@@ -23,7 +23,7 @@ Une tâche est une tâche d'implémentation quand elle crée ou modifie un fichi
 
 ## Déroulé
 
-1. **Comprendre.** Relis `CLAUDE.md`. Dans `Plan_Phases_Realisation_SIMTIS.md`, lis la phase concernée (tâches, tables, endpoints, critères de fin) et les sections 3.3 (décisions prises) et 3.4 (points en attente). Inspecte le code existant que la tâche touchera.
+1. **Comprendre.** Relis `CLAUDE.md`. Dans `docs/specs/Plan_Phases_Realisation_SIMTIS.md`, lis la phase concernée (tâches, tables, endpoints, critères de fin) et les sections 3.3 (décisions prises) et 3.4 (points en attente). Inspecte le code existant que la tâche touchera.
 2. **Repérer les blocages.** Si la tâche dépend d'un point de la section 3.4, n'invente pas sa définition. Mets-le dans « Questions et risques » avec une proposition. Si la tâche ne peut pas avancer sans réponse, dis-le dès l'objectif.
 3. **Choisir le format.** Format court si la tâche touche un seul fichier sans base de données, calcul, permission ni dépendance. Format complet dans tous les autres cas.
 4. **Présenter le plan**, terminer par la question de confirmation, puis **terminer le tour**. Si la session est en mode plan, présente-le avec ExitPlanMode.

@@ -6,39 +6,43 @@ Les données citées sont des **exemples de démonstration**. Affiche toujours l
 
 ## Tableaux imposés (RÈGLE ABSOLUE)
 
-Ces 3 tableaux suivent **exactement** la maquette Excel (`S_projet/SIMTIS_3_tableaux_corriges(1).xlsx`).
+Ces 3 tableaux suivent **exactement** la maquette Excel (`docs/specs/SIMTIS_3_tableaux_corriges(1).xlsx`).
 Ne change pas les intitulés, n'ajoute ni ne supprime de colonne, ne déplace aucune information, ne les transforme pas en cartes ou en graphiques. Seul le style (tokens, DataTable) s'applique.
 
 ### Tableau « Banques » (page Position bancaire / Banques)
 
 ```text
-┌──────────┬─────┬────────┬──────┬────┬────────┬─────────────┐
-│ Banque   │ CIH │ TIJARI │ BMCE │ BP │ Totale │ Dépassement │
-├──────────┼─────┼────────┼──────┼────┼────────┼─────────────┤
-│ Taux     │     │        │      │    │        │             │
-│ Linge    │     │        │      │    │        │             │
-│ Date     │     │        │      │    │        │             │
-└──────────┼─────┴────────┴──────┴────┴────────┼─────────────┘
-           │        Disposition FC réel        │
-           └───────────────────────────────────┘
+┌─────────────────┬─────┬──────────────┬──────┬────┬────────┬─────────────┐
+│ Banque          │ CIH │ Attijariwafa │ BMCE │ BP │ Totale │ Dépassement │
+├─────────────────┼─────┼──────────────┼──────┼────┼────────┼─────────────┤
+│ Taux            │     │              │      │    │        │             │
+│ Crédit autorisé │     │              │      │    │        │             │
+│ Date            │     │              │      │    │        │             │
+└─────────────────┼─────┴──────────────┴──────┴────┴────────┼─────────────┘
+                  │           Disposition FC réel           │
+                  └─────────────────────────────────────────┘
 ```
 
-- Colonnes : Banque · CIH · TIJARI · BMCE · BP · Totale · Dépassement.
-- Lignes : Taux · Linge · Date. « Linge » est l'intitulé de la maquette et correspond probablement à « Ligne » : garde l'intitulé déjà affiché dans le code et signale l'écart à l'utilisateur au lieu de le corriger toi-même.
-- **« Disposition FC réel »** : ligne placée **sous** le tableau, cellule fusionnée qui s'étend sous les colonnes bancaires (CIH → Totale, comme la fusion `B5:F5` de l'Excel).
+- Colonnes : Banque · CIH · Attijariwafa · BMCE · BP · Totale · Dépassement. La maquette Excel écrit « Tijari » : le métier a confirmé « Attijariwafa ».
+- Lignes : Taux · Crédit autorisé · Date.
+  - **Taux** = taux d'intérêt.
+  - **Crédit autorisé** remplace « Linge » de la maquette (= « Ligne » = crédit autorisé, confirmé par le métier). Libellé provisoire, en attendant le nom définitif : ne le change pas sans confirmation.
+  - **Date** = date de mise à jour (une seule).
+- **« Disposition FC réel »** : ligne placée **sous** le tableau, cellule fusionnée qui s'étend sous les colonnes bancaires (CIH → Totale, comme la fusion `B5:F5` de l'Excel). Formule : Solde bancaire + Crédit autorisé.
 
 ### Tableau « Devises »
 
 ```text
 ┌───────────────────┐
-│ UAR               │
+│ EUR               │
 │ USD               │
 │ Ex rh convertible │
 └───────────────────┘
 ```
 
 - Uniquement ces 3 lignes. Aucune colonne ni information supplémentaire.
-- « UAR » est l'intitulé de la maquette (probablement EUR) : ne le corrige pas sans confirmation.
+- La maquette écrit « UAR » : le métier a confirmé qu'il s'agit d'EUR, afficher « EUR ».
+- La structure complète (où s'affichent les montants) sera précisée par les tableaux complets que l'équipe doit envoyer.
 
 ### Tableau « Prévisions »
 

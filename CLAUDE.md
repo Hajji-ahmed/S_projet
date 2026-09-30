@@ -4,9 +4,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-The repository holds **only specification documents** (`S_projet/`) and a project design skill (`.claude/skills/simtis-design/`). No application code has been written yet, so there are no build, lint or test commands. Add them here once `frontend/` and `backend/` are scaffolded.
+The technical foundation (phase P3) is in place: `docker compose up --build` starts PostgreSQL, FastAPI (`backend/`) and Next.js (`frontend/`). The backend only exposes `GET /api/health`. The frontend has the layout (sidebar + header), the 13 routes as empty pages, and 11 Design System components shown on `/design-system`. There are no database tables, migrations or authentication yet (P4 and P5). Specification documents are in `docs/specs/`, the project skills in `.claude/skills/`. See `README.md` for the URLs and troubleshooting.
 
 The project language is **French**: the UI labels, the domain terms and all documentation. Keep domain terms in French in the code and UI (Rapprochement, Écart, Position disponible…).
+
+## Commands
+
+```bash
+docker compose up --build                                  # start everything (no .env needed)
+docker compose up -d --wait                                # start in the background, wait until healthy
+
+# Backend (in the container; tests need the db, started automatically)
+docker compose run --rm backend ruff check .
+docker compose run --rm backend ruff format --check .      # drop --check to apply
+docker compose run --rm backend pytest
+docker compose run --rm backend pytest tests/test_health.py::test_health_ok_when_database_reachable
+docker compose run --rm backend alembic upgrade head
+
+# Frontend (from frontend/, Node 22+)
+npm run lint && npm run format:check && npm run typecheck && npm test && npm run build
+npx vitest run lib/format.test.ts                          # a single test file
+```
+
+CI (`.github/workflows/ci.yml`) runs the same checks. Every command above must pass before a task is reported done.
+
+Environment notes:
+- The frontend dev server runs with `next dev --webpack` and file polling. Turbopack does not see file changes on bind mounts from Windows, so hot reload silently breaks with it.
+- The database is published on host port **5434** (5432 and 5433 are commonly taken). Containers reach it at `db:5432`.
+- A new API router must be added in `backend/app/api/router.py`. A new ORM model must be imported in `backend/app/models/__init__.py`, otherwise Alembic will not see it.
+- Colours live in `frontend/app/globals.css`, mirrored in `.claude/skills/simtis-design/tokens.css`. Keep both in sync. `formatAmount()` in `frontend/lib/format.ts` formats every displayed amount and never truncates.
 
 ## What SIMTIS is
 
@@ -16,7 +42,7 @@ Data flow: `Banks / Sage-SI / Excel-CSV → Import → Column mapping + checks �
 
 ## Source documents: which one wins
 
-| Document (in `S_projet/`) | Authority |
+| Document (in `docs/specs/`) | Authority |
 |---|---|
 | `Cahier_des_charges_SIMTIS_V3_*.pdf` | Scope, data model, formulas, statuses, acceptance criteria |
 | `Architecture_fonctionnelle_detaillee_SIMTIS.pdf` | Business flows, modules, user roles |
@@ -25,7 +51,7 @@ Data flow: `Banks / Sage-SI / Excel-CSV → Import → Column mapping + checks �
 | `Prompt_Design_SIMTIS_Claude.md` + dashboard PNG | UI/UX. Condensed into the `simtis-design` skill. |
 | `Plan_Phases_Realisation_SIMTIS.md` | Consolidated delivery plan (phases P0–P20), DB tables, API endpoints, open questions. Use it instead of the older `README_Phases_Realisation_Projet_SIMTIS.md`, whose phase numbering is inconsistent. |
 
-## Planned architecture
+## Architecture
 
 - **Stack**: Next.js (App Router, TypeScript, Tailwind) → HTTPS/REST → FastAPI → PostgreSQL, run with Docker Compose (`frontend`, `backend`, `db`). Redis or a worker only if imports become heavy; it is not part of the MVP.
 - **The frontend never talks to PostgreSQL.** Every call goes through FastAPI, via an API client in `frontend/lib/` and wrappers in `frontend/services/`.
@@ -55,7 +81,7 @@ Position prévisionnelle = Position de départ + Encaissements prévus − Déca
 - **Decided terms** (section 3.3 of `Plan_Phases_Realisation_SIMTIS.md`): Taux = interest rate; Ligne = Crédit autorisé, shown as "Crédit autorisé" in the Banques table until the business gives the final label; Date (Banques table) = date of last update; Pointage = operation type (encaissement, décaissement, frais bancaires…), not a reconciliation status; bank statements are Excel only; Sage/SI comes in as a file export; the bank is labelled "Attijariwafa" (not Tijari); "UAR" = EUR and is shown as "EUR". Crédit utilisé and exchange rates are entered by hand (form + audit), not imported.
 - **Two companies**: Simtis and a second one shown as "Société X" until its name is confirmed. A `companies` table is required. Positions are shown per company, never consolidated. Each company has its own accounting export, and reconciliation never matches across companies.
 - **Unresolved terms**: the business still has to define Dépassement, Lettrage/Escompte and compte RH convertible. Do not invent their meaning or "fix" these labels. Ask. The team will send complete versions of the Prévisions, Devises and Banques tables; until then their exact structure is open (section 3.4 of the plan).
-- **Logos** are in `assets/logos/`. Copy them to `frontend/public/` when the frontend is scaffolded.
+- **Logos**: `frontend/public/logo-simtis.png` and `frontend/public/banques/{cih,attijariwafa,bp,bmce}.png`.
 
 ## How to work on a task
 

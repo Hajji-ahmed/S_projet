@@ -1,6 +1,6 @@
 # SIMTIS Finance — Plan détaillé des phases de réalisation
 
-> Document de pilotage consolidé à partir de l'ensemble des documents du dossier `S_projet/`.
+> Document de pilotage consolidé à partir de l'ensemble des documents du dossier `docs/specs/`.
 > Il remplace et corrige la numérotation incohérente de `README_Phases_Realisation_Projet_SIMTIS.md`
 > (vue d'ensemble en 20 phases, détail en 23 phases).
 
@@ -159,7 +159,7 @@ Ces points bloquent la conception de la base. Ils doivent être tranchés en **P
 | **Format des relevés** | Excel uniquement | Import `.xlsx` (et `.xls` si les banques l'exportent) ; CSV et MT940 hors MVP |
 | **Accès Sage / SI** | Export de fichier | Import manuel de fichier ; pas de connexion ODBC/API dans le MVP |
 | **Nom de la banque** | « Attijariwafa » | Remplace « Tijari » / « TIJARI » partout, y compris dans l'en-tête du tableau Banques |
-| **Logos** | Fournis | `assets/logos/` : `logo-simtis.png`, `banque-cih.png`, `banque-attijariwafa.png`, `banque-bp.png`, `banque-bmce.png` |
+| **Logos** | Fournis | `frontend/public/logo-simtis.png` et `frontend/public/banques/{cih,attijariwafa,bp,bmce}.png` |
 | **Évolutions** | D'autres fonctionnalités comptables s'ajouteront après le MVP, selon l'équipe | Architecture modulaire (un module = api + service + permissions) ; vérifier que ces ajouts respectent le principe « pas un second Sage » |
 
 ### 3.4 Encore en attente
@@ -305,6 +305,13 @@ Chaque phase est décrite avec : **Objectif · Prérequis · Tâches · Livrable
 **Objectif** : poser le squelette du projet, l'environnement de développement et le Design System SIMTIS.
 
 **Prérequis** : P2
+
+> **Statut : réalisé le 30/09/2026** (`docker compose up` lance les 3 services, CI écrite, layout et 13 routes). Écarts par rapport à la liste ci-dessous, à reprendre dans la phase qui en a besoin :
+> - Composants non créés : `BankCard` (P6), `DateRangePicker` et `FilterBar` (P8), `NotificationCenter` (P15). `ChartCard` = `Card`. `SearchBar` est en place mais non branchée. `DataTable` n'a ni tri, ni pagination, ni sélection multiple (P11).
+> - Recharts n'est pas installé (P8 / P15).
+> - Rechargement à chaud : le frontend tourne en mode webpack avec scrutation des fichiers, car Turbopack ne détecte pas les modifications sur un dossier monté depuis Windows.
+> - PostgreSQL est publié sur le port 5434 du poste (5432 et 5433 sont souvent occupés).
+> - La CI (`.github/workflows/ci.yml`) est validée en syntaxe mais n'a pas encore tourné : elle ne s'exécutera qu'après un `push` sur GitHub.
 
 **Tâches — Structure du dépôt**
 

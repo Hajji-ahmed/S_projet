@@ -1,0 +1,94 @@
+/* ==========================================================================
+   SIMTIS Finance — Design tokens
+   Source : .claude/skills/simtis-design/tokens.css (garder les deux fichiers alignés).
+   La police Inter est chargée par next/font dans app/layout.tsx (variable --font-inter).
+   ========================================================================== */
+@import "tailwindcss";
+
+:root {
+  /* Couleurs de marque */
+  --simtis-primary: #006b70;
+  --simtis-primary-dark: #004f54;
+  --simtis-secondary: #18b7c8;
+  --simtis-light: #e6f7f7;
+
+  /* Surfaces & texte */
+  --simtis-background: #f5f8fa;
+  --simtis-card: #ffffff;
+  --simtis-text: #17324d;
+  --simtis-muted: #64748b;
+  --simtis-border: #d9e3e8;
+
+  /* Statuts */
+  --simtis-success: #16a66a;
+  --simtis-warning: #f59e0b;
+  --simtis-danger: #e5484d;
+
+  /* Fonds clairs de statut (badges) */
+  --simtis-success-bg: #e7f6ef;
+  --simtis-success-fg: #0f7a4c;
+  --simtis-warning-bg: #fef3dc;
+  --simtis-warning-fg: #92600a;
+  --simtis-danger-bg: #fdecec;
+  --simtis-danger-fg: #c9373c;
+  --simtis-orange-bg: #feede3;
+  --simtis-orange-fg: #c2560c;
+  --simtis-neutral-bg: #eef2f5;
+  --simtis-neutral-fg: #64748b;
+
+  /* Palette graphiques (dans cet ordre) */
+  --simtis-chart-1: #006b70; /* teal foncé */
+  --simtis-chart-2: #18b7c8; /* turquoise */
+  --simtis-chart-3: #a7e3e8; /* turquoise clair */
+  --simtis-chart-4: #94a3b8; /* gris bleuté */
+
+  /* Forme */
+  --simtis-radius-card: 14px;
+  --simtis-radius-button: 10px;
+  --simtis-radius-input: 8px;
+  --simtis-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+
+  /* Layout */
+  --simtis-sidebar-width: 252px;
+  --simtis-sidebar-collapsed-width: 72px;
+  --simtis-header-height: 70px;
+
+  --simtis-transition: 200ms ease;
+}
+
+body {
+  background: var(--simtis-background);
+  color: var(--simtis-text);
+}
+
+/* Expose les tokens comme utilitaires Tailwind (bg-simtis-primary, text-simtis-muted, ...) */
+@theme inline {
+  --color-simtis-primary: var(--simtis-primary);
+  --color-simtis-primary-dark: var(--simtis-primary-dark);
+  --color-simtis-secondary: var(--simtis-secondary);
+  --color-simtis-light: var(--simtis-light);
+  --color-simtis-background: var(--simtis-background);
+  --color-simtis-card: var(--simtis-card);
+  --color-simtis-text: var(--simtis-text);
+  --color-simtis-muted: var(--simtis-muted);
+  --color-simtis-border: var(--simtis-border);
+  --color-simtis-success: var(--simtis-success);
+  --color-simtis-warning: var(--simtis-warning);
+  --color-simtis-danger: var(--simtis-danger);
+  --color-simtis-success-bg: var(--simtis-success-bg);
+  --color-simtis-success-fg: var(--simtis-success-fg);
+  --color-simtis-warning-bg: var(--simtis-warning-bg);
+  --color-simtis-warning-fg: var(--simtis-warning-fg);
+  --color-simtis-danger-bg: var(--simtis-danger-bg);
+  --color-simtis-danger-fg: var(--simtis-danger-fg);
+  --color-simtis-orange-bg: var(--simtis-orange-bg);
+  --color-simtis-orange-fg: var(--simtis-orange-fg);
+  --color-simtis-neutral-bg: var(--simtis-neutral-bg);
+  --color-simtis-neutral-fg: var(--simtis-neutral-fg);
+  --color-simtis-chart-1: var(--simtis-chart-1);
+  --color-simtis-chart-2: var(--simtis-chart-2);
+  --color-simtis-chart-3: var(--simtis-chart-3);
+  --color-simtis-chart-4: var(--simtis-chart-4);
+  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --shadow-simtis: var(--simtis-shadow);
+}

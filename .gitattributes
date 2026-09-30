@@ -1,0 +1,10 @@
+# Fins de ligne LF partout : les fichiers montés dans les conteneurs Linux
+# (scripts, config) ne doivent pas être convertis en CRLF par Git sous Windows.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.woff2 binary

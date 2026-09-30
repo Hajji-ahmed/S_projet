@@ -16,8 +16,8 @@ SIMTIS Finance est une plateforme SaaS de trésorerie et de rapprochement bancai
 1. **Design uniquement** : ne modifie jamais la logique métier, les calculs financiers, les appels API, les routes ni la structure fonctionnelle. Si un changement visuel semble exiger un changement de logique, arrête-toi et demande.
 2. **Analyse avant de coder** : inventorie les pages, composants, la configuration Tailwind/CSS et les librairies UI/graphiques existantes. Réutilise ce qui existe, ne duplique pas.
 3. **Tokens uniquement** : aucune couleur en dur hors `tokens.css`. Utilise les variables `--simtis-*` ou les classes Tailwind qui en dérivent.
-4. **Tableaux Banques, Devises et Prévisions** : leur structure est imposée par la maquette Excel (voir `pages.md` §Tableaux imposés). Ne renomme, n'ajoute, ne supprime ni ne déplace aucune colonne ou ligne, et ne les remplace jamais par des cartes ou des graphiques.
-5. **Logo** : utilise le vrai fichier du logo SIMTIS (`public/logo-simtis.*`). Ne le recrée pas, ne le recolore pas, ne le déforme pas. S'il est absent, demande-le.
+4. **Tableaux Banques, Devises et Prévisions** : leur structure est imposée par la maquette Excel (voir `pages.md` §Tableaux imposés). Ne renomme, n'ajoute, ne supprime ni ne déplace aucune colonne ou ligne, et ne les remplace jamais par des cartes ou des graphiques. Seules exceptions, confirmées par le métier : « Tijari » s'affiche « Attijariwafa », « Linge » s'affiche « Crédit autorisé » (provisoire), « UAR » s'affiche « EUR ».
+5. **Logo** : utilise le vrai fichier du logo SIMTIS (`frontend/public/logo-simtis.png`) et ceux des banques (`frontend/public/banques/`). Ne les recrée pas, ne les recolore pas, ne les déforme pas. S'il est absent, demande-le.
 6. **Aucun emoji**. Icônes = Lucide React.
 
 ## Référence rapide

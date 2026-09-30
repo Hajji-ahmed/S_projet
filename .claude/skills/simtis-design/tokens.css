@@ -3,7 +3,8 @@
    À importer dans app/globals.css (ou fusionner avec l'existant).
    ========================================================================== */
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+/* La police Inter est chargée par next/font dans app/layout.tsx (variable --font-inter),
+   pas par un @import Google Fonts : pas de requête externe depuis le navigateur. */
 
 :root {
   /* Couleurs de marque */
@@ -50,6 +51,7 @@
 
   /* Layout */
   --simtis-sidebar-width: 252px;
+  --simtis-sidebar-collapsed-width: 72px; /* tablette : icônes seules */
   --simtis-header-height: 70px;
 
   --simtis-transition: 200ms ease;
@@ -58,7 +60,6 @@
 body {
   background: var(--simtis-background);
   color: var(--simtis-text);
-  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 /* --------------------------------------------------------------------------
@@ -78,7 +79,21 @@ body {
   --color-simtis-success: var(--simtis-success);
   --color-simtis-warning: var(--simtis-warning);
   --color-simtis-danger: var(--simtis-danger);
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-simtis-success-bg: var(--simtis-success-bg);
+  --color-simtis-success-fg: var(--simtis-success-fg);
+  --color-simtis-warning-bg: var(--simtis-warning-bg);
+  --color-simtis-warning-fg: var(--simtis-warning-fg);
+  --color-simtis-danger-bg: var(--simtis-danger-bg);
+  --color-simtis-danger-fg: var(--simtis-danger-fg);
+  --color-simtis-orange-bg: var(--simtis-orange-bg);
+  --color-simtis-orange-fg: var(--simtis-orange-fg);
+  --color-simtis-neutral-bg: var(--simtis-neutral-bg);
+  --color-simtis-neutral-fg: var(--simtis-neutral-fg);
+  --color-simtis-chart-1: var(--simtis-chart-1);
+  --color-simtis-chart-2: var(--simtis-chart-2);
+  --color-simtis-chart-3: var(--simtis-chart-3);
+  --color-simtis-chart-4: var(--simtis-chart-4);
+  --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
   --shadow-simtis: var(--simtis-shadow);
 }
 
