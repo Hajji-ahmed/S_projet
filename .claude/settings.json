@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Recurse -File | Select-Object @{n='Path';e={$_.FullName.Replace\\(\\(Get-Location\\).Path+'\\\\',''\\)}}, Length | Format-Table -AutoSize | Out-String -Width 300)",
+      "Edit(/.claude/skills/simtis-design/**)",
+      "Edit(/.claude/skills/simtis-plan/**)",
+      "PowerShell(foreach \\($c in @\\('git --version','node --version','npm --version','python --version','pip --version','docker --version','docker compose version','psql --version'\\)\\) { $out = try { Invoke-Expression $c 2>$null | Select-Object -First 1 } catch { 'ABSENT' }; if \\(-not $out\\) { $out = 'ABSENT' }; \"{0,-24} {1}\" -f $c, $out }; \"docker engine: \" + \\(try { docker info --format '{{.ServerVersion}}' 2>$null } catch { 'injoignable' }\\))",
+      "PowerShell($v = docker info --format '{{.ServerVersion}}' 2>$null; if \\($LASTEXITCODE -eq 0 -and $v\\) { \"Moteur Docker actif : $v\" } else { \"Moteur Docker injoignable \\(Docker Desktop arrete ?\\)\" }; if \\(Test-Path .git\\) { 'git: depot present' } else { 'git: pas de depot' })"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\HP EliteBook 850 G3\\Downloads\\Simtis\\SIMTIS\\.claude\\skills"
+    ]
+  }
+}
