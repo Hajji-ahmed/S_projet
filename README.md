@@ -39,9 +39,12 @@ docker compose down -v             # arrêter ET effacer la base et les modules 
 ```bash
 docker compose run --rm backend ruff check .           # lint
 docker compose run --rm backend ruff format .          # formatage
-docker compose run --rm backend pytest                 # tests (nécessitent la base, démarrée automatiquement)
-docker compose run --rm backend alembic upgrade head   # appliquer les migrations
-docker compose run --rm backend alembic revision --autogenerate -m "description"
+docker compose run --rm backend pytest                 # tests, sur une base dédiée `simtis_test` (la base de développement n'est jamais touchée)
+docker compose run --rm backend alembic upgrade head   # appliquer les migrations (fait aussi au démarrage)
+docker compose run --rm backend alembic downgrade base # tout défaire
+docker compose run --rm backend alembic revision --autogenerate -m "description"   # à relire avant de l'appliquer
+docker compose run --rm backend python -m app.seeds          # données de référence (fait aussi au démarrage)
+docker compose run --rm backend python -m app.seeds --demo   # + données de démonstration, marquées DEMO (développement uniquement)
 ```
 
 **Frontend** (depuis `frontend/`, avec Node 22 ou plus) :
@@ -61,6 +64,7 @@ npm run build
 backend/    FastAPI : api/ (endpoints minces) → services/ (règles métier) → repositories/ (base) → models/ (ORM)
 frontend/   Next.js (App Router, TypeScript, Tailwind) : app/, components/, lib/, services/, hooks/, types/
 docs/specs/ Cahier des charges, architectures, plan de phases, maquettes
+docs/modele-donnees.md   Schéma de la base (25 tables), diagramme et correspondance avec les tableaux du classeur
 .claude/    Skills du projet (simtis-plan, simtis-design)
 ```
 

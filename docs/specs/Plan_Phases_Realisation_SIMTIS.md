@@ -146,10 +146,14 @@ Ces points bloquent la conception de la base. Ils doivent être tranchés en **P
 | Sujet | Décision | Conséquence |
 |---|---|---|
 | **Taux** | Taux d'intérêt | Champ `taux_interet NUMERIC(18,6)` sur le compte / la ligne de crédit |
-| **Ligne** | = Crédit autorisé | Pas de champ séparé. La ligne s'affiche **« Crédit autorisé »** dans le tableau Banques en attendant le libellé définitif |
-| **Date** (tableau Banques) | Date de mise à jour | Une seule date par banque : celle de la dernière mise à jour du solde |
-| **Disposition FC réel** | = Solde bancaire + Crédit autorisé | Formule distincte de la Position disponible (Solde + Crédit disponible) ; à vérifier sur l'Excel de Salma en recette |
+| **Ligne** | = Crédit autorisé | Pas de champ séparé : `bank_accounts.credit_autorise`. Le tableau Banques l'affiche sous le libellé **« LIGNE »**, comme le classeur |
+| **Date** (tableau Banques) | Remplacée par 3 lignes « facilité de caisse » datées (28, 29, 30/09 dans le classeur) | Historique **par jour** : table `bank_account_balances` (compte, date, solde, crédit utilisé) |
+| **Disposition FC réel** | = Solde bancaire + Crédit autorisé. Libellé du classeur : **« Disponible Fc reel »** | Formule distincte de la Position disponible (Solde + Crédit disponible) ; à vérifier sur l'Excel de Salma en recette |
 | **UAR** | = EUR | Affiché « EUR » dans le tableau Devises |
+| **Structure des 3 tableaux** | `SIMTIS_tableaux_complets.xlsx` (envoyé le 30/09/2026) | Une feuille, 3 tableaux empilés sur les mêmes colonnes de banques. Remplace `SIMTIS_3_tableaux_corriges(1).xlsx` et la Remarque |
+| **Banques** | 5 : AWB (Attijariwafa), BMCE, BP, CIH, **BMCI** | Affichées par code, dans cet ordre (`banks.ordre_affichage`) |
+| **Prévisions** | Appartiennent à une société et, facultativement, à une banque | Une prévision sans banque = montant de la journée (Encaissement / Escompte / Douane). Chaque prévision porte son propre sens (Entrée / Sortie) |
+| **Exp DH convertible** | Type de compte `DH convertible`, en MAD | Hypothèse de modélisation, définition métier à confirmer (§3.4) |
 | **Crédit utilisé** | Saisi à la main | Formulaire par compte : montant, date de mise à jour, utilisateur ; audit avant / après |
 | **Taux de change** | Saisis à la main | Formulaire `exchange_rates` : devise, taux, date du taux, utilisateur ; audit avant / après |
 | **Pointage** | Type d'opération : encaissement, décaissement, frais bancaires… (liste ouverte) | Table de référence éditable, distincte du statut de rapprochement |
@@ -158,15 +162,19 @@ Ces points bloquent la conception de la base. Ils doivent être tranchés en **P
 | **Fichiers comptables** | Un export de comptabilisation par société | Chaque import comptable est rattaché à une société ; le rapprochement ne croise jamais deux sociétés |
 | **Format des relevés** | Excel uniquement | Import `.xlsx` (et `.xls` si les banques l'exportent) ; CSV et MT940 hors MVP |
 | **Accès Sage / SI** | Export de fichier | Import manuel de fichier ; pas de connexion ODBC/API dans le MVP |
-| **Nom de la banque** | « Attijariwafa » | Remplace « Tijari » / « TIJARI » partout, y compris dans l'en-tête du tableau Banques |
-| **Logos** | Fournis | `frontend/public/logo-simtis.png` et `frontend/public/banques/{cih,attijariwafa,bp,bmce}.png` |
+| **Nom de la banque** | « Attijariwafa » (code **AWB** dans les tableaux) | Remplace « Tijari » / « TIJARI » ; les en-têtes des tableaux affichent le code de la banque |
+| **Logos** | Fournis | `frontend/public/logo-simtis.png` et `frontend/public/banques/{attijariwafa,bmce,bp,cih,bmci}.png` |
 | **Évolutions** | D'autres fonctionnalités comptables s'ajouteront après le MVP, selon l'équipe | Architecture modulaire (un module = api + service + permissions) ; vérifier que ces ajouts respectent le principe « pas un second Sage » |
 
 ### 3.4 Encore en attente
 
-- **Structure des 3 tableaux** (Prévisions, Devises, Banques) : l'équipe envoie les versions complètes avec explications. Cela doit trancher : colonne des lignes Paie / Refinancement / CHQ, date unique ou multiple dans Prévisions, colonne de valeur des Devises, emplacement et portée de « Disposition FC réel ».
-- **Termes** : Dépassement (formule), Lettrage / Escompte, Ex rh convertible, Escompte (entrée ou sortie).
-- **Libellés provisoires** : nom définitif de la ligne « Crédit autorisé » du tableau Banques ; nom de la « Société X ».
+- **Tableaux du classeur** (à trancher avant P8, P9 et P14, sans bloquer P4 ni P5) :
+  - « facilité de caisse » 28/09, 29/09, 30/09 : est-ce le **solde** du compte ce jour-là, ou la **facilité utilisée** ? Toujours les 3 derniers jours ?
+  - Prévisions : 30/09 est-elle la date de la situation ? La colonne C contient-elle une échéance, un libellé (« La paie », « CHQ1 »…) ou les deux ? Encaissement, Escompte et Douane sont-ils des totaux de la journée, non répartis par banque ?
+  - Devises : que contiennent les cellules grisées de EUR / USD / Exp DH convertible (montant en devise ?) et le TOTAL (équivalent MAD, ou total par devise) ?
+  - « Exp DH convertible » : compte en dirhams convertibles ? Compte-t-il dans le Disponible Fc reel et le TOTAL MAD ? (proposé : à part)
+- **Termes** : Dépassement (proposé : max(0, −Disponible Fc reel)), Lettrage / Escompte, Escompte (entrée ou sortie).
+- **Libellés provisoires** : nom de la « Société X ».
 - **Pointage** : liste complète des valeurs.
 - **Règles** : tolérances de rapprochement, grille de scoring, règle de doublon, exceptions, seuils d'alerte.
 - **Fichiers réels** : le format **cible** (structure standard) est décrit dans le CDC §4 et l'architecture technique §5. Les fichiers réels ne bloquent pas le démarrage : on développe avec des fichiers de test au format standard. Ils restent nécessaires pour la recette : au moins un relevé par banque (P7), l'Excel de Salma (P8), un export comptable par société (P10).
@@ -192,7 +200,7 @@ Chaque phase est décrite avec : **Objectif · Prérequis · Tâches · Livrable
 - [ ] Collecter les fichiers (réels ou anonymisés) :
   - [ ] Excel de position bancaire de Salma
   - [ ] Excel de rapprochement de Mustapha
-  - [ ] 1 relevé réel **par banque** (CIH, Attijariwafa/Tijari, BMCE, BP, autres), idéalement sur 2 à 3 mois
+  - [ ] 1 relevé réel **par banque** (AWB, BMCE, BP, CIH, BMCI), idéalement sur 2 à 3 mois
   - [ ] Export Sage / SI représentatif
   - [ ] Tableau réel des prévisions
 - [ ] Faire trancher **tous les points de la section 3** (termes et contradictions)
@@ -388,6 +396,16 @@ simtis/
 
 **Prérequis** : P2, P3
 
+> **Statut : réalisé le 30/09/2026.** Le schéma réel (25 tables) est décrit dans [`docs/modele-donnees.md`](../modele-donnees.md), qui fait foi en cas de différence avec la liste ci-dessous. Écarts par rapport à cette liste :
+> - **Nouvelle table `bank_account_balances`** : solde et crédit utilisé par compte et **par jour**, pour les lignes « facilité de caisse » du classeur. `bank_accounts` ne porte plus le solde ni le crédit utilisé.
+> - **`bank_accounts`** : pas de colonne `ligne` (LIGNE = `credit_autorise`). Ajouts : `type_compte` (Courant / DH convertible), `compte_comptable`.
+> - **`cash_forecasts`** : rattachées à une société et à une banque **facultative** (pas obligatoirement à un compte), avec un `sens` propre à chaque prévision.
+> - **`banks`** : colonne `ordre_affichage`. **`pointage_types`** : nouvelle table de référence. **`reconciliation_matches`** : ajout de `company_id` et `commentaire` ; `origine` (Automatique / Manuelle) remplace `proposé_par`.
+> - **`audit_logs`** : ajout seul, garanti par un trigger PostgreSQL (UPDATE, DELETE et TRUNCATE refusés).
+> - **Non réalisé** : « jeu de données de test anonymisé issu de P0 » (il n'y a pas encore de fichiers réels). Remplacé par des données de démonstration (`python -m app.seeds --demo`), marquées DEMO.
+> - **Seeds** : l'administrateur initial n'est pas créé ici mais en P5, avec son mot de passe haché. La matrice des permissions proposée en P5 est chargée avec les rôles, sans validation métier.
+> - **Limite** : `alembic check` ne compare pas les contraintes CHECK ; elles sont protégées par `backend/tests/test_constraints.py`.
+
 **Tables**
 
 | Table | Champs principaux |
@@ -571,21 +589,21 @@ Résumé d'import + audit
 **Tâches — Frontend**
 
 - [ ] `/position-bancaire` : filtres Banque / Compte / Devise / Date / Période
-- [ ] **Tableau Banques (structure imposée par la maquette Excel)** :
+- [ ] **Tableau Banques (structure imposée par `SIMTIS_tableaux_complets.xlsx`)** :
 
   ```text
-  ┌──────────┬─────┬────────┬──────┬────┬────────┬─────────────┐
-  │ Banque   │ CIH │ TIJARI │ BMCE │ BP │ Totale │ Dépassement │
-  ├──────────┼─────┼────────┼──────┼────┼────────┼─────────────┤
-  │ Taux     │     │        │      │    │        │             │
-  │ Ligne    │     │        │      │    │        │             │
-  │ Date     │     │        │      │    │        │             │
-  └──────────┼─────┴────────┴──────┴────┴────────┼─────────────┘
-             │       Disposition FC réel         │   ← ligne fusionnée SOUS le tableau
-             └───────────────────────────────────┘
+  ┌─────────────────────────┬─────┬──────┬────┬─────┬──────┬───────┬─────────────┐
+  │ Banque                  │ AWB │ BMCE │ BP │ CIH │ BMCI │ TOTAL │ DEPASSEMENT │
+  │ Taux                    │     │      │    │     │      │       │             │
+  │ LIGNE                   │     │      │    │     │      │       │             │
+  │ facilité de caisse 28/09│     │      │    │     │      │       │             │
+  │ facilité de caisse 29/09│     │      │    │     │      │       │             │
+  │ facilité de caisse 30/09│     │      │    │     │      │       │             │
+  │ Disponible Fc reel      │     │      │    │     │      │       │             │  ← vert > 0, autre couleur < 0
+  └─────────────────────────┴─────┴──────┴────┴─────┴──────┴───────┴─────────────┘
   ```
 
-  Ne pas renommer, ajouter, supprimer ni déplacer de colonnes ; ne pas remplacer par des cartes.
+  Colonnes de banques issues de l'API (`banks.ordre_affichage`), affichées par code. Les 3 lignes « facilité de caisse » sont des **dates** (historique `bank_account_balances`). Ne pas renommer, ajouter, supprimer ni déplacer de colonnes ; ne pas remplacer par des cartes. Une société à la fois.
 - [ ] Tableau détaillé : Banque, Compte, Devise, Solde, Crédit autorisé, Crédit utilisé, Crédit disponible, Position disponible, Dépassement, Date de mise à jour
 - [ ] Graphique d'évolution de la position
 
@@ -610,7 +628,7 @@ Résumé d'import + audit
 - [ ] Conversion MAD : montant d'origine + taux + date du taux **toujours conservés**
 - [ ] Totaux par devise ; total consolidé MAD en option
 - [ ] Traitement du **compte RH convertible** selon la définition de P0
-- [ ] `/devises` — **tableau selon la maquette Excel** : lignes **EUR (« UAR » à confirmer)**, **USD**, **Ex rh convertible** uniquement, sans colonne supplémentaire à l'affichage
+- [ ] `/devises` — **tableau selon `SIMTIS_tableaux_complets.xlsx`** : lignes **EUR**, **USD**, **Exp DH convertible**, sur les mêmes colonnes de banques (cellules grisées) avec TOTAL et DEPASSEMENT ; aucune colonne supplémentaire. Contenu exact des cellules : à confirmer (§3.4)
 - [ ] Le détail (montant, taux, équivalent MAD, date) reste disponible en infobulle ou en vue détail, pour la traçabilité, sans modifier le tableau principal
 
 **Critères de fin**
@@ -776,25 +794,18 @@ Résumé d'import + audit
 **Tâches — Frontend**
 
 - [ ] `/previsions` : KPI (Position actuelle, Encaissements prévus, Décaissements prévus, Position future) + bouton « + Nouvelle prévision »
-- [ ] **Tableau Prévisions (structure imposée par la maquette Excel)** :
+- [ ] **Tableau Prévisions (structure imposée par `SIMTIS_tableaux_complets.xlsx`)** :
 
   ```text
-  ┌────────┬──────────────────────┬──────────────┬──────────┬────────┐
-  │ Date   │ Libellé              │ Encaissement │ Escompte │ Douane │
-  ├────────┼──────────────────────┼──────────────┼──────────┼────────┤
-  │        │ Encaissement 24/09   │              │          │        │
-  │        │ Encaissement 25/09   │              │          │        │
-  │  (une  │ Encaissement 29/09   │              │          │        │
-  │ seule  │ La paie              │              │          │        │
-  │colonne │ Refinancement        │              │          │        │
-  │fusion- │ Douane               │              │          │        │
-  │ née)   │ CHQ1                 │              │          │        │
-  │        │ CHQ2                 │              │          │        │
-  │        │ CHQ3                 │              │          │        │
-  └────────┴──────────────────────┴──────────────┴──────────┴────────┘
+  ┌────────────┬──────────┬─────┬──────┬────┬─────┬──────┬──────────────┬──────────┬────────┐
+  │ 30/09/2026 │ date     │ AWB │ BMCE │ BP │ CIH │ BMCI │ Encaissement │ Escompte │ Douane │
+  │ (une seule │ (14      │     montants par banque    │ 1 cellule fusionnée par colonne   │
+  │ cellule    │ lignes)  │                            │ pour tout le bloc                 │
+  │ fusionnée) │          │                            │                                   │
+  └────────────┴──────────┴────────────────────────────┴───────────────────────────────────┘
   ```
 
-  Une seule colonne Date à gauche ; ne pas créer de colonnes par date.
+  Une seule colonne Date à gauche (`rowSpan`) ; ne pas créer de colonnes par date. Encaissement, Escompte et Douane = montants de la journée (prévisions sans banque). Contenu exact de la 2ᵉ colonne à confirmer (§3.4).
 - [ ] Graphique combiné : encaissements (barres turquoise), décaissements (barres teal foncé), position prévisionnelle (ligne)
 
 **Critères de fin**

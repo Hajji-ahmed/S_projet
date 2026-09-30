@@ -24,6 +24,16 @@ services:
 
   backend:
     build: ./backend
+    # À chaque démarrage : schéma à jour (migrations), données de référence (seeds, sans jamais écraser
+    # l'existant), puis l'API. Les données de démonstration se chargent à part :
+    #   docker compose run --rm backend python -m app.seeds --demo
+    command:
+      - sh
+      - -c
+      - >-
+        alembic upgrade head &&
+        python -m app.seeds &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simtis}:${POSTGRES_PASSWORD:-simtis_dev_password}@db:5432/${POSTGRES_DB:-simtis}

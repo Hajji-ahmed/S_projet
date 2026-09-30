@@ -12,8 +12,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# `%` doit être doublé : configparser l'interprète sinon (mot de passe avec caractères spéciaux).
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+# Par défaut, l'URL vient de DATABASE_URL. Un appelant (les tests) peut imposer la sienne avant
+# d'exécuter Alembic. `%` doit être doublé : configparser l'interprète sinon.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

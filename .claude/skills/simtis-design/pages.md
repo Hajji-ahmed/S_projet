@@ -6,66 +6,59 @@ Les données citées sont des **exemples de démonstration**. Affiche toujours l
 
 ## Tableaux imposés (RÈGLE ABSOLUE)
 
-Ces 3 tableaux suivent **exactement** la maquette Excel (`docs/specs/SIMTIS_3_tableaux_corriges(1).xlsx`).
-Ne change pas les intitulés, n'ajoute ni ne supprime de colonne, ne déplace aucune information, ne les transforme pas en cartes ou en graphiques. Seul le style (tokens, DataTable) s'applique.
-
-### Tableau « Banques » (page Position bancaire / Banques)
+Ces 3 tableaux suivent **exactement** le classeur `docs/specs/SIMTIS_tableaux_complets.xlsx` (une feuille, les trois tableaux empilés sur les **mêmes colonnes de banques**). Il remplace l'ancienne maquette et la Remarque, dont la règle reste valable : ne change pas les intitulés, n'ajoute ni ne supprime de colonne, ne déplace aucune information, ne les transforme pas en cartes ou en graphiques. Seul le style (tokens, DataTable) s'applique.
 
 ```text
-┌─────────────────┬─────┬──────────────┬──────┬────┬────────┬─────────────┐
-│ Banque          │ CIH │ Attijariwafa │ BMCE │ BP │ Totale │ Dépassement │
-├─────────────────┼─────┼──────────────┼──────┼────┼────────┼─────────────┤
-│ Taux            │     │              │      │    │        │             │
-│ Crédit autorisé │     │              │      │    │        │             │
-│ Date            │     │              │      │    │        │             │
-└─────────────────┼─────┴──────────────┴──────┴────┴────────┼─────────────┘
-                  │           Disposition FC réel           │
-                  └─────────────────────────────────────────┘
+            ┌─────────────────────────┬─────┬──────┬────┬─────┬──────┬───────┬─────────────┐
+ BANQUES    │ Banque                  │ AWB │ BMCE │ BP │ CIH │ BMCI │ TOTAL │ DEPASSEMENT │
+            │ Taux                    │  %                           │       │             │
+            │ LIGNE                   │                              │       │             │
+            │ facilité de caisse 28/09│                              │       │             │
+            │ facilité de caisse 29/09│                              │       │             │
+            │ facilité de caisse 30/09│                              │       │             │
+            │ Disponible Fc reel      │  vert > 0, autre couleur < 0 │       │             │
+            ├─────────────────────────┼──────────────────────────────┼───────┼─────────────┘
+ DEVISES    │ EUR                     │  cellules grisées (par banque)│ TOTAL │
+            │ USD                     │                              │       │
+            │ Exp DH convertible      │                              │       │
+            └─────────────────────────┴──────────────────────────────┴───────┘
+ PRÉVISIONS ┌────────────┬────────────┬─────┬──────┬────┬─────┬──────┬──────────────┬──────────┬────────┐
+            │ 30/09/2026 │ date       │ AWB │ BMCE │ BP │ CIH │ BMCI │ Encaissement │ Escompte │ Douane │
+            │ (fusionnée │ (14 lignes)│  montants par banque         │ 1 cellule fusionnée par colonne   │
+            │ sur 14 l.) │            │                              │ pour tout le bloc                 │
+            └────────────┴────────────┴──────────────────────────────┴───────────────────────────────────┘
 ```
 
-- Colonnes : Banque · CIH · Attijariwafa · BMCE · BP · Totale · Dépassement. La maquette Excel écrit « Tijari » : le métier a confirmé « Attijariwafa ».
-- Lignes : Taux · Crédit autorisé · Date.
-  - **Taux** = taux d'intérêt.
-  - **Crédit autorisé** remplace « Linge » de la maquette (= « Ligne » = crédit autorisé, confirmé par le métier). Libellé provisoire, en attendant le nom définitif : ne le change pas sans confirmation.
-  - **Date** = date de mise à jour (une seule).
-- **« Disposition FC réel »** : ligne placée **sous** le tableau, cellule fusionnée qui s'étend sous les colonnes bancaires (CIH → Totale, comme la fusion `B5:F5` de l'Excel). Formule : Solde bancaire + Crédit autorisé.
+### Règles communes
+
+- **Colonnes de banques** : AWB · BMCE · BP · CIH · BMCI, dans cet ordre (`banks.ordre_affichage`), affichées par leur **code**. La liste vient de l'API : ne la code pas en dur.
+- **Une société à la fois** : ces tableaux se filtrent par société (Simtis ou Société X), jamais de total consolidé des deux.
+- Montants alignés à droite, chiffres tabulaires. Police du classeur : 9 pt gras. En-têtes centrés, bordures fines noires.
+
+### Tableau « Banques »
+
+- **Colonnes** : Banque · AWB · BMCE · BP · CIH · BMCI · TOTAL · DEPASSEMENT. Le classeur écrit « AWB » : c'est Attijariwafa.
+- **Lignes** :
+  - **Taux** : taux d'intérêt, format pourcentage (`0,00 %`).
+  - **LIGNE** : crédit autorisé, montants entiers. C'est le libellé du classeur : ne le remplace pas par « Crédit autorisé ».
+  - **facilité de caisse** ×3 : un libellé fixe et une **date** par ligne (28/09, 29/09, 30/09 dans le classeur, format `jj/mm/aa`). Ce sont des données par jour, pas un libellé en dur. La définition exacte (solde du jour ou facilité utilisée) reste à confirmer : affiche ce que l'API renvoie.
+  - **Disponible Fc reel** : ligne **séparée** sous le tableau. Formule : Solde bancaire + LIGNE. Mise en forme conditionnelle : vert quand la valeur est > 0, une autre couleur quand elle est < 0, y compris sur TOTAL et DEPASSEMENT. Utilise les tokens de statut (`success` / `danger`), pas le vert du classeur.
+- **TOTAL** et **DEPASSEMENT** sont des colonnes calculées par l'API, jamais par l'interface.
 
 ### Tableau « Devises »
 
-```text
-┌───────────────────┐
-│ EUR               │
-│ USD               │
-│ Ex rh convertible │
-└───────────────────┘
-```
-
-- Uniquement ces 3 lignes. Aucune colonne ni information supplémentaire.
-- La maquette écrit « UAR » : le métier a confirmé qu'il s'agit d'EUR, afficher « EUR ».
-- La structure complète (où s'affichent les montants) sera précisée par les tableaux complets que l'équipe doit envoyer.
+- **Lignes** : EUR · USD · Exp DH convertible (le classeur écrit « EUR », pas « UAR »).
+- **Colonnes** : les mêmes colonnes de banques, **cellules grisées** (fond gris clair), et TOTAL et DEPASSEMENT à droite. Sous cette forme, le tableau n'a aucune autre colonne.
+- Les montants restent dans leur devise. **Ne fais jamais de somme entre devises différentes.** Ce que contiennent exactement les cellules grisées et le TOTAL reste à confirmer : affiche ce que l'API renvoie et n'invente aucun calcul.
+- Le détail (taux, équivalent MAD, date du taux) s'ouvre en infobulle ou en vue détail, sans changer le tableau.
 
 ### Tableau « Prévisions »
 
-```text
-┌────────┬──────────────────────┬──────────────┬──────────┬────────┐
-│ Date   │ Libellé              │ Encaissement │ Escompte │ Douane │
-├────────┼──────────────────────┼──────────────┼──────────┼────────┤
-│        │ Encaissement 24/09   │              │          │        │
-│        │ Encaissement 25/09   │              │          │        │
-│ (une   │ Encaissement 29/09   │              │          │        │
-│ seule  │ La paie              │              │          │        │
-│ cellule│ Refinancement        │              │          │        │
-│ fusion-│ Douane               │              │          │        │
-│ née)   │ CHQ1                 │              │          │        │
-│        │ CHQ2                 │              │          │        │
-│        │ CHQ3                 │              │          │        │
-└────────┴──────────────────────┴──────────────┴──────────┴────────┘
-```
-
-- **Une seule colonne Date**, verticale à gauche, fusionnée sur toutes les lignes (`rowSpan`). Ne crée jamais une colonne par date.
-- Colonnes de montants : Encaissement · Escompte · Douane.
-
----
+- **Colonne Date** : **une seule**, à gauche, verticale, fusionnée sur toutes les lignes du bloc (`rowSpan`). Ne crée jamais une colonne par date.
+- **Colonne suivante** : date au format `jj/mm/aa`, gras, alignée à gauche (une par ligne).
+- **Colonnes de banques** : montants par banque et par ligne, mêmes colonnes que le tableau Banques.
+- **Encaissement · Escompte · Douane** : trois colonnes, chacune avec **une cellule fusionnée sur tout le bloc**, en-têtes sur fond gris clair. Ce sont des montants de la journée, sans banque.
+- Le sens de chaque flux (entrée ou sortie) est porté par la prévision elle-même, pas déduit de la colonne.
 
 ## Dashboard (`/dashboard`) — voir `reference-dashboard.png`
 
