@@ -1,4 +1,4 @@
-# SIMTIS Finance
+
 
 Plateforme de trésorerie et de rapprochement bancaire. Elle remplace le travail manuel sous Excel de la Trésorerie (position bancaire) et de la Comptabilité (rapprochement). SIMTIS importe, contrôle et présente les données : les écritures comptables restent dans Sage / SI.
 
