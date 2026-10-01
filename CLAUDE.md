@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-Phases P3 (technical foundation) and P4 (database) are done: `docker compose up --build` starts PostgreSQL, FastAPI (`backend/`) and Next.js (`frontend/`). On every start the backend applies the Alembic migrations and loads the reference seeds before serving the API. The schema has 25 tables (see `docs/modele-donnees.md`). The backend only exposes `GET /api/health`: there are no business endpoints, services or authentication yet (P5 onwards). The frontend has the layout (sidebar + header), the 13 routes as empty pages, and 11 Design System components shown on `/design-system`. Specification documents are in `docs/specs/`, the project skills in `.claude/skills/`. See `README.md` for the URLs and troubleshooting.
+Phases P3 (technical foundation), P4 (database) and P5 (authentication, roles, permissions, audit) are done: `docker compose up --build` starts PostgreSQL, FastAPI (`backend/`) and Next.js (`frontend/`). On every start the backend applies the Alembic migrations and loads the reference seeds before serving the API. The schema has 26 tables (see `docs/modele-donnees.md`). The backend exposes `GET /api/health` and `/api/auth/*` (login, refresh, logout, me); there are no business endpoints yet (P6 onwards). The frontend has `/login`, the layout (sidebar filtered by permissions, header with the real user and logout), the 13 routes as empty pages, and 11 Design System components shown on `/design-system`. Accounts: see "Connexion" in `README.md` (demo accounts with `python -m app.seeds --demo`, real ones with `python -m app.cli create-user`). Specification documents are in `docs/specs/`, the project skills in `.claude/skills/`. See `README.md` for the URLs and troubleshooting.
 
 The project language is **French**: the UI labels, the domain terms and all documentation. Keep domain terms in French in the code and UI (Rapprochement, Écart, Position disponible…).
 
@@ -69,6 +69,14 @@ Data flow: `Banks / Sage-SI / Excel-CSV → Import → Column mapping + checks �
 - **Imports are two-step**: analyse and preview first (detected columns, mapping, valid / error / duplicate rows), then the user confirms. Bank and Sage imports share the same pipeline.
 - **Security**: JWT, then role, then permission, checked in the backend before every sensitive operation (import, validation, reconciliation, modification, admin). Roles: Administrateur, Trésorerie, Comptable, Responsable, Direction/Consultation, Personnalisé.
 - **Audit**: every sensitive action writes to `audit_logs` with the user, the timestamp and the old and new values.
+
+## Security rules for new endpoints (P5)
+
+- Add every new module router to `protected_router` in `backend/app/api/router.py`: it already requires a logged-in user (401). Never add a router to `public_router` without a reason; `tests/test_permissions.py` lists the public routes and fails on any other route that answers without a token.
+- Every endpoint that reads or changes business data also takes `user: CurrentUser = Depends(require_permission(PermissionCode.X))` (403). Permission codes live in `backend/app/core/permissions.py`; `frontend/lib/permissions.ts` is a copy checked by a test, and `ROUTE_PERMISSIONS` there decides which pages the menu shows. Hiding a menu protects nothing: the API is the only real check.
+- Permissions are never put in the JWT: they are reloaded from the database on every request, so a role change applies at once. The access token carries its session id; logout, password change and account deactivation cut access immediately.
+- Write the audit entry with `audit_service.log(db, user_id=user.id, action=..., entite=..., entite_id=..., avant=..., apres=..., ip=client_ip(request))` in the same transaction as the change, then commit once. `audit_service` masks passwords and tokens and stores `Decimal` as exact text.
+- Frontend: call the API only through `apiFetch` (`frontend/lib/api.ts`), which adds the bearer token, refreshes once on a 401 and sends the user back to `/login` when the session is gone. The access token stays in memory only, never in `localStorage`; the session lives in an HttpOnly cookie restricted to `/api/auth`.
 
 ## Domain rules that code must respect
 

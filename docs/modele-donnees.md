@@ -1,6 +1,6 @@
 # Modèle de données
 
-Schéma PostgreSQL de SIMTIS Finance (phase P4), 25 tables. Il est décrit par les modèles SQLAlchemy de `backend/app/models/` et versionné par Alembic (`backend/alembic/versions/`). En cas de doute, le code fait foi.
+Schéma PostgreSQL de SIMTIS Finance (phases P4 et P5), 26 tables. Il est décrit par les modèles SQLAlchemy de `backend/app/models/` et versionné par Alembic (`backend/alembic/versions/`). En cas de doute, le code fait foi.
 
 ## Conventions
 
@@ -45,6 +45,7 @@ erDiagram
     bank_transactions |o--o{ cash_forecasts : "realisee par"
 
     users ||--o{ user_roles : possede
+    users ||--o{ user_sessions : "se connecte"
     roles ||--o{ user_roles : attribue
     roles ||--o{ role_permissions : accorde
     permissions ||--o{ role_permissions : "accordee par"
@@ -97,7 +98,8 @@ erDiagram
 
 | Table | Rôle | Points d'attention |
 |---|---|---|
-| `users`, `roles`, `permissions`, `user_roles`, `role_permissions` | Droits dynamiques | Email en minuscules et unique. Les mots de passe seront hachés en P5 |
+| `users`, `roles`, `permissions`, `user_roles`, `role_permissions` | Droits dynamiques | Email en minuscules et unique. Mot de passe haché (argon2id). `echecs_connexion` et `verrouille_jusqu_a` gèrent le verrouillage après des échecs |
+| `user_sessions` | Sessions de connexion | Seule l'empreinte SHA-256 du jeton est stockée (unique). Une session révoquée ou expirée coupe l'accès. Supprimée avec son utilisateur |
 | `audit_logs` | Journal des actions sensibles | **Ajout seul** : UPDATE, DELETE et TRUNCATE sont refusés par la base |
 
 ## Du classeur aux tables

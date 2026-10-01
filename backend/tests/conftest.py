@@ -11,11 +11,15 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.db import get_db
+from app.main import app
+from app.seeds.reference import seed_reference
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 TEST_DATABASE = "simtis_test"
@@ -76,3 +80,36 @@ def db(engine: Engine) -> Iterator[Session]:
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture
+def client(db: Session) -> Iterator[TestClient]:
+    """Client HTTP de l'application, branché sur la session de test (tout est annulé à la fin)."""
+
+    def test_db() -> Iterator[Session]:
+        yield db
+
+    app.dependency_overrides[get_db] = test_db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def reference(db: Session) -> Session:
+    """Session de test avec les données de référence (rôles, permissions...)."""
+    seed_reference(db)
+    return db
+
+
+@pytest.fixture
+def production_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Paramètres de production, avec un secret valide pour que la configuration se charge."""
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("JWT_SECRET", "s" * 48)
+    get_settings.cache_clear()
+    yield
+    monkeypatch.undo()
+    get_settings.cache_clear()

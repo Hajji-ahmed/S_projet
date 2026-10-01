@@ -21,6 +21,7 @@ from app.models import (
     ImportBatch,
     ReconciliationMatch,
     ReconciliationMatchItem,
+    UserSession,
 )
 from tests.helpers import (
     World,
@@ -588,3 +589,33 @@ def test_two_banks_cannot_share_a_code(db):
     save(db, build_bank(code="AWB"))
 
     assert_rejected(db, "uq_banks_code", build_bank(code="AWB"))
+
+
+# --- Sessions et verrouillage (migration 0002) ---------------------------------------------------
+
+
+def test_login_failure_counter_cannot_be_negative(db):
+    assert_rejected(db, "ck_users_echecs_positifs", build_user(echecs_connexion=-1))
+
+
+def test_session_token_hash_is_unique(db, world):
+    expires = datetime(2026, 10, 1, tzinfo=UTC)
+    save(db, UserSession(user_id=world.user.id, token_hash="a" * 64, expires_at=expires))
+    same_hash = UserSession(user_id=world.user.id, token_hash="a" * 64, expires_at=expires)
+
+    assert_rejected(db, "uq_user_sessions_token_hash", same_hash)
+
+
+def test_deleting_a_user_deletes_their_sessions(db):
+    user = save(db, build_user())
+    save(
+        db,
+        UserSession(
+            user_id=user.id, token_hash="b" * 64, expires_at=datetime(2026, 10, 1, tzinfo=UTC)
+        ),
+    )
+
+    db.delete(user)
+    db.flush()
+
+    assert db.query(UserSession).filter_by(token_hash="b" * 64).count() == 0

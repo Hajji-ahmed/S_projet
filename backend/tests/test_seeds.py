@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from app.core.config import get_settings
+from app.core.security import verify_password
 from app.models import (
     Bank,
     BankAccount,
@@ -20,10 +20,11 @@ from app.models import (
     Permission,
     PointageType,
     Role,
+    User,
 )
 from app.seeds.__main__ import main
 from app.seeds.common import SeedError
-from app.seeds.demo import seed_demo
+from app.seeds.demo import DEMO_PASSWORD, DEMO_USERS, seed_demo
 from app.seeds.reference import seed_reference
 
 TODAY = date(2026, 9, 30)
@@ -57,15 +58,6 @@ EXPECTED_ROLES = {
 
 def count(db, model) -> int:
     return db.scalar(select(func.count()).select_from(model))
-
-
-@pytest.fixture
-def production_env(monkeypatch):
-    monkeypatch.setenv("APP_ENV", "production")
-    get_settings.cache_clear()
-    yield
-    monkeypatch.undo()
-    get_settings.cache_clear()
 
 
 # --- Données de référence ------------------------------------------------------------------------
@@ -182,7 +174,7 @@ def test_demo_seed_creates_accounts_balances_rates_and_forecasts(db):
     created = seed_demo(db, today=TODAY)
 
     assert created == Counter(
-        bank_accounts=9, bank_account_balances=21, exchange_rates=2, cash_forecasts=4
+        bank_accounts=9, bank_account_balances=21, exchange_rates=2, cash_forecasts=4, users=5
     )
 
 
@@ -277,3 +269,27 @@ def test_command_line_refuses_demo_in_production_before_writing(production_env, 
     assert main(["--demo"]) == 1
 
     assert "interdites en production" in capsys.readouterr().err
+
+
+def test_demo_creates_one_user_per_role_with_a_working_password(db):
+    seed_reference(db)
+    seed_demo(db, today=TODAY)
+
+    users = {user.email: user for user in db.scalars(select(User))}
+
+    assert set(users) == {email for email, _, _ in DEMO_USERS}
+    for email, nom, role_code in DEMO_USERS:
+        user = users[email]
+        assert user.nom == nom
+        assert [role.code for role in user.roles] == [role_code]
+        assert verify_password(DEMO_PASSWORD, user.mot_de_passe_hash)
+        assert DEMO_PASSWORD not in user.mot_de_passe_hash
+
+
+def test_demo_users_are_never_created_in_production(db, production_env):
+    seed_reference(db)
+
+    with pytest.raises(SeedError):
+        seed_demo(db, today=TODAY)
+
+    assert count(db, User) == 0

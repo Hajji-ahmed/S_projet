@@ -38,6 +38,13 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simtis}:${POSTGRES_PASSWORD:-simtis_dev_password}@db:5432/${POSTGRES_DB:-simtis}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # `:-` couvre aussi une variable vide (JWT_SECRET= dans .env). Valeur de développement uniquement :
+      # en production, APP_ENV=production refuse de démarrer sans un vrai secret.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-before-any-real-deployment}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      MAX_LOGIN_FAILURES: ${MAX_LOGIN_FAILURES:-5}
+      LOCKOUT_MINUTES: ${LOCKOUT_MINUTES:-15}
       # Rechargement à chaud fiable sur les dossiers montés depuis Windows
       WATCHFILES_FORCE_POLLING: "true"
     volumes:

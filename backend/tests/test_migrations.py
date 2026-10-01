@@ -40,7 +40,7 @@ def test_upgrade_creates_every_model_table(empty_database):
     command.upgrade(config, "head")
 
     assert user_tables(engine) == set(Base.metadata.tables)
-    assert len(user_tables(engine)) == 25
+    assert len(user_tables(engine)) == 26
     assert audit_function_exists(engine)
 
 
@@ -61,7 +61,7 @@ def test_upgrade_works_again_after_downgrade(empty_database):
 
     command.upgrade(config, "head")
 
-    assert len(user_tables(engine)) == 25
+    assert len(user_tables(engine)) == 26
 
 
 def test_migration_matches_models(empty_database):

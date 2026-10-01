@@ -4,6 +4,7 @@ from collections import Counter
 
 from sqlalchemy.orm import Session
 
+from app.core.permissions import PERMISSION_DESCRIPTIONS, PermissionCode
 from app.models import (
     Bank,
     Company,
@@ -55,38 +56,27 @@ FORECAST_CATEGORIES = [
     ("AUTRE", "Autre", None),
 ]
 
-PERMISSIONS = {
-    "banks.manage": "Gérer les banques et les comptes bancaires",
-    "statements.import": "Importer des relevés bancaires",
-    "position.view": "Consulter la position bancaire",
-    "accounting.import": "Importer les écritures comptables",
-    "reconciliation.view": "Consulter le rapprochement",
-    "reconciliation.validate": "Valider ou rejeter un rapprochement",
-    "discrepancies.manage": "Traiter et clôturer les écarts",
-    "forecasts.manage": "Gérer les prévisions de trésorerie",
-    "dashboard.view": "Consulter le dashboard",
-    "admin.users": "Administrer les utilisateurs",
-    "admin.roles": "Administrer les rôles et les permissions",
-    "audit.view": "Consulter l'historique des actions",
-}
+# Source unique : app/core/permissions.py
+PERMISSIONS = {code.value: description for code, description in PERMISSION_DESCRIPTIONS.items()}
 
-_CONSULTATION = ("position.view", "reconciliation.view", "dashboard.view")
+P = PermissionCode
+_CONSULTATION = (P.POSITION_VIEW, P.RECONCILIATION_VIEW, P.DASHBOARD_VIEW)
 
 # Matrice de la phase P5, non encore validée par le métier. Elle n'est appliquée qu'à la CRÉATION d'un
 # rôle : une modification faite ensuite par l'administrateur n'est jamais écrasée par un nouveau seed.
-ROLES = {
-    "ADMIN": ("Administrateur", tuple(PERMISSIONS)),
+ROLES: dict[str, tuple[str, tuple[PermissionCode, ...]]] = {
+    "ADMIN": ("Administrateur", tuple(PermissionCode)),
     "TRESORERIE": (
         "Trésorerie",
-        _CONSULTATION + ("banks.manage", "statements.import", "forecasts.manage"),
+        _CONSULTATION + (P.BANKS_MANAGE, P.STATEMENTS_IMPORT, P.FORECASTS_MANAGE),
     ),
     "COMPTABLE": (
         "Comptable",
-        _CONSULTATION + ("accounting.import", "reconciliation.validate", "discrepancies.manage"),
+        _CONSULTATION + (P.ACCOUNTING_IMPORT, P.RECONCILIATION_VALIDATE, P.DISCREPANCIES_MANAGE),
     ),
     "RESPONSABLE": (
         "Responsable",
-        _CONSULTATION + ("reconciliation.validate", "discrepancies.manage", "audit.view"),
+        _CONSULTATION + (P.RECONCILIATION_VALIDATE, P.DISCREPANCIES_MANAGE, P.AUDIT_VIEW),
     ),
     "DIRECTION": ("Direction / Consultation", _CONSULTATION),
 }

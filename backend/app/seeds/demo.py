@@ -9,9 +9,11 @@ from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.security import hash_password
 from app.models import (
     Bank,
     BankAccount,
@@ -20,11 +22,23 @@ from app.models import (
     Company,
     ExchangeRate,
     ForecastCategory,
+    Role,
+    User,
 )
 from app.seeds.common import SeedError, get_by_code, get_or_create
 
 D = Decimal
 ZERO = D("0")
+
+# Comptes de démonstration, un par rôle. Développement uniquement : refusés en production comme le reste.
+DEMO_PASSWORD = "Simtis-Demo-2026!"
+DEMO_USERS = [
+    ("admin.demo@example.com", "Démo Administrateur", "ADMIN"),
+    ("tresorerie.demo@example.com", "Démo Trésorerie", "TRESORERIE"),
+    ("comptable.demo@example.com", "Démo Comptable", "COMPTABLE"),
+    ("responsable.demo@example.com", "Démo Responsable", "RESPONSABLE"),
+    ("direction.demo@example.com", "Démo Direction", "DIRECTION"),
+]
 
 # Comptes courants MAD de Simtis, un par banque : (banque, solde, crédit autorisé, crédit utilisé, taux)
 MAD_ACCOUNTS = [
@@ -194,4 +208,21 @@ def seed_demo(session: Session, today: date | None = None) -> Counter[str]:
             created,
         )
 
+    _seed_users(session, created)
     return created
+
+
+def _seed_users(session: Session, created: Counter[str]) -> None:
+    password_hash: str | None = None  # haché une seule fois (argon2 est volontairement lent)
+    for email, nom, role_code in DEMO_USERS:
+        if session.scalar(select(User).filter_by(email=email)) is not None:
+            continue
+        password_hash = password_hash or hash_password(DEMO_PASSWORD)
+        role = get_by_code(session, Role, role_code)
+        get_or_create(
+            session,
+            User,
+            {"email": email},
+            {"nom": nom, "mot_de_passe_hash": password_hash, "roles": [role]},
+            created,
+        )

@@ -4,8 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { NAV_ITEMS } from "@/lib/navigation";
+import { canAccess } from "@/lib/permissions";
 
 type AppSidebarProps = {
   /** Mobile : le menu est un tiroir ouvert par le bouton de l'en-tête. */
@@ -19,6 +21,9 @@ type AppSidebarProps = {
  */
 export function AppSidebar({ mobileOpen, onNavigate }: AppSidebarProps) {
   const pathname = usePathname();
+  const { user } = useAuth();
+  // Seules les pages que l'utilisateur peut consulter apparaissent
+  const items = NAV_ITEMS.filter((item) => user && canAccess(user.permissions, item.href));
 
   return (
     <aside
@@ -43,7 +48,7 @@ export function AppSidebar({ mobileOpen, onNavigate }: AppSidebarProps) {
         aria-label="Navigation principale"
         className="flex-1 space-y-1 overflow-y-auto px-3 py-4"
       >
-        {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
+        {items.map(({ label, href, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
             <Link

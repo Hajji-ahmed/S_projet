@@ -28,7 +28,15 @@ from app.models.referentiel import (
     ExchangeRate,
     PointageType,
 )
-from app.models.securite import AuditLog, Permission, Role, RolePermission, User, UserRole
+from app.models.securite import (
+    AuditLog,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+    UserSession,
+)
 
 __all__ = [
     "AccountingEntry",
@@ -57,4 +65,5 @@ __all__ = [
     "RolePermission",
     "User",
     "UserRole",
+    "UserSession",
 ]

@@ -24,6 +24,37 @@ Aucun fichier `.env` n'est nécessaire : `docker-compose.yml` fournit des valeur
 
 Le premier démarrage télécharge les images et installe les dépendances (plusieurs minutes). Les suivants prennent quelques secondes. Les ports ne sont ouverts que sur `127.0.0.1` (votre poste).
 
+## Connexion
+
+Toute l'application exige d'être connecté. Il n'existe aucun compte au premier démarrage : en créer un, ou charger les comptes de démonstration.
+
+**Comptes de démonstration** (développement uniquement, refusés quand `APP_ENV=production`) :
+
+```bash
+docker compose run --rm backend python -m app.seeds --demo
+```
+
+| Email | Rôle |
+|---|---|
+| `admin.demo@example.com` | Administrateur |
+| `tresorerie.demo@example.com` | Trésorerie |
+| `comptable.demo@example.com` | Comptable |
+| `responsable.demo@example.com` | Responsable |
+| `direction.demo@example.com` | Direction / Consultation |
+
+Mot de passe commun : `Simtis-Demo-2026!`
+
+**Créer un vrai compte** (en attendant l'écran d'administration) :
+
+```bash
+docker compose run --rm backend python -m app.cli create-user --email prenom.nom@simtis.ma --nom "Prénom Nom" --role ADMIN
+docker compose run --rm backend python -m app.cli set-password --email prenom.nom@simtis.ma   # nouveau mot de passe
+```
+
+Rôles : `ADMIN`, `TRESORERIE`, `COMPTABLE`, `RESPONSABLE`, `DIRECTION` (`--role` est répétable). Le mot de passe est généré et affiché **une seule fois**. `set-password` lève aussi un verrouillage et ferme les sessions ouvertes.
+
+Règles : session de 12 h (reconnexion chaque jour), compte verrouillé 15 min après 5 mots de passe faux, droits relus à chaque requête (un rôle retiré ou un compte désactivé prend effet immédiatement). Paramètres dans `.env.example`.
+
 ## Commandes courantes
 
 ```bash
@@ -64,7 +95,7 @@ npm run build
 backend/    FastAPI : api/ (endpoints minces) → services/ (règles métier) → repositories/ (base) → models/ (ORM)
 frontend/   Next.js (App Router, TypeScript, Tailwind) : app/, components/, lib/, services/, hooks/, types/
 docs/specs/ Cahier des charges, architectures, plan de phases, maquettes
-docs/modele-donnees.md   Schéma de la base (25 tables), diagramme et correspondance avec les tableaux du classeur
+docs/modele-donnees.md   Schéma de la base (26 tables), diagramme et correspondance avec les tableaux du classeur
 .claude/    Skills du projet (simtis-plan, simtis-design)
 ```
 
@@ -80,6 +111,8 @@ Le frontend ne parle jamais à PostgreSQL : tout passe par l'API (`frontend/lib/
   docker volume rm simtis-finance_frontend_node_modules
   docker compose up -d --build
   ```
+- **`ModuleNotFoundError` au démarrage du backend** (ex. `jwt`) : une dépendance Python a été ajoutée. Reconstruire l'image : `docker compose up -d --build backend`.
+- **Toujours renvoyé vers la page de connexion** : aucun compte n'existe encore (voir « Connexion »), ou le cookie a expiré (session de 12 h).
 - **Frontend plus rapide en local** : lancer seulement la base et l'API dans Docker, puis le frontend sur le poste.
 
   ```bash

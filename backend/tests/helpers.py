@@ -10,6 +10,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password
 from app.models import (
     AccountingEntry,
     Bank,
@@ -19,6 +20,7 @@ from app.models import (
     Company,
     Currency,
     ForecastCategory,
+    Role,
     User,
 )
 
@@ -147,3 +149,36 @@ def make_world(db: Session) -> World:
     if category is None:
         category = save(db, ForecastCategory(code="TEST", libelle="Test"))
     return World(company, bank, account, statement, user, category)
+
+
+# --- Authentification ----------------------------------------------------------------------------
+
+TEST_PASSWORD = "Mot-De-Passe-De-Test-2026"
+_test_password_hash: str | None = None
+
+
+def test_password_hash() -> str:
+    """Empreinte de TEST_PASSWORD, calculée une seule fois (argon2 est volontairement lent)."""
+    global _test_password_hash
+    if _test_password_hash is None:
+        _test_password_hash = hash_password(TEST_PASSWORD)
+    return _test_password_hash
+
+
+def make_auth_user(db: Session, *role_codes: str, **over) -> User:
+    """Utilisateur avec mot de passe TEST_PASSWORD et les rôles demandés (seeds de référence requis)."""
+    roles = list(db.scalars(select(Role).where(Role.code.in_(role_codes)))) if role_codes else []
+    assert len(roles) == len(role_codes), f"rôles introuvables : {role_codes}"
+    user = build_user(mot_de_passe_hash=test_password_hash(), roles=roles, **over)
+    return save(db, user)
+
+
+def login(client, email: str, password: str = TEST_PASSWORD) -> str:
+    """Se connecte et retourne le jeton d'accès. Le cookie de session reste dans `client`."""
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

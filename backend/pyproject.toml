@@ -11,6 +11,8 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "psycopg[binary]>=3.2",
+    "pyjwt>=2.8",
+    "pwdlib[argon2]>=0.2",
 ]
 
 [project.optional-dependencies]
@@ -45,4 +47,8 @@ known-third-party = ["alembic"]
 
 [tool.ruff.lint.flake8-bugbear]
 # `Depends(...)` en valeur par défaut est l'usage normal de FastAPI
-extend-immutable-calls = ["fastapi.Depends"]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Cookie",
+    "app.api.deps.require_permission",
+]

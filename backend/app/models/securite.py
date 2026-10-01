@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     String,
     Text,
     func,
@@ -22,7 +23,10 @@ from app.models.base import Base, TimestampMixin
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("email = lower(email)", name="email_minuscules"),)
+    __table_args__ = (
+        CheckConstraint("email = lower(email)", name="email_minuscules"),
+        CheckConstraint("echecs_connexion >= 0", name="echecs_positifs"),
+    )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
     nom: Mapped[str] = mapped_column(String(120))
@@ -30,8 +34,33 @@ class User(TimestampMixin, Base):
     mot_de_passe_hash: Mapped[str] = mapped_column(String(255))
     actif: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     dernier_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Verrouillage temporaire après des échecs de connexion consécutifs
+    echecs_connexion: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    verrouille_jusqu_a: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     roles: Mapped[list["Role"]] = relationship(secondary="user_roles", back_populates="users")
+
+
+class UserSession(Base):
+    """Session de connexion. Le jeton opaque est remis au navigateur ; seule son empreinte est stockée.
+
+    Une session révoquée ou expirée ne permet plus de rafraîchir le jeton d'accès.
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ip: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped[User] = relationship()
 
 
 class Role(TimestampMixin, Base):

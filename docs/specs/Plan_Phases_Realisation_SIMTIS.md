@@ -455,6 +455,14 @@ simtis/
 
 **Prérequis** : P4
 
+> **Statut : réalisé le 01/10/2026.** Choix et écarts par rapport à la liste ci-dessous :
+> - **Jetons** : jeton d'accès JWT de 15 min gardé en mémoire dans le navigateur ; session de 12 h dans un cookie `HttpOnly`, `SameSite=Strict`, limité à `/api/auth`, dont seule l'empreinte est stockée (`user_sessions`). Pas de rotation du jeton de session (elle déconnecterait les onglets ouverts en parallèle). Les permissions ne sont **jamais** dans le jeton : relues en base à chaque requête.
+> - **Hachage** : argon2id (`pwdlib`). Verrouillage 15 min après 5 échecs ; message unique « Email ou mot de passe incorrect », y compris pour un compte verrouillé ou désactivé (le motif réel est dans l'audit).
+> - **Comptes** : pas d'écran d'administration avant P16. En attendant : `python -m app.cli create-user` / `set-password`. Comptes de démonstration (un par rôle) avec `python -m app.seeds --demo`.
+> - **Menu** : une page est visible si l'utilisateur a l'une des permissions de `ROUTE_PERMISSIONS` (`frontend/lib/permissions.ts`). Proposition validée le 01/10/2026 ; la matrice des rôles reste à valider par le métier.
+> - **Protection par défaut** : toute route hors de la liste publique exige un utilisateur connecté ; un test échoue si une route répond sans jeton.
+> - **Hors périmètre, reporté** : limitation du nombre de requêtes par IP, IP réelle derrière un reverse proxy, désactivation de `/docs` en production (P19) ; double authentification et SSO (non demandés).
+
 **Tâches**
 
 - [ ] Authentification : login email + mot de passe (hash bcrypt/argon2), JWT access + refresh token
