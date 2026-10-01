@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { PlaceholderPage } from "@/components/layout/PlaceholderPage";
+import { AccountsView } from "@/components/accounts/AccountsView";
 
 export const metadata: Metadata = { title: "Comptes" };
 
 export default function Page() {
-  return <PlaceholderPage title="Comptes" description="Gestion des comptes bancaires" />;
+  return <AccountsView />;
 }

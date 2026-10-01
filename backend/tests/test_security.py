@@ -145,3 +145,20 @@ def test_production_refuses_a_short_secret():
 
 def test_production_accepts_a_long_secret():
     assert Settings(app_env="production", jwt_secret="x" * 32).is_production
+
+
+# --- Décalage d'horloge --------------------------------------------------------------------------
+
+
+def test_token_issued_slightly_in_the_future_is_accepted():
+    """L'horloge peut reculer de quelques dizaines de secondes (recalage de la machine virtuelle)."""
+    token = security.create_access_token(1, 1, now=datetime.now(UTC) + timedelta(seconds=30))
+
+    assert security.decode_access_token(token).user_id == 1
+
+
+def test_token_issued_far_in_the_future_is_rejected():
+    token = security.create_access_token(1, 1, now=datetime.now(UTC) + timedelta(minutes=2))
+
+    with pytest.raises(InvalidTokenError):
+        security.decode_access_token(token)

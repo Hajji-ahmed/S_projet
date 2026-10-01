@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.api import auth, banks, health
+from app.api import accounts, auth, banks, health, referentiel
 from app.api.deps import get_current_user
 
 # Routes accessibles sans être connecté. Toute nouvelle route publique doit aussi être ajoutée à
@@ -15,6 +15,8 @@ public_router.include_router(auth.public_router)
 protected_router = APIRouter(dependencies=[Depends(get_current_user)])
 protected_router.include_router(auth.protected_router)
 protected_router.include_router(banks.router)
+protected_router.include_router(accounts.router)
+protected_router.include_router(referentiel.router)
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(public_router)

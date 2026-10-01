@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { BankCard } from "@/components/banks/BankCard";
 import { BankFormModal } from "@/components/banks/BankFormModal";
+import { useCompany } from "@/components/company/CompanyProvider";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -32,6 +33,8 @@ function errorMessage(error: unknown): string {
 export function BanksView() {
   const { user } = useAuth();
   const { toast } = useToast();
+  // Le nombre de comptes de chaque carte est celui de la société active
+  const companyId = useCompany().company?.id;
   const canManage = !!user && hasAnyPermission(user.permissions, [PERMISSIONS.BANKS_MANAGE]);
 
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -44,8 +47,9 @@ export function BanksView() {
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (companyId === undefined) return;
     let cancelled = false;
-    listBanks().then(
+    listBanks(companyId).then(
       (data) => {
         if (cancelled) return;
         setBanks(data);
@@ -58,7 +62,7 @@ export function BanksView() {
     return () => {
       cancelled = true;
     };
-  }, [reloadKey]);
+  }, [reloadKey, companyId]);
 
   function retry() {
     setLoadState("loading");

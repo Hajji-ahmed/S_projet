@@ -4,6 +4,7 @@ import { Bell, ChevronDown, LogOut, Menu } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { CompanySelector } from "@/components/company/CompanySelector";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { cn } from "@/lib/cn";
 
@@ -114,6 +115,7 @@ export function AppHeader({ onMenuClick }: { onMenuClick: () => void }) {
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4">
+        <CompanySelector />
         <button
           type="button"
           aria-label="Notifications"

@@ -63,7 +63,7 @@ erDiagram
 | `banks` | Banques | `code` (AWB, BMCE, BP, CIH, BMCI) sert d'en-tête de colonne ; `ordre_affichage` fixe leur ordre |
 | `currencies` | MAD, EUR, USD | « Exp DH convertible » n'est pas une devise |
 | `pointage_types` | Types d'opération du champ « Pointage » | Liste ouverte, modifiable |
-| `bank_accounts` | Comptes bancaires d'une société | `credit_autorise` = LIGNE ; `taux_interet` = Taux ; `type_compte` = Courant ou DH convertible (toujours en MAD) |
+| `bank_accounts` | Comptes bancaires d'une société | `credit_autorise` = LIGNE ; `taux_interet` = Taux ; `type_compte` = Courant ou DH convertible (toujours en MAD). **Un seul compte actif par société, banque, devise et type** (index unique partiel, migration 0003) ; société, banque et devise non modifiables |
 | `bank_account_balances` | Solde et crédit utilisé **par compte et par jour** | Une ligne par compte et par date. Alimente les lignes « facilité de caisse » |
 | `exchange_rates` | Taux de change saisis à la main | Un taux par devise et par jour, strictement positif |
 

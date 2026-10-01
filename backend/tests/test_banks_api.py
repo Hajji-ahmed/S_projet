@@ -30,9 +30,9 @@ def audit_entries(db, action: str) -> list[AuditLog]:
     return list(db.scalars(select(AuditLog).filter_by(action=action).order_by(AuditLog.id)))
 
 
-def add_account(db, bank_code: str, *, actif: bool = True):
+def add_account(db, bank_code: str, *, devise: str = "MAD", actif: bool = True):
     company = db.scalar(select(Company).filter_by(code="SIMTIS"))
-    return save(db, build_account(company, bank(db, bank_code), actif=actif))
+    return save(db, build_account(company, bank(db, bank_code), devise=devise, actif=actif))
 
 
 # --- Lecture -------------------------------------------------------------------------------------
@@ -55,8 +55,8 @@ def test_list_follows_the_workbook_order(client, direction):
 
 
 def test_list_counts_only_active_accounts(client, direction, db):
-    add_account(db, "CIH")
-    add_account(db, "CIH")
+    add_account(db, "CIH", devise="MAD")
+    add_account(db, "CIH", devise="EUR")
     add_account(db, "CIH", actif=False)
 
     counts = {
@@ -245,8 +245,8 @@ def test_deactivate_a_bank_without_accounts(client, tresorerie, db):
 
 
 def test_a_bank_with_active_accounts_cannot_be_deactivated(client, tresorerie, db):
-    add_account(db, "CIH")
-    add_account(db, "CIH")
+    add_account(db, "CIH", devise="MAD")
+    add_account(db, "CIH", devise="EUR")
     cih = bank(db, "CIH")
 
     response = client.patch(f"{BANKS}/{cih.id}/status", json={"actif": False}, headers=tresorerie)

@@ -545,6 +545,8 @@ P6.1 Référentiel des banques ──► P6.2 Comptes bancaires + société acti
 
 #### P6.2 — Comptes bancaires et société active
 
+> **Statut : réalisé le 01/10/2026.** Écarts : « Société X » garde son nom (pas de commande de renommage, à la demande du métier). Règle ajoutée par le métier : **pour une société, une banque a un seul compte actif par devise et par type** (lecture A : un compte courant MAD avec LIGNE et taux, au plus un EUR, un USD, un DH convertible), garantie par un index unique partiel (migration 0003). Société, banque et devise d'un compte ne sont plus modifiables ; taux saisi en %, stocké en fraction. Corrections transverses faites pendant P6.2 : tolérance de 60 s sur l'horloge pour les jetons (recalage de l'horloge Docker), vrai NULL SQL dans `audit_logs`.
+
 **Objectif** : gérer les comptes de chaque société (Simtis, Société X), sans jamais mélanger les deux.
 
 **Backend**

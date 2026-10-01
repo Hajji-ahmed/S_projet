@@ -9,10 +9,12 @@ from sqlalchemy import (
     Date,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -76,6 +78,17 @@ class BankAccount(TimestampMixin, Base):
         CheckConstraint("credit_autorise >= 0", name="credit_autorise_positif"),
         CheckConstraint(
             "type_compte <> 'DH convertible' OR devise = 'MAD'", name="dh_convertible_en_mad"
+        ),
+        # Une seule cellule par banque dans les tableaux du classeur : pour une société, une banque a au
+        # plus UN compte actif par devise et par type. Un compte désactivé libère la place (nouveau RIB).
+        Index(
+            "uq_bank_accounts_compte_actif_par_banque",
+            "company_id",
+            "bank_id",
+            "devise",
+            "type_compte",
+            unique=True,
+            postgresql_where=text("actif"),
         ),
     )
 

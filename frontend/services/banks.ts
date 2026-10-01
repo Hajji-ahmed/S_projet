@@ -3,8 +3,9 @@ import type { Bank, BankCreate, BankUpdate } from "@/types/bank";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-export function listBanks() {
-  return apiFetch<Bank[]>("/banks");
+/** Avec `companyId`, le nombre de comptes actifs ne compte que cette société. */
+export function listBanks(companyId?: number) {
+  return apiFetch<Bank[]>(companyId === undefined ? "/banks" : `/banks?company_id=${companyId}`);
 }
 
 export function createBank(data: BankCreate) {

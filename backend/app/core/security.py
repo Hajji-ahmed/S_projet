@@ -16,6 +16,9 @@ from pwdlib.hashers.argon2 import Argon2Hasher
 from app.core.config import get_settings
 
 JWT_ALGORITHM = "HS256"
+# Tolérance aux décalages d'horloge : la machine virtuelle de Docker Desktop recale parfois son heure de
+# plusieurs dizaines de secondes en arrière, et un jeton tout juste émis paraîtrait « émis dans le futur ».
+CLOCK_SKEW_SECONDS = 60
 ACCESS_TOKEN_TYPE: Literal["access"] = "access"
 MIN_PASSWORD_LENGTH = 12
 
@@ -81,6 +84,7 @@ def decode_access_token(token: str) -> AccessClaims:
             get_settings().jwt_secret,
             # Liste explicite : on n'accepte jamais l'algorithme annoncé par le jeton lui-même
             algorithms=[JWT_ALGORITHM],
+            leeway=CLOCK_SKEW_SECONDS,
             options={"require": ["exp", "sub", "sid", "type"]},
         )
     except jwt.PyJWTError as error:

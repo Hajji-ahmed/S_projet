@@ -48,7 +48,8 @@ def world(db) -> World:
 
 
 def test_account_number_must_be_unique(db, world):
-    duplicate = build_account(world.company, world.bank, numero=world.account.numero)
+    # Autre devise : seul le numéro est en double (la place MAD courant est déjà prise)
+    duplicate = build_account(world.company, world.bank, numero=world.account.numero, devise="EUR")
 
     assert_rejected(db, "uq_bank_accounts_numero", duplicate)
 
@@ -160,7 +161,7 @@ def test_same_line_cannot_be_imported_twice_in_an_account(db, world):
 
 
 def test_same_line_hash_is_allowed_in_another_account(db, world):
-    other_account = save(db, build_account(world.company, world.bank))
+    other_account = save(db, build_account(world.company, world.bank, devise="EUR"))
     other_statement = save(db, BankStatement(bank_account_id=other_account.id))
     save(db, build_transaction(world.statement, hash_ligne="abc"))
 
@@ -578,7 +579,9 @@ def test_amount_beyond_18_digits_is_refused(db, world):
 
 
 def test_interest_rate_keeps_six_decimals(db, world):
-    account = save(db, build_account(world.company, world.bank, taux_interet=Decimal("0.045125")))
+    account = save(
+        db, build_account(world.company, world.bank, devise="EUR", taux_interet=Decimal("0.045125"))
+    )
 
     db.expire(account)
 
@@ -619,3 +622,33 @@ def test_deleting_a_user_deletes_their_sessions(db):
     db.flush()
 
     assert db.query(UserSession).filter_by(token_hash="b" * 64).count() == 0
+
+
+# --- Un compte actif par société, banque, devise et type (migration 0003) ------------------------
+
+
+def test_second_active_account_in_the_same_slot_is_rejected(db, world):
+    duplicate = build_account(world.company, world.bank, devise="MAD", type_compte="Courant")
+
+    assert_rejected(db, "uq_bank_accounts_compte_actif_par_banque", duplicate)
+
+
+def test_inactive_account_frees_its_slot(db, world):
+    world.account.actif = False
+    db.flush()
+
+    save(db, build_account(world.company, world.bank, devise="MAD", type_compte="Courant"))
+
+
+def test_other_currency_or_type_in_the_same_bank_is_accepted(db, world):
+    save(
+        db,
+        build_account(world.company, world.bank, devise="EUR"),
+        build_account(world.company, world.bank, devise="MAD", type_compte="DH convertible"),
+    )
+
+
+def test_same_slot_is_accepted_for_another_company(db, world):
+    other = save(db, build_company())
+
+    save(db, build_account(other, world.bank, devise="MAD", type_compte="Courant"))

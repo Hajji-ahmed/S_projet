@@ -80,3 +80,16 @@ def test_log_is_part_of_the_caller_transaction(db):
     savepoint.rollback()
 
     assert db.scalar(select(AuditLog).where(AuditLog.action == "action_annulee")) is None
+
+
+def test_missing_before_value_is_a_real_sql_null(db):
+    """Une création n'a pas de valeur « avant » : NULL SQL, pour que `IS NULL` la trouve."""
+    entry = audit_service.log(
+        db, user_id=None, action="creation_test", entite="test", apres={"a": 1}
+    )
+
+    found = db.scalar(
+        select(AuditLog).where(AuditLog.id == entry.id, AuditLog.ancienne_valeur.is_(None))
+    )
+
+    assert found is not None

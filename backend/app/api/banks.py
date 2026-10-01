@@ -16,9 +16,12 @@ can_manage = require_permission(PermissionCode.BANKS_MANAGE)
 
 @router.get("", response_model=list[BankOut])
 def list_banks(
-    db: Session = Depends(get_db), _user: CurrentUser = Depends(can_view)
+    company_id: int | None = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
 ) -> list[BankOut]:
-    return [BankOut.from_summary(summary) for summary in bank_service.list_banks(db)]
+    """Avec `company_id`, `nb_comptes_actifs` ne compte que les comptes de cette société."""
+    return [BankOut.from_summary(summary) for summary in bank_service.list_banks(db, company_id)]
 
 
 @router.get("/{bank_id}", response_model=BankOut)

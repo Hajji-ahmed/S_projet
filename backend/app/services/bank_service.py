@@ -43,8 +43,9 @@ def _summary(db: Session, bank: Bank) -> BankSummary:
     return BankSummary(bank, bank_repository.active_account_counts(db).get(bank.id, 0))
 
 
-def list_banks(db: Session) -> list[BankSummary]:
-    counts = bank_repository.active_account_counts(db)
+def list_banks(db: Session, company_id: int | None = None) -> list[BankSummary]:
+    """`company_id` : compter seulement les comptes de cette société (société active de l'écran)."""
+    counts = bank_repository.active_account_counts(db, company_id)
     return [BankSummary(bank, counts.get(bank.id, 0)) for bank in bank_repository.list_banks(db)]
 
 

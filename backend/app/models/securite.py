@@ -114,7 +114,10 @@ class RolePermission(Base):
 
 
 class AuditLog(Base):
-    """Journal des actions sensibles. Ajout seul : un trigger PostgreSQL refuse UPDATE et DELETE."""
+    """Journal des actions sensibles. Ajout seul : un trigger PostgreSQL refuse UPDATE et DELETE.
+
+    `none_as_null` : une valeur absente (ex. « avant » d'une création) est un vrai NULL SQL, pas le JSON `null`.
+    """
 
     __tablename__ = "audit_logs"
     __table_args__ = (
@@ -128,8 +131,8 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(60))
     entite: Mapped[str] = mapped_column(String(60))
     entite_id: Mapped[str | None] = mapped_column(String(60))
-    ancienne_valeur: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    nouvelle_valeur: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    ancienne_valeur: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    nouvelle_valeur: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     ip: Mapped[str | None] = mapped_column(String(45))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
