@@ -13,6 +13,7 @@ const STATUS_STYLES: Record<Status, string> = {
   Rapprochée: SUCCESS,
   Réalisé: SUCCESS,
   Conforme: SUCCESS,
+  Actif: SUCCESS,
   "À vérifier": WARNING,
   "En attente": WARNING,
   "Non rapprochée": DANGER,
@@ -24,6 +25,7 @@ const STATUS_STYLES: Record<Status, string> = {
   Clôturé: NEUTRAL,
   Traité: NEUTRAL,
   Annulé: NEUTRAL,
+  Inactif: NEUTRAL,
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {

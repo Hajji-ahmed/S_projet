@@ -4,6 +4,7 @@
  * - Écarts : À traiter, En cours, Traité, Clôturé
  * - Prévisions : Prévu, En attente, Réalisé, Reporté, Annulé
  * - Contrôle de solde : Conforme, Écart, À vérifier
+ * - Référentiel (banques, comptes) : Actif, Inactif
  */
 export const STATUSES = [
   "Rapprochée",
@@ -20,6 +21,8 @@ export const STATUSES = [
   "Reporté",
   "Annulé",
   "Conforme",
+  "Actif",
+  "Inactif",
 ] as const;
 
 export type Status = (typeof STATUSES)[number];

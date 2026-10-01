@@ -52,7 +52,7 @@ Le prompt de design parle de « refondre » un frontend existant. Dans le cadre 
 │ P5  Socle sécurité : authentification, rôles, permissions, audit     │
 └──────────────────────────────────────────────────────────────────────┘
 ┌─ TRÉSORERIE ─────────────────────────────────────────────────────────┐
-│ P6  Module Banques & Comptes                                         │
+│ P6  Banques & Comptes (P6.1 banques · P6.2 comptes · P6.3 soldes)    │
 │ P7  Import & normalisation des relevés bancaires                     │
 │ P8  Position bancaire (tableau Banques)                              │
 │ P9  Gestion des devises (tableau Devises)                            │
@@ -501,25 +501,117 @@ simtis/
 
 **Prérequis** : P5
 
-**Tâches — Backend**
+P6 est découpée en **3 sous-phases**, dans cet ordre. Chacune livre un écran utilisable, avec son API, ses tests et son contrôle dans le navigateur, et passe par son propre plan (skill `simtis-plan`).
 
-- [ ] `BankService` + endpoints : `GET/POST/PUT /banks`, `PATCH /banks/{id}/status`, `GET/POST/PUT /accounts`
-- [ ] Champs compte : banque, devise, solde, crédit autorisé, crédit utilisé, taux, ligne
-- [ ] Calcul du crédit disponible exposé dans les réponses
+```text
+P6.1 Référentiel des banques ──► P6.2 Comptes bancaires + société active ──► P6.3 Soldes du jour, crédit utilisé, chiffres
+```
 
-**Tâches — Frontend**
+**Règles communes aux 3 sous-phases**
 
-- [ ] `/banques` : une `BankCard` par banque (logo, nom, nb comptes, solde, crédit disponible, position disponible, dernière mise à jour)
-- [ ] `/banques/[id]` : détail de la banque et liste de ses comptes
-- [ ] `/comptes` : tableau des comptes + formulaires de création et de modification
-- [ ] Activation / désactivation
+- Lecture : permission `position.view`. Création, modification, activation, saisie : `banks.manage` (Administrateur, Trésorerie).
+- Aucune suppression : une banque ou un compte se **désactive** (l'historique et l'audit restent cohérents).
+- Chaque écriture produit une ligne `audit_logs` avec les valeurs avant / après, dans la même transaction.
+- Les boutons d'action ne s'affichent qu'avec `banks.manage` ; l'API refuse de toute façon (403).
 
-**Livrables** : module Banques & Comptes utilisable.
+---
+
+#### P6.1 — Référentiel des banques
+
+> **Statut : réalisé le 01/10/2026.** Propositions 1 et 2 appliquées (désactivation refusée tant que des comptes sont actifs ; logo choisi parmi les fichiers fournis). Règle ajoutée : le **code n'est plus modifiable** après la création, car les seeds retrouvent les banques par leur code à chaque démarrage. Le nombre de comptes d'une carte compte les deux sociétés ; il sera filtré par société en P6.2. Erreurs métier : `NotFoundError` (404) et `ConflictError` (409), réutilisables par les modules suivants.
+
+**Objectif** : consulter les banques et, pour la Trésorerie, en ajouter, les modifier et les désactiver. Ce sont les colonnes des 3 tableaux du classeur.
+
+**Backend**
+
+- [ ] `bank_repository`, `bank_service`, schémas Pydantic
+- [ ] `GET /api/banks` (triées par `ordre_affichage`, avec le nombre de comptes actifs) et `GET /api/banks/{id}`
+- [ ] `POST /api/banks`, `PUT /api/banks/{id}`, `PATCH /api/banks/{id}/status`
+- [ ] Règles : code unique en majuscules (AWB, BMCE…), nom obligatoire, logo choisi parmi les fichiers de `frontend/public/banques/` ou vide, ordre d'affichage modifiable
+
+**Frontend**
+
+- [ ] Composants de formulaire réutilisables : champ, texte, liste déroulante, nombre, fenêtre de formulaire
+- [ ] `BankCard` (version référentiel : logo, nom, code, nombre de comptes, statut)
+- [ ] `/banques` : grille de `BankCard`, fenêtre « Nouvelle banque » / « Modifier », activer / désactiver
 
 **Critères de fin**
 
-- ✅ CRUD complet, tracé dans l'audit
-- ✅ Crédit disponible correct (tests unitaires)
+- ✅ Création, modification, activation et désactivation tracées dans l'audit
+- ✅ Direction / Consultation voit les banques mais reçoit 403 sur toute écriture (test)
+- ✅ Contrôle dans le navigateur : Trésorerie modifie une banque, Direction ne voit aucun bouton d'action
+
+---
+
+#### P6.2 — Comptes bancaires et société active
+
+**Objectif** : gérer les comptes de chaque société (Simtis, Société X), sans jamais mélanger les deux.
+
+**Backend**
+
+- [ ] `GET /api/companies` (liste des sociétés actives, pour tout utilisateur connecté)
+- [ ] `account_repository`, `account_service`, schémas
+- [ ] `GET /api/accounts?company_id=&bank_id=&devise=&type_compte=&actif=` et `GET /api/accounts/{id}`
+- [ ] `POST /api/accounts`, `PUT /api/accounts/{id}`, `PATCH /api/accounts/{id}/status`
+- [ ] Champs : société, banque, libellé, numéro (RIB), devise, type (Courant / DH convertible), compte comptable, **LIGNE** (crédit autorisé), taux d'intérêt
+- [ ] Règles : société et banque actives, numéro unique, devise connue, compte DH convertible en MAD, LIGNE ≥ 0, taux entre 0 et 100 %
+- [ ] Commande `python -m app.cli rename-company` pour donner son vrai nom à « Société X » (écran en P16)
+
+**Frontend**
+
+- [ ] Sélecteur de **société active** dans l'en-tête (une seule à la fois, mémorisée dans le navigateur)
+- [ ] `FilterBar` (Banque, Devise, Statut)
+- [ ] `/comptes` : tableau (Banque, Libellé, Numéro, Devise, Type, LIGNE, Taux, Statut) + fenêtres de création et de modification + activation
+
+**Critères de fin**
+
+- ✅ CRUD complet tracé dans l'audit
+- ✅ Aucun écran ni aucune réponse d'API ne mélange les comptes de deux sociétés (test)
+- ✅ Règles de validation testées (doublon de numéro, DH convertible en EUR refusé…)
+
+---
+
+#### P6.3 — Soldes du jour, crédit utilisé et chiffres des banques
+
+**Objectif** : saisir chaque jour le solde et le crédit utilisé d'un compte, et voir sur chaque banque son solde, son crédit disponible et sa position disponible.
+
+**Backend**
+
+- [ ] `GET /api/accounts/{id}/balances?from=&to=` (historique)
+- [ ] `PUT /api/accounts/{id}/balances/{date}` : saisie ou correction du solde et/ou du crédit utilisé d'une date (source « Saisie », date future refusée, audit avant / après)
+- [ ] Calculs, dans un module réutilisé par la position bancaire (P8) :
+  - Crédit disponible = Crédit autorisé − Crédit utilisé
+  - Position disponible = Solde + Crédit disponible
+  - Date de mise à jour = date du dernier solde connu
+- [ ] Chiffres exposés dans les réponses des comptes et des banques. Totaux par banque **par devise** : jamais de somme entre devises différentes
+
+**Frontend**
+
+- [ ] `BankCard` complète : solde, crédit disponible, position disponible, dernière mise à jour (société active)
+- [ ] `/banques/[id]` : détail de la banque, ses comptes pour la société active, historique des soldes
+- [ ] Fenêtre « Saisir le solde du jour », depuis `/comptes` et `/banques/[id]`
+
+**Critères de fin**
+
+- ✅ Exemple du CDC vérifié en test : solde 300 000, LIGNE 500 000, utilisé 100 000 → crédit disponible 400 000, position disponible 700 000
+- ✅ Montants exacts (`Decimal`) de la base à l'écran, aucune somme entre devises (tests)
+- ✅ Chaque saisie de solde tracée (avant / après)
+
+---
+
+**Points à trancher avant P6** (propositions entre parenthèses)
+
+| # | Question | Proposition | Bloque |
+|---|---|---|---|
+| 1 | Désactiver une banque qui a encore des comptes actifs ? | Refusé, avec un message : désactiver d'abord ses comptes | P6.1 |
+| 2 | Ajouter le logo d'une nouvelle banque ? | Choisi parmi les fichiers déjà fournis ; téléversement en P16 | P6.1 |
+| 3 | Qui renomme « Société X » ? | L'administrateur, par la commande en ligne ; écran en P16 | P6.2 |
+| 4 | Quels comptes alimentent la `BankCard` ? | Les comptes courants MAD actifs de la société active ; les autres devises affichées à part sur la carte, sans conversion | P6.3 |
+| 5 | Saisie manuelle du solde : seulement en attendant les relevés (P7), ou toujours ? | Toujours possible, avec la source enregistrée (« Saisie » ou « Relevé ») | P6.3 |
+
+La question encore ouverte du §3.4 (« facilité de caisse » = solde ou facilité utilisée ?) ne bloque pas P6 : les deux valeurs sont saisissables, et le crédit disponible suit la formule du CDC.
+
+**Livrables** : module Banques & Comptes utilisable.
 
 ---
 

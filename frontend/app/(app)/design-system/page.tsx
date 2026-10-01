@@ -6,9 +6,11 @@ import { ApiStatus } from "@/components/dev/ApiStatus";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
+import { Field, NumberInput, Select, TextInput } from "@/components/ui/Field";
 import { KpiCard } from "@/components/ui/KpiCard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { BANK_LOGOS } from "@/lib/banks";
 import { formatAmount } from "@/lib/format";
 import { STATUSES } from "@/types/status";
 
@@ -198,6 +200,30 @@ export default function DesignSystemPage() {
           <ApiStatus />
         </Card>
       </div>
+
+      <Card title="Champs de formulaire">
+        <div className="grid gap-5 md:grid-cols-2">
+          <Field label="Nom" htmlFor="demo-nom" required hint="Aide affichée sous le champ.">
+            <TextInput id="demo-nom" defaultValue="Crédit du Maroc" />
+          </Field>
+          <Field label="Code" htmlFor="demo-code" error="2 à 10 lettres ou chiffres (ex. AWB).">
+            <TextInput id="demo-code" defaultValue="A-B" invalid />
+          </Field>
+          <Field label="Logo" htmlFor="demo-logo">
+            <Select id="demo-logo" options={BANK_LOGOS} placeholder="Aucun logo" defaultValue="" />
+          </Field>
+          <Field label="Ordre d'affichage" htmlFor="demo-ordre" hint="Nombre aligné à droite.">
+            <NumberInput id="demo-ordre" defaultValue="6" className="max-w-[120px]" />
+          </Field>
+          <Field
+            label="Champ désactivé"
+            htmlFor="demo-off"
+            hint="Non modifiable après la création."
+          >
+            <TextInput id="demo-off" defaultValue="AWB" disabled />
+          </Field>
+        </div>
+      </Card>
 
       <Card title="Badges de statut">
         <div className="flex flex-wrap gap-3">
