@@ -102,6 +102,19 @@ function send(path: string, init: RequestInit): Promise<Response> {
  * Si la session est perdue, `onSessionExpired` renvoie vers la page de connexion.
  */
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await request(path, init);
+  if (response.status === 204) {
+    return undefined as T;
+  }
+  return (await response.json()) as T;
+}
+
+/** Fichier renvoyé par l'API (export Excel...), avec les mêmes règles de session qu'`apiFetch`. */
+export async function apiDownload(path: string): Promise<Blob> {
+  return (await request(path, {})).blob();
+}
+
+async function request(path: string, init: RequestInit): Promise<Response> {
   let response = await send(path, init);
 
   const canRetry = path !== REFRESH_PATH && !path.startsWith("/auth/login");
@@ -118,8 +131,5 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (!response.ok) {
     throw new ApiError(response.status, await errorMessage(response));
   }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
+  return response;
 }

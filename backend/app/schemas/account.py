@@ -5,7 +5,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models import BankAccount
+from app.schemas.balance import FiguresOut
 from app.services.account_service import fraction_to_pct, normalize_numero
+from app.services.position_service import AccountFigures
 
 NUMERO_PATTERN = re.compile(r"^[A-Z0-9-]{5,40}$")
 COMPTE_COMPTABLE_PATTERN = re.compile(r"^[A-Z0-9]{1,20}$")
@@ -43,9 +45,13 @@ class AccountOut(BaseModel):
     credit_autorise: Decimal
     taux_interet_pct: Decimal | None
     actif: bool
+    # Chiffres à aujourd'hui (solde, crédit et position disponibles), calculés à partir des soldes saisis
+    figures: FiguresOut | None = None
 
     @classmethod
-    def from_model(cls, account: BankAccount) -> "AccountOut":
+    def from_model(
+        cls, account: BankAccount, figures: AccountFigures | None = None
+    ) -> "AccountOut":
         return cls(
             id=account.id,
             company_id=account.company_id,
@@ -61,6 +67,7 @@ class AccountOut(BaseModel):
             credit_autorise=account.credit_autorise,
             taux_interet_pct=fraction_to_pct(account.taux_interet),
             actif=account.actif,
+            figures=FiguresOut.from_figures(figures) if figures else None,
         )
 
 

@@ -69,11 +69,22 @@ export function BanksView() {
     setReloadKey((key) => key + 1);
   }
 
+  // Les réponses de création / modification ne portent pas les chiffres de la société active :
+  // ceux déjà affichés sont conservés.
   function replace(saved: Bank) {
     setBanks((current) => {
       const exists = current.some((bank) => bank.id === saved.id);
       const next = exists
-        ? current.map((bank) => (bank.id === saved.id ? saved : bank))
+        ? current.map((bank) =>
+            bank.id === saved.id
+              ? {
+                  ...saved,
+                  nb_comptes_actifs: bank.nb_comptes_actifs,
+                  figures: bank.figures,
+                  autres_comptes: bank.autres_comptes,
+                }
+              : bank,
+          )
         : [...current, saved];
       return next.sort(
         (a, b) => a.ordre_affichage - b.ordre_affichage || a.code.localeCompare(b.code),

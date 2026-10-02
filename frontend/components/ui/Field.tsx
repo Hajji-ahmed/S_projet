@@ -109,3 +109,17 @@ export function Select({ options, placeholder, invalid, className, id, ...props 
     </select>
   );
 }
+
+/** Date au format du navigateur ; la valeur reste « AAAA-MM-JJ ». */
+export function DateInput({ invalid, className, id, ...props }: InputProps) {
+  return (
+    <input
+      id={id}
+      type="date"
+      aria-invalid={invalid || undefined}
+      aria-describedby={id ? `${id}-message` : undefined}
+      className={controlClasses(invalid, cn("tabular-nums", className))}
+      {...props}
+    />
+  );
+}

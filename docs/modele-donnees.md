@@ -1,6 +1,6 @@
 # Modèle de données
 
-Schéma PostgreSQL de SIMTIS Finance (phases P4 et P5), 26 tables. Il est décrit par les modèles SQLAlchemy de `backend/app/models/` et versionné par Alembic (`backend/alembic/versions/`). En cas de doute, le code fait foi.
+Schéma PostgreSQL de SIMTIS Finance (phases P4 et P5, plus les saisies manuelles de la migration 0004), 29 tables. Il est décrit par les modèles SQLAlchemy de `backend/app/models/` et versionné par Alembic (`backend/alembic/versions/`). En cas de doute, le code fait foi.
 
 ## Conventions
 
@@ -94,6 +94,18 @@ erDiagram
 | `forecast_categories` | Encaissement, Escompte, Douane, Paie, Refinancement, Chèques, Autre | `sens_par_defaut` seulement quand il est certain (voir plus bas) |
 | `cash_forecasts` | Flux de trésorerie prévus | Société obligatoire, banque facultative, sens propre à chaque prévision |
 
+### Saisies manuelles des tableaux (migration 0004)
+
+Première version des tableaux Devises et Prévisions de la page Position bancaire : chaque cellule du classeur est saisie à la main, pour une société et une date. Rien n'y est calculé. Ces tables seront remplacées par les calculs de P9 (devises) et P14 (prévisions).
+
+| Table | Rôle | Points d'attention |
+|---|---|---|
+| `saisies_devises` | Une cellule du tableau Devises | Ligne EUR, USD ou Exp DH convertible ; colonne `Banque` (avec `bank_id`), `TOTAL` ou `DEPASSEMENT` (sans banque). Une valeur par cellule (deux index uniques partiels) |
+| `saisies_previsions` | Une cellule des 14 lignes du tableau Prévisions | Sans banque : le libellé de la ligne ; avec banque : un montant. Ligne 1 à 14. Une valeur par cellule |
+| `saisies_previsions_jour` | Encaissement, Escompte, Douane de la journée | Une ligne par société et par jour, au moins un montant (sinon elle est supprimée) |
+
+Une cellule vide n'a pas de ligne : elle n'est jamais enregistrée à 0. Les montants peuvent être négatifs.
+
 ### Sécurité
 
 | Table | Rôle | Points d'attention |
@@ -118,6 +130,8 @@ Le classeur `docs/specs/SIMTIS_tableaux_complets.xlsx` est la référence d'affi
 | EUR, USD, Exp DH convertible | Comptes filtrés par `devise` et `type_compte` |
 | Bloc Prévisions : Encaissement, Escompte, Douane | `cash_forecasts` sans banque : montant de la journée |
 | Bloc Prévisions : colonnes de banques | `cash_forecasts` avec `bank_id` |
+
+En attendant P9 et P14, les tableaux Devises et Prévisions de la page Position bancaire sont lus dans les tables de saisie manuelle (`saisies_*`) : leur TOTAL et leur DEPASSEMENT sont saisis, pas calculés.
 
 ## Ce que la base garantit
 

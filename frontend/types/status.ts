@@ -5,6 +5,7 @@
  * - Prévisions : Prévu, En attente, Réalisé, Reporté, Annulé
  * - Contrôle de solde : Conforme, Écart, À vérifier
  * - Référentiel (banques, comptes) : Actif, Inactif
+ * - Lignes d'un import : Valide, Erreur, Doublon
  */
 export const STATUSES = [
   "Rapprochée",
@@ -23,6 +24,9 @@ export const STATUSES = [
   "Conforme",
   "Actif",
   "Inactif",
+  "Valide",
+  "Erreur",
+  "Doublon",
 ] as const;
 
 export type Status = (typeof STATUSES)[number];

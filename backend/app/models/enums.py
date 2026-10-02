@@ -41,3 +41,10 @@ SENS = ("Entrée", "Sortie")
 
 # Origine d'un solde journalier
 SOURCES_SOLDE = ("Relevé", "Saisie")
+
+# Tableau Devises saisi à la main (page Position bancaire) : ses lignes, et ses colonnes hors banques
+LIGNES_DEVISES = ("EUR", "USD", "Exp DH convertible")
+COLONNES_DEVISES = ("Banque", "TOTAL", "DEPASSEMENT")
+
+# Tableau Prévisions saisi à la main : nombre de lignes du bloc d'une journée
+NB_LIGNES_PREVISIONS = 14

@@ -1,3 +1,5 @@
+import type { Figures } from "@/types/balance";
+
 export type TypeCompte = "Courant" | "DH convertible";
 
 export type Account = {
@@ -17,6 +19,8 @@ export type Account = {
   /** Taux d'intérêt en pourcentage, en texte : "4.5" = 4,5 %. */
   taux_interet_pct: string | null;
   actif: boolean;
+  /** Chiffres à aujourd'hui (solde, crédit et position disponibles). */
+  figures: Figures | null;
 };
 
 export type AccountFilters = {

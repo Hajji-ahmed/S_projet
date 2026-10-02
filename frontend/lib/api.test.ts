@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   API_URL,
   ApiError,
+  apiDownload,
   apiFetch,
   getAccessToken,
   refreshAccessToken,
@@ -123,6 +124,28 @@ describe("apiFetch", () => {
     fetchMock.mockResolvedValueOnce(new Response("oups", { status: 500, statusText: "" }));
 
     await expect(apiFetch("/health")).rejects.toThrow("Une erreur est survenue.");
+  });
+});
+
+describe("apiDownload", () => {
+  it("renvoie le fichier, après un rafraîchissement du jeton si besoin", async () => {
+    setAccessToken("expire");
+    fetchMock
+      .mockResolvedValueOnce(json(401, { detail: "Session expirée." }))
+      .mockResolvedValueOnce(tokenResponse("neuf"))
+      .mockResolvedValueOnce(new Response("contenu", { status: 200 }));
+
+    const blob = await apiDownload("/statements/1/export");
+
+    expect(await blob.text()).toBe("contenu");
+    expect(calledUrls()).toEqual(["/statements/1/export", "/auth/refresh", "/statements/1/export"]);
+    expect(authorizationOf(2)).toBe("Bearer neuf");
+  });
+
+  it("renvoie l'erreur de l'API", async () => {
+    fetchMock.mockResolvedValueOnce(json(404, { detail: "Relevé introuvable." }));
+
+    await expect(apiDownload("/statements/9/export")).rejects.toThrow("Relevé introuvable.");
   });
 });
 

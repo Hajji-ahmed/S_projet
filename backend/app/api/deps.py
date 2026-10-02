@@ -57,6 +57,20 @@ def require_permission(code: PermissionCode) -> Callable[..., CurrentUser]:
     return dependency
 
 
+def require_any_permission(*codes: PermissionCode) -> Callable[..., CurrentUser]:
+    """Dépendance qui exige AU MOINS UNE des permissions (lecture partagée entre deux métiers)."""
+
+    def dependency(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not any(user.has_permission(code) for code in codes):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission requise : " + " ou ".join(code.value for code in codes) + ".",
+            )
+        return user
+
+    return dependency
+
+
 def client_ip(request: Request) -> str | None:
     """Adresse IP du client. Derrière un reverse proxy (P19), il faudra lire l'en-tête du proxy."""
     return request.client.host if request.client else None

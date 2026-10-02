@@ -1,7 +1,10 @@
 import re
+from datetime import date
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.balance import FiguresOut
 from app.services.bank_service import MAX_DISPLAY_ORDER, BankSummary
 
 CODE_PATTERN = re.compile(r"^[A-Z0-9]{2,10}$")
@@ -25,6 +28,13 @@ def _clean_logo(value: str | None) -> str | None:
     return value
 
 
+class OtherAccountOut(BaseModel):
+    devise: str
+    type_compte: str
+    solde: Decimal | None
+    date_maj: date | None
+
+
 class BankOut(BaseModel):
     id: int
     code: str
@@ -33,6 +43,9 @@ class BankOut(BaseModel):
     ordre_affichage: int
     actif: bool
     nb_comptes_actifs: int
+    # Avec `company_id` : chiffres du compte courant MAD de la société, et ses autres comptes
+    figures: FiguresOut | None = None
+    autres_comptes: list[OtherAccountOut] = []
 
     @classmethod
     def from_summary(cls, summary: BankSummary) -> "BankOut":
@@ -45,6 +58,16 @@ class BankOut(BaseModel):
             ordre_affichage=bank.ordre_affichage,
             actif=bank.actif,
             nb_comptes_actifs=summary.nb_comptes_actifs,
+            figures=FiguresOut.from_figures(summary.figures) if summary.figures else None,
+            autres_comptes=[
+                OtherAccountOut(
+                    devise=other.devise,
+                    type_compte=other.type_compte,
+                    solde=other.solde,
+                    date_maj=other.date_maj,
+                )
+                for other in summary.autres_comptes
+            ],
         )
 
 

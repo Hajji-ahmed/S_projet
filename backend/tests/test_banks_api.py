@@ -51,6 +51,9 @@ def test_list_follows_the_workbook_order(client, direction):
         "ordre_affichage": 1,
         "actif": True,
         "nb_comptes_actifs": 0,
+        # Sans société indiquée : ni chiffres ni autres comptes (voir test_balances_api.py)
+        "figures": None,
+        "autres_comptes": [],
     }
 
 

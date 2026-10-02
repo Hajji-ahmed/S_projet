@@ -151,9 +151,9 @@ export function formatAmount(value: number | string, currency?: string) {
 
 | Statut | Fond | Texte |
 |---|---|---|
-| Rapprochée · Réalisé · Conforme | `--simtis-success-bg` | `--simtis-success-fg` |
-| À vérifier · En attente | `--simtis-warning-bg` | `--simtis-warning-fg` |
-| Non rapprochée · À traiter | `--simtis-danger-bg` | `--simtis-danger-fg` |
+| Rapprochée · Réalisé · Conforme · Actif · Valide | `--simtis-success-bg` | `--simtis-success-fg` |
+| À vérifier · En attente · Doublon | `--simtis-warning-bg` | `--simtis-warning-fg` |
+| Non rapprochée · À traiter · Erreur | `--simtis-danger-bg` | `--simtis-danger-fg` |
 | Écart · En cours | `--simtis-orange-bg` | `--simtis-orange-fg` |
 | Prévu | `--simtis-light` | `--simtis-primary` |
 | Reporté · Clôturé · Traité · Annulé | `--simtis-neutral-bg` | `--simtis-neutral-fg` |

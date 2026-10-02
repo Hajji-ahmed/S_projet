@@ -31,7 +31,7 @@ Ces 3 tableaux suivent **exactement** le classeur `docs/specs/SIMTIS_tableaux_co
 
 ### Règles communes
 
-- **Colonnes de banques** : AWB · BMCE · BP · CIH · BMCI, dans cet ordre (`banks.ordre_affichage`), affichées par leur **code**. La liste vient de l'API : ne la code pas en dur.
+- **Colonnes de banques** : AWB · BMCE · BP · CIH · BMCI, dans cet ordre (`banks.ordre_affichage`), affichées par leur **code**. La liste vient de l'API : ne la code pas en dur. L'en-tête de chaque colonne porte le **logo de la banque au-dessus du code** (`<BankLabel layout="stacked">`, validé par le métier le 02/10/2026) : seul l'en-tête gagne une image, aucune colonne ni ligne ne change.
 - **Une société à la fois** : ces tableaux se filtrent par société (Simtis ou Société X), jamais de total consolidé des deux.
 - Montants alignés à droite, chiffres tabulaires. Police du classeur : 9 pt gras. En-têtes centrés, bordures fines noires.
 
@@ -60,6 +60,10 @@ Ces 3 tableaux suivent **exactement** le classeur `docs/specs/SIMTIS_tableaux_co
 - **Encaissement · Escompte · Douane** : trois colonnes, chacune avec **une cellule fusionnée sur tout le bloc**, en-têtes sur fond gris clair. Ce sont des montants de la journée, sans banque.
 - Le sens de chaque flux (entrée ou sortie) est porté par la prévision elle-même, pas déduit de la colonne.
 
+## Logos des banques (tous les tableaux)
+
+Partout où un tableau nomme une banque, son vrai logo s'affiche à côté du code avec le composant `components/banks/BankLabel.tsx` : 20 px, fond blanc, bordure fine, image décorative (`alt=""`, le code écrit nomme la banque). « inline » dans les cellules (Comptes, historique et opérations des Relevés), « stacked » dans les en-têtes de colonnes (tableaux imposés). Une banque sans logo : le code seul, sans icône de remplacement. Les logos viennent de la liste des banques (`bank.logo`, ou `bank_logo` des comptes) ; ne recrée jamais un logo. Pas de logo dans les listes déroulantes natives ni dans les exports Excel.
+
 ## Dashboard (`/dashboard`) — voir `reference-dashboard.png`
 
 1. **PageHeader** : « Dashboard » + « Vue d'ensemble de la position bancaire, du rapprochement et des prévisions » ; à droite, `DateRangePicker` (icône `Calendar`, ex. `01/09/2026 - 30/09/2026`).
@@ -72,13 +76,19 @@ Chaque carte a un lien « Voir tout → » vers sa page.
 
 ## Banques (`/banques`)
 
-« Banques » / « Gestion des banques et comptes bancaires ». Grille de **BankCard** : logo ou icône, nom, nombre de comptes, solde, crédit disponible, position disponible, dernière mise à jour.
+« Banques » / « Gestion des banques et comptes bancaires ». Grille de **BankCard** : logo ou icône, nom, nombre de comptes, solde, crédit disponible, position disponible (du compte courant MAD de la société active), autres comptes listés chacun dans sa devise, dernière mise à jour, lien « Voir le détail → ».
+
+**Détail (`/banques/[id]`)** : lien retour « ← Banques », logo et nom, DataTable des comptes de la société active (Compte, Devise, LIGNE, Solde, Crédit utilisé, Crédit disponible, Position disponible, Mis à jour, Statut, action « Saisir le solde »), puis historique des soldes sur 30 jours avec un sélecteur de compte. Un montant inconnu s'affiche « - », jamais 0.
 
 ## Comptes (`/comptes`)
 
 DataTable des comptes + FilterBar (Banque, Devise, Statut) + bouton primaire « + Nouveau compte ».
 
 ## Position bancaire (`/position-bancaire`)
+
+**Aujourd'hui (saisie manuelle)** : un sélecteur de date dans le PageHeader, puis les tableaux imposés **Devises** et **Prévisions** de la société active, saisis cellule par cellule (`components/position/`). Chaque cellule est un champ sans bordure ; en lecture seule (sans `banks.manage` pour Devises, sans `forecasts.manage` pour Prévisions) elle affiche le texte seul. Un bouton « Enregistrer » et « Annuler » par tableau. Les colonnes de droite des Devises portent les en-têtes du classeur (TOTAL, DEPASSEMENT) mais sont saisies, jamais calculées. Les en-têtes de banques sont répétés au-dessus de chaque tableau, puisque le tableau Banques n'est pas encore sur la page.
+
+**Cible (P8)** :
 
 - FilterBar : Banque · Compte · Devise · Date · Période.
 - DataTable : Banque · Compte · Devise · Solde · Crédit autorisé · Crédit utilisé · Crédit disponible · Position disponible · Dépassement · Date de mise à jour.
@@ -87,10 +97,15 @@ DataTable des comptes + FilterBar (Banque, Devise, Statut) + bouton primaire « 
 
 ## Relevés (`/releves`)
 
-- « Relevés bancaires » + bouton primaire « + Importer un relevé ».
-- Zone glisser-déposer : bordure pointillée `--simtis-border`, fond `--simtis-background`, « Glissez votre fichier Excel ou CSV ici » / « ou » / bouton « Choisir un fichier ». Au survol ou au dépôt : bordure `--simtis-primary`, fond `--simtis-light`.
-- Après l'upload, stepper : **Détection des colonnes → Mapping → Validation**. Le mapping s'affiche en lignes « Colonne fichier (ex. Date opération) → Champ SIMTIS (select : Date d'opération) ».
-- Résumé : lignes valides (success), en erreur (danger), doublons (warning).
+- « Relevés bancaires » + bouton primaire « + Importer un relevé » (seulement avec `statements.import`), qui ouvre la carte « Importer un relevé » au-dessus de l'historique.
+- Zone glisser-déposer : bordure pointillée `--simtis-border`, fond `--simtis-background`, « Glissez votre fichier Excel ici » / « ou » / bouton « Choisir un fichier » (`.xlsx` seulement, décision §3.3 : pas de CSV). Au survol ou au dépôt : bordure `--simtis-primary`, fond `--simtis-light`.
+- À côté : « Compte du relevé », liste déroulante maison `AccountPicker` (comptes actifs de la société active), **chaque compte avec le logo de sa banque** (« logo AWB · MAD · Compte DÉMO »), le compte choisi aussi ; clavier : flèches, Début, Fin, Entrée, Échap.
+- Stepper : **Fichier → Validation** (étape faite : rond teal coché ; en cours : anneau teal). Pas de bouton « Analyser » : dès que le compte et le fichier sont choisis, l'analyse se lance et mène **directement à la Validation** (décision métier du 02/10/2026).
+- Mapping **seulement en secours** : si les colonnes ne sont pas reconnues, l'étape Fichier affiche l'encadré « Colonnes non reconnues » (bordure warning, fond `background`) : alerte warning listant ce qui manque, tableau « Colonne fichier (lettre + en-tête) · Exemples · Champ SIMTIS (select, « Ignorer cette colonne ») », bouton « Valider les colonnes ». La correspondance est mémorisée pour la banque : le relevé suivant de cette banque va directement à la Validation.
+- Validation : 4 tuiles (lignes valides success, en erreur danger, doublons warning, ignorées muted), période, totaux, soldes ; filtre des lignes ; tableau Ligne · Statut (badge Valide / Erreur / Doublon) · Date · Libellé (+ référence) · Débit · Crédit · Solde · Motif (case « Garder » sur un doublon interne). Case « Écarter les lignes en erreur » ; bouton secondaire « Changer de fichier » ; « Confirmer l'import » désactivé tant qu'il reste des erreurs non écartées ou si le fichier est déjà importé.
+- Après l'import : bandeau résultat (bordure gauche success), puis le relevé du compte importé.
+- Carte « Relevés par compte » : **un seul relevé continu par compte**, chaque import s'y ajoute (jamais un tableau par fichier). En haut, un bouton par compte qui a des imports (`BankLabel` « CIH · MAD » + numéro, actif : bordure `primary`, fond `light`) ; filtre Du / Au (« Tout l'historique » pour l'effacer) ; bouton secondaire « Exporter » (icône `Download`, suit la période) ; résumé (Période · Opérations · Total débit / crédit · Solde d'ouverture · Solde de clôture en `primary`) ; tableau au **format standard** : Société · Pointage · Banque · Date d'opération · Date de valeur · Libellé · Débit · Crédit · Solde · Lettrage / Escompte · Commentaire (cet ordre, ne pas le changer), puis Statut (badge).
+- Carte « Journal des imports » en dessous, lecture seule : Importé le + auteur · Compte · Fichier · Période · Opérations ajoutées · Solde de clôture · Contrôle du solde (badge). Pas d'action par fichier.
 
 ## Écritures comptables (`/ecritures`)
 

@@ -21,6 +21,9 @@ from app.models import (
     ImportBatch,
     ReconciliationMatch,
     ReconciliationMatchItem,
+    SaisieDevise,
+    SaisiePrevision,
+    SaisiePrevisionJour,
     UserSession,
 )
 from tests.helpers import (
@@ -652,3 +655,130 @@ def test_same_slot_is_accepted_for_another_company(db, world):
     other = save(db, build_company())
 
     save(db, build_account(other, world.bank, devise="MAD", type_compte="Courant"))
+
+
+# --- Tableaux Devises et Prévisions saisis à la main (migration 0004) ----------------------------
+
+DAY = date(2026, 9, 30)
+
+
+def devise(world: World, **over) -> SaisieDevise:
+    return SaisieDevise(
+        **{
+            "company_id": world.company.id,
+            "jour": DAY,
+            "ligne": "EUR",
+            "colonne": "Banque",
+            "bank_id": world.bank.id,
+            "montant": Decimal("100"),
+            **over,
+        }
+    )
+
+
+def prevision(world: World, **over) -> SaisiePrevision:
+    return SaisiePrevision(
+        **{
+            "company_id": world.company.id,
+            "jour": DAY,
+            "ligne": 1,
+            "bank_id": world.bank.id,
+            "montant": Decimal("100"),
+            **over,
+        }
+    )
+
+
+def test_devises_line_must_be_known(db, world):
+    assert_rejected(db, "ck_saisies_devises_ligne", devise(world, ligne="GBP"))
+
+
+def test_devises_column_must_be_known(db, world):
+    assert_rejected(db, "ck_saisies_devises_colonne", devise(world, colonne="Autre", bank_id=None))
+
+
+@pytest.mark.parametrize("over", [{"colonne": "Banque", "bank_id": None}, {"colonne": "TOTAL"}])
+def test_devises_bank_only_in_bank_columns(db, world, over):
+    assert_rejected(db, "ck_saisies_devises_banque_si_colonne_banque", devise(world, **over))
+
+
+def test_one_devises_value_per_bank_cell(db, world):
+    save(db, devise(world))
+
+    assert_rejected(db, "uq_saisies_devises_cellule_banque", devise(world))
+
+
+def test_one_devises_value_per_total_cell(db, world):
+    save(db, devise(world, colonne="TOTAL", bank_id=None))
+
+    assert_rejected(
+        db, "uq_saisies_devises_cellule_colonne", devise(world, colonne="TOTAL", bank_id=None)
+    )
+
+
+def test_same_devises_cell_is_accepted_on_another_day_or_line(db, world):
+    save(
+        db,
+        devise(world),
+        devise(world, jour=date(2026, 9, 29)),
+        devise(world, ligne="USD"),
+        devise(world, colonne="TOTAL", bank_id=None),
+        devise(world, colonne="DEPASSEMENT", bank_id=None, montant=Decimal("-5")),
+    )
+
+
+@pytest.mark.parametrize("ligne", [0, 15])
+def test_previsions_line_is_within_the_14_line_block(db, world, ligne):
+    assert_rejected(db, "ck_saisies_previsions_ligne_du_bloc", prevision(world, ligne=ligne))
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"libelle": "Client A"},  # banque avec un libellé
+        {"bank_id": None},  # libellé sans texte, avec un montant
+        {"montant": None},  # banque sans montant
+    ],
+)
+def test_previsions_cell_is_a_label_or_a_bank_amount(db, world, over):
+    assert_rejected(db, "ck_saisies_previsions_libelle_ou_montant", prevision(world, **over))
+
+
+def test_one_previsions_value_per_bank_cell(db, world):
+    save(db, prevision(world))
+
+    assert_rejected(db, "uq_saisies_previsions_cellule_banque", prevision(world))
+
+
+def test_one_label_per_previsions_line(db, world):
+    label = {"bank_id": None, "montant": None, "libelle": "Client A"}
+    save(db, prevision(world, **label))
+
+    assert_rejected(db, "uq_saisies_previsions_libelle", prevision(world, **label))
+
+
+def test_previsions_line_with_label_and_amounts_is_accepted(db, world):
+    save(
+        db,
+        prevision(world, bank_id=None, montant=None, libelle="Client A"),
+        prevision(world),
+        prevision(world, ligne=14),
+    )
+
+
+def test_one_day_level_row_per_company_and_day(db, world):
+    save(db, SaisiePrevisionJour(company_id=world.company.id, jour=DAY, douane=Decimal("1")))
+
+    assert_rejected(
+        db,
+        "uq_saisies_previsions_jour_societe_jour",
+        SaisiePrevisionJour(company_id=world.company.id, jour=DAY, escompte=Decimal("1")),
+    )
+
+
+def test_day_level_row_needs_at_least_one_amount(db, world):
+    assert_rejected(
+        db,
+        "ck_saisies_previsions_jour_un_montant_renseigne",
+        SaisiePrevisionJour(company_id=world.company.id, jour=DAY),
+    )

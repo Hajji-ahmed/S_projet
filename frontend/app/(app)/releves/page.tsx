@@ -1,14 +1,9 @@
 import type { Metadata } from "next";
 
-import { PlaceholderPage } from "@/components/layout/PlaceholderPage";
+import { RelevesView } from "@/components/releves/RelevesView";
 
 export const metadata: Metadata = { title: "Relevés" };
 
 export default function Page() {
-  return (
-    <PlaceholderPage
-      title="Relevés bancaires"
-      description="Import et consultation des relevés bancaires"
-    />
-  );
+  return <RelevesView />;
 }

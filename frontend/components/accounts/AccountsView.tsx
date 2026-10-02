@@ -1,11 +1,12 @@
 "use client";
 
-import { CircleAlert, Landmark, Pencil, Plus, Power, PowerOff, WalletCards } from "lucide-react";
-import Image from "next/image";
+import { CircleAlert, PenLine, Pencil, Plus, Power, PowerOff, WalletCards } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AccountFormModal } from "@/components/accounts/AccountFormModal";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { BalanceFormModal } from "@/components/balances/BalanceFormModal";
+import { BankLabel } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -21,6 +22,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
 import { formatPercent } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
+import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { listAccounts, setAccountStatus } from "@/services/accounts";
@@ -90,6 +92,7 @@ export function AccountsView() {
   const [toDeactivate, setToDeactivate] = useState<Account | null>(null);
   const [deactivateError, setDeactivateError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [balanceFor, setBalanceFor] = useState<Account | null>(null);
 
   // Listes des filtres et du formulaire (banques, devises)
   useEffect(() => {
@@ -177,22 +180,7 @@ export function AccountsView() {
       key: "bank",
       header: "Banque",
       render: (row) => (
-        <span className="flex items-center gap-2.5 font-medium whitespace-nowrap">
-          <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-md border border-simtis-border bg-simtis-card">
-            {row.bank_logo ? (
-              <Image
-                src={row.bank_logo}
-                alt=""
-                width={28}
-                height={28}
-                className="h-6 w-6 object-contain"
-              />
-            ) : (
-              <Landmark className="h-4 w-4 text-simtis-primary" aria-hidden />
-            )}
-          </span>
-          {row.bank_code}
-        </span>
+        <BankLabel code={row.bank_code} logo={row.bank_logo} className="font-medium" />
       ),
     },
     { key: "libelle", header: "Libellé" },
@@ -241,6 +229,13 @@ export function AccountsView() {
             icon={Pencil}
             onClick={() => setForm({ mode: "edit", account: row })}
           />
+          {row.actif && (
+            <IconAction
+              label={`Saisir le solde du compte ${row.bank_code} ${row.devise}`}
+              icon={PenLine}
+              onClick={() => setBalanceFor(row)}
+            />
+          )}
           {row.actif ? (
             <IconAction
               label={`Désactiver le compte ${row.bank_code} ${row.devise}`}
@@ -349,6 +344,18 @@ export function AccountsView() {
           currencies={currencies}
           onClose={() => setForm(null)}
           onSaved={handleSaved}
+        />
+      )}
+
+      {balanceFor && (
+        <BalanceFormModal
+          account={balanceFor}
+          onClose={() => setBalanceFor(null)}
+          onSaved={(saved) => {
+            setBalanceFor(null);
+            toast(`Solde du ${formatDate(saved.date_solde)} enregistré.`);
+            reload();
+          }}
         />
       )}
 

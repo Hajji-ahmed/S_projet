@@ -8,24 +8,45 @@ Règles :
 """
 
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Bank
-from app.repositories import bank_repository
-from app.services import audit_service
+from app.repositories import account_repository, bank_repository
+from app.services import audit_service, balance_service
 from app.services.errors import ConflictError, NotFoundError
+from app.services.position_service import AccountFigures
 
 MAX_DISPLAY_ORDER = 999
 EDITABLE_FIELDS = ("nom", "logo", "ordre_affichage")
+
+
+# Les chiffres principaux d'une carte viennent du compte courant en MAD (décision P6, point 4)
+MAIN_CURRENCY = "MAD"
+MAIN_TYPE = "Courant"
+
+
+@dataclass(frozen=True)
+class OtherAccount:
+    """Compte affiché à part sur la carte, dans sa propre devise (jamais additionné ni converti)."""
+
+    devise: str
+    type_compte: str
+    solde: Decimal | None
+    date_maj: date | None
 
 
 @dataclass(frozen=True)
 class BankSummary:
     bank: Bank
     nb_comptes_actifs: int
+    # Renseignés seulement quand une société est indiquée (société active de l'écran)
+    figures: AccountFigures | None = None
+    autres_comptes: tuple[OtherAccount, ...] = ()
 
 
 def _snapshot(bank: Bank, fields: tuple[str, ...]) -> dict[str, Any]:
@@ -44,9 +65,37 @@ def _summary(db: Session, bank: Bank) -> BankSummary:
 
 
 def list_banks(db: Session, company_id: int | None = None) -> list[BankSummary]:
-    """`company_id` : compter seulement les comptes de cette société (société active de l'écran)."""
+    """Avec `company_id` : comptes de cette société seulement, et chiffres de chaque banque.
+
+    Une société a au plus un compte actif par banque, devise et type : aucune somme n'est faite.
+    """
     counts = bank_repository.active_account_counts(db, company_id)
-    return [BankSummary(bank, counts.get(bank.id, 0)) for bank in bank_repository.list_banks(db)]
+    banks = bank_repository.list_banks(db)
+    if company_id is None:
+        return [BankSummary(bank, counts.get(bank.id, 0)) for bank in banks]
+
+    accounts = account_repository.list_accounts(db, company_id=company_id, actif=True)
+    figures = balance_service.figures_for_accounts(db, accounts)
+    summaries = []
+    for bank in banks:
+        own = [account for account in accounts if account.bank_id == bank.id]
+        main = next(
+            (a for a in own if a.devise == MAIN_CURRENCY and a.type_compte == MAIN_TYPE), None
+        )
+        others = tuple(
+            OtherAccount(a.devise, a.type_compte, figures[a.id].solde, figures[a.id].date_maj)
+            for a in own
+            if a is not main
+        )
+        summaries.append(
+            BankSummary(
+                bank,
+                counts.get(bank.id, 0),
+                figures=figures[main.id] if main else None,
+                autres_comptes=others,
+            )
+        )
+    return summaries
 
 
 def get_bank(db: Session, bank_id: int) -> BankSummary:

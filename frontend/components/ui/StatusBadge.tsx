@@ -26,6 +26,10 @@ const STATUS_STYLES: Record<Status, string> = {
   Traité: NEUTRAL,
   Annulé: NEUTRAL,
   Inactif: NEUTRAL,
+  // Lignes d'un import (spécification de la page Relevés)
+  Valide: SUCCESS,
+  Erreur: DANGER,
+  Doublon: WARNING,
 };
 
 export function StatusBadge({ status, className }: { status: Status; className?: string }) {

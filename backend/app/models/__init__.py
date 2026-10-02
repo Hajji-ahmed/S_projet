@@ -28,6 +28,7 @@ from app.models.referentiel import (
     ExchangeRate,
     PointageType,
 )
+from app.models.saisies import SaisieDevise, SaisiePrevision, SaisiePrevisionJour
 from app.models.securite import (
     AuditLog,
     Permission,
@@ -63,6 +64,9 @@ __all__ = [
     "ReconciliationRule",
     "Role",
     "RolePermission",
+    "SaisieDevise",
+    "SaisiePrevision",
+    "SaisiePrevisionJour",
     "User",
     "UserRole",
     "UserSession",
