@@ -111,6 +111,14 @@ def account_transactions(
     return [(row, pointage) for row, pointage in db.execute(query)]
 
 
+def get_transaction(db: Session, transaction_id: int) -> BankTransaction | None:
+    return db.get(BankTransaction, transaction_id)
+
+
+def get_pointage_type(db: Session, pointage_type_id: int) -> PointageType | None:
+    return db.get(PointageType, pointage_type_id)
+
+
 def add(db: Session, *rows: object) -> None:
     """Ajoute les lignes et les envoie à la base (les identifiants deviennent disponibles)."""
     db.add_all(rows)

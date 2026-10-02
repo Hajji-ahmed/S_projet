@@ -36,8 +36,12 @@ export type AnalysedLine = {
   credit: string | null;
   montant: string | null;
   solde: string | null;
+  /** Valeur lue dans le fichier, telle quelle. */
   pointage: string | null;
   pointage_type_id: number | null;
+  pointage_libelle: string | null;
+  /** Déduit du libellé et du sens (pas de valeur connue dans le fichier). */
+  pointage_auto: boolean;
   lettrage_escompte: string | null;
   commentaire: string | null;
   hash_ligne: string | null;
@@ -57,6 +61,9 @@ export type AnalysisSummary = {
   periode_fin: string | null;
   solde_ouverture: string | null;
   solde_cloture: string | null;
+  /** Lu sur une ligne SOLDE INITIAL (ou SOLDE FINAL) du fichier, plutôt que déduit des lignes. */
+  solde_ouverture_fichier: boolean;
+  solde_cloture_fichier: boolean;
   soldes_coherents: boolean | null;
 };
 
@@ -149,6 +156,10 @@ export type Transaction = {
   reference: string | null;
   montant: string;
   statut: string;
+  /** « Corrigée » : modifiée dans l'aperçu avant l'enregistrement. */
+  origine: "Fichier" | "Corrigée";
+  /** Type du Pointage, pour préremplir la fenêtre de modification. */
+  pointage_type_id: number | null;
 };
 
 /** Relevé continu d'un compte : toutes ses opérations importées, quel que soit le fichier. */
@@ -178,4 +189,31 @@ export type ImportRequest = {
   feuille?: string;
 };
 
-export type ConfirmOptions = { garderDoublons: number[]; ecarterErreurs: boolean };
+/** Une ligne du fichier telle que l'aperçu modifiable l'envoie (corrigée ou non). Pas d'ajout. */
+export type LigneSoumise = {
+  numero: number;
+  date_operation: string | null;
+  date_valeur: string | null;
+  libelle: string | null;
+  reference: string | null;
+  debit: string | null;
+  credit: string | null;
+  solde: string | null;
+  pointage_type_id: number | null;
+  lettrage_escompte: string | null;
+  commentaire: string | null;
+};
+
+/** Ancien fonctionnement (fichier importé tel quel), ou lignes de l'aperçu modifiable. */
+export type ConfirmOptions =
+  { garderDoublons: number[]; ecarterErreurs: boolean } | { lignes: LigneSoumise[] };
+
+/** Type d'opération (Pointage) proposé dans les listes de choix. */
+export type PointageType = { id: number; code: string; libelle: string };
+
+/** Champs métier d'une opération importée : les seuls modifiables après l'import. */
+export type TransactionUpdate = {
+  pointage_type_id: number | null;
+  lettrage_escompte: string | null;
+  commentaire: string | null;
+};

@@ -1,8 +1,8 @@
-"""Listes de référence : sociétés et devises."""
+"""Listes de référence : sociétés, devises et types de pointage."""
 
 from sqlalchemy import select
 
-from app.models import Company
+from app.models import Company, PointageType
 from tests.helpers import bearer, login, make_auth_user
 
 
@@ -42,3 +42,38 @@ def test_currencies_list_mad_first(client, reference):
 def test_reference_lists_require_a_login(client, reference):
     assert client.get("/api/companies").status_code == 401
     assert client.get("/api/currencies").status_code == 401
+
+
+# --- Types de pointage ------------------------------------------------------------------------------
+
+
+def test_pointage_types_are_listed_for_any_logged_in_user(client, reference):
+    make_auth_user(reference, "DIRECTION", email="direction.pointage@example.com")
+    headers = bearer(login(client, "direction.pointage@example.com"))
+
+    response = client.get("/api/pointage-types", headers=headers)
+
+    assert response.status_code == 200
+    assert [item["libelle"] for item in response.json()] == [
+        "Décaissement",
+        "Encaissement",
+        "Frais bancaires",
+    ]
+    assert set(response.json()[0]) == {"id", "code", "libelle"}
+
+
+def test_inactive_pointage_types_are_not_listed(client, reference, db):
+    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
+    frais.actif = False
+    db.flush()
+    make_auth_user(reference, "DIRECTION", email="direction.pointage2@example.com")
+
+    body = client.get(
+        "/api/pointage-types", headers=bearer(login(client, "direction.pointage2@example.com"))
+    ).json()
+
+    assert "FRAIS_BANCAIRES" not in {item["code"] for item in body}
+
+
+def test_pointage_types_need_a_login(client):
+    assert client.get("/api/pointage-types").status_code == 401

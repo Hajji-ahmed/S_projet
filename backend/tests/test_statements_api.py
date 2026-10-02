@@ -117,7 +117,11 @@ def test_statement_is_analysed_without_being_saved(client, tresorerie, account, 
     assert body["deja_importe"] is False
 
 
-def test_lines_are_normalised(client, tresorerie, account):
+def pointage_id(db, code: str) -> int:
+    return db.scalar(select(PointageType.id).filter_by(code=code))
+
+
+def test_lines_are_normalised(client, tresorerie, account, db):
     body = analyse(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
 
     first, cheque, fees = body["lignes"]
@@ -135,7 +139,10 @@ def test_lines_are_normalised(client, tresorerie, account):
         "montant": "50000.00",
         "solde": "1050000.00",
         "pointage": None,
-        "pointage_type_id": None,
+        # Pas de colonne Pointage : déduit du sens (crédit → Encaissement)
+        "pointage_type_id": pointage_id(db, "ENCAISSEMENT"),
+        "pointage_libelle": "Encaissement",
+        "pointage_auto": True,
         "lettrage_escompte": None,
         "commentaire": None,
         "hash_ligne": None,
@@ -147,7 +154,9 @@ def test_lines_are_normalised(client, tresorerie, account):
         "-12500.50",
     )
     assert cheque["reference"] == "1234567"
+    assert cheque["pointage_libelle"] == "Décaissement"
     assert fees["libelle"] == "FRAIS TENUE DE COMPTE"
+    assert fees["pointage_libelle"] == "Frais bancaires"
     assert len({line["hash_ligne"] for line in body["lignes"]}) == 3
 
 
@@ -166,8 +175,103 @@ def test_summary_totals_period_and_balances(client, tresorerie, account):
         "periode_fin": "2026-09-26",
         "solde_ouverture": "1000000.00",
         "solde_cloture": "1037349.50",
+        "solde_ouverture_fichier": False,  # déduits des lignes : le fichier n'a pas de SOLDE INITIAL
+        "solde_cloture_fichier": False,
         "soldes_coherents": True,
     }
+
+
+# --- Lignes SOLDE INITIAL / SOLDE FINAL ------------------------------------------------------------
+
+WITH_BALANCE_LINES = [
+    HEADER,
+    ["01/09/2026", None, "SOLDE INITIAL", None, None, 120000],  # datée, sans débit ni crédit
+    ["02/09/2026", None, "VIR CLIENT ATLAS", None, 45000, 165000],
+    ["03/09/2026", None, "COMMISSION BANCAIRE", 250, None, 164750],
+    [None, None, "SOLDE FINAL", None, None, 164750],
+]
+
+
+def test_opening_balance_line_is_not_an_error(client, tresorerie, account):
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", WITH_BALANCE_LINES))).json()
+
+    assert [line["libelle"] for line in body["lignes"]] == [
+        "VIR CLIENT ATLAS",
+        "COMMISSION BANCAIRE",
+    ]
+    assert {line["statut"] for line in body["lignes"]} == {"Valide"}
+    resume = body["resume"]
+    assert (resume["nb_erreurs"], resume["nb_ignorees"]) == (0, 2)
+    assert (resume["solde_ouverture"], resume["solde_ouverture_fichier"]) == ("120000.00", True)
+    assert (resume["solde_cloture"], resume["solde_cloture_fichier"]) == ("164750.00", True)
+    assert resume["soldes_coherents"] is True
+
+
+def test_opening_balance_line_is_checked_against_the_movements(client, tresorerie, account):
+    rows = [row[:] for row in WITH_BALANCE_LINES]
+    rows[1][5] = 100000  # solde initial faux : 100 000 + 44 750 ≠ 164 750
+
+    resume = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["resume"]
+
+    assert resume["solde_ouverture"] == "100000.00"
+    assert resume["soldes_coherents"] is False
+
+
+def test_opening_balance_line_without_balance_column_still_gives_the_balances(
+    client, tresorerie, account
+):
+    rows = [
+        ["Date", "Libellé", "Montant", "Solde"],
+        [None, "Ancien solde", None, "1 000,00"],
+        ["02/09/2026", "VIR CLIENT", "500", None],
+        [None, "Nouveau solde", None, "1 500,00"],
+    ]
+
+    resume = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["resume"]
+
+    assert (resume["solde_ouverture"], resume["solde_cloture"]) == ("1000.00", "1500.00")
+    assert resume["soldes_coherents"] is True
+
+
+def test_confirmed_statement_keeps_the_opening_balance_of_the_file(client, tresorerie, account, db):
+    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", WITH_BALANCE_LINES))).json()
+
+    assert (body["nb_importees"], body["solde_ouverture"]) == (2, "120000.00")
+    assert db.get(BankStatement, body["statement_id"]).solde_ouverture == Decimal("120000.00")
+
+
+@pytest.mark.parametrize("empty", [0, "0", "0,00", "-", " "])
+def test_opening_balance_line_with_zero_amounts_is_not_an_operation(
+    client, tresorerie, account, empty
+):
+    """Beaucoup de banques écrivent 0 ou « - » dans Débit / Crédit sur les lignes de solde."""
+    rows = [
+        HEADER,
+        ["01/09/2026", None, "SOLDE INITIAL", empty, empty, 145000],
+        ["02/09/2026", None, "VIR CLIENT ATLAS", None, 45000, 190000],
+        [None, None, "NOUVEAU SOLDE", empty, empty, 190000],
+    ]
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
+
+    assert [line["libelle"] for line in body["lignes"]] == ["VIR CLIENT ATLAS"]
+    assert (body["resume"]["nb_erreurs"], body["resume"]["nb_ignorees"]) == (0, 2)
+    assert (body["resume"]["solde_ouverture"], body["resume"]["solde_ouverture_fichier"]) == (
+        "145000.00",
+        True,
+    )
+    assert body["resume"]["solde_cloture"] == "190000.00"
+    assert body["resume"]["soldes_coherents"] is True
+
+
+def test_balance_line_with_a_real_amount_stays_an_operation(client, tresorerie, account):
+    rows = [HEADER, ["01/09/2026", None, "REPORT FRAIS AOUT", 150, None, 144850]]
+
+    lines = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    assert [(line["libelle"], line["debit"], line["statut"]) for line in lines] == [
+        ("REPORT FRAIS AOUT", "150.00", "Valide")
+    ]
 
 
 def test_newest_first_statement_gives_the_same_balances(client, tresorerie, account):
@@ -457,11 +561,14 @@ CONFIRM_URL = "/api/statements/import/confirm"
 CLOSING_DAY = date(2026, 9, 26)
 
 
-def confirm(client, headers, account_id, content, *, nom="releve.xlsx", **form):
+def confirm(client, headers, account_id, content, *, nom="releve.xlsx", lignes=None, **form):
     data = {"bank_account_id": str(account_id)}
     for key, value in form.items():
         data[key] = json.dumps(value) if isinstance(value, dict | list) else str(value).lower()
     files = {"fichier": (nom, content, "application/octet-stream")}
+    if lignes is not None:
+        # Comme le navigateur : un fichier JSON, sans la limite de 1 Mo d'un champ de formulaire
+        files["lignes"] = ("lignes.json", json.dumps(lignes).encode(), "application/json")
     return client.post(CONFIRM_URL, data=data, files=files, headers=headers)
 
 
@@ -740,23 +847,31 @@ def test_mapping_with_a_column_without_header_is_not_saved(client, tresorerie, a
     assert db.scalar(select(ColumnMapping).filter_by(bank_id=account.bank_id)) is None
 
 
-def test_pointage_is_linked_to_its_type_and_left_empty_when_unknown(
-    client, tresorerie, account, db
-):
+def test_pointage_of_the_file_wins_and_is_guessed_otherwise(client, tresorerie, account, db):
     rows = [
-        ["Date", "Libellé", "Débit", "Pointage"],
-        ["24/09/2026", "FRAIS", 10, "frais bancaires"],
-        ["24/09/2026", "AUTRE", 20, "Virement interne"],
+        ["Date", "Libellé", "Débit", "Crédit", "Pointage"],
+        ["24/09/2026", "VIR INTERNE", 10, None, "frais bancaires"],  # le fichier l'emporte
+        ["24/09/2026", "AUTRE", 20, None, "Virement interne"],  # inconnu → déduit
+        ["24/09/2026", "AGIOS TRIMESTRE", 30, None, None],  # vide → mot-clé
+        ["24/09/2026", "VIR CLIENT", None, 40, None],  # vide → sens
     ]
-    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
 
     preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
     confirm(client, tresorerie, account.id, xlsx(("Relevé", rows)))
 
-    assert preview[0]["pointage_type_id"] == frais.id
-    # Pointage inconnu : la ligne reste valide, son pointage reste vide (décision métier)
-    assert (preview[1]["statut"], preview[1]["pointage_type_id"]) == ("Valide", None)
-    assert [row.pointage_type_id for row in transactions(db, account)] == [frais.id, None]
+    assert [(line["pointage_libelle"], line["pointage_auto"]) for line in preview] == [
+        ("Frais bancaires", False),
+        ("Décaissement", True),  # une valeur inconnue ne bloque jamais la ligne
+        ("Frais bancaires", True),
+        ("Encaissement", True),
+    ]
+    assert {line["statut"] for line in preview} == {"Valide"}
+    assert [row.pointage_type_id for row in transactions(db, account)] == [
+        pointage_id(db, "FRAIS_BANCAIRES"),
+        pointage_id(db, "DECAISSEMENT"),
+        pointage_id(db, "FRAIS_BANCAIRES"),
+        pointage_id(db, "ENCAISSEMENT"),
+    ]
 
 
 @pytest.mark.parametrize("role", ["DIRECTION", "COMPTABLE"])
@@ -857,7 +972,7 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
     assert (first["date_operation"], first["credit"], first["pointage"]) == (
         "2026-09-24",
         "50000.00",
-        None,
+        "Encaissement",  # pas de pointage dans le fichier : déduit du sens
     )
     assert second | {"id": 0} == {
         "id": 0,
@@ -875,6 +990,8 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
         "reference": "1234567",
         "montant": "-12500.50",
         "statut": "Non rapprochée",
+        "origine": "Fichier",
+        "pointage_type_id": pointage_id(db, "DECAISSEMENT"),
     }
     # Les 11 champs du format standard d'abord, dans leur ordre
     assert list(second)[1:12] == [
@@ -967,8 +1084,8 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
         "L-12",
         None,
     ]
-    # Pointage inconnu : vide ; montants en vrais nombres
-    assert values[2][:3] == ["Simtis", None, "CIH"]
+    # Pointage inconnu du fichier : déduit du libellé (FRAIS) ; montants en vrais nombres
+    assert values[2][:3] == ["Simtis", "Frais bancaires", "CIH"]
     assert (values[2][6], values[2][8], values[2][10]) == (12.5, 1049987.5, "à justifier")
     assert sheet["D2"].number_format == "DD/MM/YYYY"
     assert sheet["H2"].number_format == "#,##0.00"
@@ -1128,3 +1245,408 @@ def test_account_statement_follows_the_reading_permissions(client, reference, ac
     sans_role = continuous(client, bearer(login(client, "sans.role@example.com")), account.id)
 
     assert (direction.status_code, sans_role.status_code) == (200, 403)
+
+
+# --- Confirmation avec les lignes corrigées de l'aperçu --------------------------------------------
+
+EDITABLE = [
+    HEADER,
+    ["24/09/2026", "24/09/2026", "VIR RECU CLIENT ABC", None, 50000, 1050000],
+    ["25/09/2026", None, "CHQ FOURNISSEUR", "dix", None, 1037499.5],  # montant illisible
+    ["26/09/2026", None, "FRAIS SMS", 10, None, 1037489.5],
+]
+
+
+def submitted(client, headers, account, content):
+    """Lignes de l'aperçu, au format attendu par `lignes`, avant toute correction."""
+    body = analyse(client, headers, account.id, content).json()
+    return [
+        {
+            "numero": line["numero"],
+            "date_operation": line["date_operation"],
+            "date_valeur": line["date_valeur"],
+            "libelle": line["libelle"],
+            "reference": line["reference"],
+            "debit": line["debit"],
+            "credit": line["credit"],
+            "solde": line["solde"],
+            "pointage_type_id": line["pointage_type_id"],
+            "lettrage_escompte": line["lettrage_escompte"],
+            "commentaire": line["commentaire"],
+        }
+        for line in body["lignes"]
+    ]
+
+
+def test_corrected_lines_are_saved_with_their_origin(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+    lines[1] |= {"debit": "12500.50", "credit": "0.00"}  # ligne en erreur corrigée
+    lines[2]["commentaire"] = "Frais du mois"  # ligne valide corrigée
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 201, response.text
+    rows = transactions(db, account)
+    assert [(row.libelle, row.debit, row.origine) for row in rows] == [
+        ("VIR RECU CLIENT ABC", Decimal("0.00"), "Fichier"),
+        ("CHQ FOURNISSEUR", Decimal("12500.50"), "Corrigée"),
+        ("FRAIS SMS", Decimal("10.00"), "Corrigée"),
+    ]
+    assert rows[2].commentaire == "Frais du mois"
+    [entry] = db.scalars(select(AuditLog).filter_by(action="import_releve")).all()
+    corrections = entry.nouvelle_valeur["lignes_corrigees"]
+    assert {
+        "numero": 4,
+        "champ": "commentaire",
+        "avant": None,
+        "apres": "Frais du mois",
+    } in corrections
+    assert {"numero": 3, "champ": "debit", "avant": None, "apres": "12500.50"} in corrections
+
+
+def test_unchecked_file_line_is_not_saved_and_is_audited(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+
+    confirm(client, tresorerie, account.id, content, lignes=[lines[0], lines[2]])
+
+    assert [row.libelle for row in transactions(db, account)] == [
+        "VIR RECU CLIENT ABC",
+        "FRAIS SMS",
+    ]
+    [entry] = db.scalars(select(AuditLog).filter_by(action="import_releve")).all()
+    assert entry.nouvelle_valeur["lignes_fichier_non_importees"] == [3]
+
+
+def test_unchanged_submitted_line_stays_from_file(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+
+    confirm(client, tresorerie, account.id, content, lignes=[lines[0]])
+
+    assert [row.origine for row in transactions(db, account)] == ["Fichier"]
+    [entry] = db.scalars(select(AuditLog).filter_by(action="import_releve")).all()
+    assert entry.nouvelle_valeur["lignes_corrigees"] == []
+
+
+def test_corrected_line_keeps_its_original_fingerprint(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+    lines[0]["libelle"] = "VIR RECU CLIENT ABC CORRIGE"
+    confirm(client, tresorerie, account.id, content, lignes=[lines[0]])
+    # La banque renvoie plus tard la même opération, dans sa version d'origine
+    again = xlsx(("Relevé", [HEADER, EDITABLE[1]]))
+
+    preview = analyse(client, tresorerie, account.id, again).json()
+
+    assert preview["lignes"][0]["statut"] == "Doublon"
+    assert preview["lignes"][0]["motifs"] == ["Déjà importée pour ce compte."]
+
+
+def test_corrected_lines_that_become_identical_are_both_saved(client, tresorerie, account, db):
+    rows = [
+        HEADER,
+        ["24/09/2026", None, "A", "dix", None, None],
+        ["24/09/2026", None, "A", "onze", None, None],
+    ]
+    content = xlsx(("Relevé", rows))
+    lines = submitted(client, tresorerie, account, content)
+    for line in lines:
+        line |= {"debit": "10.00", "credit": "0.00"}
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 201, response.text
+    assert len({row.hash_ligne for row in transactions(db, account)}) == 2
+
+
+def test_invalid_submitted_line_refuses_everything(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)  # ligne 3 toujours illisible
+    before = counts(db)
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 409
+    assert response.json()["detail"].startswith("Ligne 3 : Ni débit ni crédit.")
+    assert counts(db) == before
+
+
+@pytest.mark.parametrize("numero", [99, 1])
+def test_submitted_line_must_come_from_the_file(client, tresorerie, account, numero):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+
+    response = confirm(
+        client, tresorerie, account.id, content, lignes=[lines[0] | {"numero": numero}]
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": f"La ligne {numero} n'est pas une opération du fichier."}
+
+
+def test_submitted_line_already_imported_is_refused(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+    confirm(
+        client, tresorerie, account.id, xlsx(("Relevé", [HEADER, EDITABLE[1]])), nom="autre.xlsx"
+    )
+
+    response = confirm(client, tresorerie, account.id, content, lignes=[lines[0]])
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Ligne 2 : déjà importée pour ce compte."}
+
+
+def test_submitted_inactive_pointage_is_refused(client, tresorerie, account, db):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
+    frais.actif = False
+    db.flush()
+
+    response = confirm(
+        client,
+        tresorerie,
+        account.id,
+        content,
+        lignes=[lines[0] | {"pointage_type_id": frais.id}],
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Ligne 2 : Pointage inconnu ou inactif."}
+
+
+@pytest.mark.parametrize("extra", [{"garder_doublons": [3]}, {"ecarter_erreurs": True}])
+def test_lines_cannot_be_combined_with_the_old_options(client, tresorerie, account, extra):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines[:1], **extra)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("value", "status"),
+    [("[]", 409), ("pas du json", 422), ('[{"numero": 2}, {"numero": 2}]', 422)],
+)
+def test_malformed_lines(client, tresorerie, account, value, status):
+    content = xlsx(("Relevé", EDITABLE))
+    data = {"bank_account_id": str(account.id)}
+    files = {
+        "fichier": ("releve.xlsx", content, "application/octet-stream"),
+        "lignes": ("lignes.json", value.encode(), "application/json"),
+    }
+
+    response = client.post(CONFIRM_URL, data=data, files=files, headers=tresorerie)
+
+    assert response.status_code == status
+
+
+# --- Modification après l'import (champs métier) ---------------------------------------------------
+
+
+def first_transaction(client, tresorerie, account, db) -> BankTransaction:
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    return transactions(db, account)[0]
+
+
+def patch(client, headers, transaction_id, body):
+    return client.patch(
+        f"/api/statements/transactions/{transaction_id}", json=body, headers=headers
+    )
+
+
+def test_business_fields_can_be_changed_and_are_audited(client, tresorerie, account, db):
+    transaction = first_transaction(client, tresorerie, account, db)
+    frais = pointage_id(db, "FRAIS_BANCAIRES")
+
+    response = patch(
+        client,
+        tresorerie,
+        transaction.id,
+        {
+            "pointage_type_id": frais,
+            "lettrage_escompte": " L-12 ",
+            "commentaire": "Vu avec la banque",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["pointage"], body["lettrage_escompte"], body["commentaire"], body["origine"]) == (
+        "Frais bancaires",
+        "L-12",
+        "Vu avec la banque",
+        "Fichier",
+    )
+    [entry] = db.scalars(select(AuditLog).filter_by(action="modification_operation")).all()
+    assert entry.ancienne_valeur == {
+        "pointage_type_id": pointage_id(db, "ENCAISSEMENT"),
+        "lettrage_escompte": None,
+        "commentaire": None,
+    }
+    assert entry.nouvelle_valeur["commentaire"] == "Vu avec la banque"
+
+
+def test_same_values_write_no_audit(client, tresorerie, account, db):
+    transaction = first_transaction(client, tresorerie, account, db)
+    body = {
+        "pointage_type_id": transaction.pointage_type_id,
+        "lettrage_escompte": None,
+        "commentaire": "  ",
+    }
+
+    response = patch(client, tresorerie, transaction.id, body)
+
+    assert response.status_code == 200
+    assert db.scalars(select(AuditLog).filter_by(action="modification_operation")).all() == []
+
+
+@pytest.mark.parametrize("field", ["debit", "libelle", "date_operation", "solde"])
+def test_bank_fields_cannot_be_changed(client, tresorerie, account, db, field):
+    transaction = first_transaction(client, tresorerie, account, db)
+
+    response = patch(client, tresorerie, transaction.id, {"commentaire": None, field: "1"})
+
+    assert response.status_code == 422
+
+
+def test_inactive_pointage_is_refused(client, tresorerie, account, db):
+    transaction = first_transaction(client, tresorerie, account, db)
+    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
+    frais.actif = False
+    db.flush()
+
+    response = patch(client, tresorerie, transaction.id, {"pointage_type_id": frais.id})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Pointage inconnu ou inactif."}
+
+
+def test_unknown_transaction_gives_404(client, tresorerie):
+    assert patch(client, tresorerie, 999999, {"commentaire": "x"}).status_code == 404
+
+
+@pytest.mark.parametrize("role", ["COMPTABLE", "DIRECTION"])
+def test_only_importers_can_change_a_transaction(client, reference, tresorerie, account, db, role):
+    transaction = first_transaction(client, tresorerie, account, db)
+    make_auth_user(reference, role, email=f"{role.lower()}.patch@example.com")
+    headers = bearer(login(client, f"{role.lower()}.patch@example.com"))
+
+    assert patch(client, headers, transaction.id, {"commentaire": "x"}).status_code == 403
+
+
+def test_transactions_report_their_origin(client, tresorerie, account, db):
+    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+
+    rows = client.get(
+        f"/api/statements/{body['statement_id']}/transactions", headers=tresorerie
+    ).json()
+
+    assert {row["origine"] for row in rows} == {"Fichier"}
+
+
+# --- Corrections issues de la relecture finale -----------------------------------------------------
+
+
+def test_untouched_file_error_cannot_be_imported_as_is(client, tresorerie, account, db):
+    rows = [HEADER, ["24/09/2026", None, "VIR RECU", None, 10, "abc"]]  # solde illisible
+    content = xlsx(("Relevé", rows))
+    lines = submitted(client, tresorerie, account, content)
+    before = counts(db)
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Ligne 2 : Solde : Montant illisible : « abc »."}
+    assert counts(db) == before
+
+
+def test_file_error_fixed_by_the_user_is_corrected_and_audited(client, tresorerie, account, db):
+    rows = [HEADER, ["24/09/2026", None, "VIR RECU", None, 10, "abc"]]
+    content = xlsx(("Relevé", rows))
+    lines = submitted(client, tresorerie, account, content)
+    lines[0]["solde"] = "1010.00"
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 201, response.text
+    [row] = transactions(db, account)
+    assert (row.origine, row.solde) == ("Corrigée", Decimal("1010.00"))
+    [entry] = db.scalars(select(AuditLog).filter_by(action="import_releve")).all()
+    assert {
+        "numero": 2,
+        "champ": "erreurs_du_fichier",
+        "avant": "Solde : Montant illisible : « abc ».",
+        "apres": None,
+    } in entry.nouvelle_valeur["lignes_corrigees"]
+
+
+def test_line_of_another_bank_can_never_be_imported(client, tresorerie, account, db):
+    rows = [["Banque", "Date", "Libellé", "Débit"], ["BMCE", "24/09/2026", "AUTRE", 1]]
+    content = xlsx(("Relevé", rows))
+    lines = submitted(client, tresorerie, account, content)
+    lines[0]["libelle"] = "AUTRE CORRIGE"
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Ligne 2 : Banque « BMCE » différente de celle du compte (CIH)."
+    }
+
+
+def test_corrected_file_error_is_recognised_when_the_bank_resends_it(
+    client, tresorerie, account, db
+):
+    content = xlsx(("Relevé", EDITABLE))
+    lines = submitted(client, tresorerie, account, content)
+    lines[1] |= {"debit": "12500.50", "credit": "0.00"}
+    confirm(client, tresorerie, account.id, content, lignes=lines)
+    # La banque renvoie la même opération, cette fois lisible : même valeurs que la correction
+    resent = [HEADER, ["25/09/2026", None, "CHQ FOURNISSEUR", "12 500,50", None, 1037499.5]]
+
+    preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", resent))).json()
+
+    assert preview["lignes"][0]["motifs"] == ["Déjà importée pour ce compte."]
+
+
+def test_large_statement_can_be_confirmed_with_its_lines(client, tresorerie, account, db):
+    rows = [HEADER] + [
+        [f"{1 + index % 28:02d}/09/2026", None, f"VIR CLIENT {index}", None, 10, None]
+        for index in range(1100)
+    ]
+    content = xlsx(("Relevé", rows))
+    lines = submitted(client, tresorerie, account, content)
+    for line in lines:
+        line["commentaire"] = "x" * 990  # plus de 1 Mo de lignes envoyées
+
+    response = confirm(client, tresorerie, account.id, content, lignes=lines)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["nb_importees"] == 1100
+
+
+def test_operations_expose_their_pointage_id(client, tresorerie, account, db):
+    transaction = first_transaction(client, tresorerie, account, db)
+
+    body = continuous(client, tresorerie, account.id).json()
+
+    assert body["operations"][0]["pointage_type_id"] == transaction.pointage_type_id
+
+
+def test_unchanged_inactive_pointage_does_not_block_other_changes(client, tresorerie, account, db):
+    transaction = first_transaction(client, tresorerie, account, db)
+    current = db.get(PointageType, transaction.pointage_type_id)
+    current.actif = False
+    db.flush()
+
+    response = patch(
+        client, tresorerie, transaction.id, {"pointage_type_id": current.id, "commentaire": "Vu"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert (response.json()["pointage"], response.json()["commentaire"]) == (current.libelle, "Vu")

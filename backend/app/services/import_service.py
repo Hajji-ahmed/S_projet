@@ -40,15 +40,18 @@ from app.models import (
     BankTransaction,
     ColumnMapping,
     ImportBatch,
+    PointageType,
 )
 from app.repositories import account_repository, balance_repository, import_repository
 from app.services import account_service, audit_service, position_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.normalization_service import (
+    balance_line_kind,
     clean_libelle,
     clean_text,
     extract_reference,
     file_hash,
+    guess_pointage,
     is_blank,
     line_hash,
     normalize_header,
@@ -138,10 +141,15 @@ class AnalysedLine:
     credit: Decimal | None = None
     montant: Decimal | None = None
     solde: Decimal | None = None
-    pointage: str | None = None
+    pointage: str | None = None  # valeur lue dans le fichier, telle quelle
     pointage_type_id: int | None = None
+    pointage_libelle: str | None = None
+    # Pointage déduit du libellé et du sens (pas de valeur connue dans le fichier)
+    pointage_auto: bool = False
     lettrage_escompte: str | None = None
     commentaire: str | None = None
+    # « Corrigée » quand l'aperçu modifiable a changé au moins un champ (confirmation avec `lignes`)
+    origine: str = "Fichier"
     hash_ligne: str | None = None
     # Doublon interne au fichier : numéro de la première ligne identique (gardable à la confirmation)
     doublon_de: int | None = None
@@ -160,7 +168,10 @@ class Summary:
     periode_fin: date | None = None
     solde_ouverture: Decimal | None = None
     solde_cloture: Decimal | None = None
-    # Solde d'ouverture + mouvements = solde de clôture ? None sans colonne Solde
+    # Soldes lus sur une ligne SOLDE INITIAL / SOLDE FINAL du fichier (sinon déduits des lignes)
+    solde_ouverture_fichier: bool = False
+    solde_cloture_fichier: bool = False
+    # Solde d'ouverture + mouvements = solde de clôture ? None si l'un des deux est inconnu
     soldes_coherents: bool | None = None
 
 
@@ -179,6 +190,9 @@ class StatementAnalysis:
     erreurs_mapping: list[str]
     lignes: list[AnalysedLine] = field(default_factory=list)
     resume: Summary = field(default_factory=Summary)
+    # Montants des lignes SOLDE INITIAL et SOLDE FINAL du fichier, s'il en a
+    solde_initial_fichier: Decimal | None = None
+    solde_final_fichier: Decimal | None = None
 
 
 # --- Lecture du classeur ---------------------------------------------------------------------------
@@ -327,13 +341,25 @@ def _bank_matches(value: object, bank: Bank) -> bool:
     )
 
 
-def _pointage_index(db: Session) -> dict[str, int]:
-    """Types de pointage actifs, retrouvés par leur code ou leur libellé (sans casse ni accents)."""
-    index: dict[str, int] = {}
+@dataclass
+class Pointages:
+    """Types de pointage actifs : retrouvés par code ou libellé (sans casse ni accents)."""
+
+    by_key: dict[str, int]
+    labels: dict[int, str]
+
+    def find(self, text: str | None) -> int | None:
+        return self.by_key.get(normalize_header(text)) if text else None
+
+
+def _pointages(db: Session) -> Pointages:
+    by_key: dict[str, int] = {}
+    labels: dict[int, str] = {}
     for item in import_repository.active_pointage_types(db):
-        index[normalize_header(item.code)] = item.id
-        index[normalize_header(item.libelle)] = item.id
-    return index
+        by_key[normalize_header(item.code)] = item.id
+        by_key[normalize_header(item.libelle)] = item.id
+        labels[item.id] = item.libelle
+    return Pointages(by_key, labels)
 
 
 def _read_line(
@@ -342,7 +368,7 @@ def _read_line(
     mapping: Mapping,
     bank: Bank,
     today: date,
-    pointages: dict[str, int],
+    pointages: Pointages,
 ) -> AnalysedLine:
     line = AnalysedLine(numero=numero, statut="Valide", motifs=[])
 
@@ -396,10 +422,16 @@ def _read_line(
     line.solde = amount("solde")
     reference = clean_text(cells.get("reference")) or extract_reference(line.libelle)
     line.reference = reference[:REFERENCE_MAX] if reference else None
+    # Pointage : la valeur connue du fichier l'emporte ; sinon il est déduit du libellé puis du sens
+    # (décision métier du 02/10/2026). Une valeur inconnue ne bloque jamais la ligne.
     line.pointage = clean_text(cells.get("pointage"))
-    if line.pointage:
-        # Valeur inconnue : le pointage reste vide, la ligne n'est pas bloquée (décision métier)
-        line.pointage_type_id = pointages.get(normalize_header(line.pointage))
+    line.pointage_type_id = pointages.find(line.pointage)
+    if line.pointage_type_id is None:
+        line.pointage_type_id = pointages.find(
+            guess_pointage(line.libelle, line.debit, line.credit)
+        )
+        line.pointage_auto = line.pointage_type_id is not None
+    line.pointage_libelle = pointages.labels.get(line.pointage_type_id)
     line.lettrage_escompte = clean_text(cells.get("lettrage_escompte"))
     if line.lettrage_escompte and len(line.lettrage_escompte) > LETTRAGE_MAX:
         line.motifs.append(f"Lettrage / Escompte : {LETTRAGE_MAX} caractères au plus.")
@@ -426,21 +458,26 @@ def _is_ignored(cells: dict[str, object]) -> bool:
     return bool(_SUMMARY_LINE.match(libelle))
 
 
+def _line_key(line: AnalysedLine) -> tuple:
+    """Valeurs qui identifient une opération : base de son empreinte (`line_hash`)."""
+    return (
+        line.date_operation,
+        line.date_valeur,
+        line.libelle,
+        line.debit,
+        line.credit,
+        line.solde,
+        line.reference,
+    )
+
+
 def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
     first_seen: dict[tuple, int] = {}
     occurrences: Counter[tuple] = Counter()
     for line in lines:
         if line.statut != "Valide":
             continue
-        key = (
-            line.date_operation,
-            line.date_valeur,
-            line.libelle,
-            line.debit,
-            line.credit,
-            line.solde,
-            line.reference,
-        )
+        key = _line_key(line)
         occurrences[key] += 1
         line.hash_ligne = line_hash(account.id, key, occurrences[key])
         if key in first_seen:
@@ -466,19 +503,36 @@ class Balances:
     soldes_coherents: bool | None = None
 
 
-def _balances(lines: list[AnalysedLine]) -> Balances:
-    """Soldes d'ouverture et de clôture, quand chaque ligne porte son solde."""
-    if not lines or any(line.solde is None for line in lines):
-        return Balances()
-    # Relevé du plus récent au plus ancien : on le lit dans l'ordre chronologique
-    ordered = lines[::-1] if lines[0].date_operation > lines[-1].date_operation else lines
-    ouverture = ordered[0].solde - ordered[0].montant
-    cloture = ordered[-1].solde
+def _balances(
+    lines: list[AnalysedLine], opening: Decimal | None = None, closing: Decimal | None = None
+) -> Balances:
+    """Soldes d'ouverture et de clôture, et leur cohérence avec les mouvements.
+
+    Les lignes SOLDE INITIAL / SOLDE FINAL du fichier (`opening`, `closing`) l'emportent ; à défaut,
+    les soldes sont déduits des lignes quand chacune porte son solde.
+    """
+    if not lines:
+        return Balances(opening, closing, None)
+    computed_open = computed_close = None
+    if all(line.solde is not None for line in lines):
+        # Relevé du plus récent au plus ancien : on le lit dans l'ordre chronologique
+        ordered = lines[::-1] if lines[0].date_operation > lines[-1].date_operation else lines
+        computed_open = ordered[0].solde - ordered[0].montant
+        computed_close = ordered[-1].solde
+    ouverture = opening if opening is not None else computed_open
+    cloture = closing if closing is not None else computed_close
+    if ouverture is None or cloture is None:
+        return Balances(ouverture, cloture, None)
     movements = sum((line.montant for line in lines), Decimal("0.00"))
     return Balances(ouverture, cloture, ouverture + movements == cloture)
 
 
-def _summarise(lines: list[AnalysedLine], ignored: int) -> Summary:
+def _summarise(
+    lines: list[AnalysedLine],
+    ignored: int,
+    opening: Decimal | None = None,
+    closing: Decimal | None = None,
+) -> Summary:
     summary = Summary(nb_lignes=len(lines), nb_ignorees=ignored)
     valid = [line for line in lines if line.statut == "Valide"]
     summary.nb_valides = len(valid)
@@ -490,11 +544,41 @@ def _summarise(lines: list[AnalysedLine], ignored: int) -> Summary:
         return summary
     dates = [line.date_operation for line in valid]
     summary.periode_debut, summary.periode_fin = min(dates), max(dates)
-    balances = _balances(valid)
+    balances = _balances(valid, opening, closing)
     summary.solde_ouverture = balances.solde_ouverture
     summary.solde_cloture = balances.solde_cloture
+    summary.solde_ouverture_fichier = opening is not None
+    summary.solde_cloture_fichier = closing is not None
     summary.soldes_coherents = balances.soldes_coherents
     return summary
+
+
+def _no_amount(value: object) -> bool:
+    """Cellule de montant vide, à zéro (0, « 0,00 ») ou tiret : ce que les banques écrivent
+    dans Débit / Crédit sur une ligne de solde."""
+    if is_blank(value) or str(value).strip() in {"-", "–", "—"}:
+        return True
+    try:
+        return parse_amount(value) == 0
+    except ValueError:
+        return False
+
+
+def _balance_line(cells: dict[str, object]) -> tuple[str, Decimal | None] | None:
+    """Ligne SOLDE INITIAL / SOLDE FINAL (datée ou non), sans débit ni crédit : (sorte, montant).
+
+    Ce n'est pas une opération : son montant donne le solde d'ouverture ou de clôture du fichier.
+    Débit et crédit peuvent être vides, à zéro ou un tiret ; un vrai montant en fait une opération.
+    """
+    kind = balance_line_kind(clean_libelle(cells.get("libelle")))
+    if kind is None or not all(
+        _no_amount(cells.get(code)) for code in ("debit", "credit", "montant")
+    ):
+        return None
+    try:
+        return kind, parse_amount(cells.get("solde"))
+    except ValueError:
+        return kind, None
 
 
 # --- Analyse -------------------------------------------------------------------------------------
@@ -557,7 +641,7 @@ def analyse_statement(
         return analysis  # pas de lecture des lignes tant que la correspondance est incomplète
 
     today = today or position_service.business_today()
-    pointages = _pointage_index(db)
+    pointages = _pointages(db)
     lines, ignored = [], 0
     for offset, row in enumerate(data):
         if all(is_blank(cell) for cell in row):
@@ -567,6 +651,15 @@ def analyse_statement(
             for code, index in mapping.items()
             if index is not None
         }
+        balance = _balance_line(cells)
+        if balance is not None:
+            ignored += 1
+            kind, value = balance
+            if kind == "ouverture" and analysis.solde_initial_fichier is None:
+                analysis.solde_initial_fichier = value
+            elif kind == "cloture" and value is not None:
+                analysis.solde_final_fichier = value
+            continue
         if _is_ignored(cells):
             ignored += 1
             continue
@@ -575,7 +668,9 @@ def analyse_statement(
 
     _mark_duplicates(db, account, lines)
     analysis.lignes = lines
-    analysis.resume = _summarise(lines, ignored)
+    analysis.resume = _summarise(
+        lines, ignored, analysis.solde_initial_fichier, analysis.solde_final_fichier
+    )
     return analysis
 
 
@@ -695,6 +790,209 @@ def _closing_balance(
     return check, result
 
 
+@dataclass
+class Selection:
+    """Lignes retenues pour l'enregistrement, et ce qui a été écarté ou corrigé (pour l'audit)."""
+
+    lines: list[AnalysedLine]
+    nb_erreurs: int
+    nb_doublons: int
+    doublons_gardes: list[int] = field(default_factory=list)
+    corrections: list[dict] = field(default_factory=list)
+    non_importees: list[int] = field(default_factory=list)
+
+
+def _file_selection(
+    analysis: StatementAnalysis, garder_doublons: list[int] | None, ecarter_erreurs: bool
+) -> Selection:
+    """Fonctionnement sans aperçu modifiable : le fichier est importé tel qu'il est analysé.
+
+    - lignes en erreur : la confirmation est refusée, sauf si l'utilisateur choisit de les écarter ;
+    - doublons : écartés ; une ligne identique à une autre du même fichier peut être gardée en
+      donnant son numéro dans `garder_doublons` ; une ligne déjà importée ne peut jamais l'être.
+    """
+    errors = [line for line in analysis.lignes if line.statut == "Erreur"]
+    if errors and not ecarter_erreurs:
+        plural = "s" if len(errors) > 1 else ""
+        raise ConflictError(
+            f"{len(errors)} ligne{plural} en erreur : corrigez le fichier, "
+            "ou confirmez en les écartant."
+        )
+    by_number = {line.numero: line for line in analysis.lignes}
+    keep = set(garder_doublons or [])
+    for numero in sorted(keep):
+        line = by_number.get(numero)
+        if line is None or line.doublon_de is None:
+            raise ConflictError(
+                f"La ligne {numero} n'est pas identique à une autre ligne du fichier : "
+                "elle ne peut pas être gardée."
+            )
+    lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
+    if not lines:
+        raise ConflictError("Aucune ligne à importer dans ce fichier.")
+    kept = {line.numero for line in lines}
+    return Selection(
+        lines=lines,
+        nb_erreurs=len(errors),
+        nb_doublons=sum(1 for line in analysis.lignes if line.statut == "Doublon") - len(keep),
+        doublons_gardes=sorted(keep),
+        non_importees=sorted(line.numero for line in analysis.lignes if line.numero not in kept),
+    )
+
+
+# Champs comparés pour décider qu'une ligne a été corrigée dans l'aperçu (tracés dans l'audit)
+CORRECTABLE_FIELDS = (
+    "date_operation",
+    "date_valeur",
+    "libelle",
+    "reference",
+    "debit",
+    "credit",
+    "solde",
+    "pointage_type_id",
+    "lettrage_escompte",
+    "commentaire",
+)
+# Une ligne envoyée se lit comme une ligne de fichier aux colonnes Débit / Crédit séparées
+_SUBMITTED_MAPPING: Mapping = {"debit": 0, "credit": 1}
+_SUBMITTED_CELLS = (
+    "date_operation",
+    "date_valeur",
+    "libelle",
+    "reference",
+    "debit",
+    "credit",
+    "solde",
+    "lettrage_escompte",
+    "commentaire",
+)
+
+
+def _submitted_line(
+    data: dict, original: AnalysedLine, bank: Bank, today: date, pointages: Pointages
+) -> AnalysedLine:
+    """Revérifie une ligne envoyée par l'aperçu avec les règles de l'analyse (`_read_line`)."""
+    cells = {code: data.get(code) for code in _SUBMITTED_CELLS}
+    line = _read_line(original.numero, cells, _SUBMITTED_MAPPING, bank, today, pointages)
+    chosen = data.get("pointage_type_id")
+    if chosen is not None:
+        if chosen not in pointages.labels:
+            line.motifs.append("Pointage inconnu ou inactif.")
+            line.statut = "Erreur"
+        else:
+            line.pointage_type_id, line.pointage_auto = chosen, False
+            line.pointage_libelle = pointages.labels[chosen]
+    return line
+
+
+def _corrections(original: AnalysedLine, line: AnalysedLine) -> list[dict]:
+    return [
+        {
+            "numero": line.numero,
+            "champ": name,
+            "avant": getattr(original, name),
+            "apres": getattr(line, name),
+        }
+        for name in CORRECTABLE_FIELDS
+        if getattr(original, name) != getattr(line, name)
+    ]
+
+
+def _submitted_selection(
+    db: Session, analysis: StatementAnalysis, lignes: list[dict], today: date
+) -> Selection:
+    """Lignes envoyées par l'aperçu modifiable (décision métier du 02/10/2026).
+
+    Chaque ligne doit être une ligne d'opération du fichier (pas d'ajout). Elle est revérifiée avec
+    les règles de l'analyse ; une seule ligne invalide ou déjà importée refuse tout. Une ligne
+    garde l'empreinte de sa version d'origine, pour que la même opération renvoyée plus tard par la
+    banque soit reconnue comme déjà importée. Rien n'est écrit ici.
+    """
+    if not lignes:
+        raise ConflictError("Aucune ligne à importer dans ce fichier.")
+    account = analysis.account
+    pointages = _pointages(db)
+    originals = {line.numero: line for line in analysis.lignes}
+    lines: list[AnalysedLine] = []
+    corrections: list[dict] = []
+    problems: list[str] = []
+    for data in lignes:
+        original = originals.get(data["numero"])
+        if original is None:
+            raise ConflictError(f"La ligne {data['numero']} n'est pas une opération du fichier.")
+        if original.statut == "Doublon" and original.doublon_de is None:
+            problems.append(f"Ligne {original.numero} : déjà importée pour ce compte.")
+            continue
+        line = _submitted_line(data, original, account.bank, today, pointages)
+        if original.statut == "Erreur":
+            # Une autre banque ne se corrige pas dans l'aperçu : la ligne reste refusée
+            line.motifs.extend(m for m in original.motifs if m.startswith("Banque «"))
+        if line.motifs:
+            problems.append(f"Ligne {line.numero} : {' '.join(line.motifs)}")
+            continue
+        changes = _corrections(original, line)
+        if original.statut == "Erreur":
+            # Jamais corrigée en silence : une ligne en erreur dans le fichier doit avoir été
+            # corrigée, et l'erreur du fichier est gardée dans l'audit
+            if not changes:
+                problems.append(f"Ligne {line.numero} : {' '.join(original.motifs)}")
+                continue
+            changes.append(
+                {
+                    "numero": line.numero,
+                    "champ": "erreurs_du_fichier",
+                    "avant": " ".join(original.motifs),
+                    "apres": None,
+                }
+            )
+        line.origine = "Corrigée" if changes else "Fichier"
+        corrections.extend(changes)
+        line.hash_ligne = original.hash_ligne
+        lines.append(line)
+    if problems:
+        raise ConflictError(" ".join(problems))
+
+    # Ligne d'origine en erreur : empreinte de ses valeurs corrigées (spécification §4.2), comme si
+    # la banque l'avait donnée lisible. Les lignes lisibles du fichier comptent dans les occurrences,
+    # pour qu'une correction identique à l'une d'elles reçoive une empreinte distincte.
+    occurrences: Counter[tuple] = Counter(
+        _line_key(line) for line in analysis.lignes if line.statut != "Erreur"
+    )
+    for line in lines:
+        if line.hash_ligne is None:
+            key = _line_key(line)
+            occurrences[key] += 1
+            line.hash_ligne = line_hash(account.id, key, occurrences[key])
+    known = import_repository.existing_line_hashes(
+        db, account.id, [line.hash_ligne for line in lines]
+    )
+    already = [
+        f"Ligne {line.numero} : déjà importée pour ce compte."
+        for line in lines
+        if line.hash_ligne in known
+    ]
+    if already:
+        raise ConflictError(" ".join(already))
+
+    kept = {line.numero for line in lines}
+    return Selection(
+        lines=sorted(lines, key=lambda line: line.numero),
+        nb_erreurs=sum(
+            1 for line in analysis.lignes if line.statut == "Erreur" and line.numero not in kept
+        ),
+        nb_doublons=sum(
+            1 for line in analysis.lignes if line.statut == "Doublon" and line.numero not in kept
+        ),
+        doublons_gardes=sorted(
+            line.numero
+            for line in analysis.lignes
+            if line.statut == "Doublon" and line.numero in kept
+        ),
+        corrections=corrections,
+        non_importees=sorted(numero for numero in originals if numero not in kept),
+    )
+
+
 def confirm_statement(
     db: Session,
     *,
@@ -705,16 +1003,16 @@ def confirm_statement(
     feuille: str | None = None,
     garder_doublons: list[int] | None = None,
     ecarter_erreurs: bool = False,
+    lignes: list[dict] | None = None,
     acteur_id: int,
     ip: str | None = None,
     today: date | None = None,
 ) -> StatementImport:
     """Enregistre un relevé : le fichier est analysé à nouveau, puis ses lignes retenues sont importées.
 
-    - lignes en erreur : la confirmation est refusée, sauf si l'utilisateur choisit de les écarter ;
-    - doublons : écartés ; une ligne identique à une autre du même fichier peut être gardée en
-      donnant son numéro dans `garder_doublons` ; une ligne déjà importée ne peut jamais l'être ;
-    - tout est enregistré dans une seule transaction, avec l'audit.
+    Avec `lignes` (aperçu modifiable), ce sont les lignes envoyées, revérifiées, qui sont
+    enregistrées ; sinon, le fichier tel qu'il est analysé (`_file_selection`). Tout est enregistré
+    dans une seule transaction, avec l'audit.
     """
     analysis = analyse_statement(
         db,
@@ -733,31 +1031,16 @@ def confirm_statement(
     if analysis.deja_importe:
         raise ConflictError("Ce fichier a déjà été importé pour cette société.")
 
-    errors = [line for line in analysis.lignes if line.statut == "Erreur"]
-    if errors and not ecarter_erreurs:
-        plural = "s" if len(errors) > 1 else ""
-        raise ConflictError(
-            f"{len(errors)} ligne{plural} en erreur : corrigez le fichier, "
-            "ou confirmez en les écartant."
-        )
-    by_number = {line.numero: line for line in analysis.lignes}
-    keep = set(garder_doublons or [])
-    for numero in sorted(keep):
-        line = by_number.get(numero)
-        if line is None or line.doublon_de is None:
-            raise ConflictError(
-                f"La ligne {numero} n'est pas identique à une autre ligne du fichier : "
-                "elle ne peut pas être gardée."
-            )
-
-    lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
-    if not lines:
-        raise ConflictError("Aucune ligne à importer dans ce fichier.")
+    if lignes is not None:
+        today = today or position_service.business_today()
+        selection = _submitted_selection(db, analysis, lignes, today)
+    else:
+        selection = _file_selection(analysis, garder_doublons, ecarter_erreurs)
+    lines = selection.lines
     dates = [line.date_operation for line in lines]
-    balances = _balances(lines)
+    balances = _balances(lines, analysis.solde_initial_fichier, analysis.solde_final_fichier)
     total_debit = sum((line.debit for line in lines), Decimal("0.00"))
     total_credit = sum((line.credit for line in lines), Decimal("0.00"))
-    skipped_duplicates = sum(1 for line in analysis.lignes if line.statut == "Doublon") - len(keep)
 
     batch = ImportBatch(
         type=TYPE_IMPORT,
@@ -767,8 +1050,8 @@ def confirm_statement(
         fichier_hash=analysis.fichier_hash,
         statut="Confirmé",
         nb_lignes=len(lines),
-        nb_erreurs=len(errors),
-        nb_doublons=skipped_duplicates,
+        nb_erreurs=selection.nb_erreurs,
+        nb_doublons=selection.nb_doublons,
         user_id=acteur_id,
     )
     try:
@@ -800,6 +1083,7 @@ def confirm_statement(
                     lettrage_escompte=line.lettrage_escompte,
                     commentaire=line.commentaire,
                     hash_ligne=line.hash_ligne,
+                    origine=line.origine,
                 )
                 for line in lines
             ),
@@ -826,9 +1110,11 @@ def confirm_statement(
             "bank_account_id": account.id,
             "bank_statement_id": statement.id,
             "nb_lignes": len(lines),
-            "nb_erreurs_ecartees": len(errors),
-            "nb_doublons_ecartes": skipped_duplicates,
-            "lignes_doublons_gardees": sorted(keep),
+            "nb_erreurs_ecartees": selection.nb_erreurs,
+            "nb_doublons_ecartes": selection.nb_doublons,
+            "lignes_doublons_gardees": selection.doublons_gardes,
+            "lignes_corrigees": selection.corrections,
+            "lignes_fichier_non_importees": selection.non_importees,
             "total_debit": total_debit,
             "total_credit": total_credit,
             "periode_debut": statement.periode_debut,
@@ -845,8 +1131,8 @@ def confirm_statement(
         batch=batch,
         statement=statement,
         nb_importees=len(lines),
-        nb_erreurs_ecartees=len(errors),
-        nb_doublons_ecartes=skipped_duplicates,
+        nb_erreurs_ecartees=selection.nb_erreurs,
+        nb_doublons_ecartes=selection.nb_doublons,
         total_debit=total_debit,
         total_credit=total_credit,
         soldes_coherents=balances.soldes_coherents,
@@ -880,6 +1166,63 @@ def list_statements(
         StatementRow(statement, batch, account, importe_par, checks.get(statement.id))
         for statement, batch, account, importe_par in rows
     ]
+
+
+BUSINESS_FIELDS = ("pointage_type_id", "lettrage_escompte", "commentaire")
+
+
+def update_transaction(
+    db: Session,
+    transaction_id: int,
+    *,
+    pointage_type_id: int | None,
+    lettrage_escompte: str | None,
+    commentaire: str | None,
+    acteur_id: int,
+    ip: str | None = None,
+) -> tuple[BankTransaction, str | None]:
+    """Modifie les champs métier d'une opération importée (décision métier du 02/10/2026).
+
+    Dates, libellé et montants restent ceux de la banque. Seuls les champs changés sont tracés ;
+    rien n'est écrit si rien ne change. Retourne l'opération et le libellé de son pointage.
+    """
+    transaction = import_repository.get_transaction(db, transaction_id)
+    if transaction is None:
+        raise NotFoundError("Opération introuvable.")
+    pointage = None
+    if pointage_type_id is not None:
+        pointage = import_repository.get_pointage_type(db, pointage_type_id)
+        # Un type désactivé depuis reste accepté s'il ne change pas : on peut modifier le reste
+        unchanged = pointage_type_id == transaction.pointage_type_id
+        if pointage is None or (not pointage.actif and not unchanged):
+            raise ConflictError("Pointage inconnu ou inactif.")
+    new_values = {
+        "pointage_type_id": pointage_type_id,
+        "lettrage_escompte": clean_text(lettrage_escompte),
+        "commentaire": clean_text(commentaire),
+    }
+    changed = [name for name in BUSINESS_FIELDS if getattr(transaction, name) != new_values[name]]
+    if changed:
+        avant = {name: getattr(transaction, name) for name in changed}
+        for name in changed:
+            setattr(transaction, name, new_values[name])
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="modification_operation",
+            entite="bank_transaction",
+            entite_id=transaction.id,
+            avant=avant,
+            apres={name: new_values[name] for name in changed},
+            ip=ip,
+        )
+        db.commit()
+    return transaction, pointage.libelle if pointage else None
+
+
+def list_pointage_types(db: Session) -> list[PointageType]:
+    """Types de pointage actifs, par libellé (liste de choix de l'aperçu et de la modification)."""
+    return sorted(import_repository.active_pointage_types(db), key=lambda item: item.libelle)
 
 
 def statement_transactions(

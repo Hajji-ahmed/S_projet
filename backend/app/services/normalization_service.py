@@ -161,6 +161,57 @@ def extract_reference(libelle: str | None) -> str | None:
     return None
 
 
+# --- Pointage automatique (décision métier du 02/10/2026) -----------------------------------------
+
+POINTAGE_FRAIS = "FRAIS_BANCAIRES"
+POINTAGE_ENCAISSEMENT = "ENCAISSEMENT"
+POINTAGE_DECAISSEMENT = "DECAISSEMENT"
+# Même règle que la migration 0005, qui l'applique aux opérations importées avant elle
+_FRAIS = re.compile(r"\b(COMMISSIONS?|AGIOS|FRAIS|TENUE DE COMPTE)\b")
+
+
+def _plain(text: str) -> str:
+    """Majuscules sans accents : « Prélèvement » → « PRELEVEMENT »."""
+    raw = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in raw if not unicodedata.combining(char)).upper()
+
+
+def guess_pointage(
+    libelle: str | None, debit: Decimal | None, credit: Decimal | None
+) -> str | None:
+    """Code du type d'opération déduit du libellé, puis du sens de l'opération.
+
+    COMMISSION, AGIOS, FRAIS, TENUE DE COMPTE → Frais bancaires ; sinon un crédit → Encaissement,
+    un débit → Décaissement. None si l'opération n'a pas de montant.
+    """
+    if libelle and _FRAIS.search(_plain(libelle)):
+        return POINTAGE_FRAIS
+    if credit:
+        return POINTAGE_ENCAISSEMENT
+    if debit:
+        return POINTAGE_DECAISSEMENT
+    return None
+
+
+# --- Lignes de solde d'un relevé -------------------------------------------------------------------
+
+_OPENING = re.compile(r"^(SOLDE INITIAL|SOLDE PRECEDENT|ANCIEN SOLDE|REPORT)\b")
+_CLOSING = re.compile(r"^(SOLDE FINAL|NOUVEAU SOLDE)\b")
+
+
+def balance_line_kind(libelle: str | None) -> str | None:
+    """« ouverture » pour SOLDE INITIAL / ANCIEN SOLDE / SOLDE PRÉCÉDENT / REPORT, « cloture » pour
+    SOLDE FINAL / NOUVEAU SOLDE, sinon None. Le libellé est comparé sans accents ni casse."""
+    if not libelle:
+        return None
+    text = " ".join(_plain(libelle).split())
+    if _OPENING.match(text):
+        return "ouverture"
+    if _CLOSING.match(text):
+        return "cloture"
+    return None
+
+
 def file_hash(content: bytes) -> str:
     """Empreinte SHA-256 du contenu : un même fichier, quel que soit son nom, a la même empreinte."""
     return hashlib.sha256(content).hexdigest()

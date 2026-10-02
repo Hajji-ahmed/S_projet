@@ -14,9 +14,11 @@ from app.schemas.statement import (
     AnalyseOut,
     ConfirmationOut,
     LignesGardeesIn,
+    LignesSoumisesIn,
     MappingIn,
     StatementOut,
     TransactionOut,
+    TransactionUpdateIn,
 )
 from app.services import import_service
 from app.services.auth_service import CurrentUser
@@ -80,6 +82,24 @@ def list_transactions(
     return [TransactionOut.from_row(account, row, pointage) for row, pointage in rows]
 
 
+@router.patch("/transactions/{transaction_id}", response_model=TransactionOut)
+def update_transaction(
+    transaction_id: int,
+    body: TransactionUpdateIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> TransactionOut:
+    """Modifie Pointage, Lettrage / Escompte et Commentaire d'une opération importée.
+
+    Dates, libellé et montants restent ceux de la banque : tout autre champ est refusé (422).
+    """
+    transaction, pointage = import_service.update_transaction(
+        db, transaction_id, **body.model_dump(), acteur_id=user.id, ip=client_ip(request)
+    )
+    return TransactionOut.from_row(transaction.statement.bank_account, transaction, pointage)
+
+
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -140,6 +160,29 @@ def export_account_statement(
     return _xlsx(*import_service.export_account_statement(db, account_id, date_from, date_to))
 
 
+# 5 000 lignes au plus, chacune de quelques centaines d'octets : 20 Mo laissent une large marge
+MAX_LINES_BYTES = 20 * 1024 * 1024
+
+
+def _lines_text(lignes: UploadFile | None) -> str | None:
+    """Contenu du fichier JSON des lignes de l'aperçu (lecture bornée)."""
+    if lignes is None:
+        return None
+    raw = lignes.file.read(MAX_LINES_BYTES + 1)
+    if len(raw) > MAX_LINES_BYTES:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", "lignes"),
+                    "msg": "Lignes trop volumineuses.",
+                    "input": None,
+                }
+            ]
+        )
+    return raw.decode("utf-8", errors="replace")
+
+
 def _content(fichier: UploadFile) -> bytes:
     # Lecture bornée : un fichier plus gros que la limite est refusé sans être lu en entier
     return fichier.file.read(import_service.MAX_FILE_BYTES + 1)
@@ -182,14 +225,34 @@ def confirm_statement(
     ecarter_erreurs: Annotated[
         bool, Form(description="Importer malgré des lignes en erreur, en les écartant")
     ] = False,
+    lignes: Annotated[
+        UploadFile | None,
+        File(
+            description="Fichier JSON : lignes du fichier à importer, avec leurs corrections "
+            "(aperçu). Envoyé comme fichier : un champ de formulaire est limité à 1 Mo."
+        ),
+    ] = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_import),
 ) -> ConfirmationOut:
     """Enregistre le relevé (même fichier, même correspondance que l'aperçu validé).
 
-    Le fichier est analysé à nouveau : ce qui est enregistré correspond toujours à son contenu.
+    Le fichier est analysé à nouveau. Avec `lignes`, ce sont les lignes de l'aperçu, corrigées et
+    revérifiées, qui sont enregistrées ; sinon, le fichier tel qu'il est analysé.
     """
     kept = _json_field(LignesGardeesIn, "garder_doublons", garder_doublons)
+    submitted = _json_field(LignesSoumisesIn, "lignes", _lines_text(lignes))
+    if submitted is not None and (kept is not None or ecarter_erreurs):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", "lignes"),
+                    "msg": "« lignes » remplace « garder_doublons » et « ecarter_erreurs ».",
+                    "input": None,
+                }
+            ]
+        )
     result = import_service.confirm_statement(
         db,
         account_id=bank_account_id,
@@ -199,6 +262,7 @@ def confirm_statement(
         feuille=feuille or None,
         garder_doublons=None if kept is None else kept.root,
         ecarter_erreurs=ecarter_erreurs,
+        lignes=None if submitted is None else [line.model_dump() for line in submitted.root],
         acteur_id=user.id,
         ip=client_ip(request),
     )

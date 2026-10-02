@@ -3,36 +3,32 @@
 import { ArrowLeft, CircleAlert, Upload } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountPicker } from "@/components/releves/AccountPicker";
+import { EditablePreview, alreadyImported } from "@/components/releves/EditablePreview";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, Select } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ApiError } from "@/lib/api";
-import { currencySuffix, formatDate } from "@/lib/balances";
+import { businessToday, currencySuffix } from "@/lib/balances";
 import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/format";
+import { draftFromLine, draftToLigne, lineMotifs, type LineDraft } from "@/lib/statementLines";
 import { assignField, fieldsByColumn, fileProblem } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
+import { listPointageTypes } from "@/services/referentiel";
 import { analyseStatement, confirmStatement } from "@/services/statements";
 import type { Account } from "@/types/account";
 import type {
-  AnalysedLine,
   Analysis,
   ColumnMapping,
   Confirmation,
   FieldCode,
   ImportColumn,
-  LineStatus,
+  PointageType,
 } from "@/types/statement";
-
-/** Lignes affichées au plus dans l'aperçu (un relevé peut en compter 5 000). */
-const PREVIEW_LIMIT = 500;
-
-type Filter = "Toutes" | LineStatus;
 
 function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Une erreur est survenue.";
@@ -55,15 +51,6 @@ function Alert({ tone, children }: { tone: "danger" | "warning"; children: React
   );
 }
 
-function Tile({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return (
-    <div className="rounded-[12px] border border-simtis-border bg-simtis-card px-4 py-3">
-      <p className="text-xs text-simtis-muted">{label}</p>
-      <p className={cn("mt-1 text-2xl font-semibold tabular-nums", tone)}>{value}</p>
-    </div>
-  );
-}
-
 type ImportWizardProps = {
   companyId: number;
   onDone: (result: Confirmation) => void;
@@ -73,23 +60,30 @@ type ImportWizardProps = {
 /**
  * Import d'un relevé en deux étapes : Fichier, puis Validation. Dès que le compte et le fichier
  * sont choisis, l'analyse se lance seule et mène directement à la Validation. La correspondance
- * des colonnes ne s'affiche que si le fichier n'est pas reconnu (décision métier du 02/10/2026).
- * Rien n'est enregistré avant « Confirmer l'import » ; l'API analyse alors à nouveau le fichier.
+ * des colonnes ne s'affiche que si le fichier n'est pas reconnu.
+ *
+ * La Validation montre le relevé tel qu'il sera enregistré, au format standard, modifiable ligne
+ * par ligne, sans ajout de ligne (décision métier du 02/10/2026). Rien n'est enregistré avant
+ * « Confirmer l'import » : l'API analyse alors à nouveau le fichier et revérifie chaque ligne.
  */
 export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps) {
+  const { company } = useCompany();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [accountsError, setAccountsError] = useState(false);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [pointages, setPointages] = useState<PointageType[]>([]);
 
   const [step, setStep] = useState(0);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [mapping, setMapping] = useState<ColumnMapping>({});
   const [feuille, setFeuille] = useState<string | undefined>(undefined);
-  const [keep, setKeep] = useState<number[]>([]);
-  const [ecarter, setEcarter] = useState(false);
-  const [filter, setFilter] = useState<Filter>("Toutes");
+  // Aperçu modifiable : lignes telles que saisies, telles que lues, cochées, ligne en édition
+  const [drafts, setDrafts] = useState<LineDraft[]>([]);
+  const [originals, setOriginals] = useState<LineDraft[]>([]);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +97,13 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         if (!cancelled) setAccountsError(true);
       },
     );
+    // Sans la liste des Pointages, la ligne garde son pointage (le choix « Automatique » reste)
+    listPointageTypes().then(
+      (list) => {
+        if (!cancelled) setPointages(list);
+      },
+      () => undefined,
+    );
     return () => {
       cancelled = true;
     };
@@ -110,6 +111,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
 
   const account = accounts?.find((item) => item.id === accountId);
   const suffix = currencySuffix(analysis?.devise ?? account?.devise ?? "MAD");
+  const today = businessToday();
 
   /**
    * Analyse le fichier. Colonnes reconnues : directement la Validation. Sinon on reste sur l'étape
@@ -129,12 +131,19 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         mapping: options.mapping,
         feuille: options.feuille,
       });
+      const read = result.lignes.map(draftFromLine);
       setAnalysis(result);
       setMapping(result.mapping);
       setFeuille(result.feuille);
-      setKeep([]);
-      setEcarter(false);
-      setFilter("Toutes");
+      setOriginals(read);
+      setDrafts(read);
+      // Cochées par défaut : les lignes valides ; jamais une ligne déjà importée
+      setChecked(
+        new Set(
+          result.lignes.filter((line) => line.statut === "Valide").map((line) => line.numero),
+        ),
+      );
+      setEditing(null);
       setStep(result.erreurs_mapping.length > 0 ? 0 : 1);
     } catch (caught) {
       setAnalysis(null);
@@ -150,29 +159,65 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
     if (file) void run(file, id);
   }
 
-  async function confirm() {
-    if (!file || !account || !analysis) return;
-    setBusy(true);
-    setError(null);
-    try {
-      onDone(
-        await confirmStatement(
-          { file, accountId: account.id, mapping, feuille },
-          { garderDoublons: keep, ecarterErreurs: ecarter },
-        ),
-      );
-    } catch (caught) {
-      setError(errorMessage(caught));
-      setBusy(false);
-    }
-  }
-
   function chooseFile(chosen: File) {
     const problem = fileProblem(chosen);
     setFileError(problem);
     setFile(problem ? null : chosen);
     setAnalysis(null);
     if (!problem && accountId !== null) void run(chosen, accountId);
+  }
+
+  function changeDraft(next: LineDraft) {
+    setDrafts((current) => current.map((draft) => (draft.numero === next.numero ? next : draft)));
+    // Une ligne en erreur corrigée se coche d'elle-même
+    const line = analysis?.lignes.find((item) => item.numero === next.numero);
+    const original = originals.find((draft) => draft.numero === next.numero) ?? next;
+    if (line?.statut === "Erreur" && lineMotifs(line, next, original, today).length === 0) {
+      setChecked((current) => new Set(current).add(next.numero));
+    }
+  }
+
+  function toggle(numero: number, value: boolean) {
+    setChecked((current) => {
+      const next = new Set(current);
+      if (value) next.add(numero);
+      else next.delete(numero);
+      return next;
+    });
+  }
+
+  function reset(numero: number) {
+    const original = originals.find((draft) => draft.numero === numero);
+    if (original) changeDraft(original);
+  }
+
+  const lines = new Map(analysis?.lignes.map((line) => [line.numero, line]) ?? []);
+  const toImport = drafts.filter(
+    (draft) => checked.has(draft.numero) && !alreadyImported(lines.get(draft.numero)),
+  );
+  const originalOf = new Map(originals.map((draft) => [draft.numero, draft]));
+  const invalid = toImport.filter(
+    (draft) =>
+      lineMotifs(lines.get(draft.numero), draft, originalOf.get(draft.numero) ?? draft, today)
+        .length > 0,
+  );
+  const blocked = !!analysis?.deja_importe || toImport.length === 0 || invalid.length > 0;
+
+  async function confirm() {
+    if (!file || !account || !analysis || blocked) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(
+        await confirmStatement(
+          { file, accountId: account.id, mapping, feuille },
+          { lignes: toImport.map(draftToLigne) },
+        ),
+      );
+    } catch (caught) {
+      setError(errorMessage(caught));
+      setBusy(false);
+    }
   }
 
   // --- Étape 1 : compte et fichier (analyse automatique) -----------------------------------------
@@ -335,181 +380,41 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
     );
   }
 
-  // --- Étape 3 : validation -----------------------------------------------------------------------
+  // --- Étape 2 : validation (aperçu au format standard, modifiable) ------------------------------
 
   function stepValidation(current: Analysis) {
-    const { resume } = current;
-    const visible = current.lignes.filter((line) => filter === "Toutes" || line.statut === filter);
-    const columns: Column<AnalysedLine>[] = [
-      { key: "numero", header: "Ligne", render: (line) => line.numero },
-      { key: "statut", header: "Statut", render: (line) => <StatusBadge status={line.statut} /> },
-      {
-        key: "date_operation",
-        header: "Date",
-        render: (line) => (
-          <span className="whitespace-nowrap">{formatDate(line.date_operation)}</span>
-        ),
-      },
-      {
-        key: "libelle",
-        header: "Libellé",
-        render: (line) => (
-          <span>
-            <span className="block">{line.libelle ?? "-"}</span>
-            {line.reference && (
-              <span className="block text-xs text-simtis-muted">Réf. {line.reference}</span>
-            )}
-          </span>
-        ),
-      },
-      {
-        key: "debit",
-        header: "Débit",
-        align: "right",
-        render: (line) => formatAmount(line.debit, suffix, { dashForZero: true }),
-      },
-      {
-        key: "credit",
-        header: "Crédit",
-        align: "right",
-        render: (line) => formatAmount(line.credit, suffix, { dashForZero: true }),
-      },
-      {
-        key: "solde",
-        header: "Solde",
-        align: "right",
-        render: (line) => formatAmount(line.solde, suffix),
-      },
-      {
-        key: "motifs",
-        header: "Motif",
-        render: (line) =>
-          line.doublon_de !== null ? (
-            <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4 accent-simtis-primary"
-                checked={keep.includes(line.numero)}
-                onChange={(event) =>
-                  setKeep((value) =>
-                    event.target.checked
-                      ? [...value, line.numero]
-                      : value.filter((numero) => numero !== line.numero),
-                  )
-                }
-                aria-label={`Garder la ligne ${line.numero}`}
-              />
-              <span>{line.motifs.join(" ")} Cochez pour la garder.</span>
-            </label>
-          ) : (
-            <span className={cn(line.statut === "Erreur" && "text-simtis-danger-fg")}>
-              {line.motifs.join(" ") || "-"}
-            </span>
-          ),
-      },
-    ];
-
-    const toImport = resume.nb_valides + keep.length;
-    const blocked = current.deja_importe || toImport === 0 || (resume.nb_erreurs > 0 && !ecarter);
-
     return (
       <>
         {current.deja_importe && (
           <Alert tone="danger">Ce fichier a déjà été importé pour cette société.</Alert>
         )}
-        {resume.soldes_coherents === false && (
-          <Alert tone="warning">
-            Les mouvements du relevé ne retrouvent pas son solde de clôture : vérifiez le fichier.
-          </Alert>
-        )}
         <p className="mb-4 text-sm text-simtis-muted">
-          {current.fichier_nom} · compte {current.bank_code} {current.devise}
+          {current.fichier_nom} · compte {current.bank_code} {current.devise} · le relevé tel
+          qu&apos;il sera enregistré : corrigez une ligne avec le crayon, décochez celles à ne pas
+          importer.
         </p>
         {sheetPicker(current)}
-        <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Tile label="Lignes valides" value={resume.nb_valides} tone="text-simtis-success" />
-          <Tile label="Lignes en erreur" value={resume.nb_erreurs} tone="text-simtis-danger" />
-          <Tile label="Doublons" value={resume.nb_doublons} tone="text-simtis-warning" />
-          <Tile label="Lignes ignorées" value={resume.nb_ignorees} tone="text-simtis-muted" />
-        </div>
-        <dl className="mb-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <dt className="text-simtis-muted">Période</dt>
-            <dd className="font-medium">
-              {resume.periode_debut
-                ? `${formatDate(resume.periode_debut)} au ${formatDate(resume.periode_fin)}`
-                : "-"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-simtis-muted">Total débit / crédit (lignes valides)</dt>
-            <dd className="font-medium tabular-nums">
-              {formatAmount(resume.total_debit, suffix)} /{" "}
-              {formatAmount(resume.total_credit, suffix)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-simtis-muted">Solde d&apos;ouverture</dt>
-            <dd className="font-medium tabular-nums">
-              {formatAmount(resume.solde_ouverture, suffix)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-simtis-muted">Solde de clôture</dt>
-            <dd className="font-medium tabular-nums">
-              {formatAmount(resume.solde_cloture, suffix)}
-            </dd>
-          </div>
-        </dl>
-
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-          <div className="w-full max-w-[220px]">
-            <Field label="Afficher" htmlFor="releve-filtre">
-              <Select
-                id="releve-filtre"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value as Filter)}
-                options={[
-                  { value: "Toutes", label: `Toutes les lignes (${resume.nb_lignes})` },
-                  { value: "Valide", label: `Valides (${resume.nb_valides})` },
-                  { value: "Erreur", label: `En erreur (${resume.nb_erreurs})` },
-                  { value: "Doublon", label: `Doublons (${resume.nb_doublons})` },
-                ]}
-              />
-            </Field>
-          </div>
-          {resume.nb_erreurs > 0 && (
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-simtis-primary"
-                checked={ecarter}
-                onChange={(event) => setEcarter(event.target.checked)}
-              />
-              Écarter les {resume.nb_erreurs} ligne{resume.nb_erreurs > 1 ? "s" : ""} en erreur et
-              importer les autres
-            </label>
-          )}
-        </div>
-        <DataTable
-          columns={columns}
-          rows={visible.slice(0, PREVIEW_LIMIT)}
-          getRowKey={(line) => String(line.numero)}
-          emptyMessage="Aucune ligne dans cette sélection."
+        <EditablePreview
+          analysis={current}
+          societe={company?.nom ?? ""}
+          logo={account?.bank_logo}
+          suffix={suffix}
+          pointages={pointages}
+          drafts={drafts}
+          originals={originals}
+          checked={checked}
+          editing={editing}
+          today={today}
+          onChange={changeDraft}
+          onToggle={toggle}
+          onEdit={setEditing}
+          onReset={reset}
         />
-        {visible.length > PREVIEW_LIMIT && (
-          <p className="mt-2 text-xs text-simtis-muted">
-            {PREVIEW_LIMIT} premières lignes affichées sur {visible.length}.
-          </p>
-        )}
-        <p className="mt-4 text-sm text-simtis-muted">
-          {blocked && resume.nb_erreurs > 0 && !ecarter
-            ? "Corrigez le fichier, ou cochez « Écarter les lignes en erreur » pour importer les autres."
-            : `${toImport} opération${toImport > 1 ? "s" : ""} seront enregistrée${toImport > 1 ? "s" : ""} sur le compte ${current.bank_code} ${current.devise}.`}
+        <p className="mt-4 text-sm text-simtis-muted" aria-live="polite">
+          {invalid.length > 0
+            ? `${invalid.length} ligne${invalid.length > 1 ? "s" : ""} cochée${invalid.length > 1 ? "s" : ""} en erreur : corrigez-la${invalid.length > 1 ? "s" : ""} ou décochez-la${invalid.length > 1 ? "s" : ""}.`
+            : `${toImport.length} opération${toImport.length > 1 ? "s" : ""} seront enregistrée${toImport.length > 1 ? "s" : ""} sur le compte ${current.bank_code} ${current.devise}.`}
         </p>
-        <div className="sr-only" aria-live="polite">
-          {blocked ? "Import impossible en l'état." : "Import prêt à être confirmé."}
-        </div>
         <FooterButtons>
           <Button
             variant="secondary"

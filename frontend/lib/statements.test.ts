@@ -10,7 +10,42 @@ import {
   importForm,
   moveIndex,
   periodQuery,
+  showFirst,
+  showLast,
 } from "./statements";
+
+describe("lignes affichées d'une longue liste", () => {
+  const rows = Array.from({ length: 120 }, (_, index) => index + 1);
+
+  it("relevé : garde les dernières lignes, dans leur ordre, et masque les plus anciennes", () => {
+    const view = showLast(rows, 50, 50);
+    expect(view.rows).toHaveLength(50);
+    expect(view.rows[0]).toBe(71);
+    expect(view.rows[49]).toBe(120);
+    expect(view.hidden).toBe(70);
+    expect(view.next).toBe(50);
+  });
+
+  it("journal : garde les premières lignes (les plus récentes) et masque la suite", () => {
+    const view = showFirst(rows, 10, 10);
+    expect(view.rows).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(view.hidden).toBe(110);
+    expect(view.next).toBe(10);
+  });
+
+  it("le prochain lot ne dépasse pas ce qui reste masqué", () => {
+    expect(showLast(rows, 100, 50).next).toBe(20);
+    expect(showFirst(rows, 110, 10).next).toBe(10);
+    expect(showFirst(rows, 115, 10).next).toBe(5);
+  });
+
+  it("rien n'est masqué quand la liste est courte ou entièrement dépliée", () => {
+    expect(showLast([1, 2, 3], 50, 50)).toEqual({ rows: [1, 2, 3], hidden: 0, next: 0 });
+    expect(showFirst([1, 2, 3], 10, 10)).toEqual({ rows: [1, 2, 3], hidden: 0, next: 0 });
+    expect(showLast(rows, 150, 50).hidden).toBe(0);
+    expect(showLast([], 50, 50)).toEqual({ rows: [], hidden: 0, next: 0 });
+  });
+});
 
 describe("fileProblem", () => {
   it("accepte un .xlsx de taille raisonnable", () => {
@@ -82,6 +117,31 @@ describe("importForm", () => {
 
     expect(form.has("garder_doublons")).toBe(false);
     expect(form.get("ecarter_erreurs")).toBe("false");
+  });
+
+  it("envoie les lignes de l'aperçu à la place des anciennes options", async () => {
+    const ligne = {
+      numero: 2,
+      date_operation: "2026-09-24",
+      date_valeur: null,
+      libelle: "VIR",
+      reference: null,
+      debit: null,
+      credit: "10.00",
+      solde: null,
+      pointage_type_id: 1,
+      lettrage_escompte: null,
+      commentaire: null,
+    };
+
+    const form = importForm({ file, accountId: 7 }, { lignes: [ligne] });
+
+    // Envoyées comme un fichier JSON : un champ de formulaire est limité à 1 Mo côté serveur
+    const part = form.get("lignes") as File;
+    expect(part.type).toBe("application/json");
+    expect(JSON.parse(await part.text())).toEqual([ligne]);
+    expect(form.has("garder_doublons")).toBe(false);
+    expect(form.has("ecarter_erreurs")).toBe(false);
   });
 });
 

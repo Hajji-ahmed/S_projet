@@ -1,6 +1,6 @@
 # Modèle de données
 
-Schéma PostgreSQL de SIMTIS Finance (phases P4 et P5, plus les saisies manuelles de la migration 0004), 29 tables. Il est décrit par les modèles SQLAlchemy de `backend/app/models/` et versionné par Alembic (`backend/alembic/versions/`). En cas de doute, le code fait foi.
+Schéma PostgreSQL de SIMTIS Finance (phases P4 et P5, plus les saisies manuelles de la migration 0004), 29 tables. La migration 0005 ne change pas le schéma : elle remplit une fois le Pointage vide des opérations importées avant la règle automatique. Il est décrit par les modèles SQLAlchemy de `backend/app/models/` et versionné par Alembic (`backend/alembic/versions/`). En cas de doute, le code fait foi.
 
 ## Conventions
 

@@ -7,6 +7,8 @@ import type {
   ConfirmOptions,
   ImportRequest,
   Statement,
+  Transaction,
+  TransactionUpdate,
 } from "@/types/statement";
 
 /** Analyse un relevé et renvoie son aperçu. Rien n'est enregistré. */
@@ -36,6 +38,15 @@ export function listStatements(companyId: number) {
 /** Relevé continu d'un compte : tous ses imports à la suite, sur une période facultative. */
 export function getAccountStatement(accountId: number, period: Period = {}) {
   return apiFetch<AccountStatement>(`/statements/accounts/${accountId}${periodQuery(period)}`);
+}
+
+/** Modifie Pointage, Lettrage / Escompte et Commentaire d'une opération importée. */
+export function updateTransaction(transactionId: number, data: TransactionUpdate) {
+  return apiFetch<Transaction>(`/statements/transactions/${transactionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
 }
 
 /** Relevé continu du compte au format standard (11 colonnes), en classeur Excel. */

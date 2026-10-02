@@ -53,7 +53,12 @@ export function importForm(request: ImportRequest, options?: ConfirmOptions): Fo
     form.append("mapping", JSON.stringify(mapped));
   }
   if (request.feuille) form.append("feuille", request.feuille);
-  if (options) {
+  if (options && "lignes" in options) {
+    // Aperçu modifiable : les lignes remplacent garder_doublons / ecarter_erreurs. Envoyées comme
+    // un fichier JSON : le serveur limite un champ de formulaire à 1 Mo (environ 3 700 lignes).
+    const json = new Blob([JSON.stringify(options.lignes)], { type: "application/json" });
+    form.append("lignes", json, "lignes.json");
+  } else if (options) {
     if (options.garderDoublons.length > 0) {
       form.append(
         "garder_doublons",
@@ -98,6 +103,26 @@ export function accountsWithStatements<
   return [...seen.values()].sort(
     (a, b) => a.bank_code.localeCompare(b.bank_code) || a.devise.localeCompare(b.devise),
   );
+}
+
+/** Opérations affichées d'un relevé continu, puis ajoutées à chaque « Afficher plus ». */
+export const OPERATIONS_AFFICHEES = 50;
+/** Imports affichés dans le journal, puis ajoutés à chaque « Afficher plus ». */
+export const IMPORTS_AFFICHES = 10;
+
+/** Partie visible d'une longue liste : `hidden` lignes masquées, `next` affichées au clic suivant. */
+export type ShownRows<T> = { rows: T[]; hidden: number; next: number };
+
+/** Les `shown` dernières lignes (relevé trié par date croissante : les plus récentes). */
+export function showLast<T>(rows: readonly T[], shown: number, step: number): ShownRows<T> {
+  const hidden = Math.max(0, rows.length - shown);
+  return { rows: rows.slice(hidden), hidden, next: Math.min(step, hidden) };
+}
+
+/** Les `shown` premières lignes (journal trié du plus récent au plus ancien). */
+export function showFirst<T>(rows: readonly T[], shown: number, step: number): ShownRows<T> {
+  const hidden = Math.max(0, rows.length - shown);
+  return { rows: rows.slice(0, shown), hidden, next: Math.min(step, hidden) };
 }
 
 /**

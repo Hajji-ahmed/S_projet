@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from app.models import BankAccount, BankTransaction
 from app.services.import_service import (
@@ -43,6 +43,16 @@ class MappingIn(RootModel[dict[FieldCode, ColumnIndex | None]]):
     Un champ absent ou `null` n'est associé à aucune colonne."""
 
 
+class PointageTypeOut(BaseModel):
+    """Type d'opération (Pointage) proposé dans les listes de choix."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    code: str
+    libelle: str
+
+
 class ChampOut(BaseModel):
     code: str
     libelle: str
@@ -72,8 +82,10 @@ class LigneAnalyseOut(BaseModel):
     credit: Decimal | None
     montant: Decimal | None
     solde: Decimal | None
-    pointage: str | None
+    pointage: str | None = Field(description="Valeur lue dans le fichier, telle quelle")
     pointage_type_id: int | None
+    pointage_libelle: str | None
+    pointage_auto: bool = Field(description="Déduit du libellé et du sens, pas lu dans le fichier")
     lettrage_escompte: str | None
     commentaire: str | None
     hash_ligne: str | None
@@ -96,6 +108,8 @@ class ResumeOut(BaseModel):
     periode_fin: date | None
     solde_ouverture: Decimal | None
     solde_cloture: Decimal | None
+    solde_ouverture_fichier: bool = Field(description="Lu sur une ligne SOLDE INITIAL du fichier")
+    solde_cloture_fichier: bool = Field(description="Lu sur une ligne SOLDE FINAL du fichier")
     soldes_coherents: bool | None
 
 
@@ -145,6 +159,39 @@ class AnalyseOut(BaseModel):
             lignes=[LigneAnalyseOut.model_validate(line) for line in analysis.lignes],
             resume=ResumeOut.model_validate(analysis.resume),
         )
+
+
+class LigneSoumiseIn(BaseModel):
+    """Une ligne du fichier, telle que l'utilisateur l'a laissée dans l'aperçu (corrigée ou non).
+
+    Les valeurs sont revérifiées par le serveur avec les mêmes règles que l'analyse : elles arrivent
+    en texte, comme des cellules de fichier. Pas d'ajout de ligne : le numéro est obligatoire.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    numero: Annotated[int, Field(ge=1)]
+    date_operation: str | None = None
+    date_valeur: str | None = None
+    libelle: str | None = Field(default=None, max_length=500)
+    reference: str | None = Field(default=None, max_length=60)
+    debit: str | None = None
+    credit: str | None = None
+    solde: str | None = None
+    pointage_type_id: int | None = None
+    lettrage_escompte: str | None = Field(default=None, max_length=200)
+    commentaire: str | None = Field(default=None, max_length=1000)
+
+
+class LignesSoumisesIn(RootModel[list[LigneSoumiseIn]]):
+    """Lignes à importer ; un même numéro ne peut pas apparaître deux fois."""
+
+    @model_validator(mode="after")
+    def _numeros_uniques(self) -> "LignesSoumisesIn":
+        numeros = [line.numero for line in self.root]
+        if len(numeros) != len(set(numeros)):
+            raise ValueError("Une ligne du fichier apparaît deux fois.")
+        return self
 
 
 class LignesGardeesIn(RootModel[list[Annotated[int, Field(ge=1)]]]):
@@ -286,12 +333,16 @@ class TransactionOut(BaseModel):
     reference: str | None
     montant: Decimal
     statut: str
+    origine: str = Field(description="« Fichier », ou « Corrigée » dans l'aperçu avant l'import")
+    # Pour préremplir la fenêtre de modification (le libellé seul ne suffit pas)
+    pointage_type_id: int | None
 
     @classmethod
     def from_row(
         cls, account: BankAccount, transaction: BankTransaction, pointage: str | None
     ) -> "TransactionOut":
         return cls(
+            pointage_type_id=transaction.pointage_type_id,
             id=transaction.id,
             societe=account.company.nom,
             pointage=pointage,
@@ -307,7 +358,18 @@ class TransactionOut(BaseModel):
             reference=transaction.reference,
             montant=transaction.montant,
             statut=transaction.statut,
+            origine=transaction.origine,
         )
+
+
+class TransactionUpdateIn(BaseModel):
+    """Champs métier d'une opération importée : les seuls modifiables après l'import."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pointage_type_id: int | None = None
+    lettrage_escompte: str | None = Field(default=None, max_length=120)
+    commentaire: str | None = Field(default=None, max_length=1000)
 
 
 class AccountStatementOut(BaseModel):

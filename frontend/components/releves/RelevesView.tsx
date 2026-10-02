@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleCheck, FileSpreadsheet, History, Plus, Upload, X } from "lucide-react";
+import { ChevronDown, CircleCheck, FileSpreadsheet, History, Plus, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -20,7 +20,12 @@ import { useToast } from "@/components/ui/Toast";
 import { currencySuffix, formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
-import { accountsWithStatements, formatDateTime } from "@/lib/statements";
+import {
+  IMPORTS_AFFICHES,
+  accountsWithStatements,
+  formatDateTime,
+  showFirst,
+} from "@/lib/statements";
 import { listBanks } from "@/services/banks";
 import { listStatements } from "@/services/statements";
 import type { Confirmation, Statement } from "@/types/statement";
@@ -53,6 +58,8 @@ function Releves({ companyId }: { companyId: number }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [chosenAccount, setChosenAccount] = useState<number | null>(null);
   const [logos, setLogos] = useState<Map<string, string | null>>(new Map());
+  // Nombre d'imports affichés dans le journal : les plus anciens restent masqués jusqu'au clic
+  const [shownImports, setShownImports] = useState(IMPORTS_AFFICHES);
 
   // Logos des banques : sans cette liste, les codes s'affichent seuls (pas de message d'erreur)
   useEffect(() => {
@@ -74,6 +81,7 @@ function Releves({ companyId }: { companyId: number }) {
       (list) => {
         if (cancelled) return;
         setStatements(list);
+        setShownImports(IMPORTS_AFFICHES);
         setLoadState("ready");
       },
       () => {
@@ -106,6 +114,7 @@ function Releves({ companyId }: { companyId: number }) {
   const selectedId =
     accounts.find((account) => account.bank_account_id === chosenAccount)?.bank_account_id ??
     statements[0]?.bank_account_id;
+  const journal = showFirst(statements, shownImports, IMPORTS_AFFICHES);
 
   const columns: Column<Statement>[] = [
     {
@@ -200,6 +209,7 @@ function Releves({ companyId }: { companyId: number }) {
           onSelect={setChosenAccount}
           logos={logos}
           reloadKey={reloadKey}
+          canEdit={canImport}
         />
       )}
 
@@ -216,7 +226,28 @@ function Releves({ companyId }: { companyId: number }) {
               action={importButton || undefined}
             />
           ) : (
-            <DataTable columns={columns} rows={statements} getRowKey={(row) => String(row.id)} />
+            <>
+              <DataTable
+                columns={columns}
+                rows={journal.rows}
+                getRowKey={(row) => String(row.id)}
+              />
+              {journal.hidden > 0 && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <p className="text-simtis-muted">
+                    {journal.rows.length} derniers imports sur {statements.length}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    icon={ChevronDown}
+                    onClick={() => setShownImports((count) => count + IMPORTS_AFFICHES)}
+                    className="h-auto min-h-10 px-0 whitespace-normal"
+                  >
+                    Afficher {journal.next} de plus
+                  </Button>
+                </div>
+              )}
+            </>
           ))}
       </Card>
     </>

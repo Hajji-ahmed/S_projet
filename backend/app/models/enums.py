@@ -42,6 +42,9 @@ SENS = ("Entrée", "Sortie")
 # Origine d'un solde journalier
 SOURCES_SOLDE = ("Relevé", "Saisie")
 
+# Origine d'une opération bancaire : telle que le fichier, ou corrigée avant l'enregistrement
+ORIGINES_OPERATION = ("Fichier", "Corrigée")
+
 # Tableau Devises saisi à la main (page Position bancaire) : ses lignes, et ses colonnes hors banques
 LIGNES_DEVISES = ("EUR", "USD", "Exp DH convertible")
 COLONNES_DEVISES = ("Banque", "TOTAL", "DEPASSEMENT")

@@ -1,9 +1,10 @@
 "use client";
 
-import { Download, ListOrdered, X } from "lucide-react";
+import { ChevronUp, Download, ListOrdered, PenLine, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { TransactionEditModal } from "@/components/releves/TransactionEditModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -16,9 +17,16 @@ import { ApiError } from "@/lib/api";
 import { currencySuffix, formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { exportFilename, saveFile, type Period } from "@/lib/statements";
+import {
+  OPERATIONS_AFFICHEES,
+  exportFilename,
+  saveFile,
+  showLast,
+  type Period,
+} from "@/lib/statements";
+import { listPointageTypes } from "@/services/referentiel";
 import { exportAccountStatement, getAccountStatement } from "@/services/statements";
-import type { AccountStatement, Transaction } from "@/types/statement";
+import type { AccountStatement, PointageType, Transaction } from "@/types/statement";
 import type { Status } from "@/types/status";
 
 type LoadState = "loading" | "error" | "ready";
@@ -38,6 +46,8 @@ type AccountStatementCardProps = {
   logos: Map<string, string | null>;
   /** Incrémenté après un import : le relevé est rechargé avec ses nouvelles lignes. */
   reloadKey: number;
+  /** Modification des champs métier (permission statements.import : Trésorerie). */
+  canEdit: boolean;
 };
 
 /**
@@ -50,6 +60,7 @@ export function AccountStatementCard({
   onSelect,
   logos,
   reloadKey,
+  canEdit,
 }: AccountStatementCardProps) {
   const { toast } = useToast();
   const [period, setPeriod] = useState<Period>({});
@@ -57,6 +68,37 @@ export function AccountStatementCard({
   const [state, setState] = useState<LoadState>("loading");
   const [retryKey, setRetryKey] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const [pointages, setPointages] = useState<PointageType[]>([]);
+  const [editing, setEditing] = useState<Transaction | null>(null);
+  // Nombre d'opérations affichées : les plus anciennes restent masquées jusqu'au clic
+  const [shown, setShown] = useState(OPERATIONS_AFFICHEES);
+
+  // Liste de choix de la fenêtre de modification (seulement pour qui peut modifier)
+  useEffect(() => {
+    if (!canEdit) return;
+    let cancelled = false;
+    listPointageTypes().then(
+      (list) => {
+        if (!cancelled) setPointages(list);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [canEdit]);
+
+  function replaceOperation(updated: Transaction) {
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            operations: current.operations.map((row) => (row.id === updated.id ? updated : row)),
+          }
+        : current,
+    );
+    setEditing(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +106,8 @@ export function AccountStatementCard({
       (result) => {
         if (cancelled) return;
         setData(result);
+        // Autre compte, autre période ou nouvel import : retour aux dernières opérations
+        setShown(OPERATIONS_AFFICHEES);
         setState("ready");
       },
       () => {
@@ -95,6 +139,8 @@ export function AccountStatementCard({
   const devise = data?.devise ?? accounts.find((a) => a.bank_account_id === selectedId)?.devise;
   const suffix = currencySuffix(devise ?? "MAD");
   const logo = data ? logos.get(data.bank_code) : undefined;
+  // Seul le tableau est raccourci : le résumé et l'export portent sur tout le relevé
+  const visible = showLast(data?.operations ?? [], shown, OPERATIONS_AFFICHEES);
 
   // Les 11 colonnes du relevé standard, dans leur ordre, puis le statut de rapprochement
   const columns: Column<Transaction>[] = [
@@ -124,6 +170,11 @@ export function AccountStatementCard({
           <span className="block">{row.libelle}</span>
           {row.reference && (
             <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
+          )}
+          {row.origine === "Corrigée" && (
+            <span className="block text-xs font-medium text-simtis-primary">
+              corrigée avant l&apos;import
+            </span>
           )}
         </span>
       ),
@@ -158,10 +209,33 @@ export function AccountStatementCard({
       render: (row) => <StatusBadge status={row.statut as Status} />,
     },
   ];
+  if (canEdit) {
+    columns.push({
+      key: "actions",
+      header: "Actions",
+      align: "right",
+      render: (row) => (
+        <button
+          type="button"
+          onClick={() => setEditing(row)}
+          aria-label={`Modifier l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
+          title="Modifier Pointage, Lettrage / Escompte, Commentaire"
+          className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+        >
+          <PenLine className="h-4 w-4" aria-hidden />
+        </button>
+      ),
+    });
+  }
 
   return (
     <Card title="Relevés par compte" icon={ListOrdered}>
-      <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Compte affiché">
+      {/* Une seule ligne : faute de place (mobile, comptes nombreux), la rangée défile seule */}
+      <div
+        className="mb-4 flex gap-2 overflow-x-auto pb-1"
+        role="group"
+        aria-label="Compte affiché"
+      >
         {accounts.map((account) => {
           const active = account.bank_account_id === selectedId;
           return (
@@ -175,7 +249,7 @@ export function AccountStatementCard({
                 onSelect(account.bank_account_id);
               }}
               className={cn(
-                "rounded-[10px] border px-3 py-2 text-sm font-medium transition-colors duration-200",
+                "flex shrink-0 flex-col items-start gap-0.5 rounded-[10px] border px-3 py-2 text-left text-sm font-medium transition-colors duration-200",
                 active
                   ? "border-simtis-primary bg-simtis-light text-simtis-primary-dark"
                   : "border-simtis-border bg-simtis-card text-simtis-text hover:bg-simtis-light/50",
@@ -183,10 +257,10 @@ export function AccountStatementCard({
             >
               <BankLabel code={account.bank_code} logo={logos.get(account.bank_code)}>
                 {account.bank_code} · {account.devise}
-                <span className="ml-2 text-xs font-normal text-simtis-muted tabular-nums">
-                  {account.compte_numero}
-                </span>
               </BankLabel>
+              <span className="text-xs font-normal whitespace-nowrap text-simtis-muted tabular-nums">
+                {account.compte_numero}
+              </span>
             </button>
           );
         })}
@@ -276,13 +350,38 @@ export function AccountStatementCard({
               </dd>
             </div>
           </dl>
+          {visible.hidden > 0 && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <p className="text-simtis-muted">
+                {visible.rows.length} dernières opérations sur {data.operations.length}
+              </p>
+              <Button
+                variant="ghost"
+                icon={ChevronUp}
+                onClick={() => setShown((count) => count + OPERATIONS_AFFICHEES)}
+                className="h-auto min-h-10 px-0 whitespace-normal"
+              >
+                Afficher {visible.next}{" "}
+                {visible.next > 1 ? "opérations plus anciennes" : "opération plus ancienne"}
+              </Button>
+            </div>
+          )}
           <DataTable
             columns={columns}
-            rows={data.operations}
+            rows={visible.rows}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune opération sur cette période."
           />
         </>
+      )}
+      {editing && (
+        <TransactionEditModal
+          transaction={editing}
+          pointages={pointages}
+          suffix={suffix}
+          onClose={() => setEditing(null)}
+          onSaved={replaceOperation}
+        />
       )}
     </Card>
   );

@@ -6,8 +6,10 @@ from decimal import Decimal
 import pytest
 
 from app.services.normalization_service import (
+    balance_line_kind,
     clean_libelle,
     extract_reference,
+    guess_pointage,
     line_hash,
     normalize_header,
     parse_amount,
@@ -101,6 +103,46 @@ def test_label_is_cleaned_and_uppercased():
 )
 def test_reference_is_extracted_from_the_label(libelle, reference):
     assert extract_reference(libelle) == reference
+
+
+@pytest.mark.parametrize(
+    ("libelle", "debit", "credit", "expected"),
+    [
+        ("COMMISSION BANCAIRE", "250", None, "FRAIS_BANCAIRES"),
+        ("AGIOS / FRAIS DE FINANCEMENT", "690", None, "FRAIS_BANCAIRES"),
+        ("frais tenue de compte", "150", None, "FRAIS_BANCAIRES"),
+        ("COMMISSIONS SUR REMISE", None, "5", "FRAIS_BANCAIRES"),  # le mot-clé passe avant le sens
+        ("VIR CLIENT ATLAS TEXTILE", None, "45000", "ENCAISSEMENT"),
+        ("REMISE CHÈQUES CLIENTS", None, "20000", "ENCAISSEMENT"),
+        ("VIR FOURNISSEUR ABC", "18000", None, "DECAISSEMENT"),
+        ("PRÉLÈVEMENT ASSURANCE", "3200", None, "DECAISSEMENT"),
+        ("CHQ N°458721", "12500", None, "DECAISSEMENT"),
+        ("FRAISIER SA", None, "10", "ENCAISSEMENT"),  # mot entier seulement
+        ("SANS MONTANT", None, None, None),
+    ],
+)
+def test_pointage_is_guessed_from_label_then_direction(libelle, debit, credit, expected):
+    amount = lambda value: None if value is None else Decimal(value)  # noqa: E731
+
+    assert guess_pointage(libelle, amount(debit), amount(credit)) == expected
+
+
+@pytest.mark.parametrize(
+    ("libelle", "kind"),
+    [
+        ("SOLDE INITIAL", "ouverture"),
+        ("Solde précédent au 31/08", "ouverture"),
+        ("ANCIEN  SOLDE", "ouverture"),
+        ("REPORT", "ouverture"),
+        ("SOLDE FINAL", "cloture"),
+        ("Nouveau solde", "cloture"),
+        ("VIR SOLDE INITIAL CLIENT", None),  # doit commencer par le mot-clé
+        ("FRAIS", None),
+        (None, None),
+    ],
+)
+def test_balance_lines_are_recognised(libelle, kind):
+    assert balance_line_kind(libelle) == kind
 
 
 def test_line_hash_is_stable_and_separates_identical_lines():

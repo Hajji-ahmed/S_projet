@@ -64,6 +64,58 @@ def test_upgrade_works_again_after_downgrade(empty_database):
     assert len(user_tables(engine)) == 29
 
 
+def test_migration_0005_fills_only_empty_pointages(empty_database):
+    """Données importées avant la règle automatique : seul un pointage vide est rempli."""
+    config, engine = empty_database
+    command.upgrade(config, "0004")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'Société');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'Banque');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+                INSERT INTO bank_statements (id, bank_account_id) OVERRIDING SYSTEM VALUE VALUES (1, 1);
+                INSERT INTO pointage_types (id, code, libelle) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 'ENCAISSEMENT', 'Encaissement'),
+                    (2, 'DECAISSEMENT', 'Décaissement'),
+                    (3, 'FRAIS_BANCAIRES', 'Frais bancaires');
+                INSERT INTO bank_transactions
+                    (statement_id, bank_account_id, date_operation, libelle, debit, credit, montant,
+                     hash_ligne, pointage_type_id)
+                VALUES
+                    (1, 1, '2026-09-02', 'VIR CLIENT ATLAS', 0, 100, 100, 'h1', NULL),
+                    (1, 1, '2026-09-03', 'VIR FOURNISSEUR', 50, 0, -50, 'h2', NULL),
+                    (1, 1, '2026-09-04', 'AGIOS / FRAIS BANCAIRES', 5, 0, -5, 'h3', NULL),
+                    (1, 1, '2026-09-05', 'FRAIS TENUE DE COMPTE', 3, 0, -3, 'h4', NULL),
+                    (1, 1, '2026-09-06', 'FRAISIER SA', 0, 7, 7, 'h5', NULL),
+                    (1, 1, '2026-09-07', 'COMMISSION', 2, 0, -2, 'h6', 1);
+                """
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT hash_ligne, pointage_type_id FROM bank_transactions ORDER BY hash_ligne")
+        ).all()
+        audit = connection.execute(
+            text("SELECT nouvelle_valeur FROM audit_logs WHERE action = 'remplissage_pointage'")
+        ).scalar_one()
+    assert dict(rows) == {
+        "h1": 1,  # crédit → Encaissement
+        "h2": 2,  # débit → Décaissement
+        "h3": 3,  # AGIOS / FRAIS → Frais bancaires
+        "h4": 3,
+        "h5": 1,  # « FRAISIER » n'est pas le mot FRAIS
+        "h6": 1,  # déjà renseigné : jamais modifié
+    }
+    assert audit == {"migration": "0005", "operations": 5}
+
+
 def test_migration_matches_models(empty_database):
     """Échoue si un modèle a changé sans migration (colonne, contrainte ou index oublié)."""
     config, _ = empty_database

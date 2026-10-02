@@ -95,6 +95,7 @@ class BankTransaction(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("bank_account_id", "hash_ligne", name="uq_bank_transactions_compte_hash"),
         check_in("statut", "statut", enums.STATUTS_RAPPROCHEMENT),
+        check_in("origine", "origine", enums.ORIGINES_OPERATION),
         CheckConstraint("debit >= 0", name="debit_positif"),
         CheckConstraint("credit >= 0", name="credit_positif"),
         CheckConstraint("montant = credit - debit", name="montant_coherent"),
@@ -121,6 +122,8 @@ class BankTransaction(TimestampMixin, Base):
     statut: Mapped[str] = mapped_column(
         String(20), default="Non rapprochée", server_default="Non rapprochée", index=True
     )
+    # « Corrigée » : au moins un champ modifié dans l'aperçu avant l'enregistrement (tracé dans l'audit)
+    origine: Mapped[str] = mapped_column(String(10), default="Fichier", server_default="Fichier")
 
     statement: Mapped[BankStatement] = relationship()
     pointage_type: Mapped[PointageType | None] = relationship()

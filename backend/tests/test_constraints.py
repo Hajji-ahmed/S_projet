@@ -782,3 +782,23 @@ def test_day_level_row_needs_at_least_one_amount(db, world):
         "ck_saisies_previsions_jour_un_montant_renseigne",
         SaisiePrevisionJour(company_id=world.company.id, jour=DAY),
     )
+
+
+# --- Origine d'une opération (migration 0006) ------------------------------------------------------
+
+
+def test_transaction_origin_defaults_to_file(db, world):
+    transaction = save(db, build_transaction(world.statement))
+    db.refresh(transaction)
+
+    assert transaction.origine == "Fichier"
+
+
+def test_transaction_origin_must_be_known(db, world):
+    assert_rejected(
+        db, "ck_bank_transactions_origine", build_transaction(world.statement, origine="Ajoutée")
+    )
+
+
+def test_corrected_transaction_is_accepted(db, world):
+    save(db, build_transaction(world.statement, origine="Corrigée"))
