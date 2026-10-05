@@ -164,11 +164,11 @@ def save_devises(
 
 def list_previsions(
     db: Session, company_id: int, jour: date
-) -> tuple[list[SaisiePrevision], SaisiePrevisionJour | None]:
+) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
     _company(db, company_id)
     return (
         saisie_repository.list_previsions(db, company_id, jour),
-        saisie_repository.get_previsions_jour(db, company_id, jour),
+        saisie_repository.list_previsions_jour(db, company_id, jour),
     )
 
 
@@ -177,13 +177,13 @@ def save_previsions(
     company_id: int,
     jour: date,
     cells: Mapping[PrevisionCell, str | Decimal | None],
-    jour_values: Mapping[str, Decimal | None],
+    jour_values: Mapping[int, Mapping[str, Decimal | None]],
     *,
     acteur_id: int,
     ip: str | None = None,
-) -> tuple[list[SaisiePrevision], SaisiePrevisionJour | None]:
+) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
     """`cells` : libellé (sans banque) ou montant par banque. `jour_values` : Encaissement, Escompte
-    et Douane, les trois cellules fusionnées de la journée."""
+    et Douane de chaque ligne (décision du 03/10/2026) ; une ligne absente est vidée."""
     company = _company(db, company_id)
     banks = _active_banks(db, {bank_id for _, bank_id in cells if bank_id is not None})
     wanted: dict[PrevisionCell, str | Decimal] = {}
@@ -237,26 +237,30 @@ def save_previsions(
         apres=apres,
     )
 
-    # Les trois cellules fusionnées de la journée : une ligne, supprimée quand elles sont vides
-    day = saisie_repository.get_previsions_jour(db, company.id, jour)
-    new_day = {field: _amount(jour_values.get(field)) for field in JOUR_FIELDS}
-    day_changed = False
-    for field, title in JOUR_FIELDS.items():
-        old = None if day is None else getattr(day, field)
-        if old != new_day[field]:
-            avant[title] = old
-            apres[title] = new_day[field]
-            day_changed = True
-    if day_changed:
+    # Encaissement, Escompte, Douane : un enregistrement par ligne, supprimé quand les trois sont vides
+    days = {row.ligne: row for row in saisie_repository.list_previsions_jour(db, company.id, jour)}
+    for ligne in sorted(set(days) | set(jour_values)):
+        day = days.get(ligne)
+        values = jour_values.get(ligne, {})
+        new_day = {field: _amount(values.get(field)) for field in JOUR_FIELDS}
+        day_changed = False
+        for field, title in JOUR_FIELDS.items():
+            old = None if day is None else getattr(day, field)
+            if old != new_day[field]:
+                avant[f"Ligne {ligne} · {title}"] = old
+                apres[f"Ligne {ligne} · {title}"] = new_day[field]
+                day_changed = True
+        if not day_changed:
+            continue
         if all(value is None for value in new_day.values()):
             saisie_repository.delete(db, day)
-        else:
-            if day is None:
-                day = SaisiePrevisionJour(company_id=company.id, jour=jour)
-                saisie_repository.add(db, day)
-            for field, value in new_day.items():
-                setattr(day, field, value)
-            day.saisi_par_id = acteur_id
+            continue
+        if day is None:
+            day = SaisiePrevisionJour(company_id=company.id, jour=jour, ligne=ligne)
+            saisie_repository.add(db, day)
+        for field, value in new_day.items():
+            setattr(day, field, value)
+        day.saisi_par_id = acteur_id
 
     if apres:
         audit_service.log(

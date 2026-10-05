@@ -73,6 +73,14 @@ describe("validateBalanceForm", () => {
     expect(validateBalanceForm({ ...valid, jour: "2026-09-28" }, TODAY)).toEqual({});
   });
 
+  it("refuse une date avant le 01/01/2000 (année mal saisie), comme l'API", () => {
+    expect(validateBalanceForm({ ...valid, jour: "0026-09-30" }, TODAY).jour).toBe(
+      "Impossible de saisir un solde avant le 01/01/2000 : vérifiez l'année.",
+    );
+    expect(validateBalanceForm({ ...valid, jour: "1999-12-31" }, TODAY).jour).toBeDefined();
+    expect(validateBalanceForm({ ...valid, jour: "2000-01-01" }, TODAY)).toEqual({});
+  });
+
   it("accepte un solde négatif mais pas un crédit utilisé négatif", () => {
     expect(validateBalanceForm({ ...valid, solde: "-5 000" }, TODAY)).toEqual({});
     expect(

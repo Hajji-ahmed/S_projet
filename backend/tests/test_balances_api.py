@@ -1,6 +1,6 @@
 """Soldes du jour : saisie, correction, historique, et chiffres des comptes et des banques."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from itertools import count
 
@@ -126,6 +126,20 @@ def test_future_day_is_refused(client, tresorerie, db):
 
     assert response.status_code == 409
     assert response.json() == {"detail": "Impossible de saisir un solde pour une date future."}
+
+
+def test_day_before_2000_is_refused(client, tresorerie, db):
+    """Une année mal saisie (« 0026 ») ferait générer des milliers de jours au tableau Banques."""
+    account = add(db, "SIMTIS", "CIH")
+
+    response = client.put(url(account, date(1999, 12, 31)), json={"solde": "1"}, headers=tresorerie)
+    accepted = client.put(url(account, date(2000, 1, 1)), json={"solde": "1"}, headers=tresorerie)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Impossible de saisir un solde avant le 01/01/2000 : vérifiez l'année."
+    }
+    assert accepted.status_code == 200
 
 
 def test_inactive_account_is_refused(client, tresorerie, db):

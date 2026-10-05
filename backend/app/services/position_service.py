@@ -2,20 +2,30 @@
 
     Crédit disponible   = Crédit autorisé (LIGNE) − Crédit utilisé
     Position disponible = Solde bancaire + Crédit disponible
+    facilité de caisse  = Solde du jour + LIGNE (solde : dernière opération du jour, sinon solde
+                          du jour saisi, sinon dernier connu)
+    DEPASSEMENT         = TOTAL de la ligne − somme des LIGNES des mêmes banques
+    Disponible Fc reel  = facilité de caisse du dernier jour − LIGNE (décision du 03/10/2026, qui
+                          remplace « Solde + LIGNE » du CDC pour le tableau Banques)
 
 Une valeur inconnue (jamais saisie) reste inconnue (`None`) : elle n'est jamais remplacée par zéro.
 Réutilisé par la position bancaire (P8).
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 # Les dates de solde sont celles du Maroc, pas celles du serveur (UTC)
 BUSINESS_TZ = ZoneInfo("Africa/Casablanca")
+
+
+# Aucun solde avant cette date : une année mal saisie (« 0026 ») ferait générer au tableau Banques
+# une ligne par jour sur des siècles
+PREMIERE_DATE_SOLDE = date(2000, 1, 1)
 
 
 def business_today() -> date:
@@ -92,3 +102,186 @@ def account_figures(credit_autorise: Decimal, latest: LatestValues) -> AccountFi
         position_disponible=position_disponible(latest.solde, dispo),
         date_maj=latest.date_maj,
     )
+
+
+# --- Tableau Banques (P8.1, décisions du 02/10/2026) -----------------------------------------------
+
+
+@dataclass(frozen=True)
+class BanqueColonne:
+    """Une colonne du tableau : une banque active et son compte courant MAD actif, s'il existe.
+
+    `ligne` et `bank_account_id` sont `None` sans compte ; `soldes` = (date, solde) non nuls.
+    """
+
+    bank_id: int
+    code: str
+    logo: str | None
+    bank_account_id: int | None
+    taux_interet: Decimal | None
+    ligne: Decimal | None
+    soldes: tuple[tuple[date, Decimal], ...]
+
+
+@dataclass(frozen=True)
+class Cellule:
+    bank_id: int
+    valeur: Decimal | None
+    # Date du solde utilisé ; `reprise` quand ce n'est pas le jour de la ligne
+    date_solde: date | None
+    reprise: bool
+
+
+@dataclass(frozen=True)
+class LigneTableau:
+    cellules: tuple[Cellule, ...]
+    total: Decimal | None
+    depassement: Decimal | None
+
+
+@dataclass(frozen=True)
+class JourTableau:
+    date: date
+    ligne: LigneTableau
+
+
+@dataclass(frozen=True)
+class TableauBanques:
+    date_fin: date
+    banques: tuple[BanqueColonne, ...]
+    ligne_total: Decimal | None
+    jours: tuple[JourTableau, ...]
+    disponible: LigneTableau
+
+
+def facilite_de_caisse(solde: Decimal, ligne: Decimal) -> Decimal:
+    return solde + ligne
+
+
+def depassement(total: Decimal | None, total_lignes: Decimal) -> Decimal | None:
+    return None if total is None else total - total_lignes
+
+
+def fusion_soldes(
+    operations: Iterable[tuple[date, Decimal]], saisies: Iterable[tuple[date, Decimal]]
+) -> tuple[tuple[date, Decimal], ...]:
+    """Solde retenu par jour : celui de la dernière opération du jour s'il existe, sinon le solde
+    du jour (saisi ou écrit par l'import). Trié par date."""
+    par_jour = dict(saisies)
+    par_jour.update(operations)
+    return tuple(sorted(par_jour.items()))
+
+
+def _disponible(banques: Sequence[BanqueColonne], fin: LigneTableau) -> LigneTableau:
+    """Disponible Fc reel : facilité de caisse du dernier jour − LIGNE, banque par banque ;
+    TOTAL = somme des banques renseignées ; DEPASSEMENT = TOTAL, la LIGNE étant déjà retirée
+    (correction du 03/10/2026)."""
+    cellules: list[Cellule] = []
+    total: Decimal | None = None
+    for banque, cellule in zip(banques, fin.cellules, strict=True):
+        if cellule.valeur is None or banque.ligne is None:
+            cellules.append(cellule)
+            continue
+        valeur = cellule.valeur - banque.ligne
+        cellules.append(Cellule(cellule.bank_id, valeur, cellule.date_solde, cellule.reprise))
+        total = valeur if total is None else total + valeur
+    return LigneTableau(tuple(cellules), total, total)
+
+
+def _ligne(
+    banques: Sequence[BanqueColonne], jour: date, retenus: dict[int, tuple[date, Decimal]]
+) -> LigneTableau:
+    """Une ligne du tableau : chaque banque avec son solde retenu, TOTAL et DEPASSEMENT.
+
+    Une banque sans solde retenu (pas de compte, ou avant son premier solde) n'entre ni dans le
+    TOTAL ni dans la somme des LIGNES.
+    """
+    cellules: list[Cellule] = []
+    total: Decimal | None = None
+    lignes = Decimal("0")
+    for banque in banques:
+        retenu = retenus.get(banque.bank_id)
+        if retenu is None or banque.ligne is None:
+            cellules.append(Cellule(banque.bank_id, None, None, False))
+            continue
+        date_solde, solde = retenu
+        valeur = facilite_de_caisse(solde, banque.ligne)
+        cellules.append(Cellule(banque.bank_id, valeur, date_solde, date_solde != jour))
+        total = valeur if total is None else total + valeur
+        lignes += banque.ligne
+    return LigneTableau(tuple(cellules), total, depassement(total, lignes))
+
+
+def tableau_banques(banques: Sequence[BanqueColonne], date_fin: date) -> TableauBanques:
+    """Tableau Banques jusqu'à `date_fin` incluse : une ligne par jour calendaire depuis le premier
+    solde connu ; un jour sans solde reprend le dernier solde connu de la banque. Un solde daté
+    avant PREMIERE_DATE_SOLDE (année mal saisie) est ignoré."""
+    soldes = {
+        banque.bank_id: {
+            jour: solde for jour, solde in banque.soldes if PREMIERE_DATE_SOLDE <= jour <= date_fin
+        }
+        for banque in banques
+        if banque.bank_account_id is not None
+    }
+    dates = [jour for par_jour in soldes.values() for jour in par_jour]
+
+    retenus: dict[int, tuple[date, Decimal]] = {}
+    jours: list[JourTableau] = []
+    if dates:
+        jour = min(dates)
+        while jour <= date_fin:
+            for bank_id, par_jour in soldes.items():
+                if jour in par_jour:
+                    retenus[bank_id] = (jour, par_jour[jour])
+            jours.append(JourTableau(jour, _ligne(banques, jour, retenus)))
+            jour += timedelta(days=1)
+
+    lignes = [banque.ligne for banque in banques if banque.ligne is not None]
+    return TableauBanques(
+        date_fin=date_fin,
+        banques=tuple(banques),
+        ligne_total=sum(lignes, Decimal("0")) if lignes else None,
+        jours=tuple(jours),
+        disponible=_disponible(
+            banques, jours[-1].ligne if jours else _ligne(banques, date_fin, {})
+        ),
+    )
+
+
+# --- Tableau Devises : soldes des comptes EUR / USD (décision du 05/10/2026) ---------------------
+
+DEVISES_CALCULEES = ("EUR", "USD")
+
+
+@dataclass(frozen=True)
+class LigneDevise:
+    devise: str
+    cellules: tuple[Cellule, ...]
+    total: Decimal | None
+
+
+def ligne_devise(
+    devise: str,
+    bank_ids: Sequence[int],
+    soldes: dict[int, Sequence[tuple[date, Decimal]]],
+    date_fin: date,
+) -> LigneDevise:
+    """Une ligne EUR ou USD : solde du compte de chaque banque à `date_fin`, dans sa devise, sans
+    conversion (dernier solde connu, repris d'un jour précédent au besoin). TOTAL = somme des soldes
+    de cette seule devise ; `None` si aucune banque n'a de solde. `soldes` : par banque, (date,
+    solde) déjà fusionnés (dernière opération du jour, sinon solde du jour)."""
+    cellules: list[Cellule] = []
+    total: Decimal | None = None
+    for bank_id in bank_ids:
+        connus = [
+            (jour, solde)
+            for jour, solde in soldes.get(bank_id, ())
+            if PREMIERE_DATE_SOLDE <= jour <= date_fin
+        ]
+        if not connus:
+            cellules.append(Cellule(bank_id, None, None, False))
+            continue
+        jour, solde = max(connus)
+        cellules.append(Cellule(bank_id, solde, jour, jour != date_fin))
+        total = solde if total is None else total + solde
+    return LigneDevise(devise, tuple(cellules), total)

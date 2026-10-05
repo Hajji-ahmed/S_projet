@@ -105,7 +105,7 @@ def test_two_companies_are_created(db):
 
     companies = {c.code: c.nom for c in db.scalars(select(Company))}
 
-    assert companies == {"SIMTIS": "Simtis", "SOCX": "Société X"}
+    assert companies == {"SIMTIS": "Simtis", "SOCX": "Tefil"}  # nom confirmé le 05/10/2026
 
 
 def test_a_renamed_company_keeps_its_name_after_a_new_seed(db):

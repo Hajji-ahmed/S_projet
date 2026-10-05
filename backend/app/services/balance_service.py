@@ -2,7 +2,7 @@
 
 Règles :
 - une ligne par compte et par jour ; la saisir à nouveau la corrige (l'audit garde l'avant) ;
-- pas de saisie dans le futur, ni sur un compte inactif ;
+- pas de saisie dans le futur, ni avant le 01/01/2000 (année mal saisie), ni sur un compte inactif ;
 - la source passe à « Saisie » (un relevé importé en P7 portera la source « Relevé »).
 """
 
@@ -81,6 +81,8 @@ def save_balance(
     account = account_service.get_account(db, account_id)
     if jour > (today or position_service.business_today()):
         raise ConflictError("Impossible de saisir un solde pour une date future.")
+    if jour < position_service.PREMIERE_DATE_SOLDE:
+        raise ConflictError("Impossible de saisir un solde avant le 01/01/2000 : vérifiez l'année.")
     if not account.actif:
         raise ConflictError(
             f"Le compte {account.bank.code} {account.devise} est inactif : réactivez-le d'abord."

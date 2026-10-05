@@ -47,6 +47,15 @@ describe("codes de permission", () => {
       expect(ROUTE_PERMISSIONS[item.href], item.href).toBeDefined();
     }
   });
+
+  it("pas de pages Prévisions ni Devises (décision du 05/10/2026)", () => {
+    // Les tableaux Prévisions et Devises restent sur la page Position bancaire
+    const hrefs = NAV_ITEMS.map((item) => item.href);
+    expect(hrefs).not.toContain("/previsions");
+    expect(hrefs).not.toContain("/devises");
+    expect(ROUTE_PERMISSIONS["/previsions"]).toBeUndefined();
+    expect(ROUTE_PERMISSIONS["/devises"]).toBeUndefined();
+  });
 });
 
 describe("hasAnyPermission", () => {
@@ -85,7 +94,7 @@ describe("menu visible selon le rôle", () => {
   it("la trésorerie voit tout sauf l'administration", () => {
     expect(visibleMenu(ROLES.tresorerie)).not.toContain("Administration");
     expect(visibleMenu(ROLES.tresorerie)).toContain("Relevés");
-    expect(visibleMenu(ROLES.tresorerie)).toContain("Prévisions");
+    expect(visibleMenu(ROLES.tresorerie)).toContain("Position bancaire");
   });
 
   it("la direction consulte sans administration", () => {

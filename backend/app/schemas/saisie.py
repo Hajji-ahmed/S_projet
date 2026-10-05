@@ -112,6 +112,10 @@ class LignePrevisionsIn(BaseModel):
     ligne: NumeroLigne
     libelle: str | None = Field(default=None, max_length=80)
     banques: list[MontantBanque] = Field(default_factory=list, max_length=50)
+    # Une valeur par ligne depuis le 03/10/2026 (avant : une pour toute la journée)
+    encaissement: Montant | None = None
+    escompte: Montant | None = None
+    douane: Montant | None = None
 
     @model_validator(mode="after")
     def _une_valeur_par_banque(self) -> "LignePrevisionsIn":
@@ -125,9 +129,6 @@ class PrevisionsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     lignes: list[LignePrevisionsIn] = Field(max_length=enums.NB_LIGNES_PREVISIONS)
-    encaissement: Montant | None = None
-    escompte: Montant | None = None
-    douane: Montant | None = None
 
     @model_validator(mode="after")
     def _lignes_uniques(self) -> "PrevisionsIn":
@@ -142,23 +143,31 @@ class PrevisionsIn(BaseModel):
                 cells[(item.ligne, cell.bank_id)] = cell.montant
         return cells
 
-    def jour_values(self) -> dict[str, Decimal | None]:
-        return {"encaissement": self.encaissement, "escompte": self.escompte, "douane": self.douane}
+    def jour_values(self) -> dict[int, dict[str, Decimal | None]]:
+        """Encaissement, Escompte et Douane de chaque ligne envoyée."""
+        return {
+            item.ligne: {
+                "encaissement": item.encaissement,
+                "escompte": item.escompte,
+                "douane": item.douane,
+            }
+            for item in self.lignes
+        }
 
 
 class LignePrevisionsOut(BaseModel):
     ligne: int
     libelle: str | None
     banques: list[MontantBanque]
+    encaissement: Decimal | None
+    escompte: Decimal | None
+    douane: Decimal | None
 
 
 class PrevisionsOut(BaseModel):
     company_id: int
     jour: date
     lignes: list[LignePrevisionsOut]
-    encaissement: Decimal | None
-    escompte: Decimal | None
-    douane: Decimal | None
 
     @classmethod
     def from_rows(
@@ -166,12 +175,14 @@ class PrevisionsOut(BaseModel):
         company_id: int,
         jour: date,
         rows: list[SaisiePrevision],
-        day: SaisiePrevisionJour | None,
+        days: list[SaisiePrevisionJour],
     ) -> "PrevisionsOut":
         """Toujours les 14 lignes du bloc, même vides."""
+        by_line = {day.ligne: day for day in days}
         lignes = []
         for numero in range(1, enums.NB_LIGNES_PREVISIONS + 1):
             mine = [row for row in rows if row.ligne == numero]
+            day = by_line.get(numero)
             lignes.append(
                 LignePrevisionsOut(
                     ligne=numero,
@@ -181,13 +192,9 @@ class PrevisionsOut(BaseModel):
                         for row in mine
                         if row.bank_id is not None
                     ],
+                    encaissement=day.encaissement if day else None,
+                    escompte=day.escompte if day else None,
+                    douane=day.douane if day else None,
                 )
             )
-        return cls(
-            company_id=company_id,
-            jour=jour,
-            lignes=lignes,
-            encaissement=day.encaissement if day else None,
-            escompte=day.escompte if day else None,
-            douane=day.douane if day else None,
-        )
+        return cls(company_id=company_id, jour=jour, lignes=lignes)

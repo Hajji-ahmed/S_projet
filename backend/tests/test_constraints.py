@@ -766,21 +766,33 @@ def test_previsions_line_with_label_and_amounts_is_accepted(db, world):
     )
 
 
-def test_one_day_level_row_per_company_and_day(db, world):
-    save(db, SaisiePrevisionJour(company_id=world.company.id, jour=DAY, douane=Decimal("1")))
+def day_amounts(world, **over) -> SaisiePrevisionJour:
+    """Encaissement / Escompte / Douane d'une ligne du bloc Prévisions (migration 0007)."""
+    return SaisiePrevisionJour(
+        **{"company_id": world.company.id, "jour": DAY, "ligne": 1, "douane": Decimal("1"), **over}
+    )
+
+
+def test_one_day_amounts_row_per_company_day_and_line(db, world):
+    save(db, day_amounts(world), day_amounts(world, ligne=14))
 
     assert_rejected(
         db,
-        "uq_saisies_previsions_jour_societe_jour",
-        SaisiePrevisionJour(company_id=world.company.id, jour=DAY, escompte=Decimal("1")),
+        "uq_saisies_previsions_jour_societe_jour_ligne",
+        day_amounts(world, douane=None, escompte=Decimal("1")),
     )
+
+
+@pytest.mark.parametrize("ligne", [0, 15])
+def test_day_amounts_line_is_in_the_block(db, world, ligne):
+    assert_rejected(db, "ck_saisies_previsions_jour_ligne_du_bloc", day_amounts(world, ligne=ligne))
 
 
 def test_day_level_row_needs_at_least_one_amount(db, world):
     assert_rejected(
         db,
         "ck_saisies_previsions_jour_un_montant_renseigne",
-        SaisiePrevisionJour(company_id=world.company.id, jour=DAY),
+        day_amounts(world, douane=None),
     )
 
 

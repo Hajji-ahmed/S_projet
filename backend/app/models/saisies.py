@@ -107,11 +107,17 @@ class SaisiePrevision(TimestampMixin, Base):
 
 
 class SaisiePrevisionJour(TimestampMixin, Base):
-    """Les trois cellules fusionnées du tableau Prévisions : montants de la journée, sans banque."""
+    """Encaissement, Escompte et Douane d'une ligne du tableau Prévisions, sans banque.
+
+    Une valeur par ligne depuis la migration 0007 (décision du 03/10/2026) ; avant, une seule pour
+    toute la journée (reprise sur la ligne 1)."""
 
     __tablename__ = "saisies_previsions_jour"
     __table_args__ = (
-        UniqueConstraint("company_id", "jour", name="uq_saisies_previsions_jour_societe_jour"),
+        UniqueConstraint(
+            "company_id", "jour", "ligne", name="uq_saisies_previsions_jour_societe_jour_ligne"
+        ),
+        CheckConstraint(f"ligne BETWEEN 1 AND {enums.NB_LIGNES_PREVISIONS}", name="ligne_du_bloc"),
         # Trois cellules vides : la ligne est supprimée, jamais gardée avec des 0
         CheckConstraint(
             "encaissement IS NOT NULL OR escompte IS NOT NULL OR douane IS NOT NULL",
@@ -122,6 +128,7 @@ class SaisiePrevisionJour(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"))
     jour: Mapped[date] = mapped_column(Date)
+    ligne: Mapped[int] = mapped_column(SmallInteger)
     encaissement: Mapped[Montant | None]
     escompte: Mapped[Montant | None]
     douane: Mapped[Montant | None]

@@ -8,6 +8,8 @@ Les données citées sont des **exemples de démonstration**. Affiche toujours l
 
 Ces 3 tableaux suivent **exactement** le classeur `docs/specs/SIMTIS_tableaux_complets.xlsx` (une feuille, les trois tableaux empilés sur les **mêmes colonnes de banques**). Il remplace l'ancienne maquette et la Remarque, dont la règle reste valable : ne change pas les intitulés, n'ajoute ni ne supprime de colonne, ne déplace aucune information, ne les transforme pas en cartes ou en graphiques. Seul le style (tokens, DataTable) s'applique.
 
+**Style commun des 3 tableaux** (décision du 03/10/2026 : « comme les autres tableaux ») : constantes de `components/position/GridCell.tsx`. `GRID_FRAME` = même cadre que `DataTable` (arrondi 12px, bordure `border`, fond `card`, défilement horizontal). `GRID_TABLE` = texte 13,5px normal, traits **horizontaux et verticaux fins** `border` (choix du métier : grilles de montants et de saisie), contour extérieur masqué (`border-hidden`) au profit du cadre, survol `light/40`. `GRID_HEAD` = en-tête de colonne comme `DataTable` (fond `light/60`, texte `primary-dark` semi-gras 13px). `GRID_ROW_HEAD` = libellé de ligne à gauche, `font-medium`. `GRID_GREY` (cellules grisées du classeur) inchangé. Cellules de saisie : hauteur 40px. Disponible Fc reel : ligne séparée, semi-gras sur fond `background`, comme une ligne Total.
+
 ```text
             ┌─────────────────────────┬─────┬──────┬────┬─────┬──────┬───────┬─────────────┐
  BANQUES    │ Banque                  │ AWB │ BMCE │ BP │ CIH │ BMCI │ TOTAL │ DEPASSEMENT │
@@ -24,7 +26,7 @@ Ces 3 tableaux suivent **exactement** le classeur `docs/specs/SIMTIS_tableaux_co
             └─────────────────────────┴──────────────────────────────┴───────┘
  PRÉVISIONS ┌────────────┬────────────┬─────┬──────┬────┬─────┬──────┬──────────────┬──────────┬────────┐
             │ 30/09/2026 │ date       │ AWB │ BMCE │ BP │ CIH │ BMCI │ Encaissement │ Escompte │ Douane │
-            │ (fusionnée │ (14 lignes)│  montants par banque         │ 1 cellule fusionnée par colonne   │
+            │ (fusionnée │ (14 lignes)│  montants par banque         │ 1 cellule par ligne (03/10/2026)  │
             │ sur 14 l.) │            │                              │ pour tout le bloc                 │
             └────────────┴────────────┴──────────────────────────────┴───────────────────────────────────┘
 ```
@@ -41,23 +43,25 @@ Ces 3 tableaux suivent **exactement** le classeur `docs/specs/SIMTIS_tableaux_co
 - **Lignes** :
   - **Taux** : taux d'intérêt, format pourcentage (`0,00 %`).
   - **LIGNE** : crédit autorisé, montants entiers. C'est le libellé du classeur : ne le remplace pas par « Crédit autorisé ».
-  - **facilité de caisse** ×3 : un libellé fixe et une **date** par ligne (28/09, 29/09, 30/09 dans le classeur, format `jj/mm/aa`). Ce sont des données par jour, pas un libellé en dur. La définition exacte (solde du jour ou facilité utilisée) reste à confirmer : affiche ce que l'API renvoie.
-  - **Disponible Fc reel** : ligne **séparée** sous le tableau. Formule : Solde bancaire + LIGNE. Mise en forme conditionnelle : vert quand la valeur est > 0, une autre couleur quand elle est < 0, y compris sur TOTAL et DEPASSEMENT. Utilise les tokens de statut (`success` / `danger`), pas le vert du classeur.
+  - **facilité de caisse** : un libellé fixe et une **date** par ligne (format `jj/mm/aa`). Le classeur en montre 3 (28/09, 29/09, 30/09), mais c'est **une ligne par jour, sans limite** (décision du 02/10/2026) : chaque jour ajoute sa ligne. Valeur = Solde du jour + LIGNE, calculée par l'API ; DEPASSEMENT de la ligne = TOTAL − TOTAL des LIGNES. Ce sont des données, pas un libellé en dur.
+  - Affichage : les 10 derniers jours visibles, au-dessus « N derniers jours sur M » et un bouton ghost « Afficher N jours plus anciens » (`ChevronUp`) ; une valeur reprise d'un jour précédent est en `text-simtis-muted` avec l'infobulle « dernier solde connu : JJ/MM/AAAA » ; sans aucun solde : « Aucun solde enregistré pour cette société. ». Carte « Banques » (icône `Landmark`), en premier sur `/position-bancaire`, lecture seule (`components/position/BanquesTable.tsx`).
+  - **Disponible Fc reel** : ligne **séparée** sous le tableau. Formule (décision du 03/10/2026, calculée par l'API) : facilité de caisse du dernier jour − LIGNE ; TOTAL = somme ; DEPASSEMENT = TOTAL (la LIGNE est déjà retirée). Mise en forme conditionnelle : vert quand la valeur est > 0, une autre couleur quand elle est < 0, y compris sur TOTAL et DEPASSEMENT. Utilise les tokens de statut (`success` / `danger`), pas le vert du classeur.
 - **TOTAL** et **DEPASSEMENT** sont des colonnes calculées par l'API, jamais par l'interface.
 
 ### Tableau « Devises »
 
 - **Lignes** : EUR · USD · Exp DH convertible (le classeur écrit « EUR », pas « UAR »).
 - **Colonnes** : les mêmes colonnes de banques, **cellules grisées** (fond gris clair), et TOTAL et DEPASSEMENT à droite. Sous cette forme, le tableau n'a aucune autre colonne.
-- Les montants restent dans leur devise. **Ne fais jamais de somme entre devises différentes.** Ce que contiennent exactement les cellules grisées et le TOTAL reste à confirmer : affiche ce que l'API renvoie et n'invente aucun calcul.
-- Le détail (taux, équivalent MAD, date du taux) s'ouvre en infobulle ou en vue détail, sans changer le tableau.
+- Les montants restent dans leur devise. **Ne fais jamais de somme entre devises différentes.**
+- **Contenu (décision du 05/10/2026)** : lignes **EUR** et **USD** en lecture seule = solde du compte EUR / USD de chaque banque à la date choisie, **dans sa devise, sans conversion** (« 217 500 EUR »), calculé par l'API (`GET /api/position/devises/soldes`) ; un solde repris d'un jour précédent est en `text-simtis-muted` avec l'infobulle « dernier solde connu : JJ/MM/AAAA » ; « - » sans compte ni solde ; TOTAL = somme de la devise (API) ; DEPASSEMENT vide. La ligne **Exp DH convertible** reste saisie à la main (seule ligne à cellules modifiables, bouton « Enregistrer »).
+- **Société sans compte EUR, USD ni DH convertible** (Tefil) : la carte Devises n'est pas affichée du tout (`affiche: false`).
 
 ### Tableau « Prévisions »
 
 - **Colonne Date** : **une seule**, à gauche, verticale, fusionnée sur toutes les lignes du bloc (`rowSpan`). Ne crée jamais une colonne par date.
 - **Colonne suivante** : date au format `jj/mm/aa`, gras, alignée à gauche (une par ligne).
 - **Colonnes de banques** : montants par banque et par ligne, mêmes colonnes que le tableau Banques.
-- **Encaissement · Escompte · Douane** : trois colonnes, chacune avec **une cellule fusionnée sur tout le bloc**, en-têtes sur fond gris clair. Ce sont des montants de la journée, sans banque.
+- **Encaissement · Escompte · Douane** : trois colonnes, en-têtes sur fond gris clair, montants sans banque. Depuis le 03/10/2026 (décision du métier), **une cellule par ligne** (14 par colonne, libellé lecteur d'écran « Ligne N Encaissement »), comme les colonnes de banques ; avant, une cellule fusionnée pour toute la journée.
 - Le sens de chaque flux (entrée ou sortie) est porté par la prévision elle-même, pas déduit de la colonne.
 
 ## Logos des banques (tous les tableaux)
@@ -92,7 +96,7 @@ DataTable des comptes + FilterBar (Banque, Devise, Statut) + bouton primaire « 
 
 - FilterBar : Banque · Compte · Devise · Date · Période.
 - DataTable : Banque · Compte · Devise · Solde · Crédit autorisé · Crédit utilisé · Crédit disponible · Position disponible · Dépassement · Date de mise à jour.
-- Graphique d'évolution de la position.
+- Graphique d'évolution de la position : carte « Évolution de la position » (icône `TrendingUp`) sous la carte Banques (`components/position/PositionChart.tsx`, Recharts). Courbe en aire, trait 2 px `chart-1`, remplissage `light`, grille horizontale pointillée `border`, axes en `muted` ; TOTAL « facilité de caisse » des 30 derniers jours jusqu'à la date choisie ; sous-titre « TOTAL facilité de caisse, N derniers jours (DH) » ; infobulle date + montant exact ; ligne de zéro seulement si une valeur est négative ; un jour sans TOTAL = vide dans la courbe. Pas de légende (une seule série). Au-dessus, boutons **TOTAL | AWB | BP…** (`BankLabel`, banques qui ont un compte courant MAD ; actif : bordure `primary`, fond `light`, `aria-pressed`) : une courbe à la fois (décision du 03/10/2026), sous-titre « Facilité de caisse AWB, N derniers jours (DH) ». Pas de tableau Détail par compte ni de filtres (P8.2 abandonnée le 03/10/2026).
 - Tableau imposé **Banques** (voir plus haut).
 
 ## Relevés (`/releves`)
@@ -135,17 +139,9 @@ Filtres, recherche, statut, pagination, sélection multiple des deux côtés, so
 - DataTable des écarts avec badges.
 - Clic sur une ligne : panneau latéral avec Type, Transaction bancaire, Écriture comptable, Montant, Différence, Commentaire, Responsable, Statut.
 
-## Prévisions (`/previsions`)
+## Prévisions et Devises : pas de page dédiée
 
-- 4 KPI : Position actuelle · Encaissements prévus · Décaissements prévus · Position future.
-- Bouton primaire « + Nouvelle prévision ».
-- Tableau imposé **Prévisions** (voir plus haut).
-- Graphique combiné encaissements / décaissements / position prévisionnelle.
-
-## Devises (`/devises`)
-
-- FilterBar : Banque · Compte · Devise · Date.
-- Tableau imposé **Devises** (voir plus haut).
+Les pages `/previsions` et `/devises` ont été **supprimées le 05/10/2026** (décision du métier : pas besoin). Les tableaux imposés **Prévisions** et **Devises** sont sur `/position-bancaire`, sous le tableau Banques. Ce qui était prévu pour ces pages (KPI de prévisions, bouton « + Nouvelle prévision », graphique combiné, filtres) se fera, si le métier le demande, sur `/position-bancaire`. Ne recrée pas ces routes sans demande.
 
 ## Rapports (`/rapports`) · Administration (`/administration`)
 

@@ -59,7 +59,7 @@ erDiagram
 
 | Table | Rôle | Points d'attention |
 |---|---|---|
-| `companies` | Sociétés (Simtis, Société X) | Le nom de « Société X » est provisoire et se modifie en base |
+| `companies` | Sociétés (Simtis, Tefil) | Code `SOCX` pour Tefil, affichée « Société X » jusqu'au 05/10/2026 (renommée par la migration 0009) ; le nom se modifie en base, le code jamais |
 | `banks` | Banques | `code` (AWB, BMCE, BP, CIH, BMCI) sert d'en-tête de colonne ; `ordre_affichage` fixe leur ordre |
 | `currencies` | MAD, EUR, USD | « Exp DH convertible » n'est pas une devise |
 | `pointage_types` | Types d'opération du champ « Pointage » | Liste ouverte, modifiable |
@@ -102,7 +102,7 @@ Première version des tableaux Devises et Prévisions de la page Position bancai
 |---|---|---|
 | `saisies_devises` | Une cellule du tableau Devises | Ligne EUR, USD ou Exp DH convertible ; colonne `Banque` (avec `bank_id`), `TOTAL` ou `DEPASSEMENT` (sans banque). Une valeur par cellule (deux index uniques partiels) |
 | `saisies_previsions` | Une cellule des 14 lignes du tableau Prévisions | Sans banque : le libellé de la ligne ; avec banque : un montant. Ligne 1 à 14. Une valeur par cellule |
-| `saisies_previsions_jour` | Encaissement, Escompte, Douane de la journée | Une ligne par société et par jour, au moins un montant (sinon elle est supprimée) |
+| `saisies_previsions_jour` | Encaissement, Escompte, Douane d'une **ligne** du bloc (1 à 14) | Une ligne par société, jour et ligne (`uq_saisies_previsions_jour_societe_jour_ligne`, CHECK `ligne_du_bloc`), au moins un montant (sinon elle est supprimée). Migration 0007 (03/10/2026) : avant, une valeur pour toute la journée, reprise sur la ligne 1 |
 
 Une cellule vide n'a pas de ligne : elle n'est jamais enregistrée à 0. Les montants peuvent être négatifs.
 

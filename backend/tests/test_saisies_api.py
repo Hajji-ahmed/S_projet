@@ -1,6 +1,7 @@
 """Tableaux Devises et Prévisions saisis à la main (page Position bancaire)."""
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -246,9 +247,19 @@ def test_empty_previsions_grid_has_the_14_lines(client, direction, db):
 
     assert [item["ligne"] for item in body["lignes"]] == list(range(1, 15))
     assert all(
-        item == {"ligne": item["ligne"], "libelle": None, "banques": []} for item in body["lignes"]
+        item
+        == {
+            "ligne": item["ligne"],
+            "libelle": None,
+            "banques": [],
+            "encaissement": None,
+            "escompte": None,
+            "douane": None,
+        }
+        for item in body["lignes"]
     )
-    assert (body["encaissement"], body["escompte"], body["douane"]) == (None, None, None)
+    # Décision du 03/10/2026 : Encaissement, Escompte et Douane se saisissent ligne par ligne
+    assert "encaissement" not in body
 
 
 def test_previsions_grid_round_trip(client, tresorerie, db):
@@ -259,11 +270,16 @@ def test_previsions_grid_round_trip(client, tresorerie, db):
                 "ligne": 1,
                 "libelle": "  Client A  ",
                 "banques": [{"bank_id": cih, "montant": "1000"}],
+                "encaissement": "250000",
             },
-            {"ligne": 14, "libelle": "   ", "banques": [{"bank_id": cih, "montant": "-50.25"}]},
+            {"ligne": 7, "escompte": "5"},  # ligne avec seulement un montant de la journée
+            {
+                "ligne": 14,
+                "libelle": "   ",
+                "banques": [{"bank_id": cih, "montant": "-50.25"}],
+                "douane": "-12000.5",
+            },
         ],
-        "encaissement": "250000",
-        "douane": "-12000.5",
     }
 
     saved = client.put(PREVISIONS, params=params(db), json=body, headers=tresorerie).json()
@@ -274,22 +290,34 @@ def test_previsions_grid_round_trip(client, tresorerie, db):
         "ligne": 1,
         "libelle": "Client A",
         "banques": [{"bank_id": cih, "montant": "1000.00"}],
+        "encaissement": "250000.00",
+        "escompte": None,
+        "douane": None,
+    }
+    assert line(again, 7) | {"ligne": 0} == {
+        "ligne": 0,
+        "libelle": None,
+        "banques": [],
+        "encaissement": None,
+        "escompte": "5.00",
+        "douane": None,
     }
     assert line(again, 14)["libelle"] is None  # un libellé blanc est une cellule vide
-    assert (again["encaissement"], again["escompte"], again["douane"]) == (
-        "250000.00",
-        None,
-        "-12000.50",
-    )
+    assert line(again, 14)["douane"] == "-12000.50"
+    assert line(again, 2)["encaissement"] is None
 
 
 def test_previsions_grid_is_replaced_and_audited(client, tresorerie, db):
     cih = bank_id(db, "CIH")
     first = {
         "lignes": [
-            {"ligne": 3, "libelle": "Client A", "banques": [{"bank_id": cih, "montant": "1"}]}
+            {
+                "ligne": 3,
+                "libelle": "Client A",
+                "banques": [{"bank_id": cih, "montant": "1"}],
+                "escompte": "10",
+            }
         ],
-        "escompte": "10",
     }
     client.put(PREVISIONS, params=params(db), json=first, headers=tresorerie)
 
@@ -300,22 +328,45 @@ def test_previsions_grid_is_replaced_and_audited(client, tresorerie, db):
         headers=tresorerie,
     )
 
-    assert line(response.json(), 3) == {"ligne": 3, "libelle": "Client B", "banques": []}
-    assert response.json()["escompte"] is None
+    assert line(response.json(), 3) == {
+        "ligne": 3,
+        "libelle": "Client B",
+        "banques": [],
+        "encaissement": None,
+        "escompte": None,
+        "douane": None,
+    }
     assert db.scalar(select(SaisiePrevisionJour)) is None  # trois cellules vides : ligne supprimée
     entry = audit(db, "saisie_previsions")[-1]
     assert entry.ancienne_valeur == {
         "jour": DAY.isoformat(),
         "Ligne 3 · libellé": "Client A",
         "Ligne 3 · CIH": "1.00",
-        "Escompte": "10.00",
+        "Ligne 3 · Escompte": "10.00",
     }
     assert entry.nouvelle_valeur == {
         "jour": DAY.isoformat(),
         "Ligne 3 · libellé": "Client B",
         "Ligne 3 · CIH": None,
-        "Escompte": None,
+        "Ligne 3 · Escompte": None,
     }
+
+
+def test_day_amounts_of_two_lines_are_kept_apart(client, tresorerie, db):
+    body = {"lignes": [{"ligne": 1, "encaissement": "100"}, {"ligne": 2, "encaissement": "200"}]}
+    client.put(PREVISIONS, params=params(db), json=body, headers=tresorerie)
+
+    response = client.put(
+        PREVISIONS,
+        params=params(db),
+        json={"lignes": [{"ligne": 2, "encaissement": "250"}]},
+        headers=tresorerie,
+    )
+
+    assert line(response.json(), 1)["encaissement"] is None  # absente de la grille : vidée
+    assert line(response.json(), 2)["encaissement"] == "250.00"
+    rows = list(db.scalars(select(SaisiePrevisionJour)))
+    assert [(row.ligne, row.encaissement) for row in rows] == [(2, Decimal("250.00"))]
 
 
 def test_future_previsions_can_be_entered(client, tresorerie, db):
@@ -324,7 +375,7 @@ def test_future_previsions_can_be_entered(client, tresorerie, db):
     response = client.put(
         PREVISIONS,
         params=params(db, jour=future),
-        json={"lignes": [], "encaissement": "1"},
+        json={"lignes": [{"ligne": 1, "encaissement": "1"}]},
         headers=tresorerie,
     )
 
@@ -338,7 +389,10 @@ def test_future_previsions_can_be_entered(client, tresorerie, db):
         {"lignes": [{"ligne": 15}]},
         {"lignes": [{"ligne": 1}, {"ligne": 1}]},
         {"lignes": [{"ligne": 1, "libelle": "x" * 81}]},
-        {"lignes": [], "encaissement": "abc"},
+        {"lignes": [{"ligne": 1, "encaissement": "abc"}]},
+        {"lignes": [{"ligne": 1, "douane": "1.234"}]},
+        # Ancienne forme : un montant pour toute la journée n'est plus accepté
+        {"lignes": [], "encaissement": "1"},
         {"lignes": [], "inconnu": "x"},
     ],
 )
@@ -349,7 +403,7 @@ def test_invalid_previsions_grid_gives_422(client, tresorerie, db, body):
 
 
 def test_direction_and_comptable_cannot_enter_previsions(client, direction, comptable, db):
-    body = {"lignes": [], "encaissement": "1"}
+    body = {"lignes": [{"ligne": 1, "encaissement": "1"}]}
 
     assert client.get(PREVISIONS, params=params(db), headers=direction).status_code == 200
     for headers in (direction, comptable):

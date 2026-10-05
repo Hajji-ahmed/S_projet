@@ -4,8 +4,10 @@ import { CalendarClock } from "lucide-react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import {
+  GRID_FRAME,
   GRID_GREY,
   GRID_HEAD,
+  GRID_ROW_HEAD,
   GRID_TABLE,
   GridCell,
   GridFooter,
@@ -47,7 +49,7 @@ type PrevisionsTableProps = {
 /**
  * Tableau Prévisions du classeur, saisi à la main : la date fusionnée à gauche sur les 14 lignes, un
  * libellé et un montant par banque sur chaque ligne, puis Encaissement, Escompte et Douane, une
- * cellule fusionnée chacune pour toute la journée. Rien n'y est calculé.
+ * cellule par ligne (décision du 03/10/2026). Rien n'y est calculé.
  */
 export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsTableProps) {
   const { toast } = useToast();
@@ -83,7 +85,7 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
       )}
       {grid.loadState === "ready" && (
         <>
-          <div className="overflow-x-auto">
+          <div className={GRID_FRAME}>
             <table className={cn(GRID_TABLE, "min-w-[1000px] table-fixed")} aria-label="Prévisions">
               <colgroup>
                 <col className="w-[110px]" />
@@ -126,7 +128,7 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
                       <th
                         scope="rowgroup"
                         rowSpan={NB_LIGNES_PREVISIONS}
-                        className={cn(GRID_HEAD, "align-middle")}
+                        className={cn(GRID_ROW_HEAD, "text-center align-middle")}
                       >
                         {formatDate(jour)}
                       </th>
@@ -139,16 +141,12 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
                         {cell(cellKey(ligne, bank.id), `Ligne ${ligne} ${bank.code}`)}
                       </td>
                     ))}
-                    {ligne === 1 &&
-                      COLONNES_JOUR.map((column) => (
-                        <td
-                          key={column.key}
-                          rowSpan={NB_LIGNES_PREVISIONS}
-                          className="p-0 align-middle"
-                        >
-                          {cell(column.key, column.label)}
-                        </td>
-                      ))}
+                    {/* Une cellule par ligne (décision du 03/10/2026), comme les banques */}
+                    {COLONNES_JOUR.map((column) => (
+                      <td key={column.key} className="p-0">
+                        {cell(cellKey(ligne, column.key), `Ligne ${ligne} ${column.label}`)}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>

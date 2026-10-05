@@ -23,7 +23,7 @@ export const COLONNES_DEVISES = [
 
 export const NB_LIGNES_PREVISIONS = 14;
 export const LIBELLE_MAX = 80;
-/** Les trois colonnes fusionnées du tableau Prévisions : un montant pour toute la journée. */
+/** Les trois colonnes sans banque du tableau Prévisions : un montant par ligne (03/10/2026). */
 export const COLONNES_JOUR = [
   { key: "encaissement", label: "Encaissement" },
   { key: "escompte", label: "Escompte" },
@@ -34,7 +34,7 @@ export const COLONNES_JOUR = [
 export type Draft = Record<string, string>;
 export type Parsed<T> = { ok: true; value: T } | { ok: false; invalid: string[] };
 
-/** Clé d'une cellule : « EUR|3 » (ligne, banque), « EUR|total », « 5|libelle », « encaissement ». */
+/** Clé d'une cellule : « EUR|3 » (ligne, banque), « EUR|total », « 5|libelle », « 5|encaissement ». */
 export function cellKey(row: string | number, column: string | number): string {
   return `${row}|${column}`;
 }
@@ -111,8 +111,8 @@ export function previsionsToDraft(previsions: Previsions): Draft {
   for (const line of previsions.lignes) {
     if (line.libelle !== null) draft[cellKey(line.ligne, "libelle")] = line.libelle;
     putBanks(draft, line.ligne, line.banques);
+    for (const { key } of COLONNES_JOUR) putAmount(draft, cellKey(line.ligne, key), line[key]);
   }
-  for (const { key } of COLONNES_JOUR) putAmount(draft, key, previsions[key]);
   return draft;
 }
 
@@ -122,13 +122,14 @@ export function draftToPrevisionsInput(draft: Draft, bankIds: number[]): Parsed<
     const key = cellKey(ligne, "libelle");
     const libelle = (draft[key] ?? "").trim();
     if (libelle.length > LIBELLE_MAX) invalid.push(key);
-    return { ligne, libelle: libelle || null, banques: banksOf(draft, ligne, bankIds, invalid) };
+    return {
+      ligne,
+      libelle: libelle || null,
+      banques: banksOf(draft, ligne, bankIds, invalid),
+      encaissement: amountOf(draft, cellKey(ligne, "encaissement"), invalid),
+      escompte: amountOf(draft, cellKey(ligne, "escompte"), invalid),
+      douane: amountOf(draft, cellKey(ligne, "douane"), invalid),
+    };
   });
-  const value: PrevisionsInput = {
-    lignes,
-    encaissement: amountOf(draft, "encaissement", invalid),
-    escompte: amountOf(draft, "escompte", invalid),
-    douane: amountOf(draft, "douane", invalid),
-  };
-  return invalid.length ? { ok: false, invalid } : { ok: true, value };
+  return invalid.length ? { ok: false, invalid } : { ok: true, value: { lignes } };
 }

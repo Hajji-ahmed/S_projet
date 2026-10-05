@@ -23,7 +23,7 @@ from app.models.base import Base, Montant, Taux, TimestampMixin, check_in
 
 
 class Company(TimestampMixin, Base):
-    """Société du groupe (Simtis, Société X). Les positions ne sont jamais consolidées entre sociétés."""
+    """Société du groupe (Simtis, Tefil). Les positions ne sont jamais consolidées entre sociétés."""
 
     __tablename__ = "companies"
 

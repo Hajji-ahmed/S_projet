@@ -15,7 +15,7 @@ def test_companies_for_any_connected_user(client, reference):
     assert response.status_code == 200
     assert [(item["code"], item["nom"]) for item in response.json()] == [
         ("SIMTIS", "Simtis"),
-        ("SOCX", "Société X"),
+        ("SOCX", "Tefil"),
     ]
 
 

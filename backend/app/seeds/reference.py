@@ -19,7 +19,8 @@ from app.seeds.common import get_or_create
 # (code, nom). Le nom de la 2e société est provisoire : il se modifie en base, sans toucher au code.
 COMPANIES = [
     ("SIMTIS", "Simtis"),
-    ("SOCX", "Société X"),
+    # Nom confirmé le 05/10/2026 (affichée « Société X » avant) ; le code ne change jamais
+    ("SOCX", "Tefil"),
 ]
 
 # (code, nom, logo, ordre d'affichage). Les tableaux affichent les banques par code, dans cet ordre.

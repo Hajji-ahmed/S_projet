@@ -16,16 +16,16 @@ export type Devises = { company_id: number; jour: string; lignes: LigneDevises[]
 
 export type DevisesInput = { lignes: LigneDevises[] };
 
-export type LignePrevisions = { ligne: number; libelle: string | null; banques: MontantBanque[] };
-
-export type Previsions = {
-  company_id: number;
-  jour: string;
-  lignes: LignePrevisions[];
-  /** Les trois cellules fusionnées de la journée, sans banque. */
+export type LignePrevisions = {
+  ligne: number;
+  libelle: string | null;
+  banques: MontantBanque[];
+  /** Montants sans banque de la ligne (une valeur par ligne depuis le 03/10/2026). */
   encaissement: string | null;
   escompte: string | null;
   douane: string | null;
 };
+
+export type Previsions = { company_id: number; jour: string; lignes: LignePrevisions[] };
 
 export type PrevisionsInput = Omit<Previsions, "company_id" | "jour">;

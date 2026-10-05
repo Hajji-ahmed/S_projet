@@ -31,6 +31,9 @@ export function normalizeSignedAmountInput(text: string): string | null {
   return amount === null ? null : `${negative ? "-" : ""}${amount}`;
 }
 
+/** Aucun solde avant cette date (`PREMIERE_DATE_SOLDE` côté API) : année mal saisie. */
+export const PREMIERE_DATE_SOLDE = "2000-01-01";
+
 export type BalanceFormValues = {
   jour: string;
   solde: string;
@@ -47,6 +50,8 @@ export function validateBalanceForm(values: BalanceFormValues, today: string): B
     errors.jour = "Choisissez une date.";
   } else if (values.jour > today) {
     errors.jour = "Impossible de saisir un solde pour une date future.";
+  } else if (values.jour < PREMIERE_DATE_SOLDE) {
+    errors.jour = "Impossible de saisir un solde avant le 01/01/2000 : vérifiez l'année.";
   }
 
   const solde = values.solde.trim();

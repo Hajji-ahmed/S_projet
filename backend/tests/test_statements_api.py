@@ -310,6 +310,110 @@ def test_signed_amount_column(client, tresorerie, account):
     assert body["resume"]["soldes_coherents"] is None
 
 
+# Relevé BP « Format_Different » : une colonne Montant toujours positive, le sens est dans le Solde
+UNSIGNED = [
+    ["Date opération", "Opération", "Montant", "Solde"],
+    [None, "SOLDE INITIAL", None, 185000],
+    ["02/09/2026", "VIR RECU ALPHA MODE", 38500, 223500],
+    ["03/09/2026", "PRLV FOURNISSEUR TEXTILE", 12800, 210700],
+    ["05/09/2026", "COMMISSION BANCAIRE", 175, 210525],
+]
+
+
+def test_unsigned_amount_takes_its_direction_from_the_balance(client, tresorerie, account):
+    """Décision du 04/10/2026 : le solde qui baisse du montant prouve un débit."""
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", UNSIGNED))).json()
+
+    assert [
+        (line["libelle"], line["debit"], line["credit"], line["statut"], line["pointage_libelle"])
+        for line in body["lignes"]
+    ] == [
+        ("VIR RECU ALPHA MODE", "0.00", "38500.00", "Valide", "Encaissement"),
+        ("PRLV FOURNISSEUR TEXTILE", "12800.00", "0.00", "Valide", "Décaissement"),
+        ("COMMISSION BANCAIRE", "175.00", "0.00", "Valide", "Frais bancaires"),
+    ]
+    assert body["resume"]["soldes_coherents"] is True
+    assert (body["resume"]["total_debit"], body["resume"]["total_credit"]) == (
+        "12975.00",
+        "38500.00",
+    )
+
+
+def test_unsigned_amount_first_line_uses_the_previous_line_without_opening_balance(
+    client, tresorerie, account
+):
+    rows = [UNSIGNED[0], *UNSIGNED[2:]]  # sans SOLDE INITIAL
+
+    lines = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    # La 1re ligne n'a pas de solde précédent : son sens n'est pas prouvé, elle passe en erreur
+    assert lines[0]["statut"] == "Erreur"
+    assert lines[0]["motifs"] == [
+        "Sens introuvable : le solde ne permet pas de savoir si c'est un débit ou un crédit."
+    ]
+    assert [(line["debit"], line["statut"]) for line in lines[1:]] == [
+        ("12800.00", "Valide"),
+        ("175.00", "Valide"),
+    ]
+
+
+def test_unsigned_amount_with_an_unproven_line_is_never_a_silent_credit(
+    client, tresorerie, account
+):
+    rows = [*UNSIGNED[:4], ["05/09/2026", "VIR INCONNU", 999, 210525]]  # le solde ne colle pas
+
+    lines = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    assert lines[-1]["statut"] == "Erreur"
+    assert lines[-1]["motifs"][0].startswith("Sens introuvable")
+
+
+def test_newest_first_unsigned_statement_is_read_in_date_order(client, tresorerie, account):
+    rows = [UNSIGNED[0], UNSIGNED[1], *reversed(UNSIGNED[2:])]
+
+    lines = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    assert [(line["libelle"], line["debit"]) for line in lines] == [
+        ("COMMISSION BANCAIRE", "175.00"),
+        ("PRLV FOURNISSEUR TEXTILE", "12800.00"),
+        ("VIR RECU ALPHA MODE", "0.00"),
+    ]
+    assert all(line["statut"] == "Valide" for line in lines)
+
+
+def test_signed_amount_column_is_not_reread_from_the_balance(client, tresorerie, account):
+    """Une colonne qui contient déjà des montants négatifs est un vrai montant signé."""
+    rows = [
+        ["Date", "Libellé", "Montant", "Solde"],
+        ["02/09/2026", "VIR RECU", 100, 1100],
+        ["03/09/2026", "PRLV", -50, 1050],
+        ["04/09/2026", "AUTRE", 10, 999],  # solde incohérent : signalé par le résumé, pas ici
+    ]
+
+    lines = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    assert [(line["debit"], line["credit"], line["statut"]) for line in lines] == [
+        ("0.00", "100.00", "Valide"),
+        ("50.00", "0.00", "Valide"),
+        ("0.00", "10.00", "Valide"),
+    ]
+
+
+def test_unsigned_amount_confirmed_with_its_debits(client, tresorerie, account, db):
+    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", UNSIGNED))).json()
+
+    rows = db.scalars(
+        select(BankTransaction)
+        .filter_by(statement_id=body["statement_id"])
+        .order_by(BankTransaction.id)
+    ).all()
+    assert [(row.debit, row.credit, row.montant) for row in rows] == [
+        (Decimal("0.00"), Decimal("38500.00"), Decimal("38500.00")),
+        (Decimal("12800.00"), Decimal("0.00"), Decimal("-12800.00")),
+        (Decimal("175.00"), Decimal("0.00"), Decimal("-175.00")),
+    ]
+
+
 # --- Lignes en erreur et en double -----------------------------------------------------------------
 
 

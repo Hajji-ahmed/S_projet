@@ -84,18 +84,20 @@ const previsions: Previsions = {
     ligne: index + 1,
     libelle: index === 0 ? "Client A" : null,
     banques: index === 0 ? [{ bank_id: BP, montant: "1000.00" }] : [],
+    // Encaissement / Escompte / Douane : une valeur par ligne (décision du 03/10/2026)
+    encaissement: index === 0 ? "250000.00" : null,
+    escompte: null,
+    douane: index === 6 ? "-50.00" : null,
   })),
-  encaissement: "250000.00",
-  escompte: null,
-  douane: null,
 };
 
 describe("previsionsToDraft / draftToPrevisionsInput", () => {
-  it("garde le libellé tel quel et les trois cellules de la journée", () => {
+  it("garde le libellé tel quel et Encaissement / Escompte / Douane de chaque ligne", () => {
     expect(previsionsToDraft(previsions)).toEqual({
       "1|libelle": "Client A",
       "1|3": "1 000",
-      encaissement: "250 000",
+      "1|encaissement": "250 000",
+      "7|douane": "-50",
     });
   });
 
@@ -111,15 +113,26 @@ describe("previsionsToDraft / draftToPrevisionsInput", () => {
       ligne: 1,
       libelle: "Client A",
       banques: [{ bank_id: BP, montant: "1000" }],
+      encaissement: "250000",
+      escompte: null,
+      douane: null,
     });
-    expect(parsed.value.lignes[1]).toEqual({ ligne: 2, libelle: null, banques: [] });
-    expect(parsed.value).toMatchObject({ encaissement: "250000", escompte: null, douane: null });
+    expect(parsed.value.lignes[1]).toEqual({
+      ligne: 2,
+      libelle: null,
+      banques: [],
+      encaissement: null,
+      escompte: null,
+      douane: null,
+    });
+    expect(parsed.value.lignes[6].douane).toBe("-50");
+    expect(parsed.value).not.toHaveProperty("encaissement");
   });
 
   it("refuse un libellé de plus de 80 caractères et un montant invalide", () => {
-    const parsed = draftToPrevisionsInput({ "4|libelle": "x".repeat(81), douane: "1.2.3" }, []);
+    const parsed = draftToPrevisionsInput({ "4|libelle": "x".repeat(81), "4|douane": "1.2.3" }, []);
 
-    expect(parsed).toEqual({ ok: false, invalid: ["4|libelle", "douane"] });
+    expect(parsed).toEqual({ ok: false, invalid: ["4|libelle", "4|douane"] });
   });
 });
 

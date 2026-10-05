@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useCompany } from "@/components/company/CompanyProvider";
+import { BanquesTable } from "@/components/position/BanquesTable";
 import { DevisesTable } from "@/components/position/DevisesTable";
 import { PrevisionsTable } from "@/components/position/PrevisionsTable";
 import { Card } from "@/components/ui/Card";
@@ -19,8 +20,8 @@ import type { Bank } from "@/types/bank";
 type LoadState = "loading" | "error" | "ready";
 
 /**
- * Page Position bancaire : tableaux Devises et Prévisions de la société active, saisis à la main
- * pour une date (première version, en attendant P8, P9 et P14).
+ * Page Position bancaire : tableau Banques calculé (P8.1), puis tableaux Devises et Prévisions de
+ * la société active, saisis à la main pour une date (en attendant P9 et P14).
  */
 export function PositionView() {
   const { user } = useAuth();
@@ -56,7 +57,7 @@ export function PositionView() {
     <>
       <PageHeader
         title="Position bancaire"
-        description="Tableaux Devises et Prévisions de la société active, saisis à la main"
+        description="Tableau Banques calculé ; Devises et Prévisions saisis à la main"
         actions={
           <label className="flex items-center gap-2 text-sm font-medium text-simtis-text">
             Date
@@ -89,6 +90,7 @@ export function PositionView() {
       )}
       {loadState === "ready" && companyId !== undefined && (
         <>
+          <BanquesTable key={`banques-${companyId}-${jour}`} companyId={companyId} jour={jour} />
           <DevisesTable
             key={`devises-${companyId}-${jour}`}
             companyId={companyId}

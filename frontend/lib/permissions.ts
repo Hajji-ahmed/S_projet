@@ -34,12 +34,10 @@ export const ROUTE_PERMISSIONS: Record<string, readonly PermissionCode[]> = {
   "/banques": [P.POSITION_VIEW],
   "/comptes": [P.POSITION_VIEW],
   "/position-bancaire": [P.POSITION_VIEW],
-  "/devises": [P.POSITION_VIEW],
   "/releves": [P.STATEMENTS_IMPORT, P.RECONCILIATION_VIEW],
   "/ecritures": [P.ACCOUNTING_IMPORT, P.RECONCILIATION_VIEW],
   "/rapprochement": [P.RECONCILIATION_VIEW],
   "/ecarts": [P.RECONCILIATION_VIEW],
-  "/previsions": [P.FORECASTS_MANAGE, P.DASHBOARD_VIEW],
   "/administration": [P.ADMIN_USERS, P.ADMIN_ROLES],
   "/historique": [P.AUDIT_VIEW],
 };

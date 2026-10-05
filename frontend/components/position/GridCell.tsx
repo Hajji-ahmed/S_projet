@@ -5,12 +5,21 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 
 /**
- * Cellules des tableaux du classeur (Devises, Prévisions) : bordures fines, police 13px semi-grasse,
- * en-têtes centrés. Les couleurs viennent des tokens.
+ * Style des tableaux du classeur (Banques, Devises, Prévisions), aligné sur `DataTable` : cadre
+ * arrondi, en-têtes teal clair, texte normal, survol des lignes ; en plus, des traits verticaux
+ * fins (grilles de montants et de saisie). Les couleurs viennent des tokens.
  */
+/** Cadre du tableau : arrondi, bordure claire ; seul le tableau défile sur mobile. */
+export const GRID_FRAME =
+  "relative overflow-x-auto rounded-[12px] border border-simtis-border bg-simtis-card";
+// border-hidden : le contour extérieur est celui du cadre arrondi, pas celui des cellules
 export const GRID_TABLE =
-  "w-full border-collapse text-[13px] font-semibold text-simtis-text [&_td]:border [&_td]:border-simtis-muted [&_th]:border [&_th]:border-simtis-muted";
-export const GRID_HEAD = "px-2 py-1.5 text-center font-semibold whitespace-nowrap";
+  "w-full border-collapse border-hidden text-[13.5px] text-simtis-text [&_td]:border [&_td]:border-simtis-border [&_th]:border [&_th]:border-simtis-border [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-simtis-light/40";
+/** En-tête de colonne, comme `DataTable`. */
+export const GRID_HEAD =
+  "bg-simtis-light/60 px-3 py-2.5 text-center text-[13px] font-semibold whitespace-nowrap text-simtis-primary-dark";
+/** Libellé de ligne (Taux, LIGNE, EUR, date des Prévisions...). */
+export const GRID_ROW_HEAD = "px-3 py-2.5 text-left font-medium whitespace-nowrap";
 /** Fond gris clair du classeur (cellules de banques des Devises, en-têtes Encaissement...). */
 export const GRID_GREY = "bg-simtis-neutral-bg";
 
@@ -38,7 +47,7 @@ export function GridCell({
   const alignment = align === "right" ? "text-right tabular-nums" : "text-left";
   if (readOnly) {
     return (
-      <span className={cn("block min-h-8 px-2 py-1.5 whitespace-nowrap", alignment)}>{value}</span>
+      <span className={cn("block min-h-10 px-3 py-2.5 whitespace-nowrap", alignment)}>{value}</span>
     );
   }
   return (
@@ -51,7 +60,7 @@ export function GridCell({
       maxLength={maxLength}
       onChange={(event) => onChange(event.target.value)}
       className={cn(
-        "block h-8 w-full min-w-0 bg-transparent px-2 outline-none",
+        "block h-10 w-full min-w-0 bg-transparent px-3 outline-none",
         "focus:bg-simtis-card focus:ring-2 focus:ring-simtis-primary focus:ring-inset",
         invalid && "bg-simtis-danger-bg text-simtis-danger-fg ring-1 ring-simtis-danger ring-inset",
         alignment,

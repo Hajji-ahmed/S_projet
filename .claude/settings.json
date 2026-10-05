@@ -11,10 +11,17 @@
       "PowerShell(Get-Process -Id 8300 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path | Format-List; Get-CimInstance Win32_Service | Where-Object { $_.ProcessId -eq 8300 } | Select-Object Name,DisplayName,State | Format-List; \"--- ports 3000 et 8000 ---\"; Get-NetTCPConnection -LocalPort 3000,8000 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort,OwningProcess | Format-Table -AutoSize | Out-String)",
       "PowerShell(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 5433,5434,5435,5442,15432 } | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table -AutoSize | Out-String)",
       "PowerShell($edge = @\\(\"C:\\\\Program Files \\(x86\\)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe\",\"C:\\\\Program Files\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe\",\"C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe\"\\) | Where-Object { Test-Path $_ } | Select-Object -First 1; if \\(-not $edge\\) { \"AUCUN NAVIGATEUR TROUVE\"; exit 1 }; \"Navigateur: $edge\"; $out = \"C:\\\\Users\\\\HPELIT~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-HP-EliteBook-850-G3-Downloads-Simtis-SIMTIS-S-projet\\\\cfd06392-68d0-4a89-8951-7d43c55e64c2\\\\scratchpad\"; New-Item -ItemType Directory -Force $out | Out-Null; $shots = @\\(@\\(\"desktop\",1440,1500\\),@\\(\"tablet\",900,1500\\),@\\(\"mobile\",390,1800\\)\\); foreach \\($s in $shots\\) { $file = Join-Path $out \\(\"ds-\" + $s[0] + \".png\"\\); & $edge --headless=new --disable-gpu --hide-scrollbars \"--window-size=$\\($s[1]\\),$\\($s[2]\\)\" --virtual-time-budget=15000 \"--screenshot=$file\" \"http://localhost:3000/design-system\" 2>$null | Out-Null; if \\(Test-Path $file\\) { \"{0}: {1} Ko\" -f $s[0], [math]::Round\\(\\(Get-Item $file\\).Length/1KB\\) } else { \"{0}: ECHEC\" -f $s[0] } })",
-      "PowerShell(docker compose cp \"docs/specs/SIMTIS_tableaux_complets.xlsx\" backend:/tmp/t.xlsx 2>$null)"
+      "PowerShell(docker compose cp \"docs/specs/SIMTIS_tableaux_complets.xlsx\" backend:/tmp/t.xlsx 2>$null)",
+      "PowerShell(docker compose run --rm backend pytest tests/test_position_service.py -q 2>&1)",
+      "PowerShell(docker compose run --rm backend ruff check . 2>&1)",
+      "PowerShell(docker compose run --rm backend ruff format --check . 2>&1)",
+      "PowerShell($t = Measure-Command { curl.exe -s -o NUL -w \"%{http_code}\" --max-time 240 http://localhost:3000/login }; \"login: $\\([int]$t.TotalSeconds\\)s\"; curl.exe -s -o NUL -w \"%{http_code}`n\" --max-time 240 http://localhost:3000/position-bancaire; cd \"C:\\\\Users\\\\HPELIT~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-HP-EliteBook-850-G3-Downloads-Simtis-SIMTIS-S-projet\\\\f5e7e7ec-174f-4a64-b242-fae5433869e1\\\\scratchpad\\\\e2e\"; \\(Get-Content comptes-banques.mjs -Raw\\).Replace\\('await page.goto\\(\"http://localhost:3000/login?next=%2Fposition-bancaire\"\\);', 'await page.goto\\(\"http://localhost:3000/login?next=%2Fposition-bancaire\", { timeout: 180000 }\\);'\\) | Set-Content -Encoding utf8 comptes-banques.mjs; node comptes-banques.mjs)",
+      "PowerShell(docker compose exec -T frontend npm install 2>&1)",
+      "PowerShell(docker compose exec -T frontend node -e \"console.log\\(require\\('recharts/package.json'\\).version\\)\")"
     ],
     "additionalDirectories": [
-      "C:\\Users\\HP EliteBook 850 G3\\Downloads\\Simtis\\SIMTIS\\.claude\\skills"
+      "C:\\Users\\HP EliteBook 850 G3\\Downloads\\Simtis\\SIMTIS\\.claude\\skills",
+      "C:\\Users\\HP EliteBook 850 G3\\Downloads\\Simtis\\SIMTIS\\S_projet"
     ]
   }
 }

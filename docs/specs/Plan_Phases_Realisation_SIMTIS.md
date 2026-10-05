@@ -148,7 +148,8 @@ Ces points bloquent la conception de la base. Ils doivent être tranchés en **P
 | **Taux** | Taux d'intérêt | Champ `taux_interet NUMERIC(18,6)` sur le compte / la ligne de crédit |
 | **Ligne** | = Crédit autorisé | Pas de champ séparé : `bank_accounts.credit_autorise`. Le tableau Banques l'affiche sous le libellé **« LIGNE »**, comme le classeur |
 | **Date** (tableau Banques) | Remplacée par 3 lignes « facilité de caisse » datées (28, 29, 30/09 dans le classeur) | Historique **par jour** : table `bank_account_balances` (compte, date, solde, crédit utilisé) |
-| **Disposition FC réel** | = Solde bancaire + Crédit autorisé. Libellé du classeur : **« Disponible Fc reel »** | Formule distincte de la Position disponible (Solde + Crédit disponible) ; à vérifier sur l'Excel de Salma en recette |
+| **Disposition FC réel** | ~~= Solde bancaire + Crédit autorisé~~ ; **depuis le 03/10/2026 : facilité de caisse du dernier jour − LIGNE** (TOTAL = somme ; DEPASSEMENT = TOTAL, la LIGNE étant déjà retirée : correction du 03/10/2026, qui remplace « TOTAL − somme des LIGNES »). Libellé du classeur : **« Disponible Fc reel »** | Exemple : AWB LIGNE 800 000, solde 400 000 → facilité 1 200 000 → Disponible 400 000 ; avec BP (LIGNE 600 000, solde 650 000) : TOTAL 1 050 000, DEPASSEMENT 1 050 000. À vérifier sur l'Excel de Salma en recette |
+| **Solde d'un jour** (décidé le 03/10/2026) | Solde de la **dernière opération importée** ce jour-là (date d'opération, ordre du relevé, opérations sans solde ignorées), sinon solde du jour saisi ou écrit par l'import, sinon dernier solde connu | Calculé à la lecture (`position_repository.last_operation_soldes`) ; l'import ne change pas (il n'écrit toujours que le solde du jour de clôture) |
 | **UAR** | = EUR | Affiché « EUR » dans le tableau Devises |
 | **Structure des 3 tableaux** | `SIMTIS_tableaux_complets.xlsx` (envoyé le 30/09/2026) | Une feuille, 3 tableaux empilés sur les mêmes colonnes de banques. Remplace `SIMTIS_3_tableaux_corriges(1).xlsx` et la Remarque |
 | **Banques** | 5 : AWB (Attijariwafa), BMCE, BP, CIH, **BMCI** | Affichées par code, dans cet ordre (`banks.ordre_affichage`) |
@@ -157,24 +158,27 @@ Ces points bloquent la conception de la base. Ils doivent être tranchés en **P
 | **Crédit utilisé** | Saisi à la main | Formulaire par compte : montant, date de mise à jour, utilisateur ; audit avant / après |
 | **Taux de change** | Saisis à la main | Formulaire `exchange_rates` : devise, taux, date du taux, utilisateur ; audit avant / après |
 | **Pointage** | Type d'opération : encaissement, décaissement, frais bancaires… (liste ouverte) | Table de référence éditable, distincte du statut de rapprochement |
-| **Société** | Multi-sociétés : Simtis et une 2ᵉ société affichée **« Société X »** en attendant son nom | Table `companies` obligatoire ; chaque compte bancaire est rattaché à une société. Le nom est une donnée, modifiable sans toucher au code |
+| **Société** | Multi-sociétés : Simtis et **Tefil** (nom confirmé le 05/10/2026 ; affichée « Société X » avant, code `SOCX` inchangé, renommée par la migration 0009). Tefil n'a pas de comptes EUR / USD, donc pas de tableau Devises | Table `companies` obligatoire ; chaque compte bancaire est rattaché à une société. Le nom est une donnée, modifiable sans toucher au code |
 | **Position par société** | Affichée séparément, pas de total consolidé Simtis + Société X | Position, tableaux et dashboard filtrés par société |
 | **Fichiers comptables** | Un export de comptabilisation par société | Chaque import comptable est rattaché à une société ; le rapprochement ne croise jamais deux sociétés |
 | **Format des relevés** | Excel uniquement | Import `.xlsx` (et `.xls` si les banques l'exportent) ; CSV et MT940 hors MVP |
 | **Accès Sage / SI** | Export de fichier | Import manuel de fichier ; pas de connexion ODBC/API dans le MVP |
 | **Nom de la banque** | « Attijariwafa » (code **AWB** dans les tableaux) | Remplace « Tijari » / « TIJARI » ; les en-têtes des tableaux affichent le code de la banque |
 | **Logos** | Fournis | `frontend/public/logo-simtis.png` et `frontend/public/banques/{attijariwafa,bmce,bp,cih,bmci}.png` |
+| **facilité de caisse** (décidé le 02/10/2026) | Une ligne **par jour**, sans limite (chaque jour ajoute sa date), valeur de chaque banque = **Solde du jour + LIGNE** | Calculé depuis `bank_account_balances`. Exemple validé : AWB LIGNE 500 000 et solde −200 000 → 300 000 ; BMCE LIGNE 300 000 et solde +100 000 → 400 000 ; TOTAL 700 000 |
+| **DEPASSEMENT** (décidé le 02/10/2026) | Pour chaque date : TOTAL des facilités de caisse des banques − TOTAL des LIGNES des banques | Exemple ci-dessus : 700 000 − 800 000 = −100 000. Remplace la proposition max(0, −Disponible Fc reel) |
+| **Comptes du tableau Banques** (décidé le 02/10/2026) | Le **compte courant MAD** de chaque banque seulement | « Exp DH convertible » reste dans le tableau Devises, hors TOTAL et hors Disponible Fc reel |
 | **Évolutions** | D'autres fonctionnalités comptables s'ajouteront après le MVP, selon l'équipe | Architecture modulaire (un module = api + service + permissions) ; vérifier que ces ajouts respectent le principe « pas un second Sage » |
 
 ### 3.4 Encore en attente
 
 - **Tableaux du classeur** (à trancher avant P8, P9 et P14, sans bloquer P4 ni P5) :
-  - « facilité de caisse » 28/09, 29/09, 30/09 : est-ce le **solde** du compte ce jour-là, ou la **facilité utilisée** ? Toujours les 3 derniers jours ?
+  - ~~« facilité de caisse » : solde ou facilité utilisée ? Toujours 3 jours ?~~ Tranché le 02/10/2026 (§3.3) : Solde du jour + LIGNE, une ligne par jour sans limite.
   - Prévisions : 30/09 est-elle la date de la situation ? La colonne C contient-elle une échéance, un libellé (« La paie », « CHQ1 »…) ou les deux ? Encaissement, Escompte et Douane sont-ils des totaux de la journée, non répartis par banque ?
   - Devises : que contiennent les cellules grisées de EUR / USD / Exp DH convertible (montant en devise ?) et le TOTAL (équivalent MAD, ou total par devise) ?
   - « Exp DH convertible » : compte en dirhams convertibles ? Compte-t-il dans le Disponible Fc reel et le TOTAL MAD ? (proposé : à part)
-- **Termes** : Dépassement (proposé : max(0, −Disponible Fc reel)), Lettrage / Escompte, Escompte (entrée ou sortie).
-- **Libellés provisoires** : nom de la « Société X ».
+- **Termes** : Lettrage / Escompte, Escompte (entrée ou sortie). (Dépassement tranché le 02/10/2026, §3.3.)
+- ~~**Libellés provisoires** : nom de la « Société X ».~~ Tranché le 05/10/2026 : Tefil.
 - **Pointage** : liste complète des valeurs.
 - **Règles** : tolérances de rapprochement, grille de scoring, règle de doublon, exceptions, seuils d'alerte.
 - **Fichiers réels** : le format **cible** (structure standard) est décrit dans le CDC §4 et l'architecture technique §5. Les fichiers réels ne bloquent pas le démarrage : on développe avec des fichiers de test au format standard. Ils restent nécessaires pour la recette : au moins un relevé par banque (P7), l'Excel de Salma (P8), un export comptable par société (P10).
@@ -316,7 +320,7 @@ Chaque phase est décrite avec : **Objectif · Prérequis · Tâches · Livrable
 
 > **Statut : réalisé le 30/09/2026** (`docker compose up` lance les 3 services, CI écrite, layout et 13 routes). Écarts par rapport à la liste ci-dessous, à reprendre dans la phase qui en a besoin :
 > - Composants non créés : `BankCard` (P6), `DateRangePicker` et `FilterBar` (P8), `NotificationCenter` (P15). `ChartCard` = `Card`. `SearchBar` est en place mais non branchée. `DataTable` n'a ni tri, ni pagination, ni sélection multiple (P11).
-> - Recharts n'est pas installé (P8 / P15).
+> - Recharts est installé depuis P8.3 (03/10/2026) ; à réutiliser pour P14 et P15.
 > - Rechargement à chaud : le frontend tourne en mode webpack avec scrutation des fichiers, car Turbopack ne détecte pas les modifications sur un dossier monté depuis Windows.
 > - PostgreSQL est publié sur le port 5434 du poste (5432 et 5433 sont souvent occupés).
 > - La CI (`.github/workflows/ci.yml`) est validée en syntaxe mais n'a pas encore tourné : elle ne s'exécutera qu'après un `push` sur GitHub.
@@ -641,7 +645,7 @@ P7 est découpée en **3 sous-phases** : **P7.1 Analyse** (lecture du fichier, d
 
 > **Import direct — réalisé le 02/10/2026** (demande du métier, design validé). L'assistant passe à 2 étapes, **Fichier → Validation** : plus de bouton « Analyser » ni d'étape Mapping ; dès que le compte et le fichier sont choisis, l'analyse se lance et mène directement à la Validation. Le mapping ne s'affiche qu'**en secours**, si les colonnes ne sont pas reconnues (encadré « Colonnes non reconnues » ; la correspondance est ensuite mémorisée pour la banque). Le choix du compte devient une liste déroulante maison avec le **logo de chaque banque** (accessible au clavier). Aucun changement d'API ni des règles d'import.
 
-> **Solde initial et Pointage automatique — réalisé le 02/10/2026** (demande du métier, design validé). (1) Une ligne SOLDE INITIAL / ANCIEN SOLDE / SOLDE PRÉCÉDENT / REPORT (ou SOLDE FINAL / NOUVEAU SOLDE), datée ou non, **sans débit ni crédit** (cellules vides, à zéro ou « - », ajouté le 02/10/2026 car les banques écrivent souvent 0), n'est plus une erreur et n'est pas affichée dans l'aperçu : ce n'est pas une opération, son montant devient le solde d'ouverture (de clôture) du relevé et sert au contrôle « solde initial + mouvements = solde de clôture ». (2) **Pointage rempli automatiquement** : la valeur connue de la colonne Pointage du fichier l'emporte ; sinon COMMISSION, AGIOS, FRAIS, TENUE DE COMPTE → Frais bancaires, puis crédit → Encaissement, débit → Décaissement (`normalization_service.guess_pointage`). La Validation affiche la colonne Pointage. (3) La migration **0005** (données seulement) a appliqué la même règle aux 60 opérations déjà importées dont le Pointage était vide (trace dans `audit_logs`, action `remplissage_pointage`) ; son retour arrière ne vide rien. **Constat** : le relevé BP « Format_Different » importé le 02/10 a toutes ses opérations au crédit (une seule colonne Montant, en positif) alors que la colonne Solde montre des débits ; son contrôle de solde est « À vérifier ». Le format « Montant + sens » doit être traité avant de le réimporter (voir le compte rendu au métier).
+> **Solde initial et Pointage automatique — réalisé le 02/10/2026** (demande du métier, design validé). (1) Une ligne SOLDE INITIAL / ANCIEN SOLDE / SOLDE PRÉCÉDENT / REPORT (ou SOLDE FINAL / NOUVEAU SOLDE), datée ou non, **sans débit ni crédit** (cellules vides, à zéro ou « - », ajouté le 02/10/2026 car les banques écrivent souvent 0), n'est plus une erreur et n'est pas affichée dans l'aperçu : ce n'est pas une opération, son montant devient le solde d'ouverture (de clôture) du relevé et sert au contrôle « solde initial + mouvements = solde de clôture ». (2) **Pointage rempli automatiquement** : la valeur connue de la colonne Pointage du fichier l'emporte ; sinon COMMISSION, AGIOS, FRAIS, TENUE DE COMPTE → Frais bancaires, puis crédit → Encaissement, débit → Décaissement (`normalization_service.guess_pointage`). La Validation affiche la colonne Pointage. (3) La migration **0005** (données seulement) a appliqué la même règle aux 60 opérations déjà importées dont le Pointage était vide (trace dans `audit_logs`, action `remplissage_pointage`) ; son retour arrière ne vide rien. **Constat** : le relevé BP « Format_Different » importé le 02/10 a toutes ses opérations au crédit (une seule colonne Montant, en positif) alors que la colonne Solde montre des débits ; son contrôle de solde est « À vérifier ». Le format « Montant + sens » doit être traité avant de le réimporter (voir le compte rendu au métier). **Corrigé le 04/10/2026** : (1) à l'import, une colonne Montant sans aucun montant négatif, avec une colonne Solde, prend son sens dans la chaîne des soldes (`import_service._direction_from_balances`) dès que cette chaîne prouve au moins un débit ; une ligne dont le sens n'est pas prouvé passe en erreur « Sens introuvable… », jamais au crédit par défaut ; le solde précédent de la 1re ligne est le SOLDE INITIAL du fichier ; (2) la migration **0008** (données seulement) a corrigé le relevé déjà importé : 9 opérations sur 15 passées au débit (Pointage Encaissement → Décaissement, empreinte recalculée), contrôle du solde « À vérifier » → « Écart » (327 955 face au solde de 638 000 enregistré avant l'import), audit `correction_sens`.
 
 > **Relevés modifiables — réalisé le 02/10/2026** (spécification `docs/superpowers/specs/2026-10-02-releves-modifiables-design.md`, plan `docs/superpowers/plans/2026-10-02-releves-modifiables.md`). (1) **Aperçu modifiable** : l'étape Validation montre le relevé tel qu'il sera enregistré, au format standard (Importer · État · 11 colonnes), chaque ligne se corrige (crayon, « Annuler les corrections »), revérifiée aussitôt avec les règles du serveur ; une ligne en erreur corrigée se coche ; résumé recalculé en direct ; **aucun ajout de ligne**. (2) **Enregistrement** : partie `lignes` (fichier JSON, pour dépasser la limite de 1 Mo d'un champ de formulaire) de `POST /api/statements/import/confirm` ; le serveur revérifie chaque ligne (une seule invalide ou déjà importée → rien n'est enregistré ; une ligne en erreur dans le fichier et laissée telle quelle est refusée avec ses motifs ; une ligne d'une autre banque est toujours refusée), garde l'empreinte d'origine (la même opération renvoyée par la banque reste reconnue ; une ligne en erreur corrigée prend l'empreinte de ses valeurs finales), marque `bank_transactions.origine` = `Corrigée` (migration **0006**) et trace chaque correction (`lignes_corrigees`, `lignes_fichier_non_importees`). (3) **Après l'import** : Pointage, Lettrage / Escompte et Commentaire modifiables par la Trésorerie (`PATCH /api/statements/transactions/{id}`, audit `modification_operation`) ; Comptable et Direction en lecture ; mention « corrigée avant l'import » dans le relevé continu. `GET /api/pointage-types` liste les types actifs.
 
@@ -702,6 +706,14 @@ Résumé d'import + audit
 
 **Prérequis** : P7
 
+> **P8.1 — Tableau Banques calculé : réalisé le 03/10/2026** (spécification `docs/superpowers/specs/2026-10-03-tableau-banques-design.md`, plan `docs/superpowers/plans/2026-10-03-tableau-banques.md`). `GET /api/position/banques?company_id=&date=` (`position.view`, sans migration). Colonnes : banques actives, compte courant MAD actif de la société. Une ligne « facilité de caisse » par jour calendaire (solde du jour + LIGNE, dernier solde connu repris), DEPASSEMENT = TOTAL − somme des LIGNES, Disponible Fc reel = ligne de la date de fin ; 10 derniers jours visibles + « Afficher plus ». La LIGNE n'est pas historisée : les jours passés utilisent la LIGNE actuelle. Aucun solde avant le 01/01/2000 (saisie refusée, ligne ignorée par le tableau) : une année mal saisie créerait sinon des milliers de lignes. Restent : P8.3 graphique, recette sur l'Excel de Salma.
+
+> **P8.2 — Tableau détaillé par compte et filtres : abandonnée le 03/10/2026** (décision du métier : « pas besoin de ce tableau »). Ni tableau détaillé, ni filtres Banque / Compte / Devise sur la page ; le tableau Banques suffit. Les tâches « Tableau détaillé » et « filtres » ci-dessous ne sont donc pas à faire.
+
+> **P8.3 — Graphique d'évolution : réalisé le 03/10/2026** (design validé dans la conversation, demande limitée). Carte « Évolution de la position » sous le tableau Banques : courbe en aire (teal `chart-1`, fond `light`) du TOTAL « facilité de caisse » des 30 derniers jours jusqu'à la date choisie, infobulle avec le montant exact, un jour sans TOTAL laissé vide (jamais 0). Aucune modification de l'API : mêmes données que le tableau Banques, sans second appel. Première librairie de graphiques du projet : **Recharts**. Reste pour clore P8 : la recette au centime près sur l'Excel de Salma.
+
+> **Ajustements du 03/10/2026** (demandes du métier) : (1) Disponible Fc reel = facilité de caisse du dernier jour − LIGNE (voir §3.3) ; (2) le solde d'un jour est celui de la dernière opération importée ce jour-là, sinon le solde du jour (§3.3) ; (3) graphique : boutons TOTAL | AWB | BP…, une courbe à la fois ; (4) tableau Prévisions : Encaissement, Escompte et Douane saisis **ligne par ligne** (migration 0007, valeurs de la journée reprises sur la ligne 1) ; (5) style des trois tableaux aligné sur les autres tableaux.
+
 **Tâches — Backend**
 
 - [ ] `PositionService` : calcul par **compte**, par **banque** et **global**
@@ -752,7 +764,9 @@ Résumé d'import + audit
 - [ ] Conversion MAD : montant d'origine + taux + date du taux **toujours conservés**
 - [ ] Totaux par devise ; total consolidé MAD en option
 - [ ] Traitement du **compte RH convertible** selon la définition de P0
-- [ ] `/devises` — **tableau selon `SIMTIS_tableaux_complets.xlsx`** : lignes **EUR**, **USD**, **Exp DH convertible**, sur les mêmes colonnes de banques (cellules grisées) avec TOTAL et DEPASSEMENT ; aucune colonne supplémentaire. Contenu exact des cellules : à confirmer (§3.4)
+> **P9 — en partie réalisée le 05/10/2026** (décision du métier) : les lignes **EUR** et **USD** du tableau Devises affichent les **soldes des comptes courants EUR / USD** de la société, dans leur devise, **sans conversion** (`GET /api/position/devises/soldes`, même règle de solde que le tableau Banques, dernier solde connu grisé) ; TOTAL = somme de la devise, DEPASSEMENT vide ; la ligne Exp DH convertible reste saisie à la main. Pas de tableau Devises pour une société sans compte EUR, USD ni DH convertible (Tefil). La conversion MAD et le référentiel des taux ne sont pas demandés pour ce tableau.
+
+- [ ] ~~`/devises`~~ **sur `/position-bancaire`** (page `/devises` supprimée le 05/10/2026, décision du métier) — **tableau selon `SIMTIS_tableaux_complets.xlsx`** : lignes **EUR**, **USD**, **Exp DH convertible**, sur les mêmes colonnes de banques (cellules grisées) avec TOTAL et DEPASSEMENT ; aucune colonne supplémentaire. Contenu exact des cellules : à confirmer (§3.4)
 - [ ] Le détail (montant, taux, équivalent MAD, date) reste disponible en infobulle ou en vue détail, pour la traçabilité, sans modifier le tableau principal
 
 **Critères de fin**
@@ -917,7 +931,7 @@ Résumé d'import + audit
 
 **Tâches — Frontend**
 
-- [ ] `/previsions` : KPI (Position actuelle, Encaissements prévus, Décaissements prévus, Position future) + bouton « + Nouvelle prévision »
+- [ ] ~~`/previsions`~~ **sur `/position-bancaire`** (page `/previsions` supprimée le 05/10/2026, décision du métier) : KPI (Position actuelle, Encaissements prévus, Décaissements prévus, Position future) + bouton « + Nouvelle prévision »
 - [ ] **Tableau Prévisions (structure imposée par `SIMTIS_tableaux_complets.xlsx`)** :
 
   ```text

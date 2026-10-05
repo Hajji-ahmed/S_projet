@@ -20,11 +20,12 @@ def list_previsions(db: Session, company_id: int, jour: date) -> list[SaisiePrev
     return list(db.scalars(query.order_by(SaisiePrevision.ligne, SaisiePrevision.id)))
 
 
-def get_previsions_jour(db: Session, company_id: int, jour: date) -> SaisiePrevisionJour | None:
+def list_previsions_jour(db: Session, company_id: int, jour: date) -> list[SaisiePrevisionJour]:
+    """Encaissement / Escompte / Douane de la date, une ligne du bloc par enregistrement."""
     query = select(SaisiePrevisionJour).where(
         SaisiePrevisionJour.company_id == company_id, SaisiePrevisionJour.jour == jour
     )
-    return db.scalar(query)
+    return list(db.scalars(query.order_by(SaisiePrevisionJour.ligne)))
 
 
 def add(db: Session, row: object) -> None:

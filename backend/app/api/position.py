@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import client_ip, require_permission
 from app.core.db import get_db
 from app.core.permissions import PermissionCode
+from app.schemas.position import BanquesTableOut, DevisesSoldesOut
 from app.schemas.saisie import DevisesIn, DevisesOut, PrevisionsIn, PrevisionsOut
-from app.services import position_service, saisie_service
+from app.services import position_banques_service, position_service, saisie_service
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/position", tags=["position"])
@@ -23,6 +24,30 @@ Jour = Annotated[date, Query(alias="date", description="Date de la grille (AAAA-
 JourOuAujourdhui = Annotated[
     date | None, Query(alias="date", description="Date de la grille, aujourd'hui par défaut")
 ]
+
+
+@router.get("/banques", response_model=BanquesTableOut)
+def get_banques(
+    company_id: CompanyId,
+    jour: JourOuAujourdhui = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> BanquesTableOut:
+    """Tableau Banques calculé à partir des soldes du jour, jusqu'à la date (jamais après aujourd'hui)."""
+    table = position_banques_service.banques_table(db, company_id, jour)
+    return BanquesTableOut.from_table(company_id, table)
+
+
+@router.get("/devises/soldes", response_model=DevisesSoldesOut)
+def get_devises_soldes(
+    company_id: CompanyId,
+    jour: JourOuAujourdhui = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> DevisesSoldesOut:
+    """Lignes EUR et USD du tableau Devises : soldes des comptes en devise, sans conversion."""
+    table = position_banques_service.devises_table(db, company_id, jour)
+    return DevisesSoldesOut.from_table(company_id, table)
 
 
 @router.get("/devises", response_model=DevisesOut)
@@ -61,8 +86,8 @@ def get_previsions(
     _user: CurrentUser = Depends(can_view),
 ) -> PrevisionsOut:
     jour = jour or position_service.business_today()
-    rows, day = saisie_service.list_previsions(db, company_id, jour)
-    return PrevisionsOut.from_rows(company_id, jour, rows, day)
+    rows, days = saisie_service.list_previsions(db, company_id, jour)
+    return PrevisionsOut.from_rows(company_id, jour, rows, days)
 
 
 @router.put("/previsions", response_model=PrevisionsOut)
@@ -75,7 +100,7 @@ def save_previsions(
     user: CurrentUser = Depends(can_enter_previsions),
 ) -> PrevisionsOut:
     """Enregistre la grille Prévisions de la date. Une cellule absente ou `null` est vidée."""
-    rows, day = saisie_service.save_previsions(
+    rows, days = saisie_service.save_previsions(
         db,
         company_id,
         jour,
@@ -84,4 +109,4 @@ def save_previsions(
         acteur_id=user.id,
         ip=client_ip(request),
     )
-    return PrevisionsOut.from_rows(company_id, jour, rows, day)
+    return PrevisionsOut.from_rows(company_id, jour, rows, days)

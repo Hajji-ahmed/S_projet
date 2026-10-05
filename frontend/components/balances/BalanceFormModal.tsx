@@ -7,6 +7,7 @@ import { FormModal } from "@/components/ui/FormModal";
 import { amountForInput, normalizeAmountInput } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
 import {
+  PREMIERE_DATE_SOLDE,
   businessToday,
   currencySuffix,
   formatDate,
@@ -125,6 +126,7 @@ export function BalanceFormModal({ account, onClose, onSaved }: BalanceFormModal
         <DateInput
           id="balance-jour"
           value={values.jour}
+          min={PREMIERE_DATE_SOLDE}
           max={today}
           onChange={(event) => set("jour")(event.target.value)}
           disabled={submitting}

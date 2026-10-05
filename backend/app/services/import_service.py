@@ -447,6 +447,62 @@ def _read_line(
     return line
 
 
+SENS_INTROUVABLE = (
+    "Sens introuvable : le solde ne permet pas de savoir si c'est un débit ou un crédit."
+)
+
+
+def _direction_from_balances(
+    lines: list[AnalysedLine], mapping: Mapping, opening: Decimal | None, pointages: Pointages
+) -> None:
+    """Colonne Montant sans signe (relevé BP « Format_Different ») : le sens vient du Solde.
+
+    Décision du 04/10/2026. Ne s'applique que si le fichier a une colonne Montant et une colonne
+    Solde, qu'aucun montant n'est négatif (sinon la colonne est vraiment signée) et que la chaîne
+    des soldes prouve au moins un débit (solde précédent − montant = solde). Alors chaque ligne
+    prend le sens prouvé par son solde ; une ligne dont le sens n'est pas prouvé passe en erreur,
+    jamais au crédit par défaut. Le solde précédent de la 1re ligne est le SOLDE INITIAL du fichier.
+    """
+    if mapping.get("montant") is None or mapping.get("solde") is None:
+        return
+    readable = [line for line in lines if line.credit is not None and line.debit is not None]
+    if any(line.debit for line in readable):
+        return
+    dated = [line for line in lines if line.date_operation is not None]
+    newest_first = len(dated) > 1 and dated[0].date_operation > dated[-1].date_operation
+    ordered = lines[::-1] if newest_first else lines
+
+    proofs: dict[int, str | None] = {}
+    previous = opening
+    for line in ordered:
+        sens = None
+        if line.credit and previous is not None and line.solde is not None:
+            if previous + line.credit == line.solde:
+                sens = "credit"
+            elif previous - line.credit == line.solde:
+                sens = "debit"
+        proofs[id(line)] = sens
+        previous = line.solde
+    if "debit" not in proofs.values():
+        return
+
+    for line in ordered:
+        if not line.credit:
+            continue  # montant illisible ou manquant : déjà en erreur
+        sens = proofs[id(line)]
+        if sens == "debit":
+            line.debit, line.credit = line.credit, Decimal("0.00")
+            line.montant = -line.debit
+            if line.pointage_auto:
+                line.pointage_type_id = pointages.find(
+                    guess_pointage(line.libelle, line.debit, line.credit)
+                )
+                line.pointage_libelle = pointages.labels.get(line.pointage_type_id)
+        elif sens is None:
+            line.motifs.append(SENS_INTROUVABLE)
+            line.statut = "Erreur"
+
+
 def _is_ignored(cells: dict[str, object]) -> bool:
     """Ligne de titre, de total ou de solde, sans date d'opération."""
     if not is_blank(cells.get("date_operation")):
@@ -666,6 +722,7 @@ def analyse_statement(
         numero = header_index + 2 + offset
         lines.append(_read_line(numero, cells, mapping, account.bank, today, pointages))
 
+    _direction_from_balances(lines, mapping, analysis.solde_initial_fichier, pointages)
     _mark_duplicates(db, account, lines)
     analysis.lignes = lines
     analysis.resume = _summarise(
