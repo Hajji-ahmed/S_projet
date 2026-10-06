@@ -1,6 +1,15 @@
 from fastapi import APIRouter, Depends
 
-from app.api import accounts, auth, banks, health, position, referentiel, statements
+from app.api import (
+    accounting,
+    accounts,
+    auth,
+    banks,
+    health,
+    position,
+    referentiel,
+    statements,
+)
 from app.api.deps import get_current_user
 
 # Routes accessibles sans être connecté. Toute nouvelle route publique doit aussi être ajoutée à
@@ -19,6 +28,7 @@ protected_router.include_router(accounts.router)
 protected_router.include_router(referentiel.router)
 protected_router.include_router(position.router)
 protected_router.include_router(statements.router)
+protected_router.include_router(accounting.router)
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(public_router)

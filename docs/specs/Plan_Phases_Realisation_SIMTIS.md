@@ -780,6 +780,8 @@ Résumé d'import + audit
 
 **Objectif** : récupérer les écritures comptables déjà réalisées pour les rapprocher. Sage/SI reste la référence.
 
+> **P10 — Statut : réalisé le 05/10/2026** (spécification `docs/superpowers/specs/2026-10-05-import-sage-design.md`, plan `docs/superpowers/plans/2026-10-05-import-sage.md`). Décisions du 05/10/2026 : une écriture est rattachée à son compte bancaire par le **code journal Sage** (champ « Journal Sage » de chaque compte, migration **0010**, un compte actif par journal et par société) ; seules les **lignes banque des journaux de banque** sont importées (compte qui commence par le compte comptable du compte bancaire, ex. 5141) — contreparties et autres journaux ignorés ; un fichier = une société, plusieurs banques ; **aucune correction** dans SIMTIS (une ligne en erreur se corrige dans Sage ou s'écarte). API : `POST /api/accounting/import/analyse` et `/confirm` (`accounting.import`), `GET /api/accounting/entries` (50 par page, filtres compte / dates / statut / recherche, totaux sur tout le filtre), `/entries/{id}`, `/imports`. Page `/ecritures` : assistant Fichier → Validation (lecture seule), liste paginée, détail, journal des imports. Lecture du classeur commune aux relevés (`services/import_file.py`). Aucun export Sage réel disponible : format standard du CDC ; la recette (export réel, totaux identiques à Sage) reste à faire.
+
 **Prérequis** : P7 (réutilise le moteur d'import et de mapping)
 
 **Tâches — Backend**

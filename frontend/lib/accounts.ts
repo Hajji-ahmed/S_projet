@@ -18,6 +18,8 @@ export type AccountFormValues = {
   libelle: string;
   numero: string;
   compte_comptable: string;
+  /** Journal de banque Sage (ex. BQ1), tel que saisi (vide = aucun). */
+  journal_sage: string;
   /** LIGNE (crédit autorisé), telle que saisie. */
   credit_autorise: string;
   /** Taux en %, tel que saisi (vide = aucun). */
@@ -84,6 +86,10 @@ export function validateAccountForm(
   const compte = values.compte_comptable.trim().toUpperCase();
   if (compte && !/^[A-Z0-9]{1,20}$/.test(compte)) {
     errors.compte_comptable = "1 à 20 lettres ou chiffres (ex. 5141).";
+  }
+  const journal = values.journal_sage.trim().toUpperCase();
+  if (journal && !/^[A-Z0-9]{1,10}$/.test(journal)) {
+    errors.journal_sage = "1 à 10 lettres ou chiffres (ex. BQ1).";
   }
   if (normalizeAmountInput(values.credit_autorise) === null) {
     errors.credit_autorise = "Un montant positif, 2 décimales au plus (ex. 500 000).";

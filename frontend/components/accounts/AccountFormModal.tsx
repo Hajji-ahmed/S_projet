@@ -39,6 +39,7 @@ function initialValues(account?: Account): AccountFormValues {
       libelle: "",
       numero: "",
       compte_comptable: "",
+      journal_sage: "",
       credit_autorise: "0",
       taux: "",
     };
@@ -50,6 +51,7 @@ function initialValues(account?: Account): AccountFormValues {
     libelle: account.libelle,
     numero: account.numero,
     compte_comptable: account.compte_comptable ?? "",
+    journal_sage: account.journal_sage ?? "",
     credit_autorise: amountForInput(account.credit_autorise),
     taux: account.taux_interet_pct?.replace(".", ",") ?? "",
   };
@@ -105,6 +107,7 @@ export function AccountFormModal({
       numero: normalizeNumero(values.numero),
       type_compte: values.type_compte,
       compte_comptable: values.compte_comptable.trim().toUpperCase() || null,
+      journal_sage: values.journal_sage.trim().toUpperCase() || null,
       credit_autorise: normalizeAmountInput(values.credit_autorise) as string,
       taux_interet_pct: values.taux.trim() ? normalizePercentInput(values.taux) : null,
     };
@@ -246,6 +249,23 @@ export function AccountFormModal({
           />
         </Field>
       </div>
+
+      <Field
+        label="Journal Sage"
+        htmlFor="account-journal-sage"
+        error={errors.journal_sage}
+        hint="Code du journal de banque dans Sage, ex. BQ1 : rattache les écritures importées."
+      >
+        <TextInput
+          id="account-journal-sage"
+          value={values.journal_sage}
+          onChange={(event) => set("journal_sage")(event.target.value)}
+          disabled={submitting}
+          maxLength={10}
+          autoComplete="off"
+          invalid={!!errors.journal_sage}
+        />
+      </Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field

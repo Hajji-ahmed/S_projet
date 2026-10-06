@@ -20,7 +20,7 @@ from app.schemas.statement import (
     TransactionOut,
     TransactionUpdateIn,
 )
-from app.services import import_service
+from app.services import import_file, import_service
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/statements", tags=["statements"])
@@ -185,7 +185,7 @@ def _lines_text(lignes: UploadFile | None) -> str | None:
 
 def _content(fichier: UploadFile) -> bytes:
     # Lecture bornée : un fichier plus gros que la limite est refusé sans être lu en entier
-    return fichier.file.read(import_service.MAX_FILE_BYTES + 1)
+    return fichier.file.read(import_file.MAX_FILE_BYTES + 1)
 
 
 @router.post("/import/analyse", response_model=AnalyseOut)

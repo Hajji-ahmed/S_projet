@@ -11,6 +11,7 @@ from app.services.position_service import AccountFigures
 
 NUMERO_PATTERN = re.compile(r"^[A-Z0-9-]{5,40}$")
 COMPTE_COMPTABLE_PATTERN = re.compile(r"^[A-Z0-9]{1,20}$")
+JOURNAL_SAGE_PATTERN = re.compile(r"^[A-Z0-9]{1,10}$")
 
 TypeCompte = Literal["Courant", "DH convertible"]
 # LIGNE : montant exact, 2 décimales au plus. Envoyé en texte ("500000.00") pour ne rien perdre.
@@ -42,6 +43,7 @@ class AccountOut(BaseModel):
     devise: str
     type_compte: TypeCompte
     compte_comptable: str | None
+    journal_sage: str | None
     credit_autorise: Decimal
     taux_interet_pct: Decimal | None
     actif: bool
@@ -64,6 +66,7 @@ class AccountOut(BaseModel):
             devise=account.devise,
             type_compte=account.type_compte,
             compte_comptable=account.compte_comptable,
+            journal_sage=account.journal_sage,
             credit_autorise=account.credit_autorise,
             taux_interet_pct=fraction_to_pct(account.taux_interet),
             actif=account.actif,
@@ -94,6 +97,15 @@ def _clean_compte_comptable(value: str | None) -> str | None:
     return value
 
 
+def _clean_journal_sage(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip().upper()
+    if not JOURNAL_SAGE_PATTERN.match(value):
+        raise ValueError("Le journal Sage contient 1 à 10 lettres ou chiffres (ex. BQ1).")
+    return value
+
+
 class AccountCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -104,12 +116,14 @@ class AccountCreate(BaseModel):
     devise: str = Field(pattern=r"^[A-Za-z]{3}$")
     type_compte: TypeCompte = "Courant"
     compte_comptable: str | None = None
+    journal_sage: str | None = None
     credit_autorise: Ligne
     taux_interet_pct: TauxPct | None = None
 
     _libelle = field_validator("libelle")(_clean_libelle)
     _numero = field_validator("numero")(_clean_numero)
     _compte = field_validator("compte_comptable")(_clean_compte_comptable)
+    _journal = field_validator("journal_sage")(_clean_journal_sage)
 
     @field_validator("devise")
     @classmethod
@@ -132,12 +146,14 @@ class AccountUpdate(BaseModel):
     numero: str
     type_compte: TypeCompte
     compte_comptable: str | None
+    journal_sage: str | None
     credit_autorise: Ligne
     taux_interet_pct: TauxPct | None = None
 
     _libelle = field_validator("libelle")(_clean_libelle)
     _numero = field_validator("numero")(_clean_numero)
     _compte = field_validator("compte_comptable")(_clean_compte_comptable)
+    _journal = field_validator("journal_sage")(_clean_journal_sage)
 
 
 class AccountStatusUpdate(BaseModel):

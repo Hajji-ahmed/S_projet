@@ -17,6 +17,7 @@ const valid: AccountFormValues = {
   libelle: "Compte courant",
   numero: "230 780 0001234567890123 45",
   compte_comptable: "5141",
+  journal_sage: "",
   credit_autorise: "500 000",
   taux: "4,5",
 };
@@ -102,6 +103,16 @@ describe("validateAccountForm", () => {
     ["taux", { taux: "120" }],
   ])("signale le champ %s", (field, over) => {
     expect(validateAccountForm({ ...valid, ...over }, "create")).toHaveProperty(field);
+  });
+
+  it("refuse un journal Sage avec un tiret ou trop long, accepte « bq1 »", () => {
+    expect(
+      validateAccountForm({ ...valid, journal_sage: "BQ-1" }, "create").journal_sage,
+    ).toBeDefined();
+    expect(
+      validateAccountForm({ ...valid, journal_sage: "TROPLONGJOURNAL" }, "create").journal_sage,
+    ).toBeDefined();
+    expect(validateAccountForm({ ...valid, journal_sage: " bq1 " }, "create")).toEqual({});
   });
 
   it("accepte un taux vide et un compte comptable vide", () => {

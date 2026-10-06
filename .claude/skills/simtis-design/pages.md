@@ -114,7 +114,15 @@ DataTable des comptes + FilterBar (Banque, Devise, Statut) + bouton primaire « 
 
 ## Écritures comptables (`/ecritures`)
 
-DataTable : Date · Journal · Compte · Libellé · Référence · Débit · Crédit · N° pièce · Échéance · Tiers · Statut (badge). Filtres + recherche.
+Réalisé en P10 (`components/ecritures/`), société active, lecture seule (Sage reste la référence) :
+- En-tête « Écritures comptables », bouton primaire « Importer un export Sage » (`accounting.import`).
+- Carte « Importer un export Sage » : `ImportStepper` Fichier → Validation, `FileDropzone`, analyse automatique, mapping de secours « Colonnes non reconnues » ; Validation : tuiles (Lignes à importer · En erreur · En double · Ignorées · Total débit / crédit · Période), répartition par compte (`BankLabel` « AWB · BQ1 »), DataTable en lecture seule (État + motifs · Date · Journal · Compte bancaire · Compte · N° pièce · Libellé · Débit · Crédit · Échéance · Tiers), case « Garder la ligne N » sur un doublon interne, case « Écarter les lignes en erreur », « Changer de fichier » / « Confirmer l'import ». Erreur « Renseignez le journal Sage… » avec un lien vers `/comptes`.
+- Encadré de résultat (bordure gauche `success`) : écritures ajoutées, par compte, écartées, colonnes mémorisées.
+- Carte « Écritures » (icône `BookText`) : boutons de compte (« Tous les comptes » + `BankLabel` « BP · TFBQ », une ligne qui défile), Du / Au, Statut, Recherche (soumise par « Rechercher » ou Entrée), « Effacer les filtres » ; résumé Écritures · Total débit · Total crédit (sur tout le filtre) ; DataTable Date · Journal · Compte bancaire · N° pièce · Libellé (+ Réf.) · Débit · Crédit · Échéance · Tiers · Statut (badge) · Détail (icône `Eye`) ; 50 par page, « Page N sur M » + « Précédent » / « Suivant ».
+- Fenêtre « Écriture du JJ/MM/AAAA » : tous les champs + fichier d'origine, date d'import, auteur ; aucun champ modifiable.
+- Carte « Journal des imports » : 10 derniers + « Afficher N de plus ».
+
+Écran Comptes : champ « Journal Sage » (facultatif, majuscules, 10 lettres ou chiffres) dans le formulaire, colonne « Journal Sage » dans le tableau.
 
 ## Rapprochement (`/rapprochement`)
 

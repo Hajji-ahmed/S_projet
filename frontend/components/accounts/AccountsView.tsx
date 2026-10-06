@@ -196,6 +196,11 @@ export function AccountsView() {
       render: (row) => <span className="whitespace-nowrap">{row.type_compte}</span>,
     },
     {
+      key: "journal_sage",
+      header: "Journal Sage",
+      render: (row) => row.journal_sage ?? "-",
+    },
+    {
       key: "credit_autorise",
       header: "LIGNE",
       align: "right",

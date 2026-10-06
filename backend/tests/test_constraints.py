@@ -814,3 +814,27 @@ def test_transaction_origin_must_be_known(db, world):
 
 def test_corrected_transaction_is_accepted(db, world):
     save(db, build_transaction(world.statement, origine="Corrigée"))
+
+
+# --- Journal Sage (migration 0010) ----------------------------------------------------------------
+
+
+def test_one_active_account_per_sage_journal_and_company(db, world):
+    save(db, build_account(world.company, save(db, build_bank()), journal_sage="BQ1"))
+
+    assert_rejected(
+        db,
+        "uq_bank_accounts_journal_sage_actif",
+        build_account(world.company, save(db, build_bank()), journal_sage="BQ1"),
+    )
+
+
+def test_inactive_account_frees_its_sage_journal(db, world):
+    save(db, build_account(world.company, save(db, build_bank()), journal_sage="BQ1", actif=False))
+    save(db, build_account(world.company, save(db, build_bank()), journal_sage="BQ1"))
+
+
+def test_same_sage_journal_in_two_companies_is_accepted(db, world):
+    other = save(db, build_company())
+    save(db, build_account(world.company, save(db, build_bank()), journal_sage="BQ1"))
+    save(db, build_account(other, save(db, build_bank()), journal_sage="BQ1"))

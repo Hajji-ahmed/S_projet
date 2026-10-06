@@ -90,6 +90,14 @@ class BankAccount(TimestampMixin, Base):
             unique=True,
             postgresql_where=text("actif"),
         ),
+        # Un journal Sage ne sert qu'à un compte actif par société (P10, migration 0010)
+        Index(
+            "uq_bank_accounts_journal_sage_actif",
+            "company_id",
+            "journal_sage",
+            unique=True,
+            postgresql_where=text("journal_sage IS NOT NULL AND actif"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -103,6 +111,8 @@ class BankAccount(TimestampMixin, Base):
     )
     # Compte du plan comptable Sage lié à ce compte bancaire (ex. 5141), utilisé en P10
     compte_comptable: Mapped[str | None] = mapped_column(String(20))
+    # Code du journal de banque dans Sage (ex. BQ1) : rattache les écritures importées (P10)
+    journal_sage: Mapped[str | None] = mapped_column(String(10))
     credit_autorise: Mapped[Montant] = mapped_column(default=Decimal("0"), server_default="0")
     taux_interet: Mapped[Taux | None]
     actif: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

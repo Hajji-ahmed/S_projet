@@ -327,6 +327,40 @@ def test_migration_0009_names_the_second_company_tefil(empty_database, before, a
     )
 
 
+def test_migration_0010_adds_an_empty_sage_journal(empty_database):
+    config, engine = empty_database
+    command.upgrade(config, "0009")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'Société');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'Banque');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (company_id, bank_id, libelle, numero, devise)
+                    VALUES (1, 1, 'Compte', 'N1', 'MAD');
+                """
+            )
+        )
+
+    command.upgrade(config, "head")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT journal_sage FROM bank_accounts")).scalar() is None
+
+    command.downgrade(config, "0009")
+    with engine.connect() as connection:
+        columns = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'bank_accounts'"
+                )
+            )
+        }
+    assert "journal_sage" not in columns
+
+
 def test_migration_matches_models(empty_database):
     """Échoue si un modèle a changé sans migration (colonne, contrainte ou index oublié)."""
     config, _ = empty_database

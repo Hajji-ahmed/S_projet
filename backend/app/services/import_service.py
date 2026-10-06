@@ -17,17 +17,15 @@ Règles :
 """
 
 import re
-import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
-from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,8 +41,9 @@ from app.models import (
     PointageType,
 )
 from app.repositories import account_repository, balance_repository, import_repository
-from app.services import account_service, audit_service, position_service
+from app.services import account_service, audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
+from app.services.import_file import MAX_ROWS, Column, ImportField, Mapping
 from app.services.normalization_service import (
     balance_line_kind,
     clean_libelle,
@@ -60,23 +59,10 @@ from app.services.normalization_service import (
 )
 
 TYPE_IMPORT = "Banque"
-MAX_FILE_BYTES = 5 * 1024 * 1024
-MAX_ROWS = 5000
-HEADER_SCAN_ROWS = 30
-SAMPLES = 3
 LETTRAGE_MAX = 120
 REFERENCE_MAX = 60
 # Lignes sans date à ignorer : totaux et soldes de début ou de fin de relevé
 _SUMMARY_LINE = re.compile(r"^(TOTAL|SOLDE|ANCIEN SOLDE|NOUVEAU SOLDE|REPORT)\b")
-
-
-@dataclass(frozen=True)
-class ImportField:
-    code: str
-    libelle: str
-    obligatoire: bool
-    # En-têtes reconnus, déjà normalisés (`normalize_header`)
-    synonymes: tuple[str, ...]
 
 
 # Structure standard du relevé (CDC §4, architecture technique §5.2). Société et banque viennent du
@@ -116,16 +102,6 @@ STATEMENT_FIELDS: tuple[ImportField, ...] = (
 )
 FIELD_CODES = tuple(item.code for item in STATEMENT_FIELDS)
 FIELD_LABELS = {item.code: item.libelle for item in STATEMENT_FIELDS}
-
-Mapping = dict[str, int | None]
-
-
-@dataclass
-class Column:
-    index: int
-    lettre: str
-    entete: str
-    exemples: list[str]
 
 
 @dataclass
@@ -195,99 +171,12 @@ class StatementAnalysis:
     solde_final_fichier: Decimal | None = None
 
 
-# --- Lecture du classeur ---------------------------------------------------------------------------
-
-
-def _read_sheet(content: bytes, feuille: str | None) -> tuple[list[str], str, list[tuple]]:
-    try:
-        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError, ValueError) as error:
-        raise ConflictError(
-            "Fichier illisible : ce n'est pas un classeur Excel .xlsx valide."
-        ) from error
-    try:
-        names = list(workbook.sheetnames)
-        name = feuille or names[0]
-        if name not in names:
-            raise ConflictError(f"Feuille introuvable dans le fichier : « {name} ».")
-        rows: list[tuple] = []
-        for row in workbook[name].iter_rows(values_only=True):
-            rows.append(tuple(row))
-            if len(rows) > MAX_ROWS + HEADER_SCAN_ROWS:
-                raise ConflictError(f"Fichier trop long : {MAX_ROWS} lignes au plus par relevé.")
-    finally:
-        workbook.close()
-    while rows and all(is_blank(cell) for cell in rows[-1]):
-        rows.pop()
-    if not rows:
-        raise ConflictError(f"La feuille « {name} » est vide.")
-    return names, name, rows
-
-
-def _field_for_header(header: str) -> tuple[str | None, int]:
-    """Champ reconnu pour un en-tête, et la force de la correspondance (2 exacte, 1 début, 0 aucune)."""
-    if not header:
-        return None, 0
-    for item in STATEMENT_FIELDS:
-        if header in item.synonymes:
-            return item.code, 2
-    best, best_length = None, 0
-    for item in STATEMENT_FIELDS:
-        for synonym in item.synonymes:
-            if header.startswith(synonym + " ") and len(synonym) > best_length:
-                best, best_length = item.code, len(synonym)
-    return best, 1 if best else 0
-
-
-def _detect_header(rows: list[tuple]) -> int:
-    """Index de la ligne d'en-tête : celle qui reconnaît le plus de champs, parmi les premières."""
-    best_index, best_score = None, 0
-    for index, row in enumerate(rows[:HEADER_SCAN_ROWS]):
-        score = sum(1 for cell in row if _field_for_header(normalize_header(cell))[1])
-        if score > best_score:
-            best_index, best_score = index, score
-    if best_index is not None and best_score >= 2:
-        return best_index
-    return next(i for i, row in enumerate(rows) if not all(is_blank(cell) for cell in row))
-
-
-def _display(value: object) -> str:
-    if isinstance(value, date):
-        return value.strftime("%d/%m/%Y")
-    return clean_text(value) or ""
-
-
-def _columns(header: tuple, data: list[tuple]) -> list[Column]:
-    width = max([len(header), *(len(row) for row in data)])
-    columns = []
-    for index in range(width):
-        values = [row[index] for row in data if index < len(row) and not is_blank(row[index])]
-        title = clean_text(header[index]) if index < len(header) else None
-        columns.append(
-            Column(
-                index=index,
-                lettre=get_column_letter(index + 1),
-                entete=title or "",
-                exemples=[_display(value) for value in values[:SAMPLES]],
-            )
-        )
-    return columns
-
-
-# --- Correspondance colonnes / champs --------------------------------------------------------------
+# --- Lecture du classeur et correspondance (module commun `import_file`) --------------------------
 
 
 def propose_mapping(columns: list[Column]) -> Mapping:
     """Correspondance détectée : les correspondances exactes d'abord, puis les débuts d'en-tête."""
-    mapping: Mapping = dict.fromkeys(FIELD_CODES)
-    for strength in (2, 1):
-        for column in columns:
-            if column.index in mapping.values():
-                continue
-            code, found = _field_for_header(normalize_header(column.entete))
-            if code and found == strength and mapping[code] is None:
-                mapping[code] = column.index
-    return mapping
+    return import_file.propose_mapping(columns, STATEMENT_FIELDS)
 
 
 def _saved_mapping(db: Session, bank_id: int, columns: list[Column]) -> Mapping | None:
@@ -295,40 +184,11 @@ def _saved_mapping(db: Session, bank_id: int, columns: list[Column]) -> Mapping 
     saved = import_repository.latest_mapping(db, bank_id, TYPE_IMPORT)
     if saved is None:
         return None
-    by_header = {
-        normalize_header(column.entete): column.index for column in columns if column.entete
-    }
-    mapping: Mapping = dict.fromkeys(FIELD_CODES)
-    for code, header in saved.mapping.items():
-        if code not in mapping or header is None:
-            continue
-        index = by_header.get(normalize_header(header))
-        if index is None:
-            return None
-        mapping[code] = index
-    return mapping
+    return import_file.mapping_from_headers(saved.mapping, columns, STATEMENT_FIELDS)
 
 
 def mapping_errors(mapping: Mapping, width: int) -> list[str]:
-    errors = []
-    for code, index in mapping.items():
-        if index is not None and not 0 <= index < width:
-            errors.append(f"{FIELD_LABELS[code]} : colonne inexistante dans le fichier.")
-    used = Counter(index for index in mapping.values() if index is not None)
-    for index, count in sorted(used.items()):
-        if count > 1 and 0 <= index < width:
-            errors.append(
-                f"La colonne {get_column_letter(index + 1)} est associée à plusieurs champs."
-            )
-    for item in STATEMENT_FIELDS:
-        if item.obligatoire and mapping.get(item.code) is None:
-            errors.append(f"Colonne obligatoire non associée : {item.libelle}.")
-    has_debit_credit = mapping.get("debit") is not None or mapping.get("credit") is not None
-    if mapping.get("montant") is not None and has_debit_credit:
-        errors.append("Choisissez Débit et Crédit, ou Montant signé, pas les deux.")
-    elif mapping.get("montant") is None and not has_debit_credit:
-        errors.append("Associez au moins une colonne de montant : Débit, Crédit ou Montant signé.")
-    return errors
+    return import_file.mapping_errors(mapping, width, STATEMENT_FIELDS)
 
 
 # --- Lignes --------------------------------------------------------------------------------------
@@ -656,19 +516,14 @@ def analyse_statement(
         raise ConflictError(
             f"Le compte {account.bank.code} {account.devise} est inactif : réactivez-le d'abord."
         )
-    if not fichier_nom.lower().endswith(".xlsx"):
-        raise ConflictError("Seuls les fichiers Excel .xlsx sont acceptés.")
-    if not content:
-        raise ConflictError("Le fichier est vide.")
-    if len(content) > MAX_FILE_BYTES:
-        raise ConflictError("Fichier trop volumineux : 5 Mo au plus.")
+    import_file.check_file(fichier_nom, content)
 
-    feuilles, feuille, rows = _read_sheet(content, feuille)
-    header_index = _detect_header(rows)
+    feuilles, feuille, rows = import_file.read_sheet(content, feuille, unite="relevé")
+    header_index = import_file.detect_header(rows, STATEMENT_FIELDS)
     data = rows[header_index + 1 :]
     if len(data) > MAX_ROWS:
         raise ConflictError(f"Fichier trop long : {MAX_ROWS} lignes au plus par relevé.")
-    columns = _columns(rows[header_index], data)
+    columns = import_file.columns_of(rows[header_index], data)
 
     if mapping is not None:
         source = "Utilisateur"

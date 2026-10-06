@@ -266,6 +266,7 @@ def update_body(account: BankAccount, **over) -> dict:
         "numero": account.numero,
         "type_compte": account.type_compte,
         "compte_comptable": account.compte_comptable,
+        "journal_sage": account.journal_sage,
         "credit_autorise": str(account.credit_autorise),
         "taux_interet_pct": None,
         **over,
@@ -408,3 +409,72 @@ def test_bank_cards_count_accounts_of_the_active_company_only(client, direction,
     assert cih_count(company_id=company(db, "SIMTIS").id) == 2
     assert cih_count(company_id=company(db, "SOCX").id) == 1
     assert cih_count() == 3
+
+
+# --- Journal Sage (P10) ---------------------------------------------------------------------------
+
+
+def test_journal_sage_is_saved_in_capitals(client, tresorerie, db):
+    response = client.post(ACCOUNTS, json=payload(db, journal_sage=" bq1 "), headers=tresorerie)
+
+    assert response.status_code == 201
+    assert response.json()["journal_sage"] == "BQ1"
+
+
+@pytest.mark.parametrize("journal", ["BQ-1", "TROPLONGJOURNAL"])
+def test_invalid_journal_sage_gives_422(client, tresorerie, db, journal):
+    response = client.post(ACCOUNTS, json=payload(db, journal_sage=journal), headers=tresorerie)
+
+    assert response.status_code == 422
+
+
+def test_journal_sage_used_by_another_active_account_is_refused(client, tresorerie, db):
+    add(db, "SIMTIS", "AWB", journal_sage="BQ1")
+    account = add(db, "SIMTIS", "CIH")
+
+    response = client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(account, journal_sage="BQ1"),
+        headers=tresorerie,
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Le journal Sage BQ1 est déjà celui du compte AWB MAD de cette société."
+    }
+
+
+def test_same_journal_in_another_company_is_accepted(client, tresorerie, db):
+    add(db, "SOCX", "AWB", journal_sage="BQ1")
+    account = add(db, "SIMTIS", "CIH")
+
+    response = client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(account, journal_sage="BQ1"),
+        headers=tresorerie,
+    )
+
+    assert response.status_code == 200
+
+
+def test_journal_sage_change_is_audited(client, tresorerie, db):
+    account = add(db, "SIMTIS", "CIH")
+
+    client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(account, journal_sage="BQ3"),
+        headers=tresorerie,
+    )
+
+    [entry] = audit(db, "modification_compte")
+    assert entry.nouvelle_valeur == {"journal_sage": "BQ3"}
+
+
+def test_reactivating_an_account_whose_journal_is_taken_is_refused(client, tresorerie, db):
+    old = add(db, "SIMTIS", "AWB", journal_sage="BQ1", actif=False)
+    add(db, "SIMTIS", "CIH", journal_sage="BQ1")
+
+    response = client.patch(f"{ACCOUNTS}/{old.id}/status", json={"actif": True}, headers=tresorerie)
+
+    assert response.status_code == 409
+    assert "BQ1" in response.json()["detail"]

@@ -83,6 +83,16 @@ def find_active_in_slot(
     return db.scalar(query)
 
 
+def find_active_by_journal(db: Session, *, company_id: int, journal: str) -> BankAccount | None:
+    """Le compte actif de la société qui porte déjà ce journal Sage, s'il existe."""
+    query = select(BankAccount).where(
+        BankAccount.company_id == company_id,
+        BankAccount.journal_sage == journal,
+        BankAccount.actif.is_(True),
+    )
+    return db.scalar(query)
+
+
 def add(db: Session, account: BankAccount) -> BankAccount:
     db.add(account)
     db.flush()

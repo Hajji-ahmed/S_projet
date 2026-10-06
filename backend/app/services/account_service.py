@@ -32,6 +32,7 @@ EDITABLE_FIELDS = (
     "compte_comptable",
     "credit_autorise",
     "taux_interet",
+    "journal_sage",
 )
 TYPE_LABELS = {"Courant": "courant", "DH convertible": "DH convertible"}
 
@@ -125,6 +126,20 @@ def _check_slot_free(
         )
 
 
+def _check_journal_free(
+    db: Session, *, company_id: int, journal: str | None, account_id: int | None = None
+) -> None:
+    """Un journal Sage ne sert qu'à un compte actif par société (P10)."""
+    if journal is None:
+        return
+    occupant = account_repository.find_active_by_journal(db, company_id=company_id, journal=journal)
+    if occupant is not None and occupant.id != account_id:
+        raise ConflictError(
+            f"Le journal Sage {journal} est déjà celui du compte "
+            f"{occupant.bank.code} {occupant.devise} de cette société."
+        )
+
+
 def _check_dh_convertible(type_compte: str, devise: str) -> None:
     if type_compte == "DH convertible" and devise != "MAD":
         raise ConflictError("Un compte DH convertible doit être en MAD.")
@@ -144,6 +159,7 @@ def create_account(
     taux_interet_pct: Decimal | None,
     acteur_id: int,
     ip: str | None = None,
+    journal_sage: str | None = None,
 ) -> BankAccount:
     company = account_repository.get_company(db, company_id)
     if company is None or not company.actif:
@@ -167,6 +183,7 @@ def create_account(
         devise=devise,
         type_compte=type_compte,
     )
+    _check_journal_free(db, company_id=company.id, journal=journal_sage)
 
     account = BankAccount(
         company_id=company.id,
@@ -176,6 +193,7 @@ def create_account(
         devise=devise,
         type_compte=type_compte,
         compte_comptable=compte_comptable,
+        journal_sage=journal_sage,
         credit_autorise=to_amount(credit_autorise),
         taux_interet=pct_to_fraction(taux_interet_pct),
         actif=True,
@@ -211,6 +229,7 @@ def update_account(
     taux_interet_pct: Decimal | None,
     acteur_id: int,
     ip: str | None = None,
+    journal_sage: str | None = None,
 ) -> BankAccount:
     """Société, banque et devise ne sont pas modifiables. Seuls les champs changés sont tracés."""
     account = get_account(db, account_id)
@@ -221,6 +240,7 @@ def update_account(
         "compte_comptable": compte_comptable,
         "credit_autorise": to_amount(credit_autorise),
         "taux_interet": pct_to_fraction(taux_interet_pct),
+        "journal_sage": journal_sage,
     }
     changed = tuple(
         field for field, value in new_values.items() if getattr(account, field) != value
@@ -242,6 +262,11 @@ def update_account(
                 type_compte=type_compte,
                 account_id=account.id,
             )
+
+    if "journal_sage" in changed and account.actif:
+        _check_journal_free(
+            db, company_id=account.company_id, journal=journal_sage, account_id=account.id
+        )
 
     avant = _snapshot(account, changed)
     for field in changed:
@@ -280,6 +305,9 @@ def set_account_status(
             devise=account.devise,
             type_compte=account.type_compte,
             account_id=account.id,
+        )
+        _check_journal_free(
+            db, company_id=account.company_id, journal=account.journal_sage, account_id=account.id
         )
 
     account.actif = actif
