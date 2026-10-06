@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -10,10 +11,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Numeric,
     String,
     Text,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import enums
@@ -61,6 +65,8 @@ class ReconciliationMatch(TimestampMixin, Base):
     valide_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     valide_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     commentaire: Mapped[str | None] = mapped_column(Text)
+    # Points obtenus par critère au moment de la proposition : {"montant": "30.00", ...}
+    detail_score: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
     items: Mapped[list["ReconciliationMatchItem"]] = relationship(
         back_populates="match", cascade="all, delete-orphan"
@@ -78,6 +84,19 @@ class ReconciliationMatchItem(Base):
             name="un_seul_lien",
         ),
         CheckConstraint("montant_affecte > 0", name="montant_affecte_positif"),
+        # Une opération, ou une écriture, ne fait partie que d'une correspondance active (migration 0011)
+        Index(
+            "uq_reconciliation_match_items_transaction_active",
+            "bank_transaction_id",
+            unique=True,
+            postgresql_where=text("actif AND bank_transaction_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_reconciliation_match_items_ecriture_active",
+            "accounting_entry_id",
+            unique=True,
+            postgresql_where=text("actif AND accounting_entry_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -91,6 +110,8 @@ class ReconciliationMatchItem(Base):
         ForeignKey("accounting_entries.id"), index=True
     )
     montant_affecte: Mapped[Montant]
+    # Vrai tant que la correspondance est « Proposée » ou « Validée » ; faux une fois rejetée ou annulée
+    actif: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     match: Mapped[ReconciliationMatch] = relationship(back_populates="items")
 

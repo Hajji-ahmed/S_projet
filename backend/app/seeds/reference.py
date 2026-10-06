@@ -1,6 +1,7 @@
 """Données de référence, nécessaires au fonctionnement de l'application (production comprise)."""
 
 from collections import Counter
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -12,6 +13,7 @@ from app.models import (
     ForecastCategory,
     Permission,
     PointageType,
+    ReconciliationRule,
     Role,
 )
 from app.seeds.common import get_or_create
@@ -55,6 +57,27 @@ FORECAST_CATEGORIES = [
     ("REFINANCEMENT", "Refinancement", None),
     ("CHEQUES", "Chèques", None),
     ("AUTRE", "Autre", None),
+]
+
+# Grille du rapprochement 1→1 (plan P11), non encore validée par Mustapha : (code, libellé, critère,
+# points ou valeur du seuil, tolérance). Elle se modifie en base ; un nouveau seed ne l'écrase jamais.
+# Codes lus par `reconciliation_service.grille()` ; valeurs par défaut : `reconciliation_scoring.Grille`.
+RECONCILIATION_RULES = [
+    ("REFERENCE", "Référence / n° chèque / n° pièce identique", "reference", "40", None),
+    ("MONTANT", "Montant exact, sens opposé", "montant", "30", None),
+    ("DATE", "Date dans la tolérance (jours), dégressif", "date", "15", "3"),
+    ("LIBELLE", "Libellé similaire", "libelle", "10", None),
+    ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None),
+    ("FENETRE", "Fenêtre de comparaison des dates (jours)", "fenetre", "0", "10"),
+    ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None),
+    ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "90", None),
+    (
+        "ECART_AMBIGUITE",
+        "Écart de points sous lequel deux candidats sont ambigus",
+        "seuil",
+        "10",
+        None,
+    ),
 ]
 
 # Source unique : app/core/permissions.py
@@ -114,6 +137,20 @@ def seed_reference(session: Session) -> Counter[str]:
             ForecastCategory,
             {"code": code},
             {"libelle": libelle, "sens_par_defaut": sens},
+            created,
+        )
+
+    for code, libelle, critere, poids, tolerance in RECONCILIATION_RULES:
+        get_or_create(
+            session,
+            ReconciliationRule,
+            {"code": code},
+            {
+                "libelle": libelle,
+                "critere": critere,
+                "poids": Decimal(poids),
+                "tolerance": None if tolerance is None else Decimal(tolerance),
+            },
             created,
         )
 

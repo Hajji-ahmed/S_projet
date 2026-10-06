@@ -19,11 +19,17 @@ type DataTableProps<T> = {
   footer?: Partial<Record<string, ReactNode>>;
   emptyMessage?: string;
   className?: string;
+  /** Clic (ou Entrée / Espace) sur une ligne : la ligne devient sélectionnable. */
+  onRowClick?: (row: T) => void;
+  /** Ligne sélectionnée : fond `simtis-light`. */
+  isRowSelected?: (row: T) => boolean;
+  /** Nom accessible d'une ligne cliquable (lu par les lecteurs d'écran). */
+  rowLabel?: (row: T) => string;
 };
 
 /**
- * Tableau de base. Le tri, la pagination et la sélection multiple seront ajoutés
- * dans les phases dont les pages en ont besoin. Les tableaux Banques, Devises et
+ * Tableau de base, avec sélection d'une ligne au clic (`onRowClick`, `isRowSelected`). Le tri et la
+ * sélection multiple seront ajoutés dans les phases dont les pages en ont besoin. Les tableaux Banques, Devises et
  * Prévisions ont une structure imposée : ils ne passent pas par ce composant générique.
  */
 export function DataTable<T extends Record<string, unknown>>({
@@ -33,6 +39,9 @@ export function DataTable<T extends Record<string, unknown>>({
   footer,
   emptyMessage = "Aucune donnée disponible.",
   className,
+  onRowClick,
+  isRowSelected,
+  rowLabel,
 }: DataTableProps<T>) {
   const cellClass = (column: Column<T>) =>
     cn("px-4 py-3", column.align === "right" && "text-right whitespace-nowrap tabular-nums");
@@ -69,18 +78,40 @@ export function DataTable<T extends Record<string, unknown>>({
               </td>
             </tr>
           ) : (
-            rows.map((row) => (
-              <tr
-                key={getRowKey(row)}
-                className="border-b border-simtis-border/70 bg-simtis-card transition-colors last:border-b-0 hover:bg-simtis-light/40"
-              >
-                {columns.map((column) => (
-                  <td key={column.key} className={cellClass(column)}>
-                    {column.render ? column.render(row) : (row[column.key] as ReactNode)}
-                  </td>
-                ))}
-              </tr>
-            ))
+            rows.map((row) => {
+              const selected = isRowSelected?.(row) ?? false;
+              return (
+                <tr
+                  key={getRowKey(row)}
+                  aria-selected={onRowClick ? selected : undefined}
+                  aria-label={onRowClick && rowLabel ? rowLabel(row) : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            onRowClick(row);
+                          }
+                        }
+                      : undefined
+                  }
+                  className={cn(
+                    "border-b border-simtis-border/70 transition-colors last:border-b-0",
+                    selected ? "bg-simtis-light" : "bg-simtis-card hover:bg-simtis-light/40",
+                    onRowClick &&
+                      "cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-simtis-secondary",
+                  )}
+                >
+                  {columns.map((column) => (
+                    <td key={column.key} className={cellClass(column)}>
+                      {column.render ? column.render(row) : (row[column.key] as ReactNode)}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })
           )}
         </tbody>
         {footer && rows.length > 0 && (

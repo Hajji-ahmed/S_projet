@@ -7,6 +7,7 @@ from app.api import (
     banks,
     health,
     position,
+    reconciliation,
     referentiel,
     statements,
 )
@@ -29,6 +30,7 @@ protected_router.include_router(referentiel.router)
 protected_router.include_router(position.router)
 protected_router.include_router(statements.router)
 protected_router.include_router(accounting.router)
+protected_router.include_router(reconciliation.router)
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(public_router)

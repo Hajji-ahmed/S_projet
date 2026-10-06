@@ -1,14 +1,9 @@
 import type { Metadata } from "next";
 
-import { PlaceholderPage } from "@/components/layout/PlaceholderPage";
+import { RapprochementView } from "@/components/rapprochement/RapprochementView";
 
 export const metadata: Metadata = { title: "Rapprochement" };
 
 export default function Page() {
-  return (
-    <PlaceholderPage
-      title="Rapprochement"
-      description="Rapprochement des transactions bancaires et des écritures comptables"
-    />
-  );
+  return <RapprochementView />;
 }

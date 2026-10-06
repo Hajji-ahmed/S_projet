@@ -312,7 +312,8 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
   );
 }
 
-function AccountButton({
+/** Bouton de filtre par compte bancaire (aussi utilisé par l'écran Rapprochement). */
+export function AccountButton({
   active,
   onClick,
   children,

@@ -141,6 +141,11 @@ Réalisé en P10 (`components/ecritures/`), société active, lecture seule (Sag
 
 Filtres, recherche, statut, pagination, sélection multiple des deux côtés, somme sélectionnée et écart restant visibles. Ligne sélectionnée : `bg-simtis-light`.
 
+Réalisé en P11 (06/10/2026, 1→1 seulement ; la sélection multiple viendra en P13) :
+- PageHeader + bouton « Lancer le rapprochement » (icône `Play`). Carte de filtres : boutons de compte (`AccountButton` d'`EntriesCard`, logo + « BP · journal »), Du / Au ; résumé Rapprochées · À vérifier · Non rapprochées · Propositions en attente ; bouton secondaire « Valider les fortes correspondances (N) » (`CheckCheck`) avec fenêtre de confirmation.
+- Grille `xl:grid-cols-[1fr_minmax(300px,360px)_1fr]`, empilée en dessous ; panneau central `xl:sticky`.
+- Panneau « Correspondance » (`GitCompareArrows`) : blocs Transaction / Écriture sur fond `simtis-background`, montant en 20px `primary-dark` + sens (« crédit », « débit Sage »), `ScoreBadge` (success si forte, warning sinon), détail des 5 critères, boutons pleine largeur Valider (primaire) · Rejeter (secondaire) · Choisir une autre écriture (ghost) ; Annuler le rapprochement (motif obligatoire) ; bloc « Rapprochement manuel » sur `simtis-light/40` avec écart restant (success à 0, danger sinon).
+
 ## Écarts (`/ecarts`)
 
 - 4 KPI : Écarts à traiter · Écarts en cours · Écarts clôturés · Montant total.

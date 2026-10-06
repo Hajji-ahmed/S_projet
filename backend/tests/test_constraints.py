@@ -324,6 +324,39 @@ def test_match_item_amount_must_be_positive(db, world):
     assert_rejected(db, "ck_reconciliation_match_items_montant_affecte_positif", item)
 
 
+def _item(match, **link) -> ReconciliationMatchItem:
+    return ReconciliationMatchItem(match_id=match.id, montant_affecte=Decimal("100"), **link)
+
+
+def test_a_transaction_is_in_one_active_match_only(db, world):
+    first = save(db, ReconciliationMatch(company_id=world.company.id, type="1-1"))
+    second = save(db, ReconciliationMatch(company_id=world.company.id, type="1-1"))
+    tx = save(db, build_transaction(world.statement))
+    save(db, _item(first, bank_transaction_id=tx.id, actif=True))
+
+    assert_rejected(
+        db,
+        "uq_reconciliation_match_items_transaction_active",
+        _item(second, bank_transaction_id=tx.id, actif=True),
+    )
+    # Rejetée ou annulée : l'élément inactif garde la trace sans bloquer une nouvelle correspondance
+    save(db, _item(second, bank_transaction_id=tx.id, actif=False))
+
+
+def test_an_entry_is_in_one_active_match_only(db, world):
+    first = save(db, ReconciliationMatch(company_id=world.company.id, type="1-1"))
+    second = save(db, ReconciliationMatch(company_id=world.company.id, type="1-1"))
+    entry = save(db, build_entry(world.company))
+    save(db, _item(first, accounting_entry_id=entry.id, actif=True))
+
+    assert_rejected(
+        db,
+        "uq_reconciliation_match_items_ecriture_active",
+        _item(second, accounting_entry_id=entry.id, actif=True),
+    )
+    save(db, _item(second, accounting_entry_id=entry.id, actif=False))
+
+
 def test_match_type_must_be_known(db, world):
     assert_rejected(
         db,

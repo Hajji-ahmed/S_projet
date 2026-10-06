@@ -810,6 +810,8 @@ Résumé d'import + audit
 
 **Prérequis** : P7, P10
 
+> **P11 — Statut : réalisé le 06/10/2026** (spécification `docs/superpowers/specs/2026-10-06-rapprochement-design.md`). Grille ci-dessous enregistrée dans `reconciliation_rules` (seeds, modifiable en base), **à faire valider par Mustapha**. Décisions : une proposition met les lignes « À vérifier », elles ne passent « Rapprochée » qu'après validation humaine (même ≥ 90) ; rapprochement manuel 1→1 seulement à montant égal et sens opposé (crédit banque ↔ débit Sage) ; une paire rejetée n'est jamais reproposée ; relancer le moteur ne remplace que ses propositions en attente. Migration **0011** : une opération ou une écriture n'est que dans une correspondance active (index uniques partiels), détail du score en JSONB. API `/api/reconciliation/*` (run, transactions, proposals, matches/{id}, candidates, validate, validate-batch, reject, matches, DELETE matches/{id}), page `/rapprochement` en trois volets. Recette sur un mois réel encore à faire (les données de développement n'ont aucun montant commun entre banque et Sage).
+
 **Critères de comparaison** : montant, date, libellé, référence, sens débit/crédit, n° chèque, n° pièce, tiers.
 
 **Grille de scoring (paramétrable dans `reconciliation_rules`)**

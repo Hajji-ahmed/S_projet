@@ -74,6 +74,7 @@ def test_reference_seed_creates_the_expected_rows(db):
         forecast_categories=7,
         permissions=12,
         roles=5,
+        reconciliation_rules=9,
     )
 
 
