@@ -9,6 +9,7 @@ import {
   rapprochable,
   reconciliationQuery,
   sensBanque,
+  toggleStatut,
 } from "./reconciliation";
 import type { Correspondance } from "@/types/reconciliation";
 
@@ -80,5 +81,13 @@ describe("formats", () => {
     expect(absolute("-80.00")).toBe("80.00");
     expect(sensBanque("-80.00")).toBe("Débit");
     expect(sensBanque("80.00")).toBe("Crédit");
+  });
+});
+
+describe("toggleStatut", () => {
+  it("filtre sur le compteur cliqué, et retire le filtre au second clic", () => {
+    expect(toggleStatut("", "À vérifier")).toBe("À vérifier");
+    expect(toggleStatut("Rapprochée", "À vérifier")).toBe("À vérifier");
+    expect(toggleStatut("À vérifier", "À vérifier")).toBe("");
   });
 });

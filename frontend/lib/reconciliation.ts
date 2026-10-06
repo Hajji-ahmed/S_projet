@@ -77,3 +77,8 @@ export function absolute(montant: string): string {
 export function sensBanque(montant: string): "Crédit" | "Débit" {
   return montant.startsWith("-") ? "Débit" : "Crédit";
 }
+
+/** Clic sur un compteur : il devient le filtre, ou le retire s'il l'était déjà ("" = tous). */
+export function toggleStatut(current: string, clicked: string): string {
+  return current === clicked ? "" : clicked;
+}

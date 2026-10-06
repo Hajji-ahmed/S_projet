@@ -8,10 +8,13 @@ import {
   Link2,
   ListFilter,
   MousePointerClick,
+  TriangleAlert,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { SignalDiscrepancyModal } from "@/components/ecarts/SignalDiscrepancyModal";
 import { ScoreBadge, ScoreDetail } from "@/components/rapprochement/Score";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -39,9 +42,12 @@ import type { Ecriture } from "@/types/accounting";
 import type { Candidats, Correspondance, Operation } from "@/types/reconciliation";
 
 type MatchPanelProps = {
+  companyId: number;
   operation: Operation | null;
   entry: Ecriture | null;
   canValidate: boolean;
+  /** Permission `discrepancies.manage` : bouton « Signaler un écart » (P12). */
+  canManageDiscrepancies: boolean;
   reloadKey: number;
   /** Après une décision : la vue recharge les volets et affiche le message. */
   onChanged: (message: string) => void;
@@ -62,9 +68,11 @@ function sensSage(entry: Ecriture): string {
  * rapprochement manuel avec l'écriture sélectionnée à droite. Rien n'est validé sans un clic.
  */
 export function MatchPanel({
+  companyId,
   operation,
   entry,
   canValidate,
+  canManageDiscrepancies,
   reloadKey,
   onChanged,
 }: MatchPanelProps) {
@@ -84,6 +92,7 @@ export function MatchPanel({
   const [comment, setComment] = useState("");
   const [motif, setMotif] = useState("");
   const [manualComment, setManualComment] = useState("");
+  const [signaling, setSignaling] = useState(false);
 
   const wantsCandidates = operationId !== null && (matchId === null || showCandidates);
   // Une correspondance chargée pour une autre valeur (rejetée entre-temps...) n'est plus montrée
@@ -182,6 +191,14 @@ export function MatchPanel({
   const pending = match?.statut === "Proposée";
   const validated = match?.statut === "Validée";
   const manualEntry = operation && entry && entry.id !== match?.ecriture.id ? entry : null;
+  // Écart : l'écriture sélectionnée à droite, sinon celle de la proposition en attente
+  const ecartEntry = entry ?? (pending ? (match?.ecriture ?? null) : null);
+  const canSignal =
+    canManageDiscrepancies &&
+    !validated &&
+    operation?.statut !== "Écart" &&
+    ecartEntry?.statut !== "Écart" &&
+    ecartEntry?.statut !== "Rapprochée";
 
   return (
     <Card title="Correspondance" icon={GitCompareArrows}>
@@ -207,6 +224,21 @@ export function MatchPanel({
         ) : (
           <p className="text-sm text-simtis-muted">
             Sélectionnez la transaction bancaire correspondant à cette écriture.
+          </p>
+        )}
+
+        {operation?.ecart_id && (
+          <p className="flex items-center gap-2 rounded-[10px] bg-simtis-orange-bg px-3 py-2 text-sm text-simtis-orange-fg">
+            <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />
+            <span>
+              Opération en écart :{" "}
+              <Link
+                href={`/ecarts?ecart=${operation.ecart_id}`}
+                className="font-medium underline underline-offset-2"
+              >
+                voir l&apos;écart n° {operation.ecart_id}
+              </Link>
+            </span>
           </p>
         )}
 
@@ -317,7 +349,45 @@ export function MatchPanel({
             onConfirm={() => manual(manualEntry.id, manualComment)}
           />
         )}
+
+        {canSignal && (
+          <Button
+            variant="ghost"
+            icon={TriangleAlert}
+            disabled={busy}
+            onClick={() => setSignaling(true)}
+          >
+            Signaler un écart
+          </Button>
+        )}
       </div>
+
+      {signaling && (
+        <SignalDiscrepancyModal
+          companyId={companyId}
+          operation={
+            operation && {
+              id: operation.id,
+              date: operation.date_operation,
+              libelle: operation.libelle,
+              montant: operation.montant,
+            }
+          }
+          ecriture={
+            ecartEntry && {
+              id: ecartEntry.id,
+              date: ecartEntry.date_ecriture,
+              libelle: ecartEntry.libelle,
+              montant: ecartEntry.montant,
+            }
+          }
+          onClose={() => setSignaling(false)}
+          onCreated={(ecart) => {
+            setSignaling(false);
+            onChanged(`Écart n° ${ecart.id} « ${ecart.type} » signalé.`);
+          }}
+        />
+      )}
 
       {match && (
         <Modal

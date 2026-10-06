@@ -861,6 +861,8 @@ Résumé d'import + audit
 
 **Prérequis** : P11
 
+> **P12 — Statut : réalisé le 06/10/2026** (spécification `docs/superpowers/specs/2026-10-06-ecarts-design.md`). Décisions validées le 06/10/2026 : génération **sur demande** (bouton « Générer les écarts », pas à chaque rapprochement) des doublons potentiels et des lignes « Non rapprochée » datées d'au moins 10 jours (fenêtre du moteur) ; une ligne qui a déjà eu un écart n'est jamais signalée de nouveau automatiquement ; à la clôture (commentaire obligatoire) les lignes redeviennent « Non rapprochée » ; une proposition dont les montants diffèrent ne peut plus être validée (correction de P11 : écart « Montant différent »). Création manuelle depuis `/rapprochement` ou par l'API. Migration **0012** : un seul écart ouvert par opération et par écriture. API `/api/discrepancies` (liste, détail avec historique lu dans `audit_logs`, responsables, création, génération, PATCH, clôture). Page `/ecarts` : KPI, filtres, tableau, panneau latéral de traitement. Montant total des écarts ouverts **par devise**.
+
 **Types d'écarts**
 
 | Type | Exemple | Traitement |

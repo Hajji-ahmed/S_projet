@@ -357,6 +357,66 @@ def matches_of_period(
     return list(db.scalars(query).unique())
 
 
+# Statuts d'une correspondance décidée par un utilisateur (historique)
+STATUTS_DECIDES = ("Validée", "Rejetée", "Annulée")
+
+
+def decisions_query(
+    company_id: int,
+    *,
+    bank_account_id: int | None,
+    date_from: date | None,
+    date_to: date | None,
+) -> Select:
+    """Identifiants des correspondances décidées de la société dont l'opération est dans le filtre
+    (sans filtre de statut, ni ordre, ni pagination)."""
+    query = (
+        select(ReconciliationMatch.id)
+        .join(ReconciliationMatchItem, ReconciliationMatchItem.match_id == ReconciliationMatch.id)
+        .join(BankTransaction, BankTransaction.id == ReconciliationMatchItem.bank_transaction_id)
+        .where(
+            ReconciliationMatch.company_id == company_id,
+            ReconciliationMatch.statut.in_(STATUTS_DECIDES),
+        )
+    )
+    if bank_account_id is not None:
+        query = query.where(BankTransaction.bank_account_id == bank_account_id)
+    if date_from is not None:
+        query = query.where(BankTransaction.date_operation >= date_from)
+    if date_to is not None:
+        query = query.where(BankTransaction.date_operation <= date_to)
+    return query.distinct()
+
+
+def count_decisions_by_status(db: Session, ids_query: Select) -> dict[str, int]:
+    ids = ids_query.subquery()
+    rows = db.execute(
+        select(ReconciliationMatch.statut, func.count())
+        .join(ids, ids.c.id == ReconciliationMatch.id)
+        .group_by(ReconciliationMatch.statut)
+    )
+    return {row[0]: row[1] for row in rows}
+
+
+def page_of_decisions(
+    db: Session, ids_query: Select, *, statut: str | None, offset: int, limit: int
+) -> tuple[int, list[ReconciliationMatch]]:
+    """Nombre de décisions du filtre et une page, de la plus récente à la plus ancienne."""
+    if statut is not None:
+        ids_query = ids_query.where(ReconciliationMatch.statut == statut)
+    ids = ids_query.subquery()
+    total = db.scalar(select(func.count()).select_from(ids)) or 0
+    query = (
+        select(ReconciliationMatch)
+        .join(ids, ids.c.id == ReconciliationMatch.id)
+        .options(selectinload(ReconciliationMatch.items))
+        .order_by(ReconciliationMatch.decide_le.desc(), ReconciliationMatch.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return total, list(db.scalars(query))
+
+
 def transactions_with_bank(db: Session, ids: set[int]) -> dict[int, tuple[BankTransaction, str]]:
     if not ids:
         return {}

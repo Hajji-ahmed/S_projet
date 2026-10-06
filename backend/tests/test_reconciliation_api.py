@@ -468,3 +468,110 @@ def test_one_match_can_be_read_with_its_score_detail(client, direction, comptabl
     assert response.json()["operation"]["id"] == tx.id
     assert len(response.json()["criteres"]) == 5
     assert missing.status_code == 404
+
+
+def test_a_proposal_with_different_amounts_cannot_be_validated(client, comptable, db):
+    compte = account(db)
+    tx = operation(db, compte, libelle="VIR REG458 ABC")
+    entry = ecriture(db, compte, montant="-49000")
+    run(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    response = client.post(
+        f"/api/reconciliation/matches/{proposal['id']}/validate", headers=comptable
+    )
+
+    assert proposal["criteres"][1] == {"code": "montant", "libelle": "Montant", "points": "0.00"}
+    assert response.status_code == 409
+    assert "Montant différent" in response.json()["detail"]
+    assert statuses(db, tx, entry) == ["À vérifier", "À vérifier"]
+
+
+# --- Historique ----------------------------------------------------------------------------------
+
+
+def history(client, headers, db, **params):
+    params = {"company_id": str(company(db).id), **params}
+    return client.get("/api/reconciliation/history", params=params, headers=headers)
+
+
+def test_history_lists_every_decision_with_who_and_when(client, comptable, direction, db):
+    compte = account(db)
+    for montant, jour in (("100", 10), ("200", 11), ("300", 12)):
+        operation(db, compte, montant=montant, jour=date(2026, 9, jour), libelle=f"VIR {montant}")
+        ecriture(
+            db,
+            compte,
+            montant=f"-{montant}",
+            jour=date(2026, 9, jour),
+            libelle=f"VIR {montant}",
+            numero_piece=f"P{montant}",
+            tiers=None,
+        )
+    run(client, comptable, db)
+    pending = {
+        p["operation"]["montant"]: p["id"]
+        for p in proposals(client, comptable, db).json()["correspondances"]
+    }
+    url = "/api/reconciliation/matches"
+    client.post(f"{url}/{pending['100.00']}/validate", headers=comptable)
+    client.post(f"{url}/{pending['200.00']}/reject", json={"commentaire": "Non"}, headers=comptable)
+    client.post(f"{url}/{pending['300.00']}/validate", headers=comptable)
+    client.request(
+        "DELETE", f"{url}/{pending['300.00']}", json={"motif": "Erreur"}, headers=comptable
+    )
+
+    response = history(client, direction, db, **{"from": "2026-09-01", "to": "2026-09-30"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 3
+    assert body["par_statut"] == {"Validée": 1, "Rejetée": 1, "Annulée": 1}
+    # La plus récente d'abord : l'annulation a été décidée en dernier
+    assert [d["statut"] for d in body["decisions"]] == ["Annulée", "Rejetée", "Validée"]
+    assert all(d["decide_par"] and d["decide_le"] for d in body["decisions"])
+    cancelled = body["decisions"][0]
+    assert (cancelled["commentaire"], cancelled["valide_par"]) == (
+        "Erreur",
+        cancelled["decide_par"],
+    )
+    assert history(client, direction, db, statut="Rejetée").json()["total"] == 1
+    assert proposals(client, comptable, db).json()["correspondances"] == []
+
+
+def test_history_keeps_manual_matches_and_ignores_pending_proposals(client, comptable, db):
+    compte = account(db)
+    tx, entry = operation(db, compte, montant="900"), ecriture(db, compte, montant="-900")
+    operation(db, compte)
+    ecriture(db, compte)
+    run(client, comptable, db)
+    client.post(
+        "/api/reconciliation/matches",
+        json={"transaction_id": tx.id, "ecriture_id": entry.id},
+        headers=comptable,
+    )
+
+    body = history(client, comptable, db).json()
+
+    assert ("Manuelle", "Validée") in [(d["origine"], d["statut"]) for d in body["decisions"]]
+    assert "Proposée" not in {d["statut"] for d in body["decisions"]}
+    # Une proposition en attente n'est pas une décision : elle n'apparaît pas
+    assert body["total"] == sum(body["par_statut"].values())
+
+
+def test_history_never_mixes_companies_and_checks_rights(client, comptable, reference, db):
+    tefil = account(db, "SOCX")
+    tx, entry = operation(db, tefil, montant="900"), ecriture(db, tefil, montant="-900")
+    client.post(
+        "/api/reconciliation/matches",
+        json={"transaction_id": tx.id, "ecriture_id": entry.id},
+        headers=comptable,
+    )
+    make_auth_user(reference, email="sans-droit@example.com")
+    no_right = bearer(login(client, "sans-droit@example.com"))
+
+    assert history(client, comptable, db).json()["total"] == 0
+    assert (
+        history(client, comptable, db, company_id=str(company(db, "SOCX").id)).json()["total"] == 1
+    )
+    assert history(client, no_right, db).status_code == 403

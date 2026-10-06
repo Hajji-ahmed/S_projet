@@ -8,9 +8,11 @@ import type {
   Candidats,
   Correspondance,
   Correspondances,
+  Historique,
   OperationsPage,
   RunResult,
   StatutCorrespondance,
+  StatutDecision,
 } from "@/types/reconciliation";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -92,4 +94,15 @@ export function matchManually(transactionId: number, ecritureId: number, comment
       commentaire: commentaire?.trim() || null,
     }),
   });
+}
+
+/** Historique des décisions (validées, rejetées, annulées), les plus récentes d'abord. */
+export function listHistory(
+  companyId: number,
+  filter: ReconciliationFilter,
+  options: { statut?: StatutDecision; page: number },
+) {
+  return apiFetch<Historique>(
+    `/reconciliation/history${reconciliationQuery(companyId, { ...filter, ...options })}`,
+  );
 }

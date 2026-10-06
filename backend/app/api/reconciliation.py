@@ -15,6 +15,7 @@ from app.schemas.reconciliation import (
     CandidatsOut,
     CorrespondanceOut,
     CorrespondancesOut,
+    HistoriqueOut,
     ManuelIn,
     OperationOut,
     OperationsPageOut,
@@ -22,6 +23,7 @@ from app.schemas.reconciliation import (
     RunIn,
     RunOut,
     StatutCorrespondance,
+    StatutDecision,
     StatutRapprochement,
     ValidationLotIn,
     ValidationLotOut,
@@ -80,6 +82,30 @@ def list_transactions(
         page=page,
     )
     return OperationsPageOut.from_page(result)
+
+
+@router.get("/history", response_model=HistoriqueOut)
+def list_history(
+    company_id: Annotated[int, Query(description="Société dont on veut l'historique")],
+    statut: StatutDecision | None = None,
+    bank_account_id: int | None = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> HistoriqueOut:
+    """Historique des décisions (validées, rejetées, annulées), les plus récentes d'abord."""
+    result = reconciliation_service.list_history(
+        db,
+        company_id,
+        statut=statut,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+    )
+    return HistoriqueOut.from_page(result)
 
 
 @router.get("/proposals", response_model=CorrespondancesOut)

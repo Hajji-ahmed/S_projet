@@ -361,6 +361,51 @@ def test_migration_0010_adds_an_empty_sage_journal(empty_database):
     assert "journal_sage" not in columns
 
 
+def test_migration_0013_takes_past_decisions_from_validation_and_audit(empty_database):
+    """Les décisions passées gardent leur auteur et leur date : la validation depuis la
+    correspondance, le rejet et l'annulation depuis la dernière trace d'audit."""
+    config, engine = empty_database
+    command.upgrade(config, "0012")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'Société');
+                INSERT INTO users (id, nom, email, mot_de_passe_hash) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 'Mustapha', 'm@example.com', 'x'), (2, 'Salma', 's@example.com', 'x');
+                INSERT INTO reconciliation_matches
+                    (id, company_id, type, origine, statut, valide_par_id, valide_le)
+                    OVERRIDING SYSTEM VALUE
+                VALUES
+                    (1, 1, '1-1', 'Automatique', 'Validée', 1, '2026-10-01 09:00+00'),
+                    (2, 1, '1-1', 'Automatique', 'Rejetée', NULL, NULL),
+                    (3, 1, '1-1', 'Automatique', 'Annulée', 1, '2026-10-01 10:00+00'),
+                    (4, 1, '1-1', 'Automatique', 'Proposée', NULL, NULL);
+                INSERT INTO audit_logs (user_id, action, entite, entite_id, created_at) VALUES
+                    (2, 'rejet_rapprochement', 'reconciliation_match', '2', '2026-10-02 08:00+00'),
+                    (1, 'validation_rapprochement', 'reconciliation_match', '3', '2026-10-01 10:00+00'),
+                    (2, 'annulation_rapprochement', 'reconciliation_match', '3', '2026-10-03 11:00+00');
+                """
+            )
+        )
+
+    command.upgrade(config, "0013")
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT id, decide_par_id, to_char(decide_le AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') "
+                "FROM reconciliation_matches ORDER BY id"
+            )
+        ).all()
+    assert [tuple(row) for row in rows] == [
+        (1, 1, "2026-10-01 09:00"),
+        (2, 2, "2026-10-02 08:00"),
+        (3, 2, "2026-10-03 11:00"),
+        (4, None, None),
+    ]
+
+
 def test_migration_matches_models(empty_database):
     """Échoue si un modèle a changé sans migration (colonne, contrainte ou index oublié)."""
     config, _ = empty_database

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCheck, Play, Scale } from "lucide-react";
+import { CheckCheck, GitCompareArrows, History, Play, Scale } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -8,7 +8,10 @@ import { BankLabel } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountButton } from "@/components/ecritures/EntriesCard";
 import { EntriesPane } from "@/components/rapprochement/EntriesPane";
+import { HistoryTab } from "@/components/rapprochement/HistoryTab";
 import { MatchPanel } from "@/components/rapprochement/MatchPanel";
+import { PendingProposalsModal } from "@/components/rapprochement/PendingProposalsModal";
+import { StatButton } from "@/components/rapprochement/StatButton";
 import { TransactionsPane } from "@/components/rapprochement/TransactionsPane";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -18,10 +21,12 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
+import { cn } from "@/lib/cn";
 import {
   formatScore,
   defaultPeriod,
   fortes,
+  toggleStatut,
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
@@ -42,6 +47,13 @@ export function RapprochementView() {
   return company ? <Rapprochement key={company.id} companyId={company.id} /> : null;
 }
 
+// Compteurs qui filtrent le volet « Transactions bancaires »
+const COMPTEURS: { statut: StatutRapprochement; label: string }[] = [
+  { statut: "Rapprochée", label: "Rapprochées" },
+  { statut: "À vérifier", label: "À vérifier" },
+  { statut: "Non rapprochée", label: "Non rapprochées" },
+];
+
 function plural(n: number, word: string): string {
   return `${n} ${word}${n > 1 ? "s" : ""}`;
 }
@@ -51,6 +63,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const { toast } = useToast();
   const canValidate =
     !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
+  const canManageDiscrepancies =
+    !!user && hasAnyPermission(user.permissions, [PERMISSIONS.DISCREPANCIES_MANAGE]);
 
   const [filter, setFilter] = useState<ReconciliationFilter>(() => defaultPeriod(businessToday()));
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -61,6 +75,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [pending, setPending] = useState<Correspondances | null>(null);
   const [running, setRunning] = useState(false);
   const [confirmBatch, setConfirmBatch] = useState(false);
+  const [statut, setStatut] = useState("");
+  const [tab, setTab] = useState<"rapprochement" | "historique">("rapprochement");
+  const [showPending, setShowPending] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
 
   const periodError =
@@ -226,15 +243,32 @@ function Rapprochement({ companyId }: { companyId: number }) {
 
           {!periodError && (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
-              <dl
-                className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm sm:grid-cols-4"
-                aria-label="Résumé du rapprochement"
+              <div
+                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4"
+                role="group"
+                aria-label="Résumé du rapprochement : un clic filtre les transactions"
               >
-                <Stat label="Rapprochées" value={parStatut?.["Rapprochée"]} />
-                <Stat label="À vérifier" value={parStatut?.["À vérifier"]} />
-                <Stat label="Non rapprochées" value={parStatut?.["Non rapprochée"]} />
-                <Stat label="Propositions en attente" value={pending?.correspondances.length} />
-              </dl>
+                {COMPTEURS.map(({ statut: value, label }) => (
+                  <StatButton
+                    key={value}
+                    label={label}
+                    value={parStatut?.[value]}
+                    active={tab === "rapprochement" && statut === value}
+                    description={`Afficher les transactions « ${value} »`}
+                    onClick={() => {
+                      setTab("rapprochement");
+                      setStatut((current) => toggleStatut(current, value));
+                    }}
+                  />
+                ))}
+                <StatButton
+                  label="Propositions en attente"
+                  value={pending?.correspondances.length}
+                  active={showPending}
+                  description="Voir les propositions en attente"
+                  onClick={() => setShowPending(true)}
+                />
+              </div>
               {canValidate && strongIds.length > 0 && (
                 <Button variant="secondary" icon={CheckCheck} onClick={() => setConfirmBatch(true)}>
                   Valider les fortes correspondances ({strongIds.length})
@@ -246,6 +280,49 @@ function Rapprochement({ companyId }: { companyId: number }) {
       </Card>
 
       {!periodError && (
+        <div
+          className="flex gap-2 border-b border-simtis-border"
+          role="tablist"
+          aria-label="Vue du rapprochement"
+        >
+          {(
+            [
+              ["rapprochement", "Rapprochement", GitCompareArrows],
+              ["historique", "Historique", History],
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              onClick={() => setTab(value)}
+              className={cn(
+                "-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-200",
+                tab === value
+                  ? "border-simtis-primary text-simtis-primary-dark"
+                  : "border-transparent text-simtis-muted hover:text-simtis-primary",
+              )}
+            >
+              <Icon className="h-4 w-4" aria-hidden />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!periodError && tab === "historique" && (
+        <HistoryTab
+          key={`hist-${filterKey}`}
+          companyId={companyId}
+          filter={filter}
+          canValidate={canValidate}
+          reloadKey={reloadKey}
+          onChanged={reload}
+        />
+      )}
+
+      {!periodError && tab === "rapprochement" && (
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]">
           <TransactionsPane
             key={`tx-${filterKey}`}
@@ -255,13 +332,17 @@ function Rapprochement({ companyId }: { companyId: number }) {
             selectedId={operation?.id ?? null}
             onSelect={setOperation}
             onLoaded={handleOperations}
+            statut={statut}
+            onStatutChange={setStatut}
           />
           <div className="xl:sticky xl:top-4">
             <MatchPanel
               key={operation?.id ?? "aucune"}
+              companyId={companyId}
               operation={operation}
               entry={entry}
               canValidate={canValidate}
+              canManageDiscrepancies={canManageDiscrepancies}
               reloadKey={reloadKey}
               onChanged={reload}
             />
@@ -277,6 +358,17 @@ function Rapprochement({ companyId }: { companyId: number }) {
           />
         </div>
       )}
+
+      <PendingProposalsModal
+        open={showPending}
+        correspondances={pending?.correspondances ?? []}
+        onClose={() => setShowPending(false)}
+        onSelect={(selected) => {
+          setShowPending(false);
+          setTab("rapprochement");
+          setOperation(selected);
+        }}
+      />
 
       <Modal
         open={confirmBatch}
@@ -304,16 +396,5 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </p>
       </Modal>
     </>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number | undefined }) {
-  return (
-    <div>
-      <dt className="text-simtis-muted">{label}</dt>
-      <dd className="text-[17px] font-semibold text-simtis-primary-dark tabular-nums">
-        {value ?? "-"}
-      </dd>
-    </div>
   );
 }

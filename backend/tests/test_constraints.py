@@ -373,7 +373,14 @@ def test_match_score_is_between_0_and_100(db, world):
 
 def test_validated_match_must_record_who_validated_and_when(db, world):
     """Le moteur ne fait que proposer : une validation sans validateur est impossible."""
-    unsigned = ReconciliationMatch(company_id=world.company.id, type="1-1", statut="Validée")
+    # Décision tracée : seule la règle de validation est en défaut
+    unsigned = ReconciliationMatch(
+        company_id=world.company.id,
+        type="1-1",
+        statut="Validée",
+        decide_par_id=world.user.id,
+        decide_le=NOW,
+    )
 
     assert_rejected(db, "ck_reconciliation_matches_validation_tracee", unsigned)
 
@@ -385,9 +392,44 @@ def test_validated_match_with_validator_is_accepted(db, world):
         statut="Validée",
         valide_par_id=world.user.id,
         valide_le=NOW,
+        decide_par_id=world.user.id,
+        decide_le=NOW,
     )
 
     save(db, signed)
+
+
+def test_every_decision_records_who_and_when(db, world):
+    """Validée, Rejetée et Annulée gardent leur auteur et leur date (historique)."""
+    validated = dict(valide_par_id=world.user.id, valide_le=NOW)
+    for statut, extra in (("Validée", validated), ("Rejetée", {}), ("Annulée", {})):
+        anonymous = ReconciliationMatch(
+            company_id=world.company.id, type="1-1", statut=statut, decide_le=NOW, **extra
+        )
+        undated = ReconciliationMatch(
+            company_id=world.company.id,
+            type="1-1",
+            statut=statut,
+            decide_par_id=world.user.id,
+            **extra,
+        )
+        assert_rejected(db, "ck_reconciliation_matches_decision_tracee", anonymous)
+        assert_rejected(db, "ck_reconciliation_matches_decision_tracee", undated)
+        save(
+            db,
+            ReconciliationMatch(
+                company_id=world.company.id,
+                type="1-1",
+                statut=statut,
+                decide_par_id=world.user.id,
+                decide_le=NOW,
+                **extra,
+            ),
+        )
+
+
+def test_a_proposal_needs_no_decision(db, world):
+    save(db, ReconciliationMatch(company_id=world.company.id, type="1-1", statut="Proposée"))
 
 
 # --- Écarts --------------------------------------------------------------------------------------
@@ -445,6 +487,43 @@ def test_fully_documented_closure_is_accepted(db, world):
 
 def test_open_discrepancy_needs_no_comment(db, world):
     save(db, discrepancy(world, statut="À traiter"))
+
+
+def test_a_transaction_has_only_one_open_discrepancy(db, world):
+    tx = save(db, build_transaction(world.statement))
+    save(db, discrepancy(world, bank_transaction_id=tx.id, statut="En cours"))
+
+    assert_rejected(
+        db,
+        "uq_discrepancies_transaction_ouvert",
+        discrepancy(world, bank_transaction_id=tx.id, statut="À traiter"),
+    )
+
+
+def test_an_entry_has_only_one_open_discrepancy(db, world):
+    entry = save(db, build_entry(world.company))
+    save(db, discrepancy(world, accounting_entry_id=entry.id, statut="Traité"))
+
+    assert_rejected(
+        db,
+        "uq_discrepancies_ecriture_ouvert",
+        discrepancy(world, accounting_entry_id=entry.id),
+    )
+
+
+def test_closed_discrepancies_do_not_block_a_new_one(db, world):
+    tx = save(db, build_transaction(world.statement))
+    entry = save(db, build_entry(world.company))
+    closed = dict(
+        statut="Clôturé", commentaire="Justifié", cloture_le=NOW, cloture_par_id=world.user.id
+    )
+    save(
+        db,
+        discrepancy(world, bank_transaction_id=tx.id, accounting_entry_id=entry.id, **closed),
+        discrepancy(world, bank_transaction_id=tx.id, accounting_entry_id=entry.id, **closed),
+    )
+
+    save(db, discrepancy(world, bank_transaction_id=tx.id, accounting_entry_id=entry.id))
 
 
 def test_discrepancy_type_and_status_must_be_known(db, world):

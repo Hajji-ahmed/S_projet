@@ -11,6 +11,7 @@ from app.schemas.accounting import EcritureOut
 from app.services.reconciliation_scoring import CRITERES, LIBELLES_CRITERES
 from app.services.reconciliation_service import (
     Candidate,
+    HistoryPage,
     MatchView,
     RunResult,
     TransactionsPage,
@@ -87,10 +88,15 @@ class OperationOut(BaseModel):
     montant: Decimal
     statut: StatutRapprochement
     correspondance: CorrespondanceResumeOut | None = None
+    ecart_id: int | None = Field(None, description="Écart ouvert de l'opération (P12)")
 
     @classmethod
     def of(
-        cls, tx: BankTransaction, bank_code: str, match: ReconciliationMatch | None = None
+        cls,
+        tx: BankTransaction,
+        bank_code: str,
+        match: ReconciliationMatch | None = None,
+        ecart_id: int | None = None,
     ) -> "OperationOut":
         resume = None
         if match is not None:
@@ -116,6 +122,7 @@ class OperationOut(BaseModel):
             montant=tx.montant,
             statut=tx.statut,
             correspondance=resume,
+            ecart_id=ecart_id,
         )
 
 
@@ -137,7 +144,10 @@ class OperationsPageOut(BaseModel):
             par_statut={
                 statut: result.par_statut.get(statut, 0) for statut in StatutRapprochement.__args__
             },
-            operations=[OperationOut.of(tx, code, match) for tx, code, match in result.operations],
+            operations=[
+                OperationOut.of(tx, code, match, result.ecarts.get(tx.id))
+                for tx, code, match in result.operations
+            ],
         )
 
 
@@ -152,6 +162,8 @@ class CorrespondanceOut(BaseModel):
     commentaire: str | None
     valide_par: str | None
     valide_le: datetime | None
+    decide_par: str | None = Field(description="Auteur de la dernière décision (historique)")
+    decide_le: datetime | None
     created_at: datetime
     operation: OperationOut
     ecriture: EcritureOut
@@ -170,6 +182,8 @@ class CorrespondanceOut(BaseModel):
             commentaire=match.commentaire,
             valide_par=view.valide_par,
             valide_le=match.valide_le,
+            decide_par=view.decide_par,
+            decide_le=match.decide_le,
             created_at=match.created_at,
             operation=OperationOut.of(view.transaction, view.bank_code),
             ecriture=EcritureOut(**EcritureOut.fields_of(view.entry, view.entry_bank_code)),
@@ -179,6 +193,31 @@ class CorrespondanceOut(BaseModel):
 class CorrespondancesOut(BaseModel):
     seuil_fort: Decimal
     correspondances: list[CorrespondanceOut]
+
+
+StatutDecision = Literal["Validée", "Rejetée", "Annulée"]
+
+
+class HistoriqueOut(BaseModel):
+    """Une page de 50 décisions ; `par_statut` porte sur tout le filtre, hors statut."""
+
+    total: int
+    page: int
+    taille: int
+    par_statut: dict[str, int]
+    decisions: list[CorrespondanceOut]
+
+    @classmethod
+    def from_page(cls, result: HistoryPage) -> "HistoriqueOut":
+        return cls(
+            total=result.total,
+            page=result.page,
+            taille=result.taille,
+            par_statut={
+                statut: result.par_statut.get(statut, 0) for statut in StatutDecision.__args__
+            },
+            decisions=[CorrespondanceOut.from_view(view) for view in result.decisions],
+        )
 
 
 class CandidatOut(BaseModel):

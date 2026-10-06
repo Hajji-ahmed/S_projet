@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { PlaceholderPage } from "@/components/layout/PlaceholderPage";
+import { EcartsView } from "@/components/ecarts/EcartsView";
 
 export const metadata: Metadata = { title: "Écarts" };
 
 export default function Page() {
+  // useSearchParams (lien direct vers un écart : /ecarts?ecart=12) exige une frontière Suspense
   return (
-    <PlaceholderPage
-      title="Écarts"
-      description="Suivi des opérations non rapprochées et des écarts"
-    />
+    <Suspense>
+      <EcartsView />
+    </Suspense>
   );
 }

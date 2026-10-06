@@ -141,6 +141,9 @@ Réalisé en P10 (`components/ecritures/`), société active, lecture seule (Sag
 
 Filtres, recherche, statut, pagination, sélection multiple des deux côtés, somme sélectionnée et écart restant visibles. Ligne sélectionnée : `bg-simtis-light`.
 
+- Résumé sous la période : compteurs cliquables (`StatButton`, `aria-pressed`) Rapprochées · À vérifier · Non rapprochées, qui filtrent le volet Transactions bancaires (compteur actif : bordure `simtis-primary` + `bg-simtis-light` ; second clic = tous les statuts), et Propositions en attente, qui ouvre la fenêtre des propositions (la plus forte d'abord ; un clic la montre dans le panneau Correspondance).
+- Onglets sous la carte de période : « Rapprochement » (icône `GitCompareArrows`, les trois volets) et « Historique » (icône `History`) : compteurs Validées · Rejetées · Annulées (même comportement), DataTable Décision (date + auteur) · Statut (badge vert / rouge / gris) · Opération · Écriture · Montant · Score · Origine · Commentaire · « Annuler » sur une ligne validée (fenêtre, motif obligatoire) ; 50 par page.
+
 Réalisé en P11 (06/10/2026, 1→1 seulement ; la sélection multiple viendra en P13) :
 - PageHeader + bouton « Lancer le rapprochement » (icône `Play`). Carte de filtres : boutons de compte (`AccountButton` d'`EntriesCard`, logo + « BP · journal »), Du / Au ; résumé Rapprochées · À vérifier · Non rapprochées · Propositions en attente ; bouton secondaire « Valider les fortes correspondances (N) » (`CheckCheck`) avec fenêtre de confirmation.
 - Grille `xl:grid-cols-[1fr_minmax(300px,360px)_1fr]`, empilée en dessous ; panneau central `xl:sticky`.
@@ -148,9 +151,11 @@ Réalisé en P11 (06/10/2026, 1→1 seulement ; la sélection multiple viendra e
 
 ## Écarts (`/ecarts`)
 
-- 4 KPI : Écarts à traiter · Écarts en cours · Écarts clôturés · Montant total.
-- DataTable des écarts avec badges.
-- Clic sur une ligne : panneau latéral avec Type, Transaction bancaire, Écriture comptable, Montant, Différence, Commentaire, Responsable, Statut.
+- En-tête : bouton « Générer les écarts » (icône `Wand2`, permission `discrepancies.manage`) → fenêtre Du / Au / Compte.
+- 4 KPI : Écarts à traiter · Écarts en cours (En cours + Traité, « dont N traités » en dessous) · Écarts clôturés · Montant total (écarts ouverts, en DH ; les autres devises listées en dessous, jamais additionnées).
+- Carte « Écarts » : boutons de compte, filtres Statut · Type · Responsable · Du · Au · Recherche ; DataTable Date · Type · Banque (`BankLabel`) · Libellé · Montant · Différence · Responsable · Statut (badge) ; 50 par page.
+- Clic sur une ligne (sélectionnée en `bg-simtis-light`) : panneau latéral à droite (sticky en desktop, sous la liste en mobile) avec Type, Montant, Différence, Date, Banque, Transaction bancaire, Écriture comptable, Responsable (liste), boutons « Passer « En cours » / « Traité » », Commentaire, « Clôturer l'écart » (fenêtre, commentaire obligatoire) et l'Historique. Lien direct : `/ecarts?ecart=ID`.
+- `/rapprochement` : bouton « Signaler un écart » (icône `TriangleAlert`) dans le panneau Correspondance ; une opération en écart affiche un bandeau orange avec le lien vers son écart.
 
 ## Prévisions et Devises : pas de page dédiée
 

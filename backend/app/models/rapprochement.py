@@ -54,6 +54,12 @@ class ReconciliationMatch(TimestampMixin, Base):
             "statut <> 'Validée' OR (valide_par_id IS NOT NULL AND valide_le IS NOT NULL)",
             name="validation_tracee",
         ),
+        # Toute décision (validation, rejet, annulation) a son auteur et sa date (migration 0013)
+        CheckConstraint(
+            "statut = 'Proposée' OR (decide_par_id IS NOT NULL AND decide_le IS NOT NULL)",
+            name="decision_tracee",
+        ),
+        Index("ix_reconciliation_matches_societe_decision", "company_id", "decide_le"),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -64,6 +70,9 @@ class ReconciliationMatch(TimestampMixin, Base):
     origine: Mapped[str] = mapped_column(String(12), default="Automatique")
     valide_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     valide_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Dernière décision humaine : validation, rejet ou annulation (historique, migration 0013)
+    decide_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    decide_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     commentaire: Mapped[str | None] = mapped_column(Text)
     # Points obtenus par critère au moment de la proposition : {"montant": "30.00", ...}
     detail_score: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
@@ -145,6 +154,19 @@ class Discrepancy(TimestampMixin, Base):
             "statut <> 'Clôturé' OR (commentaire IS NOT NULL AND btrim(commentaire) <> '' "
             "AND cloture_le IS NOT NULL AND cloture_par_id IS NOT NULL)",
             name="cloture_avec_commentaire",
+        ),
+        # Un seul écart ouvert par opération et par écriture (migration 0012)
+        Index(
+            "uq_discrepancies_transaction_ouvert",
+            "bank_transaction_id",
+            unique=True,
+            postgresql_where=text("statut <> 'Clôturé' AND bank_transaction_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_discrepancies_ecriture_ouvert",
+            "accounting_entry_id",
+            unique=True,
+            postgresql_where=text("statut <> 'Clôturé' AND accounting_entry_id IS NOT NULL"),
         ),
     )
 

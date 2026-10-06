@@ -31,6 +31,8 @@ export type Operation = {
   montant: string;
   statut: StatutRapprochement;
   correspondance: CorrespondanceResume | null;
+  /** Écart ouvert de l'opération (P12). */
+  ecart_id: number | null;
 };
 
 /** Une page de 50 opérations ; total et décompte par statut portent sur tout le filtre. */
@@ -53,6 +55,9 @@ export type Correspondance = {
   commentaire: string | null;
   valide_par: string | null;
   valide_le: string | null;
+  /** Dernière décision humaine (validation, rejet, annulation) : historique. */
+  decide_par: string | null;
+  decide_le: string | null;
   created_at: string;
   operation: Operation;
   ecriture: Ecriture;
@@ -85,4 +90,15 @@ export type RunResult = {
   nb_fortes: number;
   nb_operations_ambigues: number;
   nb_ecritures_ambigues: number;
+};
+
+export type StatutDecision = "Validée" | "Rejetée" | "Annulée";
+
+/** Une page de 50 décisions ; `par_statut` porte sur tout le filtre, hors statut. */
+export type Historique = {
+  total: number;
+  page: number;
+  taille: number;
+  par_statut: Record<StatutDecision, number>;
+  decisions: Correspondance[];
 };

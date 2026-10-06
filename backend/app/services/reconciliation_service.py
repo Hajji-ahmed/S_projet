@@ -24,6 +24,7 @@ from app.models import (
     ReconciliationMatch,
     ReconciliationMatchItem,
 )
+from app.repositories import discrepancy_repository
 from app.repositories import reconciliation_repository as repo
 from app.services import audit_service
 from app.services.errors import ConflictError, NotFoundError
@@ -275,9 +276,22 @@ def _snapshot(match: ReconciliationMatch) -> dict:
     }
 
 
-def _release(db: Session, match: ReconciliationMatch, statut: str, commentaire: str | None) -> None:
-    """Rejette ou annule : les éléments sont libérés et redeviennent « Non rapprochée »."""
+def _decide(match: ReconciliationMatch, statut: str, acteur_id: int) -> None:
+    """Nouvelle décision humaine : son auteur et sa date restent dans l'historique."""
     match.statut = statut
+    match.decide_par_id = acteur_id
+    match.decide_le = datetime.now(UTC)
+
+
+def _release(
+    db: Session,
+    match: ReconciliationMatch,
+    statut: str,
+    commentaire: str | None,
+    acteur_id: int,
+) -> None:
+    """Rejette ou annule : les éléments sont libérés et redeviennent « Non rapprochée »."""
+    _decide(match, statut, acteur_id)
     if commentaire is not None:
         match.commentaire = commentaire
     for item in match.items:
@@ -288,10 +302,27 @@ def _release(db: Session, match: ReconciliationMatch, statut: str, commentaire: 
     repo.set_entry_status(db, entry_ids, "Non rapprochée")
 
 
+MONTANTS_DIFFERENTS = (
+    "Les montants de l'opération et de l'écriture diffèrent : ce rapprochement ne peut pas être "
+    "validé. Signalez un écart « Montant différent »."
+)
+
+
+def _check_amounts(db: Session, match: ReconciliationMatch) -> None:
+    """Un rapprochement validé s'équilibre : la somme des montants (banque + Sage) vaut zéro."""
+    tx_ids, entry_ids = _members(match)
+    total = sum((db.get(BankTransaction, i).montant for i in tx_ids), Decimal("0")) + sum(
+        (db.get(AccountingEntry, i).montant for i in entry_ids), Decimal("0")
+    )
+    if total != 0:
+        raise ConflictError(MONTANTS_DIFFERENTS)
+
+
 def _validate(db: Session, match: ReconciliationMatch, acteur_id: int) -> None:
-    match.statut = "Validée"
+    _check_amounts(db, match)
+    _decide(match, "Validée", acteur_id)
     match.valide_par_id = acteur_id
-    match.valide_le = datetime.now(UTC)
+    match.valide_le = match.decide_le
     tx_ids, entry_ids = _members(match)
     db.flush()
     repo.set_transaction_status(db, tx_ids, "Rapprochée")
@@ -380,7 +411,7 @@ def reject(
             f"Seule une correspondance proposée se rejette (statut : {match.statut})."
         )
     avant = _snapshot(match)
-    _release(db, match, "Rejetée", _clean_comment(commentaire))
+    _release(db, match, "Rejetée", _clean_comment(commentaire), acteur_id)
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -409,7 +440,7 @@ def cancel(
             "une proposition se rejette."
         )
     avant = _snapshot(match)
-    _release(db, match, "Annulée", texte)
+    _release(db, match, "Annulée", texte, acteur_id)
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -422,6 +453,44 @@ def cancel(
     )
     _commit(db)
     return match
+
+
+def release_pending_matches(
+    db: Session,
+    *,
+    transaction_id: int | None,
+    entry_id: int | None,
+    motif: str,
+    acteur_id: int,
+    ip: str | None,
+) -> list[int]:
+    """Rejette (et trace) les propositions en attente qui contiennent l'opération ou l'écriture.
+
+    Un rapprochement validé n'est jamais défait ici : 409, à annuler d'abord. Ne valide pas la
+    transaction ; retourne les identifiants des propositions rejetées.
+    """
+    actives = repo.active_matches_of(db, transaction_id=transaction_id, entry_id=entry_id)
+    for active in actives:
+        if active.statut == "Validée":
+            tx_ids, _ = _members(active)
+            quoi = "L'opération" if transaction_id in tx_ids else "L'écriture"
+            raise ConflictError(f"{quoi} est déjà rapprochée : annulez d'abord ce rapprochement.")
+    remplacees = []
+    for active in actives:
+        avant = _snapshot(active)
+        _release(db, active, "Rejetée", motif, acteur_id)
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="rejet_rapprochement",
+            entite=ENTITE,
+            entite_id=active.id,
+            avant=avant,
+            apres=_snapshot(active),
+            ip=ip,
+        )
+        remplacees.append(active.id)
+    return remplacees
 
 
 def match_manually(
@@ -466,25 +535,14 @@ def match_manually(
     if "Écart" in (tx.statut, entry.statut):
         raise ConflictError("Une ligne en écart se traite dans l'écran Écarts.")
 
-    remplacees = []
-    for active in repo.active_matches_of(db, transaction_id=tx.id, entry_id=entry.id):
-        if active.statut == "Validée":
-            tx_ids, _ = _members(active)
-            quoi = "L'opération" if tx.id in tx_ids else "L'écriture"
-            raise ConflictError(f"{quoi} est déjà rapprochée : annulez d'abord ce rapprochement.")
-        avant = _snapshot(active)
-        _release(db, active, "Rejetée", "Remplacée par un rapprochement manuel.")
-        audit_service.log(
-            db,
-            user_id=acteur_id,
-            action="rejet_rapprochement",
-            entite=ENTITE,
-            entite_id=active.id,
-            avant=avant,
-            apres=_snapshot(active),
-            ip=ip,
-        )
-        remplacees.append(active.id)
+    remplacees = release_pending_matches(
+        db,
+        transaction_id=tx.id,
+        entry_id=entry.id,
+        motif="Remplacée par un rapprochement manuel.",
+        acteur_id=acteur_id,
+        ip=ip,
+    )
 
     resultat = score(_operation(tx), _ecriture(entry), grille(db))
     match = ReconciliationMatch(
@@ -532,6 +590,7 @@ class MatchView:
     entry_bank_code: str | None
     valide_par: str | None
     forte: bool
+    decide_par: str | None = None
 
 
 @dataclass
@@ -541,6 +600,8 @@ class TransactionsPage:
     taille: int
     par_statut: dict[str, int]
     operations: list[tuple[BankTransaction, str, ReconciliationMatch | None]]
+    # Écart ouvert de chaque opération de la page qui en a un (P12)
+    ecarts: dict[int, int]
 
 
 @dataclass
@@ -581,6 +642,9 @@ def list_transactions(
         taille=PAGE_SIZE,
         par_statut=par_statut,
         operations=[(tx, code, matches.get(tx.id)) for tx, code in rows],
+        ecarts=discrepancy_repository.open_discrepancy_by_transaction(
+            db, [tx.id for tx, _ in rows]
+        ),
     )
 
 
@@ -589,7 +653,11 @@ def _views(db: Session, matches: list[ReconciliationMatch], seuil_fort: Decimal)
     entry_ids = {i.accounting_entry_id for m in matches for i in m.items if i.accounting_entry_id}
     transactions = repo.transactions_with_bank(db, tx_ids)
     entries = repo.entries_with_bank(db, entry_ids)
-    names = repo.user_names(db, {m.valide_par_id for m in matches if m.valide_par_id})
+    names = repo.user_names(
+        db,
+        {m.valide_par_id for m in matches if m.valide_par_id}
+        | {m.decide_par_id for m in matches if m.decide_par_id},
+    )
     views = []
     for match in matches:
         tx_id = next(i.bank_transaction_id for i in match.items if i.bank_transaction_id)
@@ -604,6 +672,7 @@ def _views(db: Session, matches: list[ReconciliationMatch], seuil_fort: Decimal)
                 entry=entry,
                 entry_bank_code=entry_code,
                 valide_par=names.get(match.valide_par_id) if match.valide_par_id else None,
+                decide_par=names.get(match.decide_par_id) if match.decide_par_id else None,
                 forte=match.score is not None and match.score >= seuil_fort,
             )
         )
@@ -632,6 +701,47 @@ def list_matches(
         date_to=date_to,
     )
     return seuil, _views(db, matches, seuil)
+
+
+@dataclass
+class HistoryPage:
+    total: int
+    page: int
+    taille: int
+    par_statut: dict[str, int]
+    seuil_fort: Decimal
+    decisions: list[MatchView]
+
+
+def list_history(
+    db: Session,
+    company_id: int,
+    *,
+    statut: str | None = None,
+    bank_account_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    page: int = 1,
+) -> HistoryPage:
+    """Historique des décisions (validées, rejetées, annulées), de la plus récente à la plus
+    ancienne, 50 par page ; le décompte par statut porte sur tout le filtre, hors statut."""
+    company = _company(db, company_id)
+    _check_period(date_from, date_to)
+    seuil = grille(db).seuil_fort
+    query = repo.decisions_query(
+        company.id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+    )
+    total, matches = repo.page_of_decisions(
+        db, query, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE
+    )
+    return HistoryPage(
+        total=total,
+        page=page,
+        taille=PAGE_SIZE,
+        par_statut=repo.count_decisions_by_status(db, query),
+        seuil_fort=seuil,
+        decisions=_views(db, matches, seuil),
+    )
 
 
 def get_match_view(db: Session, match_id: int) -> MatchView:

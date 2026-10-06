@@ -82,3 +82,12 @@ Audit : `rapprochement_lance`, `validation_rapprochement`, `rejet_rapprochement`
 
 - Faire valider la grille et les seuils par Mustapha.
 - Recette sur un mois réel : les données de développement actuelles (100 opérations, 400 écritures synthétiques) n'ont aucun montant commun ; mesurer le taux de propositions correctes.
+
+
+## Compteurs cliquables et historique (07/10/2026)
+
+Décisions de l'utilisateur du 07/10/2026 : un clic sur un compteur filtre le volet « Transactions bancaires » (pas de fenêtre séparée) ; l'historique montre **toutes** les décisions (validées, rejetées, annulées) ; pas d'export Excel avant P16.
+
+- Compteurs Rapprochées / À vérifier / Non rapprochées : filtre Statut du volet de gauche (second clic : tous les statuts). « Propositions en attente » : fenêtre listant les propositions de la période, la plus forte d'abord ; un clic sélectionne l'opération et sa proposition dans le panneau Correspondance.
+- Onglet « Historique » : `GET /api/reconciliation/history?company_id=&bank_account_id=&from=&to=&statut=&page=` (`reconciliation.view`) ; décisions dont l'opération est dans la période, triées par date de décision décroissante, 50 par page ; `par_statut` sur tout le filtre hors statut. Une ligne validée peut être annulée (motif obligatoire).
+- Migration 0013 : `reconciliation_matches.decide_par_id` / `decide_le` renseignés par chaque décision (validation, rejet, annulation, rapprochement manuel) ; CHECK `decision_tracee` (toute correspondance non « Proposée » a son auteur et sa date) ; reprise des décisions passées depuis `valide_par_id` / `valide_le`, sinon la dernière trace `rejet_rapprochement` / `annulation_rapprochement` de l'audit.

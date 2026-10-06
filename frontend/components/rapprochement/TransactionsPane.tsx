@@ -23,6 +23,9 @@ type TransactionsPaneProps = {
   reloadKey: number;
   selectedId: number | null;
   onSelect: (operation: Operation) => void;
+  /** Filtre Statut, piloté aussi par les compteurs de la vue ("" = tous les statuts). */
+  statut: string;
+  onStatutChange: (statut: string) => void;
   /** Chaque page chargée : la vue met à jour l'opération sélectionnée et le résumé. */
   onLoaded: (page: OperationsPage) => void;
 };
@@ -35,14 +38,22 @@ export function TransactionsPane({
   selectedId,
   onSelect,
   onLoaded,
+  statut,
+  onStatutChange,
 }: TransactionsPaneProps) {
-  const [statut, setStatut] = useState("");
+  // Un statut changé depuis les compteurs repart de la première page
+  const [shownStatut, setShownStatut] = useState(statut);
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<OperationsPage | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
   const [retryKey, setRetryKey] = useState(0);
+  if (statut !== shownStatut) {
+    setShownStatut(statut);
+    setPage(1);
+    setState("loading");
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -115,11 +126,7 @@ export function TransactionsPane({
               value={statut}
               placeholder="Tous les statuts"
               options={STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item }))}
-              onChange={(event) => {
-                setState("loading");
-                setPage(1);
-                setStatut(event.target.value);
-              }}
+              onChange={(event) => onStatutChange(event.target.value)}
             />
           </Field>
         </div>
