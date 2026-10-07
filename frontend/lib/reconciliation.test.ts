@@ -3,13 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
   absolute,
   defaultPeriod,
+  defaultSelection,
   ecartManuel,
+  filterProposals,
   formatScore,
-  fortes,
   rapprochable,
   reconciliationQuery,
+  selectionSummary,
   sensBanque,
+  sensSage,
+  statutsVolet,
   toggleStatut,
+  validable,
 } from "./reconciliation";
 import type { Correspondance } from "@/types/reconciliation";
 
@@ -58,18 +63,6 @@ describe("ecartManuel et rapprochable", () => {
   });
 });
 
-describe("fortes", () => {
-  it("ne garde que les propositions fortes en attente", () => {
-    const rows = [
-      { id: 1, statut: "Proposée", forte: true },
-      { id: 2, statut: "Proposée", forte: false },
-      { id: 3, statut: "Validée", forte: true },
-    ] as Correspondance[];
-
-    expect(fortes(rows)).toEqual([1]);
-  });
-});
-
 describe("formats", () => {
   it("affiche le score sans zéros inutiles", () => {
     expect(formatScore("92.50")).toBe("92,5");
@@ -89,5 +82,80 @@ describe("toggleStatut", () => {
     expect(toggleStatut("", "À vérifier")).toBe("À vérifier");
     expect(toggleStatut("Rapprochée", "À vérifier")).toBe("À vérifier");
     expect(toggleStatut("À vérifier", "À vérifier")).toBe("");
+  });
+});
+
+function proposal(
+  id: number,
+  score: string,
+  forte: boolean,
+  montant = "100.00",
+  ecriture = "-100.00",
+) {
+  return {
+    id,
+    statut: "Proposée",
+    score,
+    forte,
+    operation: { montant },
+    ecriture: { montant: ecriture },
+  } as unknown as Correspondance;
+}
+
+describe("propositions en attente", () => {
+  const strong = proposal(1, "95.00", true, "-250.50", "250.50");
+  const weak = proposal(2, "60.00", false);
+  const unequal = proposal(3, "92.00", true, "100.00", "-90.00");
+  const items = [weak, unequal, strong];
+
+  it("ne valide que les propositions équilibrées", () => {
+    expect(validable(strong)).toBe(true);
+    expect(validable(unequal)).toBe(false);
+    expect(validable({ ...weak, statut: "Validée" })).toBe(false);
+  });
+
+  it("coche d'office les seules fortes validables", () => {
+    expect([...defaultSelection(items)]).toEqual([1]);
+  });
+
+  it("filtre fortes / à vérifier, la plus forte d'abord", () => {
+    expect(filterProposals(items, "toutes").map((p) => p.id)).toEqual([1, 3, 2]);
+    expect(filterProposals(items, "fortes").map((p) => p.id)).toEqual([1, 3]);
+    expect(filterProposals(items, "a_verifier").map((p) => p.id)).toEqual([2]);
+    // Le filtre « Ambiguës » ne montre que les opérations sans proposition
+    expect(filterProposals(items, "ambigues")).toEqual([]);
+  });
+
+  it("résume la sélection en centimes exacts", () => {
+    expect(selectionSummary(items, new Set([1, 2]))).toEqual({
+      nb: 2,
+      faibles: 1,
+      total: "350.50",
+    });
+    expect(selectionSummary(items, new Set())).toEqual({ nb: 0, faibles: 0, total: "0.00" });
+  });
+});
+
+describe("sensSage", () => {
+  it("lit le montant Sage : positif = crédit (sortie de banque), négatif = débit", () => {
+    // Droit de timbre : 1 DH au débit en banque, 1 DH au crédit du compte banque dans Sage
+    expect(sensSage("1.00")).toBe("crédit Sage");
+    expect(sensSage("-50000.00")).toBe("débit Sage");
+  });
+});
+
+describe("reconciliationQuery sans À vérifier", () => {
+  it("ajoute sans_a_verifier seulement quand il est demandé", () => {
+    expect(reconciliationQuery(1, { sansAVerifier: true, page: 1 })).toBe(
+      "?company_id=1&sans_a_verifier=true&page=1",
+    );
+    expect(reconciliationQuery(1, { page: 1 })).toBe("?company_id=1&page=1");
+  });
+});
+
+describe("statutsVolet", () => {
+  it("ne propose « Écart » que si la fonction Écarts est active", () => {
+    expect(statutsVolet(false)).toEqual(["Non rapprochée", "Rapprochée"]);
+    expect(statutsVolet(true)).toEqual(["Non rapprochée", "Rapprochée", "Écart"]);
   });
 });

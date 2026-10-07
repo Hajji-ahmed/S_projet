@@ -12,6 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { ECARTS_ACTIFS } from "@/lib/features";
+
 export type NavItem = { label: string; href: string; icon: LucideIcon };
 
 /**
@@ -19,7 +21,7 @@ export type NavItem = { label: string; href: string; icon: LucideIcon };
  * Pas de pages Prévisions ni Devises (décision du 05/10/2026) : leurs tableaux sont sur la page
  * Position bancaire.
  */
-export const NAV_ITEMS: NavItem[] = [
+const ALL_NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Banques", href: "/banques", icon: Landmark },
   { label: "Comptes", href: "/comptes", icon: WalletCards },
@@ -31,3 +33,10 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Rapports", href: "/rapports", icon: FileText },
   { label: "Administration", href: "/administration", icon: Settings },
 ];
+
+/** Entrées visibles : sans « Écarts » tant que la fonction est mise de côté (`ECARTS_ACTIFS`). */
+export function navItems(ecartsActifs: boolean): NavItem[] {
+  return ALL_NAV_ITEMS.filter((item) => ecartsActifs || item.href !== "/ecarts");
+}
+
+export const NAV_ITEMS: NavItem[] = navItems(ECARTS_ACTIFS);

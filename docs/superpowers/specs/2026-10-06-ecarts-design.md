@@ -1,5 +1,7 @@
 # P12 — Gestion des écarts
 
+> **Mise de côté le 07/10/2026** (décision du métier). Fonction masquée à l'écran par `ECARTS_ACTIFS = false` (`frontend/lib/features.ts`) ; backend, API, base et tests conservés. Migration 0015 (données) : écarts ouverts clôturés (commentaire « Fonction Écarts mise de côté le 07/10/2026. », auteur = premier administrateur actif, audit `cloture_ecart`), lignes « Écart » remises « Non rapprochée ». Réactivation : `ECARTS_ACTIFS = true`.
+
 Date : 06/10/2026. Décisions validées par l'utilisateur le 06/10/2026 (plan présenté avant l'implémentation).
 
 ## Objectif

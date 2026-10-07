@@ -810,6 +810,8 @@ Résumé d'import + audit
 
 **Prérequis** : P7, P10
 
+> **Grille modifiée le 07/10/2026** (migration 0014) : pour le moment, score = Montant 50 + Date 30 + Libellé 20 ; Référence et Tiers désactivés (gardés en base). Seuils inchangés. La grille ci-dessous est celle d'origine.
+>
 > **P11 — Statut : réalisé le 06/10/2026** (spécification `docs/superpowers/specs/2026-10-06-rapprochement-design.md`). Grille ci-dessous enregistrée dans `reconciliation_rules` (seeds, modifiable en base), **à faire valider par Mustapha**. Décisions : une proposition met les lignes « À vérifier », elles ne passent « Rapprochée » qu'après validation humaine (même ≥ 90) ; rapprochement manuel 1→1 seulement à montant égal et sens opposé (crédit banque ↔ débit Sage) ; une paire rejetée n'est jamais reproposée ; relancer le moteur ne remplace que ses propositions en attente. Migration **0011** : une opération ou une écriture n'est que dans une correspondance active (index uniques partiels), détail du score en JSONB. API `/api/reconciliation/*` (run, transactions, proposals, matches/{id}, candidates, validate, validate-batch, reject, matches, DELETE matches/{id}), page `/rapprochement` en trois volets. Recette sur un mois réel encore à faire (les données de développement n'ont aucun montant commun entre banque et Sage).
 
 **Critères de comparaison** : montant, date, libellé, référence, sens débit/crédit, n° chèque, n° pièce, tiers.
@@ -861,6 +863,8 @@ Résumé d'import + audit
 
 **Prérequis** : P11
 
+> **P12 — Mise de côté le 07/10/2026** (décision du métier) : la fonction est masquée à l'écran (`ECARTS_ACTIFS = false` dans `frontend/lib/features.ts`), le code et la base restent ; la migration **0015** a clôturé les écarts ouverts et remis leurs lignes « Non rapprochée ». Réactivation : passer l'interrupteur à `true`.
+>
 > **P12 — Statut : réalisé le 06/10/2026** (spécification `docs/superpowers/specs/2026-10-06-ecarts-design.md`). Décisions validées le 06/10/2026 : génération **sur demande** (bouton « Générer les écarts », pas à chaque rapprochement) des doublons potentiels et des lignes « Non rapprochée » datées d'au moins 10 jours (fenêtre du moteur) ; une ligne qui a déjà eu un écart n'est jamais signalée de nouveau automatiquement ; à la clôture (commentaire obligatoire) les lignes redeviennent « Non rapprochée » ; une proposition dont les montants diffèrent ne peut plus être validée (correction de P11 : écart « Montant différent »). Création manuelle depuis `/rapprochement` ou par l'API. Migration **0012** : un seul écart ouvert par opération et par écriture. API `/api/discrepancies` (liste, détail avec historique lu dans `audit_logs`, responsables, création, génération, PATCH, clôture). Page `/ecarts` : KPI, filtres, tableau, panneau latéral de traitement. Montant total des écarts ouverts **par devise**.
 
 **Types d'écarts**

@@ -15,7 +15,7 @@ import { ApiError } from "@/lib/api";
 import { currencySuffix, formatDate } from "@/lib/balances";
 import { changedFields, eventLabel, nextStatuses } from "@/lib/discrepancies";
 import { formatAmount } from "@/lib/format";
-import { absolute } from "@/lib/reconciliation";
+import { absolute, sensSage } from "@/lib/reconciliation";
 import { formatDateTime } from "@/lib/statements";
 import { closeDiscrepancy, getDiscrepancy, updateDiscrepancy } from "@/services/discrepancies";
 import type { EcartDetail, Responsable } from "@/types/discrepancy";
@@ -198,7 +198,7 @@ export function DiscrepancyPanel({
               <p className="font-medium tabular-nums">
                 {formatAmount(absolute(ecart.ecriture.montant), devise)}{" "}
                 <span className="text-xs font-normal text-simtis-muted">
-                  {ecart.ecriture.montant.startsWith("-") ? "crédit Sage" : "débit Sage"}
+                  {sensSage(ecart.ecriture.montant)}
                 </span>
               </p>
               <p>{ecart.ecriture.libelle}</p>

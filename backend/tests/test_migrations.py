@@ -406,6 +406,143 @@ def test_migration_0013_takes_past_decisions_from_validation_and_audit(empty_dat
     ]
 
 
+def test_migration_0014_scores_on_amount_date_and_label(empty_database):
+    """Décision du 07/10/2026 : montant 50, date 30, libellé 20 ; référence et tiers désactivés."""
+    config, engine = empty_database
+    command.upgrade(config, "0013")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO reconciliation_rules (code, libelle, critere, poids, tolerance) VALUES
+                    ('REFERENCE', 'Référence', 'reference', 40, NULL),
+                    ('MONTANT', 'Montant', 'montant', 30, NULL),
+                    ('DATE', 'Date', 'date', 15, 3),
+                    ('LIBELLE', 'Libellé', 'libelle', 10, NULL),
+                    ('TIERS', 'Tiers', 'tiers', 5, NULL),
+                    ('SEUIL_FORT', 'Seuil', 'seuil', 90, NULL);
+                """
+            )
+        )
+
+    def grid() -> dict[str, tuple[int, bool]]:
+        with engine.connect() as connection:
+            rows = connection.execute(text("SELECT code, poids, actif FROM reconciliation_rules"))
+            return {row[0]: (int(row[1]), row[2]) for row in rows}
+
+    command.upgrade(config, "0014")
+    after = grid()
+    command.downgrade(config, "0013")
+
+    assert after == {
+        "REFERENCE": (40, False),
+        "MONTANT": (50, True),
+        "DATE": (30, True),
+        "LIBELLE": (20, True),
+        "TIERS": (5, False),
+        "SEUIL_FORT": (90, True),
+    }
+    assert grid() == {
+        "REFERENCE": (40, True),
+        "MONTANT": (30, True),
+        "DATE": (15, True),
+        "LIBELLE": (10, True),
+        "TIERS": (5, True),
+        "SEUIL_FORT": (90, True),
+    }
+
+
+_DONNEES_0015 = """
+INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'Société');
+INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'Banque');
+INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+INSERT INTO bank_statements (id, bank_account_id) OVERRIDING SYSTEM VALUE VALUES (1, 1);
+INSERT INTO bank_transactions (id, statement_id, bank_account_id, date_operation, libelle,
+    debit, credit, montant, hash_ligne, statut) OVERRIDING SYSTEM VALUE VALUES
+    (1, 1, 1, '2026-09-30', 'COMMISSION', 20, 0, -20, 'h1', 'Écart'),
+    (2, 1, 1, '2026-09-30', 'VIR CLIENT', 0, 100, 100, 'h2', 'Non rapprochée');
+INSERT INTO accounting_entries (id, company_id, bank_account_id, date_ecriture, libelle,
+    debit, credit, montant, hash_ligne, statut) OVERRIDING SYSTEM VALUE VALUES
+    (1, 1, 1, '2026-09-28', 'CHEQUE', 0, 500, 500, 'e1', 'Écart');
+INSERT INTO users (id, nom, email, mot_de_passe_hash) OVERRIDING SYSTEM VALUE VALUES
+    (1, 'Admin', 'admin@example.com', 'x'), (2, 'Comptable', 'c@example.com', 'x');
+INSERT INTO discrepancies (id, company_id, type, bank_transaction_id, accounting_entry_id,
+    montant, date_ecart, statut, commentaire, cloture_le, cloture_par_id)
+    OVERRIDING SYSTEM VALUE VALUES
+    (1, 1, 'Banque sans écriture', 1, NULL, 20, '2026-09-30', 'À traiter', NULL, NULL, NULL),
+    (2, 1, 'Écriture sans banque', NULL, 1, 500, '2026-09-28', 'Traité', 'Relancé', NULL, NULL),
+    (3, 1, 'Banque sans écriture', 2, NULL, 100, '2026-09-30', 'Clôturé', 'Réglé',
+        '2026-10-01 09:00+00', 2);
+"""
+
+
+def _add_admin(connection) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO roles (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'ADMIN', 'Admin');
+            INSERT INTO user_roles (user_id, role_id) VALUES (1, 1);
+            """
+        )
+    )
+
+
+def test_migration_0015_closes_open_discrepancies_and_frees_their_lines(empty_database):
+    """Décision du 07/10/2026 : la fonction Écarts est mise de côté ; les écarts ouverts sont
+    clôturés comme à l'écran et leurs lignes redeviennent « Non rapprochée »."""
+    config, engine = empty_database
+    command.upgrade(config, "0014")
+    with engine.begin() as connection:
+        connection.execute(text(_DONNEES_0015))
+        _add_admin(connection)
+
+    command.upgrade(config, "0015")
+
+    with engine.connect() as connection:
+        ecarts = connection.execute(
+            text(
+                "SELECT id, statut, commentaire, cloture_par_id, cloture_le IS NOT NULL "
+                "FROM discrepancies ORDER BY id"
+            )
+        ).all()
+        lignes = connection.execute(
+            text(
+                "SELECT 'tx', id, statut FROM bank_transactions "
+                "UNION ALL SELECT 'ec', id, statut FROM accounting_entries ORDER BY 1, 2"
+            )
+        ).all()
+        audit = connection.execute(
+            text(
+                "SELECT entite_id, user_id, ancienne_valeur ->> 'statut' FROM audit_logs "
+                "WHERE action = 'cloture_ecart' ORDER BY entite_id"
+            )
+        ).all()
+    motif = "Fonction Écarts mise de côté le 07/10/2026."
+    assert [tuple(row) for row in ecarts] == [
+        (1, "Clôturé", motif, 1, True),
+        (2, "Clôturé", f"Relancé {motif}", 1, True),
+        (3, "Clôturé", "Réglé", 2, True),  # déjà clôturé : intact
+    ]
+    assert [tuple(row) for row in lignes] == [
+        ("ec", 1, "Non rapprochée"),
+        ("tx", 1, "Non rapprochée"),
+        ("tx", 2, "Non rapprochée"),
+    ]
+    assert [tuple(row) for row in audit] == [("1", 1, "À traiter"), ("2", 1, "Traité")]
+
+
+def test_migration_0015_needs_an_administrator_to_close(empty_database):
+    config, engine = empty_database
+    command.upgrade(config, "0014")
+    with engine.begin() as connection:
+        connection.execute(text(_DONNEES_0015))
+
+    with pytest.raises(Exception, match="aucun administrateur actif"):
+        command.upgrade(config, "0015")
+
+
 def test_migration_matches_models(empty_database):
     """Échoue si un modèle a changé sans migration (colonne, contrainte ou index oublié)."""
     config, _ = empty_database

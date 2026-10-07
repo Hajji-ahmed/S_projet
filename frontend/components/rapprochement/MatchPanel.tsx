@@ -27,8 +27,9 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
+import { ECARTS_ACTIFS } from "@/lib/features";
 import { formatAmount } from "@/lib/format";
-import { absolute, ecartManuel, rapprochable, sensBanque } from "@/lib/reconciliation";
+import { absolute, ecartManuel, rapprochable, sensBanque, sensSage } from "@/lib/reconciliation";
 import { formatDateTime } from "@/lib/statements";
 import {
   cancelMatch,
@@ -58,8 +59,8 @@ function messageOf(error: unknown): string {
 }
 
 /** Sens Sage d'une écriture : un débit du compte banque correspond à un crédit en banque. */
-function sensSage(entry: Ecriture): string {
-  return entry.montant.startsWith("-") ? "crédit Sage" : "débit Sage";
+function sensSageOf(entry: Ecriture): string {
+  return sensSage(entry.montant);
 }
 
 /**
@@ -227,7 +228,7 @@ export function MatchPanel({
           </p>
         )}
 
-        {operation?.ecart_id && (
+        {ECARTS_ACTIFS && operation?.ecart_id && (
           <p className="flex items-center gap-2 rounded-[10px] bg-simtis-orange-bg px-3 py-2 text-sm text-simtis-orange-fg">
             <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />
             <span>
@@ -259,7 +260,7 @@ export function MatchPanel({
               )}
             </div>
             <Side title="Écriture comptable">
-              <Amount value={match.ecriture.montant} sens={sensSage(match.ecriture)} />
+              <Amount value={match.ecriture.montant} sens={sensSageOf(match.ecriture)} />
               <p className="text-sm">{match.ecriture.libelle}</p>
               <p className="text-xs text-simtis-muted">
                 {formatDate(match.ecriture.date_ecriture)}
@@ -612,7 +613,7 @@ function ManualMatch({
         <dd className="text-right tabular-nums">
           {formatAmount(absolute(operation.montant), "DH")}
         </dd>
-        <dt className="text-simtis-muted">Écriture ({sensSage(entry)})</dt>
+        <dt className="text-simtis-muted">Écriture ({sensSageOf(entry)})</dt>
         <dd className="text-right tabular-nums">{formatAmount(absolute(entry.montant), "DH")}</dd>
         <dt className="font-medium">Écart restant</dt>
         <dd

@@ -59,24 +59,27 @@ FORECAST_CATEGORIES = [
     ("AUTRE", "Autre", None),
 ]
 
-# Grille du rapprochement 1→1 (plan P11), non encore validée par Mustapha : (code, libellé, critère,
-# points ou valeur du seuil, tolérance). Elle se modifie en base ; un nouveau seed ne l'écrase jamais.
+# Grille du rapprochement 1→1, non encore validée par Mustapha : (code, libellé, critère, points ou
+# valeur du seuil, tolérance, actif). Décision du 07/10/2026 : pour le moment, seuls le montant, la
+# date et le libellé comptent ; la référence et le tiers sont désactivés (migration 0014 pour une base
+# existante). Elle se modifie en base ; un nouveau seed ne l'écrase jamais.
 # Codes lus par `reconciliation_service.grille()` ; valeurs par défaut : `reconciliation_scoring.Grille`.
 RECONCILIATION_RULES = [
-    ("REFERENCE", "Référence / n° chèque / n° pièce identique", "reference", "40", None),
-    ("MONTANT", "Montant exact, sens opposé", "montant", "30", None),
-    ("DATE", "Date dans la tolérance (jours), dégressif", "date", "15", "3"),
-    ("LIBELLE", "Libellé similaire", "libelle", "10", None),
-    ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None),
-    ("FENETRE", "Fenêtre de comparaison des dates (jours)", "fenetre", "0", "10"),
-    ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None),
-    ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "90", None),
+    ("REFERENCE", "Référence / n° chèque / n° pièce identique", "reference", "40", None, False),
+    ("MONTANT", "Montant exact, sens opposé", "montant", "50", None, True),
+    ("DATE", "Date dans la tolérance (jours), dégressif", "date", "30", "3", True),
+    ("LIBELLE", "Libellé similaire", "libelle", "20", None, True),
+    ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None, False),
+    ("FENETRE", "Fenêtre de comparaison des dates (jours)", "fenetre", "0", "10", True),
+    ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None, True),
+    ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "90", None, True),
     (
         "ECART_AMBIGUITE",
         "Écart de points sous lequel deux candidats sont ambigus",
         "seuil",
         "10",
         None,
+        True,
     ),
 ]
 
@@ -140,7 +143,7 @@ def seed_reference(session: Session) -> Counter[str]:
             created,
         )
 
-    for code, libelle, critere, poids, tolerance in RECONCILIATION_RULES:
+    for code, libelle, critere, poids, tolerance, actif in RECONCILIATION_RULES:
         get_or_create(
             session,
             ReconciliationRule,
@@ -150,6 +153,7 @@ def seed_reference(session: Session) -> Counter[str]:
                 "critere": critere,
                 "poids": Decimal(poids),
                 "tolerance": None if tolerance is None else Decimal(tolerance),
+                "actif": actif,
             },
             created,
         )

@@ -102,3 +102,14 @@ export type Historique = {
   par_statut: Record<StatutDecision, number>;
   decisions: Correspondance[];
 };
+
+/** Opération ambiguë : plusieurs écritures aussi proches, aucune proposée par le moteur. */
+export type Ambigue = {
+  operation: Operation;
+  candidats: Candidat[];
+};
+
+export type Ambigues = {
+  seuil_fort: string;
+  ambigues: Ambigue[];
+};

@@ -29,8 +29,9 @@ def lock_company(db: Session, company_id: int) -> Company | None:
     return db.scalar(select(Company).where(Company.id == company_id).with_for_update())
 
 
-def active_rules(db: Session) -> list[ReconciliationRule]:
-    return list(db.scalars(select(ReconciliationRule).where(ReconciliationRule.actif.is_(True))))
+def all_rules(db: Session) -> list[ReconciliationRule]:
+    """Toutes les règles, actives ou non : un critère désactivé vaut 0 point."""
+    return list(db.scalars(select(ReconciliationRule)))
 
 
 def company_accounts(
@@ -280,6 +281,36 @@ def transactions_query(
             )
         )
     return query
+
+
+def without_status(query: Select, statut: str) -> Select:
+    """Le même filtre d'opérations, sans celles qui ont ce statut."""
+    return query.where(BankTransaction.statut != statut)
+
+
+def ambiguous_transactions(
+    db: Session,
+    company_id: int,
+    *,
+    bank_account_id: int | None,
+    date_from: date | None,
+    date_to: date | None,
+    limit: int,
+) -> list[BankTransaction]:
+    """Opérations « À vérifier » sans correspondance active : le moteur a trouvé plusieurs
+    candidats trop proches pour en proposer un. Des plus récentes aux plus anciennes."""
+    query = (
+        transactions_query(
+            company_id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+        )
+        .where(
+            BankTransaction.statut == "À vérifier",
+            BankTransaction.id.not_in(_active_transaction_ids()),
+        )
+        .order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
+        .limit(limit)
+    )
+    return list(db.scalars(query))
 
 
 def count_by_status(db: Session, query: Select) -> dict[str, int]:

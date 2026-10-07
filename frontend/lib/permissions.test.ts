@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { NAV_ITEMS } from "./navigation";
+import { NAV_ITEMS, navItems } from "./navigation";
 import {
   PERMISSIONS,
   ROUTE_PERMISSIONS,
@@ -55,6 +55,13 @@ describe("codes de permission", () => {
     expect(hrefs).not.toContain("/devises");
     expect(ROUTE_PERMISSIONS["/previsions"]).toBeUndefined();
     expect(ROUTE_PERMISSIONS["/devises"]).toBeUndefined();
+  });
+});
+
+describe("fonction Écarts mise de côté (07/10/2026)", () => {
+  it("le menu n'a pas « Écarts » tant que la fonction est coupée", () => {
+    expect(NAV_ITEMS.map((item) => item.href)).not.toContain("/ecarts");
+    expect(navItems(true).map((item) => item.href)).toContain("/ecarts");
   });
 });
 

@@ -5,6 +5,7 @@ import {
   type TransactionsFilter,
 } from "@/lib/reconciliation";
 import type {
+  Ambigues,
   Candidats,
   Correspondance,
   Correspondances,
@@ -105,4 +106,9 @@ export function listHistory(
   return apiFetch<Historique>(
     `/reconciliation/history${reconciliationQuery(companyId, { ...filter, ...options })}`,
   );
+}
+
+/** Opérations ambiguës de la période (à vérifier sans proposition), avec leurs candidates. */
+export function listAmbiguous(companyId: number, filter: ReconciliationFilter) {
+  return apiFetch<Ambigues>(`/reconciliation/ambiguous${reconciliationQuery(companyId, filter)}`);
 }

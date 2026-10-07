@@ -50,17 +50,32 @@ CONCURRENT = "Le rapprochement vient d'être modifié par un autre utilisateur :
 # --- Grille ---------------------------------------------------------------------------------------
 
 
+# Critères dont la règle désactivée vaut 0 point (et non sa valeur par défaut)
+_CRITERES_REGLES = {
+    "REFERENCE": "reference",
+    "MONTANT": "montant",
+    "DATE": "date",
+    "LIBELLE": "libelle",
+    "TIERS": "tiers",
+}
+
+
 def grille(db: Session) -> Grille:
-    """Grille lue dans `reconciliation_rules` ; un code absent ou désactivé garde sa valeur par défaut."""
+    """Grille lue dans `reconciliation_rules`.
+
+    Un critère désactivé (`actif = false`) vaut 0 point ; un seuil ou une fenêtre désactivé ou
+    absent garde sa valeur par défaut, comme un critère absent de la table.
+    """
     valeurs: dict[str, object] = {}
-    for rule in repo.active_rules(db):
+    for rule in repo.all_rules(db):
+        if rule.code in _CRITERES_REGLES:
+            valeurs[_CRITERES_REGLES[rule.code]] = rule.poids if rule.actif else Decimal("0")
+            if rule.code == "DATE" and rule.actif and rule.tolerance is not None:
+                valeurs["tolerance_jours"] = int(rule.tolerance)
+            continue
+        if not rule.actif:
+            continue
         match rule.code:
-            case "REFERENCE" | "MONTANT" | "LIBELLE" | "TIERS":
-                valeurs[rule.code.lower()] = rule.poids
-            case "DATE":
-                valeurs["date"] = rule.poids
-                if rule.tolerance is not None:
-                    valeurs["tolerance_jours"] = int(rule.tolerance)
             case "FENETRE":
                 if rule.tolerance is not None:
                     valeurs["fenetre_jours"] = int(rule.tolerance)
@@ -362,7 +377,12 @@ def validate(db: Session, match_id: int, *, acteur_id: int, ip: str | None) -> R
 def validate_batch(
     db: Session, match_ids: list[int], *, acteur_id: int, ip: str | None
 ) -> list[ReconciliationMatch]:
-    """Valide en une fois des propositions FORTES (score ≥ seuil), toutes ou aucune."""
+    """Valide en une fois les propositions choisies par l'utilisateur, toutes ou aucune.
+
+    Décision du 07/10/2026 : la sélection peut contenir des propositions faibles, cochées une à
+    une par l'utilisateur (l'écran ne coche d'office que les fortes). Chacune doit être encore
+    « Proposée » et s'équilibrer (même montant, sens opposé) ; sinon rien n'est validé.
+    """
     ids = sorted(set(match_ids))
     found = repo.get_matches(db, ids)
     if len(found) != len(ids):
@@ -377,13 +397,15 @@ def validate_batch(
         db.refresh(match)
         if match.statut != "Proposée":
             raise ConflictError(
-                f"La correspondance n° {match.id} n'est plus proposée (statut : {match.statut})."
+                f"La correspondance n° {match.id} n'est plus proposée (statut : {match.statut}) : "
+                "rien n'a été validé, rechargez la liste."
             )
-        if match.score is None or match.score < seuil:
+        try:
+            _check_amounts(db, match)
+        except ConflictError as error:
             raise ConflictError(
-                f"La correspondance n° {match.id} n'est pas une forte correspondance "
-                f"(score inférieur à {seuil:.0f}) : validez-la seule, après vérification."
-            )
+                f"Correspondance n° {match.id} : {error.message} Rien n'a été validé."
+            ) from error
     for match in matches:
         avant = _snapshot(match)
         _validate(db, match, acteur_id)
@@ -394,7 +416,11 @@ def validate_batch(
             entite=ENTITE,
             entite_id=match.id,
             avant=avant,
-            apres={**_snapshot(match), "en_lot": True},
+            apres={
+                **_snapshot(match),
+                "en_lot": True,
+                "forte": match.score is not None and match.score >= seuil,
+            },
             ip=ip,
         )
     _commit(db)
@@ -591,6 +617,8 @@ class MatchView:
     valide_par: str | None
     forte: bool
     decide_par: str | None = None
+    # Critères de la grille actuelle : le détail affiche ceux-ci, plus ceux qui ont rapporté des points
+    actifs: tuple[str, ...] = ()
 
 
 @dataclass
@@ -611,6 +639,7 @@ class Candidate:
     score: Score
     rejetee: bool
     proposee_ailleurs: bool
+    actifs: tuple[str, ...] = ()
 
 
 def list_transactions(
@@ -623,17 +652,23 @@ def list_transactions(
     statut: str | None = None,
     q: str | None = None,
     page: int = 1,
+    sans_a_verifier: bool = False,
 ) -> TransactionsPage:
     """Volet « Transactions bancaires » : 50 par page ; le décompte par statut porte sur tout le
-    filtre, hors filtre de statut."""
+    filtre, hors filtre de statut.
+
+    `sans_a_verifier` : les opérations « À vérifier » ne sont pas listées (elles se traitent dans
+    l'onglet Propositions, décision du 07/10/2026) ; elles restent comptées dans `par_statut`.
+    """
     company = _company(db, company_id)
     _check_period(date_from, date_to)
     query = repo.transactions_query(
         company.id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to, q=q
     )
     par_statut = repo.count_by_status(db, query)
+    listed = repo.without_status(query, "À vérifier") if sans_a_verifier else query
     total, rows = repo.page_of_transactions(
-        db, query, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE
+        db, listed, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE
     )
     matches = repo.active_match_by_transaction(db, [tx.id for tx, _ in rows])
     return TransactionsPage(
@@ -648,7 +683,7 @@ def list_transactions(
     )
 
 
-def _views(db: Session, matches: list[ReconciliationMatch], seuil_fort: Decimal) -> list[MatchView]:
+def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> list[MatchView]:
     tx_ids = {i.bank_transaction_id for m in matches for i in m.items if i.bank_transaction_id}
     entry_ids = {i.accounting_entry_id for m in matches for i in m.items if i.accounting_entry_id}
     transactions = repo.transactions_with_bank(db, tx_ids)
@@ -673,7 +708,8 @@ def _views(db: Session, matches: list[ReconciliationMatch], seuil_fort: Decimal)
                 entry_bank_code=entry_code,
                 valide_par=names.get(match.valide_par_id) if match.valide_par_id else None,
                 decide_par=names.get(match.decide_par_id) if match.decide_par_id else None,
-                forte=match.score is not None and match.score >= seuil_fort,
+                forte=match.score is not None and match.score >= regles.seuil_fort,
+                actifs=regles.criteres_actifs,
             )
         )
     return views
@@ -691,7 +727,7 @@ def list_matches(
     """Correspondances 1→1 de la société (par défaut celles en attente), avec le seuil « forte »."""
     company = _company(db, company_id)
     _check_period(date_from, date_to)
-    seuil = grille(db).seuil_fort
+    regles = grille(db)
     matches = repo.matches_of_period(
         db,
         company.id,
@@ -700,7 +736,7 @@ def list_matches(
         date_from=date_from,
         date_to=date_to,
     )
-    return seuil, _views(db, matches, seuil)
+    return regles.seuil_fort, _views(db, matches, regles)
 
 
 @dataclass
@@ -727,7 +763,7 @@ def list_history(
     ancienne, 50 par page ; le décompte par statut porte sur tout le filtre, hors statut."""
     company = _company(db, company_id)
     _check_period(date_from, date_to)
-    seuil = grille(db).seuil_fort
+    regles = grille(db)
     query = repo.decisions_query(
         company.id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
     )
@@ -739,8 +775,8 @@ def list_history(
         page=page,
         taille=PAGE_SIZE,
         par_statut=repo.count_decisions_by_status(db, query),
-        seuil_fort=seuil,
-        decisions=_views(db, matches, seuil),
+        seuil_fort=regles.seuil_fort,
+        decisions=_views(db, matches, regles),
     )
 
 
@@ -748,7 +784,7 @@ def get_match_view(db: Session, match_id: int) -> MatchView:
     match = repo.get_match(db, match_id)
     if match is None:
         raise NotFoundError("Correspondance introuvable.")
-    return _views(db, [match], grille(db).seuil_fort)[0]
+    return _views(db, [match], grille(db))[0]
 
 
 def candidates(
@@ -786,8 +822,58 @@ def candidates(
                 score=score(operation, ecriture, regles),
                 rejetee=(tx.id, entry.id) in rejetees,
                 proposee_ailleurs=active is not None and tx.id not in _members(active)[0],
+                actifs=regles.criteres_actifs,
             )
         )
     scored.sort(key=lambda item: (-item.score.total, item.entry.date_ecriture, item.entry.id))
     bank_code = repo.transactions_with_bank(db, {tx.id})[tx.id][1]
     return tx, bank_code, scored[:NB_CANDIDATS], regles.seuil_proposition, regles.seuil_fort
+
+
+NB_AMBIGUES = 100
+
+
+@dataclass
+class AmbiguousView:
+    transaction: BankTransaction
+    bank_code: str
+    candidats: list[Candidate]
+
+
+def list_ambiguous(
+    db: Session,
+    company_id: int,
+    *,
+    bank_account_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> tuple[Decimal, list[AmbiguousView]]:
+    """Opérations ambiguës de la période (« À vérifier » sans proposition), chacune avec ses
+    écritures candidates au-dessus du seuil de proposition, la meilleure d'abord (hors paires déjà
+    rejetées). L'utilisateur en choisit une : rapprochement manuel. Retourne aussi le seuil
+    « forte »."""
+    company = _company(db, company_id)
+    _check_period(date_from, date_to)
+    regles = grille(db)
+    views = []
+    for tx in repo.ambiguous_transactions(
+        db,
+        company.id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=NB_AMBIGUES,
+    ):
+        _, bank_code, items, seuil_proposition, _ = candidates(db, tx.id)
+        views.append(
+            AmbiguousView(
+                transaction=tx,
+                bank_code=bank_code,
+                candidats=[
+                    item
+                    for item in items
+                    if item.score.total >= seuil_proposition and not item.rejetee
+                ],
+            )
+        )
+    return regles.seuil_fort, views

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCheck, GitCompareArrows, History, Play, Scale } from "lucide-react";
+import { GitCompareArrows, History, ListChecks, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -10,31 +10,30 @@ import { AccountButton } from "@/components/ecritures/EntriesCard";
 import { EntriesPane } from "@/components/rapprochement/EntriesPane";
 import { HistoryTab } from "@/components/rapprochement/HistoryTab";
 import { MatchPanel } from "@/components/rapprochement/MatchPanel";
-import { PendingProposalsModal } from "@/components/rapprochement/PendingProposalsModal";
+import { ProposalsTab } from "@/components/rapprochement/ProposalsTab";
 import { StatButton } from "@/components/rapprochement/StatButton";
 import { TransactionsPane } from "@/components/rapprochement/TransactionsPane";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DateInput, Field } from "@/components/ui/Field";
-import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
+import { ECARTS_ACTIFS } from "@/lib/features";
 import {
-  formatScore,
   defaultPeriod,
-  fortes,
+  operationOf,
   toggleStatut,
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { listAccounts } from "@/services/accounts";
-import { listProposals, runReconciliation, validateMatches } from "@/services/reconciliation";
+import { listAmbiguous, listProposals, runReconciliation } from "@/services/reconciliation";
 import type { Account } from "@/types/account";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
-import type { Correspondances, Operation, OperationsPage } from "@/types/reconciliation";
+import type { Ambigues, Correspondances, Operation, OperationsPage } from "@/types/reconciliation";
 
 /**
  * Page Rapprochement (P11) : le moteur propose des correspondances 1→1 entre les opérations
@@ -47,10 +46,10 @@ export function RapprochementView() {
   return company ? <Rapprochement key={company.id} companyId={company.id} /> : null;
 }
 
-// Compteurs qui filtrent le volet « Transactions bancaires »
+// Compteurs qui filtrent le volet « Transactions bancaires ». « À vérifier » n'en fait pas partie :
+// ces opérations se traitent dans l'onglet Propositions (décision du 07/10/2026).
 const COMPTEURS: { statut: StatutRapprochement; label: string }[] = [
   { statut: "Rapprochée", label: "Rapprochées" },
-  { statut: "À vérifier", label: "À vérifier" },
   { statut: "Non rapprochée", label: "Non rapprochées" },
 ];
 
@@ -63,8 +62,11 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const { toast } = useToast();
   const canValidate =
     !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
+  // Tous les boutons « Signaler un écart » de la page en dépendent
   const canManageDiscrepancies =
-    !!user && hasAnyPermission(user.permissions, [PERMISSIONS.DISCREPANCIES_MANAGE]);
+    ECARTS_ACTIFS &&
+    !!user &&
+    hasAnyPermission(user.permissions, [PERMISSIONS.DISCREPANCIES_MANAGE]);
 
   const [filter, setFilter] = useState<ReconciliationFilter>(() => defaultPeriod(businessToday()));
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -73,12 +75,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [entry, setEntry] = useState<Ecriture | null>(null);
   const [parStatut, setParStatut] = useState<Record<StatutRapprochement, number> | null>(null);
   const [pending, setPending] = useState<Correspondances | null>(null);
+  const [ambigues, setAmbigues] = useState<Ambigues | null>(null);
   const [running, setRunning] = useState(false);
-  const [confirmBatch, setConfirmBatch] = useState(false);
   const [statut, setStatut] = useState("");
-  const [tab, setTab] = useState<"rapprochement" | "historique">("rapprochement");
-  const [showPending, setShowPending] = useState(false);
-  const [batchBusy, setBatchBusy] = useState(false);
+  const [tab, setTab] = useState<"rapprochement" | "propositions" | "historique">("rapprochement");
 
   const periodError =
     filter.from && filter.to && filter.from > filter.to
@@ -109,6 +109,14 @@ function Rapprochement({ companyId }: { companyId: number }) {
       },
       () => {
         if (!cancelled) setPending(null);
+      },
+    );
+    listAmbiguous(companyId, filter).then(
+      (result) => {
+        if (!cancelled) setAmbigues(result);
+      },
+      () => {
+        if (!cancelled) setAmbigues(null);
       },
     );
     return () => {
@@ -158,20 +166,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
     }
   }
 
-  const strongIds = pending ? fortes(pending.correspondances) : [];
-
-  async function validateStrong() {
-    setBatchBusy(true);
-    try {
-      const result = await validateMatches(strongIds);
-      setConfirmBatch(false);
-      reload(`${plural(result.nb_validees, "rapprochement")} validé(s).`);
-    } catch (error) {
-      toast(error instanceof ApiError ? error.message : "La validation a échoué.", "error");
-    } finally {
-      setBatchBusy(false);
-    }
-  }
+  // Tout ce qui est à vérifier : les propositions en attente et les opérations ambiguës
+  const aVerifier =
+    pending && ambigues ? pending.correspondances.length + ambigues.ambigues.length : null;
+  const logos = new Map(accounts.map((account) => [account.bank_code, account.bank_logo]));
 
   const filterKey = `${filter.bankAccountId ?? "tous"}|${filter.from}|${filter.to}`;
 
@@ -244,7 +242,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
           {!periodError && (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
               <div
-                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4"
+                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3"
                 role="group"
                 aria-label="Résumé du rapprochement : un clic filtre les transactions"
               >
@@ -263,17 +261,12 @@ function Rapprochement({ companyId }: { companyId: number }) {
                 ))}
                 <StatButton
                   label="Propositions en attente"
-                  value={pending?.correspondances.length}
-                  active={showPending}
+                  value={aVerifier ?? undefined}
+                  active={tab === "propositions"}
                   description="Voir les propositions en attente"
-                  onClick={() => setShowPending(true)}
+                  onClick={() => setTab("propositions")}
                 />
               </div>
-              {canValidate && strongIds.length > 0 && (
-                <Button variant="secondary" icon={CheckCheck} onClick={() => setConfirmBatch(true)}>
-                  Valider les fortes correspondances ({strongIds.length})
-                </Button>
-              )}
             </div>
           )}
         </div>
@@ -288,6 +281,11 @@ function Rapprochement({ companyId }: { companyId: number }) {
           {(
             [
               ["rapprochement", "Rapprochement", GitCompareArrows],
+              [
+                "propositions",
+                `Propositions${aVerifier !== null ? ` (${aVerifier})` : ""}`,
+                ListChecks,
+              ],
               ["historique", "Historique", History],
             ] as const
           ).map(([value, label, Icon]) => (
@@ -309,6 +307,28 @@ function Rapprochement({ companyId }: { companyId: number }) {
             </button>
           ))}
         </div>
+      )}
+
+      {!periodError && tab === "propositions" && (
+        <ProposalsTab
+          companyId={companyId}
+          pending={pending}
+          logos={logos}
+          canValidate={canValidate}
+          canManageDiscrepancies={canManageDiscrepancies}
+          onChanged={reload}
+          onOpen={(item) => {
+            setTab("rapprochement");
+            setStatut("");
+            setOperation(operationOf(item));
+          }}
+          ambigues={ambigues}
+          onOpenOperation={(selected) => {
+            setTab("rapprochement");
+            setStatut("");
+            setOperation(selected);
+          }}
+        />
       )}
 
       {!periodError && tab === "historique" && (
@@ -358,43 +378,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
           />
         </div>
       )}
-
-      <PendingProposalsModal
-        open={showPending}
-        correspondances={pending?.correspondances ?? []}
-        onClose={() => setShowPending(false)}
-        onSelect={(selected) => {
-          setShowPending(false);
-          setTab("rapprochement");
-          setOperation(selected);
-        }}
-      />
-
-      <Modal
-        open={confirmBatch}
-        onClose={() => setConfirmBatch(false)}
-        title="Valider les fortes correspondances"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setConfirmBatch(false)}>
-              Retour
-            </Button>
-            <Button icon={CheckCheck} disabled={batchBusy} onClick={validateStrong}>
-              Valider {plural(strongIds.length, "rapprochement")}
-            </Button>
-          </>
-        }
-      >
-        <p>
-          {plural(strongIds.length, "correspondance")} de la période ont un score d&apos;au moins{" "}
-          {formatScore(pending?.seuil_fort ?? null)}. Chacune sera validée en votre nom et tracée
-          dans l&apos;historique.
-        </p>
-        <p className="mt-2 flex items-center gap-2 text-simtis-muted">
-          <Scale className="h-4 w-4" aria-hidden />
-          Les propositions plus faibles restent à vérifier une par une.
-        </p>
-      </Modal>
     </>
   );
 }

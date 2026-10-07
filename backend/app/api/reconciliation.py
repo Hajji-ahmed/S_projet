@@ -10,6 +10,8 @@ from app.api.deps import client_ip, require_permission
 from app.core.db import get_db
 from app.core.permissions import PermissionCode
 from app.schemas.reconciliation import (
+    AmbigueOut,
+    AmbiguesOut,
     AnnulationIn,
     CandidatOut,
     CandidatsOut,
@@ -67,6 +69,9 @@ def list_transactions(
     statut: StatutRapprochement | None = None,
     q: Annotated[str | None, Query(max_length=100, description="Libellé ou référence")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
+    sans_a_verifier: Annotated[
+        bool, Query(description="Ne pas lister les opérations « À vérifier » (onglet Propositions)")
+    ] = False,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> OperationsPageOut:
@@ -80,8 +85,29 @@ def list_transactions(
         statut=statut,
         q=q,
         page=page,
+        sans_a_verifier=sans_a_verifier,
     )
     return OperationsPageOut.from_page(result)
+
+
+@router.get("/ambiguous", response_model=AmbiguesOut)
+def list_ambiguous(
+    company_id: Annotated[int, Query(description="Société dont on veut les opérations ambiguës")],
+    bank_account_id: int | None = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> AmbiguesOut:
+    """Opérations « À vérifier » sans proposition, avec leurs écritures candidates."""
+    seuil, views = reconciliation_service.list_ambiguous(
+        db,
+        company_id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return AmbiguesOut(seuil_fort=seuil, ambigues=[AmbigueOut.from_view(v) for v in views])
 
 
 @router.get("/history", response_model=HistoriqueOut)
@@ -169,7 +195,7 @@ def validate_batch(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_validate),
 ) -> ValidationLotOut:
-    """Valide en lot des fortes correspondances (toutes ou aucune)."""
+    """Valide en lot les propositions choisies (toutes ou aucune ; montants égaux exigés)."""
     matches = reconciliation_service.validate_batch(
         db, body.ids, acteur_id=user.id, ip=client_ip(request)
     )

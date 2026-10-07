@@ -88,6 +88,34 @@ Audit : `rapprochement_lance`, `validation_rapprochement`, `rejet_rapprochement`
 
 Décisions de l'utilisateur du 07/10/2026 : un clic sur un compteur filtre le volet « Transactions bancaires » (pas de fenêtre séparée) ; l'historique montre **toutes** les décisions (validées, rejetées, annulées) ; pas d'export Excel avant P16.
 
-- Compteurs Rapprochées / À vérifier / Non rapprochées : filtre Statut du volet de gauche (second clic : tous les statuts). « Propositions en attente » : fenêtre listant les propositions de la période, la plus forte d'abord ; un clic sélectionne l'opération et sa proposition dans le panneau Correspondance.
+- Compteurs Rapprochées / À vérifier / Non rapprochées : filtre Statut du volet de gauche (second clic : tous les statuts). « Propositions en attente » : ouvre l'onglet « Propositions » (ci-dessous).
 - Onglet « Historique » : `GET /api/reconciliation/history?company_id=&bank_account_id=&from=&to=&statut=&page=` (`reconciliation.view`) ; décisions dont l'opération est dans la période, triées par date de décision décroissante, 50 par page ; `par_statut` sur tout le filtre hors statut. Une ligne validée peut être annulée (motif obligatoire).
 - Migration 0013 : `reconciliation_matches.decide_par_id` / `decide_le` renseignés par chaque décision (validation, rejet, annulation, rapprochement manuel) ; CHECK `decision_tracee` (toute correspondance non « Proposée » a son auteur et sa date) ; reprise des décisions passées depuis `valide_par_id` / `valide_le`, sinon la dernière trace `rejet_rapprochement` / `annulation_rapprochement` de l'audit.
+
+## Onglet « Propositions » et validation de la sélection (07/10/2026)
+
+Décisions de l'utilisateur du 07/10/2026 : onglet pleine largeur ; le bouton du bas valide **la sélection** ; filtre Fortes / À vérifier.
+
+- Une carte par proposition, la plus forte d'abord : transaction bancaire | score et critères | écriture comptable ; Valider, Rejeter, Ouvrir dans le rapprochement ; une proposition dont les montants diffèrent n'est ni cochable ni validable (« Signaler un écart »).
+- **Règle modifiée** : `POST /api/reconciliation/matches/validate-batch` n'exige plus un score ≥ 90. Il valide les propositions choisies, toutes ou aucune ; chacune doit être encore « Proposée » et s'équilibrer, et appartenir à la même société. L'écran ne coche d'office que les fortes ; une faible n'est cochée que par l'utilisateur, et la confirmation indique combien de faibles sont incluses. L'audit de chaque validation porte `en_lot: true` et `forte`.
+- Le bouton « Valider les fortes correspondances » et la fenêtre des propositions sont remplacés par cet onglet.
+
+## Score sur le montant, la date et le libellé (07/10/2026)
+
+Décision de l'utilisateur du 07/10/2026 : pour le moment, le score ne repose que sur le montant, la date et le libellé. Grille : **Montant 50 · Date 30 · Libellé 20** (date : 30 · 22,5 · 15 · 7,5 · 0 de 0 à 4 jours d'écart) ; seuils inchangés (proposition 50, forte 90, ambiguïté 10) ; pré-filtre inchangé.
+
+- Migration 0014 (données) : poids mis à jour ; Référence (40) et Tiers (5) gardés mais `actif = false`. Les seeds créent la même grille dans une base neuve.
+- `reconciliation_service.grille()` : un critère désactivé vaut 0 point (avant : sa valeur par défaut). Seuils et fenêtre désactivés gardent leur valeur par défaut.
+- Détail du score : les critères actifs, plus ceux qui ont rapporté des points sous une grille précédente.
+- Conséquence : l'exemple de l'architecture fonctionnelle (VIR ABC ↔ Règlement ABC, même montant, même jour) obtient 100, forte correspondance (toujours validée par un humain). Une proposition peut atteindre 50 sans le montant (date + libellé parfaits) : elle reste non validable (« Montant différent »).
+- Les propositions en attente gardent leur ancien score jusqu'au prochain « Lancer le rapprochement ».
+
+## « À vérifier » regroupé dans Propositions (07/10/2026)
+
+Décisions de l'utilisateur du 07/10/2026 : le compteur « À vérifier » disparaît ; ce qui est à vérifier se traite uniquement dans l'onglet Propositions ; les opérations ambiguës y figurent aussi ; le volet de gauche ne les liste plus.
+
+- Le statut « À vérifier » reste en base (statut du CDC) ; seul l'écran change.
+- `GET /api/reconciliation/transactions?sans_a_verifier=true` : le volet n'affiche pas les opérations « À vérifier » ; `par_statut` les compte toujours. Filtre Statut du volet : Non rapprochée · Rapprochée · Écart.
+- `GET /api/reconciliation/ambiguous?company_id=&bank_account_id=&from=&to=` (`reconciliation.view`, 100 au plus) : opérations « À vérifier » sans correspondance active, chacune avec ses écritures candidates au-dessus du seuil de proposition (calcul des candidates existant, paires rejetées exclues). « Rapprocher » sur une candidate = rapprochement manuel (montant égal exigé, validé d'emblée, tracé).
+- « Propositions en attente » (compteur et onglet) = propositions en attente + opérations ambiguës. La barre « Valider la sélection » ne concerne que les propositions.
+- Correction : l'étiquette du sens Sage était inversée à l'écran. Montant Sage (crédit − débit) positif = « crédit Sage » (argent qui sort de la banque), négatif = « débit Sage » ; règle `sensSage` dans `frontend/lib/reconciliation.ts`, utilisée par le panneau Correspondance, les cartes et le détail d'un écart.

@@ -10,10 +10,10 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { STATUTS_RAPPROCHEMENT, pageCount } from "@/lib/accounting";
+import { pageCount } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
-import type { ReconciliationFilter } from "@/lib/reconciliation";
+import { STATUTS_VOLET, type ReconciliationFilter } from "@/lib/reconciliation";
 import { listTransactions } from "@/services/reconciliation";
 import type { Operation, OperationsPage } from "@/types/reconciliation";
 
@@ -57,7 +57,13 @@ export function TransactionsPane({
 
   useEffect(() => {
     let cancelled = false;
-    listTransactions(companyId, { ...filter, statut: statut || undefined, q, page }).then(
+    listTransactions(companyId, {
+      ...filter,
+      statut: statut || undefined,
+      q,
+      page,
+      sansAVerifier: true,
+    }).then(
       (result) => {
         if (cancelled) return;
         setData(result);
@@ -125,7 +131,7 @@ export function TransactionsPane({
               id="rapprochement-tx-statut"
               value={statut}
               placeholder="Tous les statuts"
-              options={STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item }))}
+              options={STATUTS_VOLET.map((item) => ({ value: item, label: item }))}
               onChange={(event) => onStatutChange(event.target.value)}
             />
           </Field>

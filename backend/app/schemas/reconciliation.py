@@ -10,6 +10,7 @@ from app.models import BankTransaction, ReconciliationMatch
 from app.schemas.accounting import EcritureOut
 from app.services.reconciliation_scoring import CRITERES, LIBELLES_CRITERES
 from app.services.reconciliation_service import (
+    AmbiguousView,
     Candidate,
     HistoryPage,
     MatchView,
@@ -52,16 +53,15 @@ class CritereOut(BaseModel):
     points: Decimal
 
 
-def criteres(detail: dict[str, object] | None) -> list[CritereOut]:
-    """Détail du score dans l'ordre d'affichage ; un critère absent vaut 0."""
+def criteres(detail: dict[str, object] | None, actifs: tuple[str, ...]) -> list[CritereOut]:
+    """Détail du score dans l'ordre d'affichage : les critères de la grille actuelle, plus ceux qui
+    ont rapporté des points (score calculé avec une grille précédente) ; un absent vaut 0."""
     detail = detail or {}
+    points = {code: Decimal(str(detail.get(code, "0.00"))) for code in CRITERES}
     return [
-        CritereOut(
-            code=code,
-            libelle=LIBELLES_CRITERES[code],
-            points=Decimal(str(detail.get(code, "0.00"))),
-        )
+        CritereOut(code=code, libelle=LIBELLES_CRITERES[code], points=points[code])
         for code in CRITERES
+        if code in actifs or points[code] > 0
     ]
 
 
@@ -178,7 +178,7 @@ class CorrespondanceOut(BaseModel):
             origine=match.origine,
             score=match.score,
             forte=view.forte,
-            criteres=criteres(match.detail_score),
+            criteres=criteres(match.detail_score, view.actifs),
             commentaire=match.commentaire,
             valide_par=view.valide_par,
             valide_le=match.valide_le,
@@ -234,7 +234,7 @@ class CandidatOut(BaseModel):
         return cls(
             ecriture=EcritureOut(**EcritureOut.fields_of(item.entry, item.bank_code)),
             score=item.score.total,
-            criteres=criteres({k: str(v) for k, v in item.score.detail.items()}),
+            criteres=criteres({k: str(v) for k, v in item.score.detail.items()}, item.actifs),
             rejetee=item.rejetee,
             proposee_ailleurs=item.proposee_ailleurs,
         )
@@ -245,6 +245,25 @@ class CandidatsOut(BaseModel):
     seuil_proposition: Decimal
     seuil_fort: Decimal
     candidats: list[CandidatOut]
+
+
+class AmbigueOut(BaseModel):
+    """Opération ambiguë : plusieurs écritures aussi proches, aucune proposée."""
+
+    operation: OperationOut
+    candidats: list[CandidatOut]
+
+    @classmethod
+    def from_view(cls, view: AmbiguousView) -> "AmbigueOut":
+        return cls(
+            operation=OperationOut.of(view.transaction, view.bank_code),
+            candidats=[CandidatOut.from_candidate(item) for item in view.candidats],
+        )
+
+
+class AmbiguesOut(BaseModel):
+    seuil_fort: Decimal
+    ambigues: list[AmbigueOut]
 
 
 class RejetIn(BaseModel):

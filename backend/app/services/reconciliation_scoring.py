@@ -34,13 +34,17 @@ LIBELLES_CRITERES = {
 
 @dataclass(frozen=True)
 class Grille:
-    """Grille de score (table `reconciliation_rules`, plan P11) ; non encore validée par le métier."""
+    """Grille de score (table `reconciliation_rules`) ; non encore validée par le métier.
 
-    reference: Decimal = Decimal("40")
-    montant: Decimal = Decimal("30")
-    date: Decimal = Decimal("15")
-    libelle: Decimal = Decimal("10")
-    tiers: Decimal = Decimal("5")
+    Décision du 07/10/2026 : pour le moment, le score ne repose que sur le montant, la date et le
+    libellé (50 + 30 + 20) ; la référence et le tiers sont désactivés (0 point).
+    """
+
+    reference: Decimal = Decimal("0")
+    montant: Decimal = Decimal("50")
+    date: Decimal = Decimal("30")
+    libelle: Decimal = Decimal("20")
+    tiers: Decimal = Decimal("0")
     # Au-delà de `tolerance_jours` d'écart, le critère Date ne rapporte rien
     tolerance_jours: int = 3
     # Seules les écritures à ± `fenetre_jours` de l'opération sont comparées
@@ -54,6 +58,11 @@ class Grille:
 
     def poids(self, critere: str) -> Decimal:
         return getattr(self, critere)
+
+    @property
+    def criteres_actifs(self) -> tuple[str, ...]:
+        """Critères qui rapportent des points, dans l'ordre d'affichage."""
+        return tuple(code for code in CRITERES if self.poids(code) > 0)
 
 
 GRILLE_PAR_DEFAUT = Grille()

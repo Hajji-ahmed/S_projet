@@ -16,7 +16,10 @@ from app.models import (
     BankTransaction,
     Company,
     ReconciliationMatch,
+    ReconciliationRule,
 )
+from app.schemas.reconciliation import criteres
+from app.services.reconciliation_service import grille
 from tests.helpers import bearer, build_account, login, make_auth_user, save
 
 _seq = count(1)
@@ -129,15 +132,15 @@ def test_example_of_the_functional_architecture_is_proposed_then_validated(clien
     assert (proposal["statut"], proposal["origine"], proposal["score"]) == (
         "Proposée",
         "Automatique",
-        "60.00",
+        "100.00",
     )
-    assert proposal["forte"] is False
+    # Forte, mais jamais validée sans un utilisateur
+    assert proposal["forte"] is True
+    # Pour le moment, seuls le montant, la date et le libellé comptent (décision du 07/10/2026)
     assert [(c["code"], c["points"]) for c in proposal["criteres"]] == [
-        ("reference", "0.00"),
-        ("montant", "30.00"),
-        ("date", "15.00"),
-        ("libelle", "10.00"),
-        ("tiers", "5.00"),
+        ("montant", "50.00"),
+        ("date", "30.00"),
+        ("libelle", "20.00"),
     ]
     assert proposal["operation"]["id"] == tx.id
     assert proposal["ecriture"]["numero_piece"] == "REG458"
@@ -295,35 +298,79 @@ def test_cancelling_a_validated_match_needs_a_reason_and_frees_the_lines(client,
     assert audit_actions(db)[-1] == "annulation_rapprochement"
 
 
-def test_batch_validation_only_accepts_strong_matches(client, comptable, db):
+def _strong_and_weak(client, comptable, db):
     compte = account(db)
     strong_tx = operation(db, compte, libelle="VIR REG458 ABC")
     ecriture(db, compte)
-    operation(db, compte, montant="700", jour=date(2026, 9, 10), libelle="VIR XYZ")
+    # Même montant, deux jours d'écart, libellés différents : 50 + 15 + quelques points, < 90
+    weak_tx = operation(db, compte, montant="700", jour=date(2026, 9, 10), libelle="VIR XYZ")
     ecriture(
         db,
         compte,
         montant="-700",
-        jour=date(2026, 9, 10),
-        libelle="XYZ",
-        tiers="XYZ",
+        jour=date(2026, 9, 12),
+        libelle="Paiement divers",
+        tiers=None,
         numero_piece="P7",
     )
     run(client, comptable, db)
     pending = proposals(client, comptable, db).json()["correspondances"]
     strong = [p["id"] for p in pending if p["forte"]]
     weak = [p["id"] for p in pending if not p["forte"]]
-    url = "/api/reconciliation/matches/validate-batch"
-
-    refused = client.post(url, json={"ids": strong + weak}, headers=comptable)
-    accepted = client.post(url, json={"ids": strong}, headers=comptable)
-
     assert (len(strong), len(weak)) == (1, 1)
-    assert refused.status_code == 409
+    return compte, strong_tx, weak_tx, strong, weak
+
+
+BATCH = "/api/reconciliation/matches/validate-batch"
+
+
+def test_batch_validation_accepts_the_selection_strong_and_weak(client, comptable, db):
+    _, strong_tx, weak_tx, strong, weak = _strong_and_weak(client, comptable, db)
+
+    accepted = client.post(BATCH, json={"ids": strong + weak}, headers=comptable)
+
     assert accepted.status_code == 200, accepted.text
-    assert accepted.json() == {"nb_validees": 1}
-    assert statuses(db, strong_tx) == ["Rapprochée"]
-    assert len(proposals(client, comptable, db).json()["correspondances"]) == 1
+    assert accepted.json() == {"nb_validees": 2}
+    assert statuses(db, strong_tx, weak_tx) == ["Rapprochée", "Rapprochée"]
+    assert proposals(client, comptable, db).json()["correspondances"] == []
+    logs = db.scalars(
+        select(AuditLog).where(AuditLog.action == "validation_rapprochement").order_by(AuditLog.id)
+    ).all()
+    assert [(log.nouvelle_valeur["en_lot"], log.nouvelle_valeur["forte"]) for log in logs] == [
+        (True, True),
+        (True, False),
+    ]
+
+
+def test_batch_validation_is_all_or_nothing(client, comptable, db):
+    compte, strong_tx, weak_tx, strong, weak = _strong_and_weak(client, comptable, db)
+    client.post(f"/api/reconciliation/matches/{weak[0]}/reject", headers=comptable)
+
+    refused = client.post(BATCH, json={"ids": strong + weak}, headers=comptable)
+
+    assert refused.status_code == 409
+    assert f"n° {weak[0]}" in refused.json()["detail"]
+    assert statuses(db, strong_tx) == ["À vérifier"]
+
+
+def test_batch_validation_refuses_different_amounts(client, comptable, db):
+    compte = account(db)
+    tx = operation(db, compte, libelle="VIR REG458 ABC")
+    ecriture(db, compte, montant="-49000")
+    run(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    refused = client.post(BATCH, json={"ids": [proposal["id"]]}, headers=comptable)
+
+    assert refused.status_code == 409
+    assert "Montant différent" in refused.json()["detail"]
+    assert statuses(db, tx) == ["À vérifier"]
+
+
+def test_batch_validation_needs_the_permission(client, direction, comptable, db):
+    *_, strong, weak = _strong_and_weak(client, comptable, db)
+
+    assert client.post(BATCH, json={"ids": strong}, headers=direction).status_code == 403
 
 
 # --- Rapprochement manuel ------------------------------------------------------------------------
@@ -466,7 +513,7 @@ def test_one_match_can_be_read_with_its_score_detail(client, direction, comptabl
 
     assert response.status_code == 200
     assert response.json()["operation"]["id"] == tx.id
-    assert len(response.json()["criteres"]) == 5
+    assert [c["code"] for c in response.json()["criteres"]] == ["montant", "date", "libelle"]
     assert missing.status_code == 404
 
 
@@ -481,7 +528,7 @@ def test_a_proposal_with_different_amounts_cannot_be_validated(client, comptable
         f"/api/reconciliation/matches/{proposal['id']}/validate", headers=comptable
     )
 
-    assert proposal["criteres"][1] == {"code": "montant", "libelle": "Montant", "points": "0.00"}
+    assert proposal["criteres"][0] == {"code": "montant", "libelle": "Montant", "points": "0.00"}
     assert response.status_code == 409
     assert "Montant différent" in response.json()["detail"]
     assert statuses(db, tx, entry) == ["À vérifier", "À vérifier"]
@@ -575,3 +622,119 @@ def test_history_never_mixes_companies_and_checks_rights(client, comptable, refe
         history(client, comptable, db, company_id=str(company(db, "SOCX").id)).json()["total"] == 1
     )
     assert history(client, no_right, db).status_code == 403
+
+
+def test_batch_validation_never_mixes_companies(client, comptable, db):
+    simtis, tefil = account(db), account(db, "SOCX")
+    for compte in (simtis, tefil):
+        operation(db, compte, libelle="VIR REG458 ABC")
+        ecriture(db, compte)
+    run(client, comptable, db)
+    run(client, comptable, db, code="SOCX")
+    ids = [p["id"] for p in proposals(client, comptable, db).json()["correspondances"]] + [
+        p["id"]
+        for p in proposals(client, comptable, db, company_id=str(company(db, "SOCX").id)).json()[
+            "correspondances"
+        ]
+    ]
+
+    response = client.post(BATCH, json={"ids": ids}, headers=comptable)
+
+    assert len(ids) == 2
+    assert response.status_code == 409
+    assert "une seule société" in response.json()["detail"]
+
+
+# --- Grille ---------------------------------------------------------------------------------------
+
+
+def test_a_disabled_criterion_is_worth_zero_and_can_be_enabled_again(reference):
+    seeded = grille(reference)
+    rule = reference.scalar(select(ReconciliationRule).filter_by(code="REFERENCE"))
+    rule.actif = True
+    reference.flush()
+
+    assert (seeded.reference, seeded.tiers) == (Decimal("0"), Decimal("0"))
+    assert (seeded.montant, seeded.date, seeded.libelle) == (
+        Decimal("50"),
+        Decimal("30"),
+        Decimal("20"),
+    )
+    assert grille(reference).reference == Decimal("40")
+
+
+def test_an_older_score_still_shows_the_points_it_got():
+    shown = criteres({"reference": "40.00", "montant": "30.00"}, ("montant", "date", "libelle"))
+
+    assert [(c.code, str(c.points)) for c in shown] == [
+        ("reference", "40.00"),
+        ("montant", "30.00"),
+        ("date", "0.00"),
+        ("libelle", "0.00"),
+    ]
+
+
+# --- « À vérifier » regroupé dans Propositions (07/10/2026) ---------------------------------------
+
+
+def test_pane_can_hide_lines_to_check_but_still_counts_them(client, comptable, db):
+    compte = account(db)
+    operation(db, compte)
+    ecriture(db, compte)
+    alone = operation(db, compte, montant="-80", libelle="FRAIS")
+    run(client, comptable, db)
+    params = {"company_id": company(db).id, "sans_a_verifier": "true"}
+
+    body = client.get("/api/reconciliation/transactions", params=params, headers=comptable).json()
+
+    assert [o["id"] for o in body["operations"]] == [alone.id]
+    assert body["total"] == 1
+    assert body["par_statut"]["À vérifier"] == 1
+
+
+def test_ambiguous_lines_come_with_their_candidates(client, comptable, direction, db):
+    compte = account(db)
+    tx = operation(db, compte)
+    first, second = ecriture(db, compte), ecriture(db, compte)
+    proposed_tx = operation(db, compte, montant="900", jour=date(2026, 9, 10), libelle="VIR 900")
+    ecriture(db, compte, montant="-900", jour=date(2026, 9, 10), libelle="VIR 900")
+    run(client, comptable, db)
+    url = "/api/reconciliation/ambiguous"
+
+    response = client.get(url, params={"company_id": company(db).id}, headers=direction)
+
+    assert response.status_code == 200, response.text
+    [ambigue] = response.json()["ambigues"]
+    assert ambigue["operation"]["id"] == tx.id
+    assert {c["ecriture"]["id"] for c in ambigue["candidats"]} == {first.id, second.id}
+    assert proposed_tx.id != ambigue["operation"]["id"]
+
+    chosen = client.post(
+        "/api/reconciliation/matches",
+        json={"transaction_id": tx.id, "ecriture_id": first.id},
+        headers=comptable,
+    )
+    after = client.get(url, params={"company_id": company(db).id}, headers=direction).json()
+
+    assert chosen.status_code == 201
+    assert statuses(db, tx, first) == ["Rapprochée", "Rapprochée"]
+    assert after["ambigues"] == []
+
+
+def test_ambiguous_lines_never_mix_companies_and_need_the_right(client, comptable, reference, db):
+    tefil = account(db, "SOCX")
+    operation(db, tefil)
+    ecriture(db, tefil)
+    ecriture(db, tefil)
+    run(client, comptable, db, code="SOCX")
+    make_auth_user(reference, email="sans-droit-2@example.com")
+    no_right = bearer(login(client, "sans-droit-2@example.com"))
+    url = "/api/reconciliation/ambiguous"
+
+    simtis = client.get(url, params={"company_id": company(db).id}, headers=comptable).json()
+    socx = client.get(url, params={"company_id": company(db, "SOCX").id}, headers=comptable).json()
+    refused = client.get(url, params={"company_id": company(db).id}, headers=no_right)
+
+    assert simtis["ambigues"] == []
+    assert len(socx["ambigues"]) == 1
+    assert refused.status_code == 403
