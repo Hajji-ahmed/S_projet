@@ -33,6 +33,7 @@ from app.services.reconciliation_scoring import (
     Ecriture,
     Grille,
     Operation,
+    Resultat,
     Score,
     comparable,
     proposer,
@@ -109,8 +110,18 @@ def _ecriture(entry: AccountingEntry) -> Ecriture:
     )
 
 
-def _detail_json(resultat: Score) -> dict[str, str]:
-    return {code: str(value) for code, value in resultat.detail.items()}
+def _detail_json(resultat: Score, second: Decimal | None = None) -> dict[str, str]:
+    """Points par critère ; `second` : score du meilleur autre candidat (concurrente proche)."""
+    detail = {code: str(value) for code, value in resultat.detail.items()}
+    if second is not None:
+        detail["second"] = str(second)
+    return detail
+
+
+def score_second(match: ReconciliationMatch) -> Decimal | None:
+    """Score de la 2e meilleure écriture (ou opération) au moment de la proposition."""
+    value = (match.detail_score or {}).get("second")
+    return None if value is None else Decimal(str(value))
 
 
 def _company(db: Session, company_id: int, *, lock: bool = False) -> Company:
@@ -170,6 +181,55 @@ def run(
         raise NotFoundError("Compte bancaire introuvable pour cette société.")
     account_ids = [account.id for account in accounts]
     regles = grille(db)
+    moteur = _engine(db, company, account_ids, date_from, date_to, regles)
+    result = RunResult(
+        nb_operations=moteur.nb_operations,
+        nb_ecritures=moteur.nb_ecritures,
+        nb_propositions=len(moteur.resultat.propositions),
+        nb_fortes=sum(
+            1 for p in moteur.resultat.propositions if p.score.total >= regles.seuil_fort
+        ),
+        nb_operations_ambigues=len(moteur.resultat.operations_ambigues),
+        nb_ecritures_ambigues=len(moteur.resultat.ecritures_ambigues),
+    )
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="rapprochement_lance",
+        entite="company",
+        entite_id=company.id,
+        apres={
+            "compte": bank_account_id,
+            "du": date_from,
+            "au": date_to,
+            "propositions_remplacees": moteur.nb_remplacees,
+            **result.__dict__,
+        },
+        ip=ip,
+    )
+    _commit(db)
+    return result
+
+
+@dataclass
+class _Moteur:
+    resultat: Resultat
+    nb_operations: int
+    nb_ecritures: int
+    nb_remplacees: int
+
+
+def _engine(
+    db: Session,
+    company: Company,
+    account_ids: list[int],
+    date_from: date,
+    date_to: date,
+    regles: Grille,
+) -> _Moteur:
+    """Refait les propositions automatiques en attente des comptes sur la période (sans commit) :
+    les correspondances validées, rejetées ou manuelles ne sont jamais modifiées."""
+    db.flush()
     entry_from = date_from - timedelta(days=regles.fenetre_jours)
     entry_to = date_to + timedelta(days=regles.fenetre_jours)
 
@@ -212,7 +272,7 @@ def run(
                 score=proposition.score.total,
                 statut="Proposée",
                 origine="Automatique",
-                detail_score=_detail_json(proposition.score),
+                detail_score=_detail_json(proposition.score, proposition.second),
                 items=[
                     ReconciliationMatchItem(
                         bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
@@ -229,32 +289,8 @@ def run(
     a_verifier_ec = {p.ecriture_id for p in resultat.propositions} | resultat.ecritures_ambigues
     repo.set_transaction_status(db, a_verifier_tx, "À vérifier")
     repo.set_entry_status(db, a_verifier_ec, "À vérifier")
-
-    result = RunResult(
-        nb_operations=len(transactions),
-        nb_ecritures=len(entries),
-        nb_propositions=len(resultat.propositions),
-        nb_fortes=sum(1 for p in resultat.propositions if p.score.total >= regles.seuil_fort),
-        nb_operations_ambigues=len(resultat.operations_ambigues),
-        nb_ecritures_ambigues=len(resultat.ecritures_ambigues),
-    )
-    audit_service.log(
-        db,
-        user_id=acteur_id,
-        action="rapprochement_lance",
-        entite="company",
-        entite_id=company.id,
-        apres={
-            "compte": bank_account_id,
-            "du": date_from,
-            "au": date_to,
-            "propositions_remplacees": len(anciennes),
-            **result.__dict__,
-        },
-        ip=ip,
-    )
-    _commit(db)
-    return result
+    db.flush()
+    return _Moteur(resultat, len(transactions), len(entries), len(anciennes))
 
 
 # --- Décisions -----------------------------------------------------------------------------------
@@ -591,13 +627,33 @@ def match_manually(
     repo.add(db, match)
     db.flush()
     _validate(db, match, acteur_id)
+    snapshot = _snapshot(match)
+    # Les opérations qui convoitaient la même écriture sont départagées à nouveau (08/10/2026) :
+    # relance du moteur sur ce compte, autour des deux lignes rapprochées
+    regles = grille(db)
+    marge = timedelta(days=regles.fenetre_jours)
+    moteur = _engine(
+        db,
+        company,
+        [tx.bank_account_id],
+        min(tx.date_operation, entry.date_ecriture) - marge,
+        max(tx.date_operation, entry.date_ecriture) + marge,
+        regles,
+    )
     audit_service.log(
         db,
         user_id=acteur_id,
         action="rapprochement_manuel",
         entite=ENTITE,
         entite_id=match.id,
-        apres={**_snapshot(match), "propositions_remplacees": remplacees},
+        apres={
+            **snapshot,
+            "propositions_remplacees": remplacees,
+            "relance": {
+                "propositions": len(moteur.resultat.propositions),
+                "operations_ambigues": len(moteur.resultat.operations_ambigues),
+            },
+        },
         ip=ip,
     )
     _commit(db)
@@ -619,6 +675,9 @@ class MatchView:
     decide_par: str | None = None
     # Critères de la grille actuelle : le détail affiche ceux-ci, plus ceux qui ont rapporté des points
     actifs: tuple[str, ...] = ()
+    # Une autre écriture (ou opération) à moins de `ecart_ambiguite` points (08/10/2026)
+    score_second: Decimal | None = None
+    concurrente_proche: bool = False
 
 
 @dataclass
@@ -695,6 +754,7 @@ def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> l
     )
     views = []
     for match in matches:
+        second = score_second(match)
         tx_id = next(i.bank_transaction_id for i in match.items if i.bank_transaction_id)
         entry_id = next(i.accounting_entry_id for i in match.items if i.accounting_entry_id)
         tx, code = transactions[tx_id]
@@ -710,6 +770,10 @@ def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> l
                 decide_par=names.get(match.decide_par_id) if match.decide_par_id else None,
                 forte=match.score is not None and match.score >= regles.seuil_fort,
                 actifs=regles.criteres_actifs,
+                score_second=second,
+                concurrente_proche=second is not None
+                and match.score is not None
+                and match.score - second < regles.ecart_ambiguite,
             )
         )
     return views
@@ -830,7 +894,8 @@ def candidates(
     return tx, bank_code, scored[:NB_CANDIDATS], regles.seuil_proposition, regles.seuil_fort
 
 
-NB_AMBIGUES = 100
+# Opérations ambiguës par page ; le total porte sur tout le filtre (08/10/2026)
+PAGE_AMBIGUES = 50
 
 
 @dataclass
@@ -847,7 +912,8 @@ def list_ambiguous(
     bank_account_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
-) -> tuple[Decimal, list[AmbiguousView]]:
+    page: int = 1,
+) -> tuple[Decimal, int, list[AmbiguousView]]:
     """Opérations ambiguës de la période (« À vérifier » sans proposition), chacune avec ses
     écritures candidates au-dessus du seuil de proposition, la meilleure d'abord (hors paires déjà
     rejetées). L'utilisateur en choisit une : rapprochement manuel. Retourne aussi le seuil
@@ -856,14 +922,16 @@ def list_ambiguous(
     _check_period(date_from, date_to)
     regles = grille(db)
     views = []
-    for tx in repo.ambiguous_transactions(
+    total, transactions = repo.ambiguous_transactions(
         db,
         company.id,
         bank_account_id=bank_account_id,
         date_from=date_from,
         date_to=date_to,
-        limit=NB_AMBIGUES,
-    ):
+        offset=(page - 1) * PAGE_AMBIGUES,
+        limit=PAGE_AMBIGUES,
+    )
+    for tx in transactions:
         _, bank_code, items, seuil_proposition, _ = candidates(db, tx.id)
         views.append(
             AmbiguousView(
@@ -876,4 +944,4 @@ def list_ambiguous(
                 ],
             )
         )
-    return regles.seuil_fort, views
+    return regles.seuil_fort, total, views

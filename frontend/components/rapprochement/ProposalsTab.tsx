@@ -13,11 +13,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Field, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
+import { Pagination } from "@/components/ui/Pagination";
 import { ApiError } from "@/lib/api";
 import { formatAmount } from "@/lib/format";
 import {
   defaultSelection,
   filterProposals,
+  formatScore,
   selectionSummary,
   validable,
   type ProposalsFilter,
@@ -43,6 +45,8 @@ type ProposalsTabProps = {
   onOpen: (item: Correspondance) => void;
   /** Opérations ambiguës (à vérifier sans proposition), chargées par la vue (null : en cours). */
   ambigues: Ambigues | null;
+  /** Page des opérations ambiguës (50 par page). */
+  onAmbiguPage: (page: number) => void;
   /** Ouvre une opération ambiguë dans l'onglet Rapprochement. */
   onOpenOperation: (operation: Operation) => void;
 };
@@ -52,12 +56,15 @@ type LignesEcart = {
   ecriture: { id: number; date: string; libelle: string; montant: string } | null;
 };
 
-const FILTRES: { value: ProposalsFilter; label: string }[] = [
-  { value: "toutes", label: "Toutes" },
-  { value: "fortes", label: "Fortes (≥ 90)" },
-  { value: "a_verifier", label: "À vérifier (< 90)" },
-  { value: "ambigues", label: "Ambiguës" },
-];
+/** Filtres de l'onglet ; le seuil « forte » vient du serveur (80 depuis le 08/10/2026). */
+function filtres(seuil: string): { value: ProposalsFilter; label: string }[] {
+  return [
+    { value: "toutes", label: "Toutes" },
+    { value: "fortes", label: `Fortes (≥ ${seuil})` },
+    { value: "a_verifier", label: `À vérifier (< ${seuil})` },
+    { value: "ambigues", label: "Ambiguës" },
+  ];
+}
 
 function messageOf(error: unknown): string {
   return error instanceof ApiError ? error.message : "Une erreur est survenue.";
@@ -81,6 +88,7 @@ export function ProposalsTab({
   onChanged,
   onOpen,
   ambigues,
+  onAmbiguPage,
   onOpenOperation,
 }: ProposalsTabProps) {
   const items = pending?.correspondances ?? null;
@@ -112,6 +120,7 @@ export function ProposalsTab({
   const summary = selectionSummary(items, selected);
   const nbFortes = items.filter((item) => item.forte).length;
   const ambiguous = ambigues.ambigues;
+  const seuil = formatScore(pending?.seuil_fort ?? ambigues.seuil_fort);
   const shownAmbiguous = filtre === "toutes" || filtre === "ambigues" ? ambiguous : [];
   const nothing = shown.length === 0 && shownAmbiguous.length === 0;
 
@@ -144,18 +153,18 @@ export function ProposalsTab({
             role="group"
             aria-label="Filtrer les propositions"
           >
-            {FILTRES.map(({ value, label }) => (
+            {filtres(seuil).map(({ value, label }) => (
               <StatButton
                 key={value}
                 label={label}
                 value={
                   value === "toutes"
-                    ? items.length + ambiguous.length
+                    ? items.length + ambigues.total
                     : value === "fortes"
                       ? nbFortes
                       : value === "a_verifier"
                         ? items.length - nbFortes
-                        : ambiguous.length
+                        : ambigues.total
                 }
                 active={filtre === value}
                 onClick={() => setFiltre(value)}
@@ -183,7 +192,7 @@ export function ProposalsTab({
           <EmptyState
             icon={ListChecks}
             message={
-              items.length + ambiguous.length === 0
+              items.length + ambigues.total === 0
                 ? "Rien à vérifier : lancez le rapprochement sur la période."
                 : "Rien dans ce filtre."
             }
@@ -263,6 +272,16 @@ export function ProposalsTab({
             </li>
           ))}
         </ul>
+      )}
+      {shownAmbiguous.length > 0 && ambigues.total > ambigues.taille && (
+        <Pagination
+          label="Pages des opérations ambiguës"
+          page={ambigues.page}
+          pages={Math.ceil(ambigues.total / ambigues.taille)}
+          total={ambigues.total}
+          noun="opération"
+          onPage={onAmbiguPage}
+        />
       )}
 
       {canValidate && items.length > 0 && (
@@ -344,7 +363,7 @@ export function ProposalsTab({
         </p>
         {summary.faibles > 0 && (
           <p className="mt-2 text-simtis-warning-fg">
-            Dont {plural(summary.faibles, "proposition")} à vérifier (score inférieur à 90) :
+            Dont {plural(summary.faibles, "proposition")} à vérifier (score inférieur à {seuil}) :
             confirmez que vous les avez contrôlées.
           </p>
         )}

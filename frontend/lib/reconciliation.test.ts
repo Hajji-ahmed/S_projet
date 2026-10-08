@@ -118,6 +118,11 @@ describe("propositions en attente", () => {
     expect([...defaultSelection(items)]).toEqual([1]);
   });
 
+  it("ne coche jamais d'office une forte qui a une concurrente proche", () => {
+    const close = { ...strong, id: 4, concurrente_proche: true, score_second: "88.00" };
+    expect([...defaultSelection([strong, close])]).toEqual([1]);
+  });
+
   it("filtre fortes / à vérifier, la plus forte d'abord", () => {
     expect(filterProposals(items, "toutes").map((p) => p.id)).toEqual([1, 3, 2]);
     expect(filterProposals(items, "fortes").map((p) => p.id)).toEqual([1, 3]);

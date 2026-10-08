@@ -19,7 +19,7 @@ Règles :
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -181,6 +181,8 @@ class StatementAnalysis:
     soldes_calcules: bool = False
     solde_ouverture_propose: Decimal | None = None
     solde_ouverture_source: str | None = None
+    # Calcul à rebours depuis un solde postérieur au fichier : à vérifier (08/10/2026)
+    solde_ouverture_avertissement: str | None = None
     solde_ouverture_choisi: Decimal | None = None
 
 
@@ -540,27 +542,66 @@ def running_balances(
     return solde
 
 
+@dataclass
+class Ouverture:
+    """Solde d'ouverture proposé, d'où il vient, et un avertissement s'il est à vérifier."""
+
+    solde: Decimal | None
+    source: str
+    avertissement: str | None = None
+
+
 def _proposed_opening(
     db: Session, account: BankAccount, lines: list[AnalysedLine], file_opening: Decimal | None
-) -> tuple[Decimal | None, str]:
-    """Solde d'ouverture proposé : la ligne SOLDE INITIAL du fichier, sinon le dernier solde connu
-    du compte avant la première opération à importer, sinon rien (à saisir)."""
+) -> Ouverture:
+    """Solde d'ouverture proposé, dans cet ordre : la ligne SOLDE INITIAL du fichier ; le dernier
+    solde connu du compte avant la première opération à importer ; à rebours, le premier solde du
+    tableau Banques à partir du dernier jour du fichier, moins les mouvements du fichier
+    (08/10/2026) ; sinon rien (à saisir)."""
     if file_opening is not None:
-        return file_opening, "Ligne SOLDE INITIAL du fichier"
-    dates = [
-        line.date_operation
+        return Ouverture(file_opening, "Ligne SOLDE INITIAL du fichier")
+    # Les lignes déjà importées pour ce compte ne comptent pas : elles ne seront pas enregistrées
+    nouvelles = [
+        line
         for line in lines
-        if line.date_operation is not None and line.statut != "Doublon"
+        if line.date_operation is not None
+        and not (line.statut == "Doublon" and line.doublon_de is None)
     ]
-    if not dates:
-        return None, "À saisir"
+    if not nouvelles:
+        return Ouverture(None, "À saisir")
+    dates = [line.date_operation for line in nouvelles]
     known = import_repository.last_known_balance(db, account.id, min(dates))
-    if known is None:
-        return None, "À saisir"
-    jour, solde, origine = known
-    if origine == "operation":
-        return solde, f"Solde de la dernière opération importée, le {jour:%d/%m/%Y}"
-    return solde, f"Solde du jour enregistré le {jour:%d/%m/%Y}"
+    if known is not None:
+        jour, solde, origine = known
+        if origine == "operation":
+            return Ouverture(solde, f"Solde de la dernière opération importée, le {jour:%d/%m/%Y}")
+        return Ouverture(solde, f"Solde du jour enregistré le {jour:%d/%m/%Y}")
+    return _opening_backwards(db, account, nouvelles, max(dates))
+
+
+def _opening_backwards(
+    db: Session, account: BankAccount, lines: list[AnalysedLine], dernier_jour: date
+) -> Ouverture:
+    """Solde d'ouverture = solde du tableau Banques (jour J ≥ dernier jour du fichier) − crédits
+    + débits du fichier. Exact seulement si le fichier contient toutes les opérations jusqu'à J."""
+    later = import_repository.first_balance_from(db, account.id, dernier_jour)
+    if later is None:
+        return Ouverture(None, "À saisir")
+    jour, solde = later
+    mouvements = sum((line.montant for line in lines if line.montant is not None), Decimal(0))
+    avertissement = None
+    if jour > dernier_jour:
+        lendemain = dernier_jour + timedelta(days=1)
+        avertissement = (
+            f"Le solde du {jour:%d/%m/%Y} est postérieur au dernier jour du fichier "
+            f"({dernier_jour:%d/%m/%Y}) : des opérations du {lendemain:%d/%m/%Y} au "
+            f"{jour:%d/%m/%Y} absentes du fichier fausseraient le calcul. Vérifiez."
+        )
+    return Ouverture(
+        solde - mouvements,
+        f"Calculé à rebours depuis le solde du {jour:%d/%m/%Y} (tableau Banques)",
+        avertissement,
+    )
 
 
 def _no_amount(value: object) -> bool:
@@ -694,8 +735,11 @@ def analyse_statement(
     # Pas de soldes dans le fichier : ils sont calculés depuis un solde d'ouverture
     if lines and not solde_dans_le_fichier:
         analysis.soldes_calcules = True
-        proposed, source = _proposed_opening(db, account, lines, analysis.solde_initial_fichier)
-        analysis.solde_ouverture_propose, analysis.solde_ouverture_source = proposed, source
+        ouverture = _proposed_opening(db, account, lines, analysis.solde_initial_fichier)
+        proposed = ouverture.solde
+        analysis.solde_ouverture_propose = proposed
+        analysis.solde_ouverture_source = ouverture.source
+        analysis.solde_ouverture_avertissement = ouverture.avertissement
         opening = solde_ouverture if solde_ouverture is not None else proposed
         analysis.solde_ouverture_choisi = opening
         closing = None

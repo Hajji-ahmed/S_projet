@@ -94,6 +94,8 @@ export type Analysis = {
   solde_ouverture_propose: string | null;
   /** D'où vient la proposition (« Ligne SOLDE INITIAL du fichier », « À saisir »…). */
   solde_ouverture_source: string | null;
+  /** Proposition calculée à rebours depuis un solde postérieur au fichier : à vérifier. */
+  solde_ouverture_avertissement?: string | null;
   resume: AnalysisSummary;
 };
 

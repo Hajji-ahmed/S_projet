@@ -295,22 +295,21 @@ def ambiguous_transactions(
     bank_account_id: int | None,
     date_from: date | None,
     date_to: date | None,
+    offset: int,
     limit: int,
-) -> list[BankTransaction]:
+) -> tuple[int, list[BankTransaction]]:
     """Opérations « À vérifier » sans correspondance active : le moteur a trouvé plusieurs
-    candidats trop proches pour en proposer un. Des plus récentes aux plus anciennes."""
-    query = (
-        transactions_query(
-            company_id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
-        )
-        .where(
-            BankTransaction.statut == "À vérifier",
-            BankTransaction.id.not_in(_active_transaction_ids()),
-        )
-        .order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
-        .limit(limit)
+    candidats trop proches pour en proposer un. Leur nombre sur tout le filtre, et une page, des
+    plus récentes aux plus anciennes."""
+    query = transactions_query(
+        company_id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+    ).where(
+        BankTransaction.statut == "À vérifier",
+        BankTransaction.id.not_in(_active_transaction_ids()),
     )
-    return list(db.scalars(query))
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    page = query.order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
+    return total, list(db.scalars(page.offset(offset).limit(limit)))
 
 
 def count_by_status(db: Session, query: Select) -> dict[str, int]:

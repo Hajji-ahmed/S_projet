@@ -26,7 +26,8 @@ export function defaultChecked(lines: readonly LigneCochable[]): Set<number> {
   return new Set(lines.filter(cochable).map((line) => line.numero));
 }
 
-/** Lignes d'un export Sage à montrer selon la tuile choisie (« importer » : lignes cochées). */
+/** Lignes d'un export Sage à montrer selon la tuile choisie (« importer » : lignes cochées ;
+ *  « erreurs » : lignes en erreur encore cochées, comme pour les relevés). */
 export function sageLinesFor<T extends { numero: number; statut: string }>(
   lines: readonly T[],
   vue: VueLignes,
@@ -36,7 +37,7 @@ export function sageLinesFor<T extends { numero: number; statut: string }>(
     case "importer":
       return lines.filter((line) => cochees.has(line.numero));
     case "erreurs":
-      return lines.filter((line) => line.statut === "Erreur");
+      return lines.filter((line) => line.statut === "Erreur" && cochees.has(line.numero));
     case "doublons":
       return lines.filter((line) => line.statut === "Doublon");
     case "ignorees":
@@ -63,4 +64,46 @@ export function pageOf<T>(
   const pages = Math.max(1, Math.ceil(rows.length / size));
   const current = Math.min(Math.max(1, page), pages);
   return { rows: rows.slice((current - 1) * size, current * size), page: current, pages };
+}
+
+export type BlocageImport = {
+  raison: "deja_importe" | "aucune" | "erreurs" | "ouverture";
+  message: string;
+};
+
+/**
+ * Pourquoi « Confirmer l'import » est désactivé (08/10/2026) : la première raison qui s'applique,
+ * affichée à côté du bouton ; null quand rien ne bloque. `ouvertureManquante` : relevé sans soldes
+ * dont le solde d'ouverture n'est pas saisi (toujours faux pour Sage).
+ */
+export function blocageImport(etat: {
+  dejaImporte: boolean;
+  cochees: number;
+  erreursCochees: number;
+  ouvertureManquante?: boolean;
+  correction?: "relevé" | "Sage";
+}): BlocageImport | null {
+  if (etat.dejaImporte) {
+    return { raison: "deja_importe", message: "Ce fichier a déjà été importé." };
+  }
+  if (etat.cochees === 0) {
+    return { raison: "aucune", message: "Cochez au moins une ligne à importer." };
+  }
+  if (etat.erreursCochees > 0) {
+    const n = etat.erreursCochees;
+    const s = n > 1 ? "s" : "";
+    const la = n > 1 ? "les" : "la";
+    const corriger = etat.correction === "Sage" ? "corrigez l'export dans Sage" : `corrigez-${la}`;
+    return {
+      raison: "erreurs",
+      message: `${n} ligne${s} cochée${s} en erreur : ${corriger} ou décochez-${la}.`,
+    };
+  }
+  if (etat.ouvertureManquante) {
+    return {
+      raison: "ouverture",
+      message: "Saisissez le solde d'ouverture : ce fichier n'a pas de soldes.",
+    };
+  }
+  return null;
 }

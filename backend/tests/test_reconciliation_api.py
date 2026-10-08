@@ -489,7 +489,7 @@ def test_candidates_are_sorted_by_score(client, comptable, db):
     body = response.json()
     assert response.status_code == 200
     assert [c["ecriture"]["id"] for c in body["candidats"]] == [best.id, other.id]
-    assert body["seuil_fort"] == "90.00"
+    assert body["seuil_fort"] == "80.00"
 
 
 # --- Permissions ---------------------------------------------------------------------------------
@@ -738,3 +738,73 @@ def test_ambiguous_lines_never_mix_companies_and_need_the_right(client, comptabl
     assert simtis["ambigues"] == []
     assert len(socx["ambigues"]) == 1
     assert refused.status_code == 403
+
+
+# --- Ambiguës : vrai total, pagination, relance après un choix manuel (08/10/2026) ----------------
+
+
+def test_ambiguous_lines_give_the_real_total_and_are_paged(client, comptable, db):
+    compte = account(db)
+    for numero in range(55):
+        operation(db, compte, montant=str(1000 + numero), statut="À vérifier")
+    url = "/api/reconciliation/ambiguous"
+    params = {"company_id": company(db).id}
+
+    first = client.get(url, params=params, headers=comptable).json()
+    second = client.get(url, params={**params, "page": 2}, headers=comptable).json()
+
+    assert (first["total"], first["page"], first["taille"], len(first["ambigues"])) == (
+        55,
+        1,
+        50,
+        50,
+    )
+    assert (second["total"], second["page"], len(second["ambigues"])) == (55, 2, 5)
+    seen = {a["operation"]["id"] for a in first["ambigues"] + second["ambigues"]}
+    assert len(seen) == 55
+
+
+def test_a_manual_match_frees_the_competing_operation(client, comptable, db):
+    compte = account(db)
+    # Deux opérations identiques convoitent la même écriture E1 : aucune proposition
+    tx1, tx2 = operation(db, compte), operation(db, compte)
+    e1 = ecriture(db, compte)
+    e2 = ecriture(db, compte, jour=date(2026, 9, 26))
+    body = run(client, comptable, db).json()
+    assert body["nb_propositions"] == 0
+
+    response = manual(client, comptable, tx1, e1)
+
+    assert response.status_code == 201, response.text
+    [pending] = proposals(client, comptable, db).json()["correspondances"]
+    assert (pending["operation"]["id"], pending["ecriture"]["id"]) == (tx2.id, e2.id)
+    assert statuses(db, tx1, e1, tx2, e2) == [
+        "Rapprochée",
+        "Rapprochée",
+        "À vérifier",
+        "À vérifier",
+    ]
+    ambigues = client.get(
+        "/api/reconciliation/ambiguous", params={"company_id": company(db).id}, headers=comptable
+    ).json()
+    assert ambigues["total"] == 0
+    [log] = db.scalars(select(AuditLog).filter_by(action="rapprochement_manuel")).all()
+    assert log.nouvelle_valeur["relance"]["propositions"] == 1
+
+
+def test_a_strong_proposal_with_a_close_competitor_is_flagged(client, comptable, db):
+    compte = account(db)
+    operation(db, compte)
+    best = ecriture(db, compte)
+    ecriture(db, compte, jour=date(2026, 9, 25))
+    body = run(client, comptable, db).json()
+    assert (body["nb_propositions"], body["nb_operations_ambigues"]) == (1, 0)
+
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    assert proposal["ecriture"]["id"] == best.id
+    assert (proposal["forte"], proposal["score_second"], proposal["concurrente_proche"]) == (
+        True,
+        "92.50",
+        True,
+    )

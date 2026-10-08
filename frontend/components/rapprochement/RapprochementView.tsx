@@ -76,6 +76,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [parStatut, setParStatut] = useState<Record<StatutRapprochement, number> | null>(null);
   const [pending, setPending] = useState<Correspondances | null>(null);
   const [ambigues, setAmbigues] = useState<Ambigues | null>(null);
+  // Page des opérations ambiguës (50 par page) ; revient à 1 quand le filtre change
+  const cleAmbigues = `${companyId}|${filter.bankAccountId ?? "tous"}|${filter.from}|${filter.to}`;
+  const [ambiguPage, setAmbiguPage] = useState({ cle: cleAmbigues, page: 1 });
+  const pageAmbigues = ambiguPage.cle === cleAmbigues ? ambiguPage.page : 1;
   const [running, setRunning] = useState(false);
   const [statut, setStatut] = useState("");
   const [tab, setTab] = useState<"rapprochement" | "propositions" | "historique">("rapprochement");
@@ -111,7 +115,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         if (!cancelled) setPending(null);
       },
     );
-    listAmbiguous(companyId, filter).then(
+    listAmbiguous(companyId, filter, pageAmbigues).then(
       (result) => {
         if (!cancelled) setAmbigues(result);
       },
@@ -122,7 +126,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [companyId, filter, reloadKey, periodError]);
+  }, [companyId, filter, reloadKey, periodError, pageAmbigues]);
 
   // Les volets rechargés : la sélection suit les nouvelles valeurs (statut, correspondance)
   const handleOperations = useCallback((page: OperationsPage) => {
@@ -167,8 +171,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
   }
 
   // Tout ce qui est à vérifier : les propositions en attente et les opérations ambiguës
-  const aVerifier =
-    pending && ambigues ? pending.correspondances.length + ambigues.ambigues.length : null;
+  const aVerifier = pending && ambigues ? pending.correspondances.length + ambigues.total : null;
   const logos = new Map(accounts.map((account) => [account.bank_code, account.bank_logo]));
 
   const filterKey = `${filter.bankAccountId ?? "tous"}|${filter.from}|${filter.to}`;
@@ -323,6 +326,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
             setOperation(operationOf(item));
           }}
           ambigues={ambigues}
+          onAmbiguPage={(page) => setAmbiguPage({ cle: cleAmbigues, page })}
           onOpenOperation={(selected) => {
             setTab("rapprochement");
             setStatut("");

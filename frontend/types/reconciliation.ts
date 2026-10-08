@@ -51,6 +51,10 @@ export type Correspondance = {
   origine: OrigineCorrespondance;
   score: string | null;
   forte: boolean;
+  /** Score du meilleur autre candidat au moment de la proposition (08/10/2026). */
+  score_second?: string | null;
+  /** Un autre candidat à moins de 10 points : jamais coché d'office. */
+  concurrente_proche?: boolean;
   criteres: Critere[];
   commentaire: string | null;
   valide_par: string | null;
@@ -110,6 +114,10 @@ export type Ambigue = {
 };
 
 export type Ambigues = {
+  /** Nombre d'opérations ambiguës sur tout le filtre ; `ambigues` n'en donne qu'une page. */
+  total: number;
+  page: number;
+  taille: number;
   seuil_fort: string;
   ambigues: Ambigue[];
 };

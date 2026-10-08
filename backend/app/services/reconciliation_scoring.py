@@ -51,9 +51,11 @@ class Grille:
     fenetre_jours: int = 10
     # En dessous : aucune proposition
     seuil_proposition: Decimal = Decimal("50")
-    # À partir de : « Forte correspondance », validable en lot (toujours par un humain)
-    seuil_fort: Decimal = Decimal("90")
-    # Deux candidats à moins de cet écart de points : ambiguïté, aucune proposition
+    # À partir de : « Forte correspondance », validable en lot (toujours par un humain) ; 80 depuis
+    # le 08/10/2026
+    seuil_fort: Decimal = Decimal("80")
+    # Une 2e écriture à moins de cet écart de points est signalée « concurrente proche » ; depuis le
+    # 08/10/2026, seule une égalité de score rend une opération ambiguë
     ecart_ambiguite: Decimal = Decimal("10")
 
     def poids(self, critere: str) -> Decimal:
@@ -107,12 +109,14 @@ class Proposition:
     operation_id: int
     ecriture_id: int
     score: Score
+    # Meilleur score d'un autre candidat de l'opération ou de l'écriture (None : aucun)
+    second: Decimal | None = None
 
 
 @dataclass
 class Resultat:
     propositions: list[Proposition] = field(default_factory=list)
-    # Opérations et écritures dont plusieurs candidats ont un score proche : « À vérifier »
+    # Opérations et écritures dont plusieurs candidats ont le même meilleur score : « À vérifier »
     operations_ambigues: set[int] = field(default_factory=set)
     ecritures_ambigues: set[int] = field(default_factory=set)
 
@@ -264,8 +268,9 @@ def proposer(
 
     - Une paire déjà rejetée par un utilisateur n'est jamais reproposée.
     - Une paire sous le seuil de proposition n'est pas un candidat.
-    - Si les deux meilleurs candidats d'une opération (ou d'une écriture) sont à moins de
-      `ecart_ambiguite` points, aucune proposition pour elle.
+    - Si les deux meilleurs candidats d'une opération (ou d'une écriture) ont le même score,
+      aucune proposition pour elle (décision du 08/10/2026 : avant, à moins de 10 points). Sinon le
+      meilleur est proposé, avec le score du suivant (`second`).
     - Les paires retenues sont retirées, puis le choix recommence sur ce qui reste.
     - À la fin, une opération ou une écriture qui garde un candidat est « ambiguë » (« À vérifier »).
     """
@@ -304,8 +309,16 @@ def proposer(
             resultat.ecritures_ambigues = set(par_ecriture)
             break
         for operation_id, ecriture_id in retenues:
+            autres = [total for total, cle in par_operation[operation_id] if cle != ecriture_id] + [
+                total for total, cle in par_ecriture[ecriture_id] if cle != operation_id
+            ]
             resultat.propositions.append(
-                Proposition(operation_id, ecriture_id, restants[(operation_id, ecriture_id)])
+                Proposition(
+                    operation_id,
+                    ecriture_id,
+                    restants[(operation_id, ecriture_id)],
+                    max(autres) if autres else None,
+                )
             )
         utilisees_operation = {paire[0] for paire in retenues}
         utilisees_ecriture = {paire[1] for paire in retenues}
@@ -343,8 +356,8 @@ def _paires_comparables(
 
 
 def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int | None:
-    """Identifiant du meilleur candidat, ou None si le deuxième est trop proche (ambiguïté)."""
+    """Identifiant du meilleur candidat, ou None si le deuxième a le même score (ambiguïté)."""
     classes = sorted(candidats, key=lambda item: (-item[0], item[1]))
-    if len(classes) >= 2 and classes[0][0] - classes[1][0] < grille.ecart_ambiguite:
+    if len(classes) >= 2 and classes[0][0] == classes[1][0]:
         return None
     return classes[0][1]

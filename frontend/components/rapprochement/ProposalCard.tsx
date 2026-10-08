@@ -9,7 +9,14 @@ import { Button } from "@/components/ui/Button";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { absolute, ecartManuel, sensBanque, sensSage, validable } from "@/lib/reconciliation";
+import {
+  absolute,
+  ecartManuel,
+  formatScore,
+  sensBanque,
+  sensSage,
+  validable,
+} from "@/lib/reconciliation";
 import type { Correspondance } from "@/types/reconciliation";
 
 type ProposalCardProps = {
@@ -88,6 +95,15 @@ export function ProposalCard({
             <ScoreBadge score={item.score} forte={item.forte} />
             <span className="text-xs text-simtis-muted">{item.forte ? "forte" : "à vérifier"}</span>
           </div>
+          {item.concurrente_proche && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-simtis-warning-bg px-2 py-0.5 text-[11px] font-medium text-simtis-warning-fg"
+              title="Une autre écriture a un score proche : contrôlez avant de valider. Cette proposition n'est jamais cochée d'office."
+            >
+              <TriangleAlert className="h-3 w-3" aria-hidden />
+              Concurrente proche · 2e à {formatScore(item.score_second ?? null)}
+            </span>
+          )}
           <ul className="flex flex-wrap justify-center gap-1" aria-label="Critères du score">
             {item.criteres.map((critere) => {
               const gained = Number(critere.points) > 0;

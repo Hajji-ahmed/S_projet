@@ -71,10 +71,10 @@ RECONCILIATION_RULES = [
     ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None, False),
     ("FENETRE", "Fenêtre de comparaison des dates (jours)", "fenetre", "0", "10", True),
     ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None, True),
-    ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "90", None, True),
+    ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "80", None, True),
     (
         "ECART_AMBIGUITE",
-        "Écart de points sous lequel deux candidats sont ambigus",
+        "Écart de points sous lequel une 2e écriture est signalée comme proche",
         "seuil",
         "10",
         None,

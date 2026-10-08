@@ -158,6 +158,13 @@ class CorrespondanceOut(BaseModel):
     origine: Literal["Automatique", "Manuelle"]
     score: Decimal | None
     forte: bool = Field(description="Score au moins égal au seuil de forte correspondance")
+    score_second: Decimal | None = Field(
+        None, description="Score du meilleur autre candidat au moment de la proposition"
+    )
+    concurrente_proche: bool = Field(
+        False,
+        description="Un autre candidat à moins de l'écart d'ambiguïté : jamais coché d'office",
+    )
     criteres: list[CritereOut]
     commentaire: str | None
     valide_par: str | None
@@ -178,6 +185,8 @@ class CorrespondanceOut(BaseModel):
             origine=match.origine,
             score=match.score,
             forte=view.forte,
+            score_second=view.score_second,
+            concurrente_proche=view.concurrente_proche,
             criteres=criteres(match.detail_score, view.actifs),
             commentaire=match.commentaire,
             valide_par=view.valide_par,
@@ -263,6 +272,10 @@ class AmbigueOut(BaseModel):
 
 class AmbiguesOut(BaseModel):
     seuil_fort: Decimal
+    # Nombre d'opérations ambiguës sur tout le filtre ; `ambigues` n'en donne qu'une page
+    total: int
+    page: int
+    taille: int
     ambigues: list[AmbigueOut]
 
 

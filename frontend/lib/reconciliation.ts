@@ -88,9 +88,14 @@ export function validable(item: Correspondance): boolean {
   return item.statut === "Proposée" && rapprochable(item.operation.montant, item.ecriture.montant);
 }
 
-/** Sélection proposée à l'ouverture : seules les fortes validables sont cochées d'office. */
+/** Sélection proposée à l'ouverture : seules les fortes validables sans concurrente proche sont
+ *  cochées d'office (08/10/2026) ; les autres se cochent après contrôle. */
 export function defaultSelection(items: readonly Correspondance[]): Set<number> {
-  return new Set(items.filter((item) => item.forte && validable(item)).map((item) => item.id));
+  return new Set(
+    items
+      .filter((item) => item.forte && !item.concurrente_proche && validable(item))
+      .map((item) => item.id),
+  );
 }
 
 export type ProposalsFilter = "toutes" | "fortes" | "a_verifier" | "ambigues";

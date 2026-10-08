@@ -183,3 +183,17 @@ def statement_transactions_in_order(db: Session, statement_id: int) -> list[Bank
         .order_by(BankTransaction.date_operation, BankTransaction.id)
     )
     return list(db.scalars(query))
+
+
+def first_balance_from(db: Session, account_id: int, day: date) -> tuple[date, Decimal] | None:
+    """Premier solde du jour enregistré (tableau Banques) à partir de `day` inclus : (jour, solde)."""
+    row = db.execute(
+        select(BankAccountBalance.date_solde, BankAccountBalance.solde)
+        .where(
+            BankAccountBalance.bank_account_id == account_id,
+            BankAccountBalance.date_solde >= day,
+        )
+        .order_by(BankAccountBalance.date_solde)
+        .limit(1)
+    ).first()
+    return None if row is None else (row[0], row[1])

@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.services.reconciliation_scoring import (
+    GRILLE_PAR_DEFAUT,
     Ecriture,
     Grille,
     Operation,
@@ -153,7 +154,7 @@ def test_below_the_threshold_nothing_is_proposed_nor_ambiguous():
     assert resultat.operations_ambigues == set()
 
 
-def test_two_close_candidates_give_no_proposal():
+def test_two_candidates_with_the_same_score_give_no_proposal():
     resultat = proposer([op()], [ec(id=1), ec(id=2)])
 
     assert resultat.propositions == []
@@ -161,7 +162,7 @@ def test_two_close_candidates_give_no_proposal():
     assert resultat.ecritures_ambigues == {1, 2}
 
 
-def test_one_entry_close_to_two_operations_is_not_proposed():
+def test_one_entry_equal_for_two_operations_is_not_proposed():
     resultat = proposer([op(id=1), op(id=2)], [ec()])
 
     assert resultat.propositions == []
@@ -198,3 +199,26 @@ def test_the_grid_is_configurable():
     assert proposer([op()], [ec()], Grille(seuil_proposition=Decimal("100.01"))).propositions == []
     assert score(op(), ec(), Grille(montant=Decimal("0"))).total == Decimal("50.00")
     assert Grille(montant=Decimal("0")).criteres_actifs == ("date", "libelle")
+
+
+def test_a_close_but_lower_candidate_no_longer_blocks_the_best():
+    """Décision du 08/10/2026 : seule une égalité rend ambigu ; le suivant est gardé dans `second`."""
+    meme_jour = ec(id=1)
+    lendemain = ec(id=2, jour=date(2026, 9, 25))
+
+    resultat = proposer([op()], [meme_jour, lendemain])
+
+    [proposition] = resultat.propositions
+    assert (proposition.ecriture_id, proposition.score.total) == (1, Decimal("100.00"))
+    assert proposition.second == Decimal("92.50")
+    assert resultat.operations_ambigues == set()
+
+
+def test_a_single_candidate_has_no_second():
+    [proposition] = proposer([op()], [ec()]).propositions
+
+    assert proposition.second is None
+
+
+def test_the_strong_threshold_is_80_by_default():
+    assert GRILLE_PAR_DEFAUT.seuil_fort == Decimal("80")

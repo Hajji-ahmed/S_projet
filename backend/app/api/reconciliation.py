@@ -96,18 +96,27 @@ def list_ambiguous(
     bank_account_id: int | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> AmbiguesOut:
-    """Opérations « À vérifier » sans proposition, avec leurs écritures candidates."""
-    seuil, views = reconciliation_service.list_ambiguous(
+    """Opérations « À vérifier » sans proposition, avec leurs écritures candidates (50 par page,
+    le total porte sur tout le filtre)."""
+    seuil, total, views = reconciliation_service.list_ambiguous(
         db,
         company_id,
         bank_account_id=bank_account_id,
         date_from=date_from,
         date_to=date_to,
+        page=page,
     )
-    return AmbiguesOut(seuil_fort=seuil, ambigues=[AmbigueOut.from_view(v) for v in views])
+    return AmbiguesOut(
+        seuil_fort=seuil,
+        total=total,
+        page=page,
+        taille=reconciliation_service.PAGE_AMBIGUES,
+        ambigues=[AmbigueOut.from_view(v) for v in views],
+    )
 
 
 @router.get("/history", response_model=HistoriqueOut)

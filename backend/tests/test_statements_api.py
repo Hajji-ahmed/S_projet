@@ -2038,3 +2038,79 @@ def test_computed_balances_do_not_change_the_line_or_its_fingerprint(
     assert [line["statut"] for line in body["lignes"]] == ["Doublon"] * 3 + ["Valide"]
     # Le nouveau départ est le dernier solde calculé enregistré (100 + 800)
     assert body["solde_ouverture_propose"] == "900.00"
+
+
+# --- Solde d'ouverture à rebours depuis le tableau Banques (08/10/2026) ----------------------------
+
+
+def _day_balance(db, account, jour, solde):
+    save(
+        db,
+        BankAccountBalance(
+            bank_account_id=account.id, date_solde=jour, solde=Decimal(solde), source="Saisie"
+        ),
+    )
+
+
+def test_the_opening_is_computed_backwards_from_the_closing_day_balance(
+    client, tresorerie, account, db
+):
+    # Fichier du 02/09 au 03/09 : +1000 − 250 + 50 = +800
+    _day_balance(db, account, date(2026, 9, 3), "5000800")
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert body["solde_ouverture_propose"] == "5000000.00"
+    assert body["solde_ouverture_source"] == (
+        "Calculé à rebours depuis le solde du 03/09/2026 (tableau Banques)"
+    )
+    assert body["solde_ouverture_avertissement"] is None
+    assert body["lignes"][-1]["solde_apercu"] == "5000800.00"
+
+
+def test_a_later_balance_gives_a_warning(client, tresorerie, account, db):
+    _day_balance(db, account, date(2026, 10, 3), "5000800")
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert body["solde_ouverture_propose"] == "5000000.00"
+    assert body["solde_ouverture_avertissement"] == (
+        "Le solde du 03/10/2026 est postérieur au dernier jour du fichier (03/09/2026) : "
+        "des opérations du 04/09/2026 au 03/10/2026 absentes du fichier fausseraient le calcul. "
+        "Vérifiez."
+    )
+
+
+def test_an_earlier_balance_wins_over_the_backwards_computation(client, tresorerie, account, db):
+    _day_balance(db, account, date(2026, 8, 31), "700")
+    _day_balance(db, account, date(2026, 9, 3), "5000800")
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert body["solde_ouverture_propose"] == "700.00"
+    assert body["solde_ouverture_avertissement"] is None
+
+
+def test_the_file_opening_line_wins_over_the_backwards_computation(client, tresorerie, account, db):
+    _day_balance(db, account, date(2026, 9, 3), "5000800")
+    with_opening = [
+        ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+        [None, "SOLDE INITIAL", None, None, 300],
+        ["02/09/2026", "VIR CLIENT", None, 1000, None],
+    ]
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", with_opening))).json()
+
+    assert body["solde_ouverture_source"] == "Ligne SOLDE INITIAL du fichier"
+    assert body["solde_ouverture_propose"] == "300.00"
+
+
+def test_the_backwards_opening_is_used_at_confirmation(client, tresorerie, account, db):
+    _day_balance(db, account, date(2026, 9, 3), "5000800")
+
+    response = confirm(
+        client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE)), solde_ouverture=None
+    )
+
+    assert response.status_code == 201, response.text
+    assert [row.solde for row in transactions(db, account)][-1] == Decimal("5000800.00")

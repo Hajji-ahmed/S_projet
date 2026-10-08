@@ -109,6 +109,8 @@ export function listHistory(
 }
 
 /** Opérations ambiguës de la période (à vérifier sans proposition), avec leurs candidates. */
-export function listAmbiguous(companyId: number, filter: ReconciliationFilter) {
-  return apiFetch<Ambigues>(`/reconciliation/ambiguous${reconciliationQuery(companyId, filter)}`);
+export function listAmbiguous(companyId: number, filter: ReconciliationFilter, page = 1) {
+  return apiFetch<Ambigues>(
+    `/reconciliation/ambiguous${reconciliationQuery(companyId, { ...filter, page })}`,
+  );
 }

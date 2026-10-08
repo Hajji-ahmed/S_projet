@@ -119,3 +119,15 @@ Décisions de l'utilisateur du 07/10/2026 : le compteur « À vérifier » dispa
 - `GET /api/reconciliation/ambiguous?company_id=&bank_account_id=&from=&to=` (`reconciliation.view`, 100 au plus) : opérations « À vérifier » sans correspondance active, chacune avec ses écritures candidates au-dessus du seuil de proposition (calcul des candidates existant, paires rejetées exclues). « Rapprocher » sur une candidate = rapprochement manuel (montant égal exigé, validé d'emblée, tracé).
 - « Propositions en attente » (compteur et onglet) = propositions en attente + opérations ambiguës. La barre « Valider la sélection » ne concerne que les propositions.
 - Correction : l'étiquette du sens Sage était inversée à l'écran. Montant Sage (crédit − débit) positif = « crédit Sage » (argent qui sort de la banque), négatif = « débit Sage » ; règle `sensSage` dans `frontend/lib/reconciliation.ts`, utilisée par le panneau Correspondance, les cartes et le détail d'un écart.
+
+## Ambiguës : vrai total, pagination et relance (08/10/2026)
+
+- `GET /api/reconciliation/ambiguous` renvoie `total` (toutes les opérations ambiguës du filtre), `page` et `taille` (50). Avant, la liste était coupée à 100 sans le dire : le compteur restait à 100 après chaque rapprochement. Les compteurs « Ambiguës », « Toutes » et « Propositions en attente » utilisent ce total ; les cartes se parcourent par page.
+- Un rapprochement manuel relance le moteur sur le même compte, de la plus petite date des deux lignes − 10 jours à la plus grande + 10 jours (`_engine`, partagé avec `run`). Une opération qui convoitait la même écriture devient une proposition claire ou sort de « Ambiguës ». L'audit `rapprochement_manuel` garde `relance` (propositions, opérations ambiguës).
+
+## Ambiguïté par égalité seulement, forte à 80 (08/10/2026)
+
+- **Ambiguïté** : une opération (ou une écriture) n'est ambiguë que si ses deux meilleurs candidats ont **le même score**. Sinon le meilleur est proposé, même si le suivant est proche. Avant, deux candidats à moins de 10 points rendaient la ligne ambiguë.
+- **Concurrente proche** : le score du meilleur autre candidat est gardé dans `detail_score.second`. S'il est à moins de `ECART_AMBIGUITE` (10) points, l'API renvoie `concurrente_proche: true` et `score_second`. La carte affiche le badge « Concurrente proche · 2e à N ». Une telle proposition n'est jamais cochée d'office, même forte.
+- **Seuil fort** : `SEUIL_FORT` passe à **80** (migration 0019, données seulement). Les libellés des filtres lisent le seuil renvoyé par le serveur.
+- Les propositions et les ambiguës existantes ont été calculées avec l'ancienne règle : relancer le moteur sur la période. « Forte » est calculé à la lecture et change tout de suite.

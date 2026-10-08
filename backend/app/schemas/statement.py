@@ -152,6 +152,9 @@ class AnalyseOut(BaseModel):
         None, description="Solde d'ouverture proposé pour le calcul (None : à saisir)"
     )
     solde_ouverture_source: str | None = None
+    solde_ouverture_avertissement: str | None = Field(
+        None, description="Proposition calculée à rebours depuis un solde postérieur : à vérifier"
+    )
     lignes_ignorees: list["LigneIgnoreeOut"] = Field(
         default_factory=list, description="Lignes non retenues et leur raison (jamais importées)"
     )
@@ -183,6 +186,7 @@ class AnalyseOut(BaseModel):
             soldes_calcules=analysis.soldes_calcules,
             solde_ouverture_propose=analysis.solde_ouverture_propose,
             solde_ouverture_source=analysis.solde_ouverture_source,
+            solde_ouverture_avertissement=analysis.solde_ouverture_avertissement,
             lignes_ignorees=[
                 LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
             ],

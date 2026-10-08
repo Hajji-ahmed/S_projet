@@ -7,7 +7,7 @@ import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountPicker } from "@/components/releves/AccountPicker";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import { EditablePreview, alreadyImported } from "@/components/releves/EditablePreview";
-import { defaultChecked } from "@/lib/importLines";
+import { blocageImport, defaultChecked } from "@/lib/importLines";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -212,8 +212,20 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   // Fichier sans soldes : le solde d'ouverture est obligatoire (saisi ou proposé)
   const ouverture = ouvertureText.trim() ? normalizeSignedAmountInput(ouvertureText) : null;
   const ouvertureManquante = !!analysis?.soldes_calcules && ouverture === null;
-  const blocked =
-    !!analysis?.deja_importe || toImport.length === 0 || invalid.length > 0 || ouvertureManquante;
+  // Raison affichée à côté du bouton quand la confirmation est impossible
+  const blocage = blocageImport({
+    dejaImporte: !!analysis?.deja_importe,
+    cochees: toImport.length,
+    erreursCochees: invalid.length,
+    ouvertureManquante,
+  });
+  const blocked = blocage !== null;
+
+  function goToOpening() {
+    const input = document.getElementById("releve-solde-ouverture");
+    input?.scrollIntoView({ behavior: "smooth", block: "center" });
+    input?.focus({ preventScroll: true });
+  }
 
   async function confirm() {
     if (!file || !account || !analysis || blocked) return;
@@ -422,7 +434,9 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
                 error={
                   ouvertureText.trim() && ouverture === null
                     ? "Montant illisible (ex. 5 000 000 ou -1 250,50)."
-                    : undefined
+                    : ouvertureManquante
+                      ? "Obligatoire pour importer ce fichier."
+                      : undefined
                 }
               >
                 <TextInput
@@ -441,6 +455,15 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
                 ? `Proposé : ${current.solde_ouverture_source.toLowerCase()}.`
                 : "Aucun solde connu ne précède la première opération : saisissez-le."}
             </p>
+            {current.solde_ouverture_avertissement && (
+              <p
+                role="alert"
+                className="flex w-full items-start gap-2 rounded-lg bg-simtis-warning-bg px-3 py-2 text-sm text-simtis-warning-fg"
+              >
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                {current.solde_ouverture_avertissement}
+              </p>
+            )}
           </div>
         )}
         <CheckAllButtons
@@ -466,10 +489,30 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
           onEdit={setEditing}
           onReset={reset}
         />
-        <p className="mt-4 text-sm text-simtis-muted" aria-live="polite">
-          {invalid.length > 0
-            ? `${invalid.length} ligne${invalid.length > 1 ? "s" : ""} cochée${invalid.length > 1 ? "s" : ""} en erreur : corrigez-la${invalid.length > 1 ? "s" : ""} ou décochez-la${invalid.length > 1 ? "s" : ""}.`
-            : `${toImport.length} opération${toImport.length > 1 ? "s" : ""} seront enregistrée${toImport.length > 1 ? "s" : ""} sur le compte ${current.bank_code} ${current.devise}.`}
+        <p
+          className={cn(
+            "mt-4 flex flex-wrap items-center gap-x-2 text-sm",
+            blocage ? "font-medium text-simtis-danger-fg" : "text-simtis-muted",
+          )}
+          aria-live="polite"
+        >
+          {blocage ? (
+            <>
+              <CircleAlert className="h-4 w-4 shrink-0" aria-hidden />
+              {blocage.message}
+              {blocage.raison === "ouverture" && (
+                <button
+                  type="button"
+                  onClick={goToOpening}
+                  className="text-simtis-primary underline underline-offset-2 hover:text-simtis-primary-dark"
+                >
+                  Saisir le solde d&apos;ouverture
+                </button>
+              )}
+            </>
+          ) : (
+            `${toImport.length} opération${toImport.length > 1 ? "s" : ""} seront enregistrée${toImport.length > 1 ? "s" : ""} sur le compte ${current.bank_code} ${current.devise}.`
+          )}
         </p>
         <FooterButtons>
           <Button

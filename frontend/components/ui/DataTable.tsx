@@ -25,6 +25,8 @@ type DataTableProps<T> = {
   isRowSelected?: (row: T) => boolean;
   /** Nom accessible d'une ligne cliquable (lu par les lecteurs d'écran). */
   rowLabel?: (row: T) => string;
+  /** Ligne mise en retrait (texte grisé), par exemple une ligne décochée d'un aperçu d'import. */
+  isRowMuted?: (row: T) => boolean;
 };
 
 /**
@@ -42,6 +44,7 @@ export function DataTable<T extends Record<string, unknown>>({
   onRowClick,
   isRowSelected,
   rowLabel,
+  isRowMuted,
 }: DataTableProps<T>) {
   const cellClass = (column: Column<T>) =>
     cn("px-4 py-3", column.align === "right" && "text-right whitespace-nowrap tabular-nums");
@@ -100,6 +103,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   className={cn(
                     "border-b border-simtis-border/70 transition-colors last:border-b-0",
                     selected ? "bg-simtis-light" : "bg-simtis-card hover:bg-simtis-light/40",
+                    isRowMuted?.(row) && "text-simtis-muted",
                     onRowClick &&
                       "cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-simtis-secondary",
                   )}

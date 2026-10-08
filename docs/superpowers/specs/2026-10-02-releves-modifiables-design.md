@@ -114,3 +114,9 @@ Sans `lignes`, la confirmation garde son fonctionnement actuel (`garder_doublons
 - Étape Validation : champ « Solde d'ouverture » pré-rempli et modifiable ; soldes recalculés en direct. Le serveur refait le calcul sur les lignes retenues.
 - Enregistrement : `solde_calcule = true` (migration 0018) ; le solde de clôture devient le solde du jour. Affichage identique à un solde du fichier.
 - Relevé déjà importé sans soldes : `python -m app.cli recalculer-soldes --releve N --solde-ouverture X`.
+
+## Solde d'ouverture calculé à rebours (08/10/2026)
+
+Fichier sans soldes, sans ligne SOLDE INITIAL et sans solde connu avant sa première opération : le solde d'ouverture proposé est calculé **à rebours** depuis le tableau Banques. SIMTIS prend le premier solde du jour enregistré à partir du dernier jour du fichier (jour J), puis calcule `solde de J − crédits + débits du fichier`. Les lignes déjà importées sont exclues. L'origine s'affiche sous le champ (« Calculé à rebours depuis le solde du JJ/MM/AAAA (tableau Banques) »).
+
+Si J est postérieur au dernier jour du fichier, un avertissement orange (`solde_ouverture_avertissement`) prévient que des opérations absentes entre les deux dates fausseraient le calcul. La valeur reste modifiable, et le serveur refait le calcul à la confirmation.

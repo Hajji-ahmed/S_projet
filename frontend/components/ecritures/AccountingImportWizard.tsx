@@ -19,6 +19,7 @@ import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import {
+  blocageImport,
   cochable,
   defaultChecked,
   pageOf,
@@ -127,7 +128,14 @@ export function AccountingImportWizard({
   const checkedErrors =
     analysis?.lignes.filter((line) => line.statut === "Erreur" && coches.has(line.numero)).length ??
     0;
-  const blocked = !analysis || analysis.deja_importe || toImport === 0 || checkedErrors > 0;
+  // Raison affichée à côté du bouton quand la confirmation est impossible
+  const blocage = blocageImport({
+    dejaImporte: !!analysis?.deja_importe,
+    cochees: toImport,
+    erreursCochees: checkedErrors,
+    correction: "Sage",
+  });
+  const blocked = !analysis || blocage !== null;
 
   function toggle(numero: number, value: boolean) {
     setCoches((current) => {
@@ -344,7 +352,8 @@ export function AccountingImportWizard({
     ];
     const filters: [VueLignes, string, number, string][] = [
       ["importer", "Lignes à importer", toImport, "text-simtis-success"],
-      ["erreurs", "Lignes en erreur", summary.nb_erreurs, "text-simtis-danger"],
+      // Comme pour les relevés : seules les erreurs encore cochées comptent
+      ["erreurs", "Lignes en erreur", checkedErrors, "text-simtis-danger"],
       ["doublons", "Doublons", summary.nb_doublons, "text-simtis-warning"],
       ["ignorees", "Lignes ignorées", summary.nb_ignorees, "text-simtis-muted"],
     ];
@@ -432,6 +441,7 @@ export function AccountingImportWizard({
               columns={columns}
               rows={pageLignesView.rows}
               getRowKey={(line) => String(line.numero)}
+              isRowMuted={(line) => !coches.has(line.numero)}
               emptyMessage={
                 vue === "toutes"
                   ? "Aucune ligne banque dans ce fichier."
@@ -450,10 +460,21 @@ export function AccountingImportWizard({
             )}
           </>
         )}
-        <p className="mt-4 text-sm text-simtis-muted" aria-live="polite">
-          {checkedErrors > 0
-            ? `${checkedErrors} ligne${checkedErrors > 1 ? "s" : ""} cochée${checkedErrors > 1 ? "s" : ""} en erreur : corrigez l'export dans Sage ou décochez-la${checkedErrors > 1 ? "s" : ""}.`
-            : `${toImport} écriture${toImport > 1 ? "s" : ""} seront enregistrée${toImport > 1 ? "s" : ""}.`}
+        <p
+          className={cn(
+            "mt-4 flex items-center gap-2 text-sm",
+            blocage ? "font-medium text-simtis-danger-fg" : "text-simtis-muted",
+          )}
+          aria-live="polite"
+        >
+          {blocage ? (
+            <>
+              <CircleAlert className="h-4 w-4 shrink-0" aria-hidden />
+              {blocage.message}
+            </>
+          ) : (
+            `${toImport} écriture${toImport > 1 ? "s" : ""} seront enregistrée${toImport > 1 ? "s" : ""}.`
+          )}
         </p>
         <div className="mt-6 flex flex-wrap justify-end gap-3">
           <Button
