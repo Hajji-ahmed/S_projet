@@ -5,17 +5,25 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountPicker } from "@/components/releves/AccountPicker";
+import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import { EditablePreview, alreadyImported } from "@/components/releves/EditablePreview";
+import { defaultChecked } from "@/lib/importLines";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { Field, Select } from "@/components/ui/Field";
+import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { ApiError } from "@/lib/api";
-import { businessToday, currencySuffix } from "@/lib/balances";
+import { businessToday, currencySuffix, normalizeSignedAmountInput } from "@/lib/balances";
 import { cn } from "@/lib/cn";
-import { draftFromLine, draftToLigne, lineMotifs, type LineDraft } from "@/lib/statementLines";
+import {
+  amountToInput,
+  draftFromLine,
+  draftToLigne,
+  lineMotifs,
+  type LineDraft,
+} from "@/lib/statementLines";
 import { assignField, fieldsByColumn, fileProblem } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
 import { listPointageTypes } from "@/services/referentiel";
@@ -84,6 +92,8 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   const [originals, setOriginals] = useState<LineDraft[]>([]);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<number | null>(null);
+  // Fichier sans soldes : solde d'ouverture du calcul, tel que saisi (pré-rempli par la proposition)
+  const [ouvertureText, setOuvertureText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,16 +143,14 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
       });
       const read = result.lignes.map(draftFromLine);
       setAnalysis(result);
+      setOuvertureText(amountToInput(result.solde_ouverture_propose));
       setMapping(result.mapping);
       setFeuille(result.feuille);
       setOriginals(read);
       setDrafts(read);
-      // Cochées par défaut : les lignes valides ; jamais une ligne déjà importée
-      setChecked(
-        new Set(
-          result.lignes.filter((line) => line.statut === "Valide").map((line) => line.numero),
-        ),
-      );
+      // Cochées par défaut (08/10/2026) : valides, en erreur et doublons internes ; jamais une
+      // ligne déjà importée. Une ligne en erreur cochée bloque jusqu'à sa correction.
+      setChecked(defaultChecked(result.lignes));
       setEditing(null);
       setStep(result.erreurs_mapping.length > 0 ? 0 : 1);
     } catch (caught) {
@@ -201,7 +209,11 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
       lineMotifs(lines.get(draft.numero), draft, originalOf.get(draft.numero) ?? draft, today)
         .length > 0,
   );
-  const blocked = !!analysis?.deja_importe || toImport.length === 0 || invalid.length > 0;
+  // Fichier sans soldes : le solde d'ouverture est obligatoire (saisi ou proposé)
+  const ouverture = ouvertureText.trim() ? normalizeSignedAmountInput(ouvertureText) : null;
+  const ouvertureManquante = !!analysis?.soldes_calcules && ouverture === null;
+  const blocked =
+    !!analysis?.deja_importe || toImport.length === 0 || invalid.length > 0 || ouvertureManquante;
 
   async function confirm() {
     if (!file || !account || !analysis || blocked) return;
@@ -210,7 +222,13 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
     try {
       onDone(
         await confirmStatement(
-          { file, accountId: account.id, mapping, feuille },
+          {
+            file,
+            accountId: account.id,
+            mapping,
+            feuille,
+            soldeOuverture: analysis.soldes_calcules ? (ouverture ?? undefined) : undefined,
+          },
           { lignes: toImport.map(draftToLigne) },
         ),
       );
@@ -394,7 +412,45 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
           importer.
         </p>
         {sheetPicker(current)}
+        {current.soldes_calcules && (
+          <div className="mb-4 flex flex-wrap items-end gap-4 rounded-[12px] border border-simtis-border bg-simtis-background px-4 py-3">
+            <div className="w-full max-w-[240px]">
+              <Field
+                label="Solde d'ouverture"
+                htmlFor="releve-solde-ouverture"
+                required
+                error={
+                  ouvertureText.trim() && ouverture === null
+                    ? "Montant illisible (ex. 5 000 000 ou -1 250,50)."
+                    : undefined
+                }
+              >
+                <TextInput
+                  id="releve-solde-ouverture"
+                  value={ouvertureText}
+                  inputMode="decimal"
+                  placeholder="À saisir"
+                  onChange={(event) => setOuvertureText(event.target.value)}
+                />
+              </Field>
+            </div>
+            <p className="max-w-xl pb-2 text-sm text-simtis-muted">
+              Ce fichier n&apos;a pas de soldes : chaque solde est calculé (solde précédent − débit
+              + crédit) à partir de ce solde d&apos;ouverture.{" "}
+              {current.solde_ouverture_source && current.solde_ouverture_propose !== null
+                ? `Proposé : ${current.solde_ouverture_source.toLowerCase()}.`
+                : "Aucun solde connu ne précède la première opération : saisissez-le."}
+            </p>
+          </div>
+        )}
+        <CheckAllButtons
+          checked={checked.size}
+          total={defaultChecked(current.lignes).size}
+          onCheckAll={() => setChecked(defaultChecked(current.lignes))}
+          onUncheckAll={() => setChecked(new Set())}
+        />
         <EditablePreview
+          ouverture={ouverture}
           analysis={current}
           societe={company?.nom ?? ""}
           logo={account?.bank_logo}

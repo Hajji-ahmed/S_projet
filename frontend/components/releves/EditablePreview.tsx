@@ -17,6 +17,7 @@ import {
   lineMotifs,
   draftToLigne,
   sameDraft,
+  runningBalances,
   summariseDrafts,
   type LineDraft,
 } from "@/lib/statementLines";
@@ -38,6 +39,8 @@ type EditablePreviewProps = {
   onToggle: (numero: number, checked: boolean) => void;
   onEdit: (numero: number | null) => void;
   onReset: (numero: number) => void;
+  /** Fichier sans soldes : solde d'ouverture du calcul (« 5000000.00 »), null s'il manque. */
+  ouverture?: string | null;
 };
 
 const HEAD = "px-3 py-2.5 text-left whitespace-nowrap";
@@ -76,17 +79,25 @@ export function EditablePreview({
   onToggle,
   onEdit,
   onReset,
+  ouverture = null,
 }: EditablePreviewProps) {
   const lines = new Map(analysis.lignes.map((line) => [line.numero, line]));
   const originalOf = new Map(originals.map((draft) => [draft.numero, draft]));
   const pointageLabel = new Map(pointages.map((item) => [item.id, item.libelle]));
   const checkedDrafts = drafts.filter((draft) => checked.has(draft.numero));
   const { resume } = analysis;
-  const summary = summariseDrafts(
-    checkedDrafts,
-    resume.solde_ouverture_fichier ? resume.solde_ouverture : null,
-    resume.solde_cloture_fichier ? resume.solde_cloture : null,
-  );
+  // Fichier sans soldes : soldes calculés en direct depuis le solde d'ouverture (08/10/2026)
+  const computed =
+    analysis.soldes_calcules && ouverture !== null
+      ? runningBalances(checkedDrafts, ouverture)
+      : null;
+  const summary = analysis.soldes_calcules
+    ? summariseDrafts(checkedDrafts, ouverture, computed?.cloture ?? null)
+    : summariseDrafts(
+        checkedDrafts,
+        resume.solde_ouverture_fichier ? resume.solde_ouverture : null,
+        resume.solde_cloture_fichier ? resume.solde_cloture : null,
+      );
   const motifsOf = (draft: LineDraft) =>
     lineMotifs(lines.get(draft.numero), draft, originalOf.get(draft.numero) ?? draft, today);
   const errors = checkedDrafts.filter((draft) => motifsOf(draft).length > 0).length;
@@ -383,11 +394,13 @@ export function EditablePreview({
                         : amount(ligne.credit, draft.credit)}
                     </td>
                     <td className={cn(CELL, "text-right whitespace-nowrap tabular-nums")}>
-                      {isEditing
-                        ? field(draft, "solde", "Solde")
-                        : ligne.solde !== null
-                          ? formatAmount(ligne.solde, suffix)
-                          : amount(null, draft.solde)}
+                      {analysis.soldes_calcules
+                        ? formatAmount(computed?.soldes.get(draft.numero) ?? null, suffix)
+                        : isEditing
+                          ? field(draft, "solde", "Solde")
+                          : ligne.solde !== null
+                            ? formatAmount(ligne.solde, suffix)
+                            : amount(null, draft.solde)}
                     </td>
                     <td className={CELL}>
                       {isEditing

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cellulesText, pageOf, sageLinesFor, toggleVue } from "./importLines";
+import { cellulesText, defaultChecked, pageOf, sageLinesFor, toggleVue } from "./importLines";
 
 describe("toggleVue", () => {
   it("filtre sur la tuile cliquée, et réaffiche tout au second clic", () => {
@@ -19,12 +19,24 @@ describe("sageLinesFor", () => {
   ];
 
   it("garde les lignes de la tuile choisie", () => {
-    const gardees = new Set([5]);
+    const gardees = new Set([3, 5]);
     expect(sageLinesFor(lines, "toutes", gardees).map((l) => l.numero)).toEqual([3, 4, 5, 6]);
     expect(sageLinesFor(lines, "importer", gardees).map((l) => l.numero)).toEqual([3, 5]);
     expect(sageLinesFor(lines, "erreurs", gardees).map((l) => l.numero)).toEqual([4]);
     expect(sageLinesFor(lines, "doublons", gardees).map((l) => l.numero)).toEqual([5, 6]);
     expect(sageLinesFor(lines, "ignorees", gardees)).toEqual([]);
+  });
+});
+
+describe("defaultChecked", () => {
+  it("coche les lignes valides, en erreur et les doublons internes, jamais une ligne déjà importée", () => {
+    const lines = [
+      { numero: 3, statut: "Valide", doublon_de: null },
+      { numero: 4, statut: "Erreur", doublon_de: null },
+      { numero: 5, statut: "Doublon", doublon_de: 3 },
+      { numero: 6, statut: "Doublon", doublon_de: null },
+    ];
+    expect([...defaultChecked(lines)]).toEqual([3, 4, 5]);
   });
 });
 

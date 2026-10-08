@@ -40,6 +40,8 @@ export type AccountingOptions = {
   feuille?: string;
   garderDoublons?: number[];
   ecarterErreurs?: boolean;
+  /** Cases cochées (08/10/2026) : seules ces lignes sont importées ; remplace les deux options. */
+  lignesChoisies?: number[];
 };
 
 /** Formulaire multipart de `/accounting/import/analyse` et `/confirm`. */
@@ -66,6 +68,12 @@ export function accountingForm(
   }
   if (options.ecarterErreurs !== undefined) {
     form.append("ecarter_erreurs", String(options.ecarterErreurs));
+  }
+  if (options.lignesChoisies) {
+    form.append(
+      "lignes_choisies",
+      JSON.stringify([...options.lignesChoisies].sort((a, b) => a - b)),
+    );
   }
   return form;
 }

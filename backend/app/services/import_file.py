@@ -154,10 +154,41 @@ def _read_xls(content: bytes, feuille: str | None, unite: str) -> tuple[list[str
     return names, name, rows
 
 
+# Abréviations courantes des en-têtes de banques et d'exports (08/10/2026, ex. AWB « DT opération ») :
+# un mot entier de l'en-tête normalisé est remplacé avant la comparaison aux synonymes
+ABREVIATIONS = {
+    "dt": "date",
+    "val": "valeur",
+    "lib": "libelle",
+    "mnt": "montant",
+    "mt": "montant",
+    "ope": "operation",
+    "oper": "operation",
+    "deb": "debit",
+    "cred": "credit",
+}
+
+
+def expand_abbreviations(header: str) -> str:
+    """« dt operation » → « date operation » : chaque mot abrégé connu est développé."""
+    return " ".join(ABREVIATIONS.get(word, word) for word in header.split())
+
+
 def field_for_header(header: str, fields: Sequence[ImportField]) -> tuple[str | None, int]:
-    """Champ reconnu pour un en-tête, et la force de la correspondance (2 exacte, 1 début, 0 aucune)."""
+    """Champ reconnu pour un en-tête, et la force de la correspondance (2 exacte, 1 début, 0 aucune).
+    L'en-tête est lu tel quel, puis avec ses abréviations développées (« DT valeur »)."""
     if not header:
         return None, 0
+    code, strength = _field_for(header, fields)
+    expanded = expand_abbreviations(header)
+    if strength < 2 and expanded != header:
+        other, other_strength = _field_for(expanded, fields)
+        if other_strength > strength:
+            return other, other_strength
+    return code, strength
+
+
+def _field_for(header: str, fields: Sequence[ImportField]) -> tuple[str | None, int]:
     for item in fields:
         if header in item.synonymes:
             return item.code, 2

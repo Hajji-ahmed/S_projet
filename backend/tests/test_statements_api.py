@@ -139,6 +139,7 @@ def test_lines_are_normalised(client, tresorerie, account, db):
         "credit": "50000.00",
         "montant": "50000.00",
         "solde": "1050000.00",
+        "solde_apercu": None,  # le fichier a ses soldes : rien n'est calculé
         "pointage": None,
         # Aucune catégorie nommée dans le libellé : sans pointage, à choisir (08/10/2026)
         "pointage_type_id": None,
@@ -667,6 +668,11 @@ CLOSING_DAY = date(2026, 9, 26)
 
 
 def confirm(client, headers, account_id, content, *, nom="releve.xlsx", lignes=None, **form):
+    # Fichier sans soldes : un solde d'ouverture est exigé (08/10/2026) ; 0 par défaut dans les
+    # tests, sans effet quand le fichier a ses soldes. `solde_ouverture=None` n'en envoie pas.
+    form.setdefault("solde_ouverture", "0")
+    if form["solde_ouverture"] is None:
+        del form["solde_ouverture"]
     data = {"bank_account_id": str(account_id)}
     for key, value in form.items():
         data[key] = json.dumps(value) if isinstance(value, dict | list) else str(value).lower()
@@ -915,15 +921,19 @@ def test_inconsistent_statement_gives_a_check_to_verify(client, tresorerie, acco
     assert body["controle_solde"]["commentaire"] is not None
 
 
-def test_statement_without_balance_column_leaves_the_daily_balance_alone(
+def test_statement_without_balance_column_gets_a_computed_closing_balance(
     client, tresorerie, account, db
 ):
+    """Décision du 08/10/2026 : sans colonne Solde, les soldes sont calculés depuis le solde
+    d'ouverture et le solde de clôture devient le solde du jour."""
     rows = [["Date", "Libellé", "Montant"], ["26/09/2026", "VIR RECU", "1 000,00"]]
 
-    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
+    body = confirm(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), solde_ouverture="5000000"
+    ).json()
 
-    assert (body["solde_du_jour"], body["controle_solde"]) == (None, None)
-    assert day_balance(db, account) is None
+    assert (body["solde_du_jour"], body["solde_cloture"]) == ("Créé", "5001000.00")
+    assert day_balance(db, account).solde == Decimal("5001000.00")
 
 
 # --- Modèle de correspondance et pointage --------------------------------------------------------
@@ -1089,7 +1099,8 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
         "libelle": "CHQ N° 1234567",
         "debit": "12500.50",
         "credit": "0.00",
-        "solde": None,
+        # Pas de colonne Solde : calculé depuis 0 (24/09 +50 000, puis 25/09 −12 500,50)
+        "solde": "37499.50",
         "lettrage_escompte": None,
         "commentaire": None,
         "reference": "1234567",
@@ -1881,3 +1892,149 @@ def test_already_imported_lines_are_found_across_hash_batches(
     body = analyse(client, tresorerie, account.id, content).json()
 
     assert [line["motifs"] for line in body["lignes"]] == [["Déjà importée pour ce compte."]] * 5
+
+
+# --- Relevés sans soldes : solde calculé (08/10/2026) ---------------------------------------------
+
+NO_BALANCE = [
+    ["Date", "Libellé", "Débit", "Crédit"],
+    ["02/09/2026", "VIR CLIENT", None, 1000],
+    ["03/09/2026", "CHQ 12", 250, None],
+    ["03/09/2026", "VIR CLIENT 2", None, 50],
+]
+
+
+def test_balances_are_computed_from_the_opening_balance(client, tresorerie, account, db):
+    body = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE)), solde_ouverture="5 000 000"
+    ).json()
+
+    assert body["soldes_calcules"] is True
+    assert [line["solde_apercu"] for line in body["lignes"]] == [
+        "5001000.00",
+        "5000750.00",
+        "5000800.00",
+    ]
+    assert {line["solde"] for line in body["lignes"]} == {None}  # jamais renvoyé par l'écran
+    assert (body["resume"]["solde_ouverture"], body["resume"]["solde_cloture"]) == (
+        "5000000.00",
+        "5000800.00",
+    )
+
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE)), solde_ouverture="5000000")
+
+    saved = transactions(db, account)
+    assert [(row.solde, row.solde_calcule) for row in saved] == [
+        (Decimal("5001000.00"), True),
+        (Decimal("5000750.00"), True),
+        (Decimal("5000800.00"), True),
+    ]
+    assert day_balance(db, account, date(2026, 9, 3)).solde == Decimal("5000800.00")
+
+
+def test_a_statement_from_newest_to_oldest_is_computed_in_date_order(client, tresorerie, account):
+    rows = [NO_BALANCE[0], NO_BALANCE[3], NO_BALANCE[2], NO_BALANCE[1]]
+
+    body = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), solde_ouverture="0"
+    ).json()
+
+    assert [(line["libelle"], line["solde_apercu"]) for line in body["lignes"]] == [
+        ("VIR CLIENT 2", "800.00"),
+        ("CHQ 12", "750.00"),
+        ("VIR CLIENT", "1000.00"),
+    ]
+
+
+def test_without_any_known_balance_the_opening_must_be_entered(client, tresorerie, account):
+    content = xlsx(("Relevé", NO_BALANCE))
+
+    body = analyse(client, tresorerie, account.id, content).json()
+    response = confirm(client, tresorerie, account.id, content, solde_ouverture=None)
+
+    assert (body["solde_ouverture_propose"], body["solde_ouverture_source"]) == (None, "À saisir")
+    assert {line["solde_apercu"] for line in body["lignes"]} == {None}
+    assert response.status_code == 409
+    assert "Indiquez le solde d'ouverture" in response.json()["detail"]
+
+
+def test_the_opening_comes_from_the_last_imported_operation(client, tresorerie, account):
+    first = [["Date", "Libellé", "Crédit", "Solde"], ["01/09/2026", "VIR", 10, 4200]]
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", first)))
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert body["solde_ouverture_propose"] == "4200.00"
+    assert (
+        body["solde_ouverture_source"] == "Solde de la dernière opération importée, le 01/09/2026"
+    )
+    assert body["lignes"][0]["solde_apercu"] == "5200.00"
+
+
+def test_the_opening_comes_from_a_saved_balance_otherwise(client, tresorerie, account, db):
+    save(
+        db,
+        BankAccountBalance(
+            bank_account_id=account.id,
+            date_solde=date(2026, 8, 31),
+            solde=Decimal("700"),
+            source="Saisie",
+        ),
+    )
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert body["solde_ouverture_source"] == "Solde du jour enregistré le 31/08/2026"
+    assert body["lignes"][0]["solde_apercu"] == "1700.00"
+
+
+def test_the_file_opening_line_wins_and_the_user_can_override_it(client, tresorerie, account):
+    with_opening = [
+        ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+        [None, "SOLDE INITIAL", None, None, 300],
+        ["02/09/2026", "VIR CLIENT", None, 1000, None],
+    ]
+
+    proposed = analyse(client, tresorerie, account.id, xlsx(("Relevé", with_opening))).json()
+    overridden = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", with_opening)), solde_ouverture="100"
+    ).json()
+
+    assert proposed["solde_ouverture_source"] == "Ligne SOLDE INITIAL du fichier"
+    assert proposed["lignes"][0]["solde_apercu"] == "1300.00"
+    assert overridden["lignes"][0]["solde_apercu"] == "1100.00"
+
+
+def test_balances_of_the_file_are_never_recomputed(client, tresorerie, account):
+    body = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)), solde_ouverture="0"
+    ).json()
+
+    assert body["soldes_calcules"] is False
+    assert body["lignes"][0]["solde"] == "1050000.00"
+
+
+def test_unreadable_opening_balance_gives_422(client, tresorerie, account):
+    response = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE)), solde_ouverture="beaucoup"
+    )
+
+    assert response.status_code == 422
+
+
+def test_computed_balances_do_not_change_the_line_or_its_fingerprint(
+    client, tresorerie, account, db
+):
+    """Les lignes renvoyées par l'écran (sans solde) ne sont pas « corrigées » et le même fichier
+    réimporté est reconnu comme déjà importé."""
+    content = xlsx(("Relevé", NO_BALANCE))
+    lines = submitted(client, tresorerie, account, content)
+
+    confirm(client, tresorerie, account.id, content, lignes=lines, solde_ouverture="100")
+    again = xlsx(("Relevé", [*NO_BALANCE, ["04/09/2026", "VIR NOUVEAU", None, 5]]))
+    body = analyse(client, tresorerie, account.id, again).json()
+
+    assert {row.origine for row in transactions(db, account)} == {"Fichier"}
+    assert [line["statut"] for line in body["lignes"]] == ["Doublon"] * 3 + ["Valide"]
+    # Le nouveau départ est le dernier solde calculé enregistré (100 + 800)
+    assert body["solde_ouverture_propose"] == "900.00"

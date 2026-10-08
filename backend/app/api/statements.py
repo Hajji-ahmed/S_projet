@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
@@ -22,6 +23,7 @@ from app.schemas.statement import (
 )
 from app.services import import_file, import_service
 from app.services.auth_service import CurrentUser
+from app.services.normalization_service import parse_amount
 
 router = APIRouter(prefix="/statements", tags=["statements"])
 
@@ -188,12 +190,40 @@ def _content(fichier: UploadFile) -> bytes:
     return fichier.file.read(import_file.MAX_FILE_BYTES + 1)
 
 
+SoldeOuvertureForm = Annotated[
+    str | None,
+    Form(
+        description="Fichier sans soldes : solde d'ouverture du calcul (ex. 5000000 ou -1 250,50)"
+    ),
+]
+
+
+def _opening(raw: str | None) -> Decimal | None:
+    """Solde d'ouverture saisi ; illisible → 422."""
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return parse_amount(raw)
+    except ValueError as error:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", "solde_ouverture"),
+                    "msg": f"Solde d'ouverture illisible : {error}",
+                    "input": raw,
+                }
+            ]
+        ) from error
+
+
 @router.post("/import/analyse", response_model=AnalyseOut)
 def analyse_statement(
     fichier: Fichier,
     bank_account_id: CompteId,
     mapping: MappingForm = None,
     feuille: FeuilleForm = None,
+    solde_ouverture: SoldeOuvertureForm = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_import),
 ) -> AnalyseOut:
@@ -208,6 +238,7 @@ def analyse_statement(
         content=_content(fichier),
         mapping=_mapping(mapping),
         feuille=feuille or None,
+        solde_ouverture=_opening(solde_ouverture),
     )
     return AnalyseOut.from_analysis(analysis)
 
@@ -225,6 +256,7 @@ def confirm_statement(
     ecarter_erreurs: Annotated[
         bool, Form(description="Importer malgré des lignes en erreur, en les écartant")
     ] = False,
+    solde_ouverture: SoldeOuvertureForm = None,
     lignes: Annotated[
         UploadFile | None,
         File(
@@ -265,5 +297,6 @@ def confirm_statement(
         lignes=None if submitted is None else [line.model_dump() for line in submitted.root],
         acteur_id=user.id,
         ip=client_ip(request),
+        solde_ouverture=_opening(solde_ouverture),
     )
     return ConfirmationOut.from_import(result)

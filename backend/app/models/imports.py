@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     ForeignKey,
@@ -124,6 +125,8 @@ class BankTransaction(TimestampMixin, Base):
     )
     # « Corrigée » : au moins un champ modifié dans l'aperçu avant l'enregistrement (tracé dans l'audit)
     origine: Mapped[str] = mapped_column(String(10), default="Fichier", server_default="Fichier")
+    # Solde calculé par SIMTIS (solde précédent − débit + crédit) : le fichier n'avait pas de soldes
+    solde_calcule: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     statement: Mapped[BankStatement] = relationship()
     pointage_type: Mapped[PointageType | None] = relationship()

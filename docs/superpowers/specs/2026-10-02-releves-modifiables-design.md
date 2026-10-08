@@ -25,7 +25,7 @@ Après l'analyse automatique (inchangée : choix du compte, dépôt du fichier, 
 - **Modifier une ligne** : un clic la passe en édition (champs à la place des cellules) : dates (`AAAA-MM-JJ` via champ date), montants (saisie française, ex. `12 500,50`, jamais convertis en nombre à virgule flottante), Pointage (liste des types actifs), textes. Société et Banque viennent du compte et ne se modifient pas. Un bouton « Annuler les corrections » rend à la ligne ses valeurs du fichier.
 - **Revérification immédiate** dans le navigateur, avec les mêmes règles que le serveur : date d'opération lisible et pas dans le futur ; date de valeur lisible si renseignée ; libellé présent ; débit ou crédit (pas les deux, pas aucun) ; montants à 2 décimales au plus ; solde facultatif ; Lettrage / Escompte 120 caractères au plus. Une ligne en erreur corrigée devient Valide et se coche automatiquement ; une ligne Valide rendue invalide par une correction reste cochée et bloque « Confirmer l'import » jusqu'à ce qu'elle soit corrigée ou décochée.
 - **Pas d'ajout de ligne** : aucun bouton « Ajouter une ligne ». Une opération absente du fichier doit venir d'un nouveau fichier de la banque.
-- **Case Importer** : cochée par défaut sur les lignes valides ; décochée par défaut sur les doublons internes au fichier et sur les lignes en erreur ; **non cochable** sur une ligne déjà importée pour ce compte. Elle remplace « Écarter les lignes en erreur » et « Garder la ligne ».
+- **Case Importer** : **cochée par défaut sur toutes les lignes cochables** (décision du 08/10/2026 : lignes valides, en erreur et doublons internes au fichier ; `defaultChecked` dans `lib/importLines.ts`, partagé avec l'import Sage) ; une ligne en erreur cochée bloque la confirmation jusqu'à sa correction ou son décochage ; **non cochable** sur une ligne déjà importée pour ce compte ; les lignes ignorées n'ont pas de case et ne sont jamais importées. Boutons « Tout cocher » / « Tout décocher » (`CheckAllButtons`) au-dessus du tableau. Elle remplace « Écarter les lignes en erreur » et « Garder la ligne ».
 - **Résumé recalculé en direct** sur les lignes cochées : nombre, totaux débit / crédit, période, solde d'ouverture et de clôture (lignes SOLDE INITIAL / SOLDE FINAL du fichier prioritaires), cohérence « ouverture + mouvements = clôture ».
 - **« Confirmer l'import »** désactivé tant qu'une ligne cochée est en erreur, qu'aucune ligne n'est cochée, ou que le fichier est déjà importé.
 
@@ -106,3 +106,11 @@ Sans `lignes`, la confirmation garde son fonctionnement actuel (`garder_doublons
 - Migration 0017 : catégories créées, anciens types désactivés, opérations existantes re-pointées par les mots-clés (audit `repointage`).
 
 - Gros fichiers (08/10/2026) : 50 000 lignes et 20 Mo au plus ; aperçu de l'étape Validation par pages de 100 lignes (les tuiles filtrent et les totaux portent sur tout le fichier). Mesuré : 50 000 lignes analysées en 3 à 7 s, confirmées en 10 à 19 s.
+- Abréviations des en-têtes (08/10/2026) : un en-tête est aussi lu avec ses abréviations développées en mots entiers (DT → date, VAL → valeur, LIB → libellé, MNT / MT → montant, OPE / OPER → opération, DEB → débit, CRED → crédit). Exemple : relevé AWB « DT opération », « DT valeur ».
+
+## Relevés sans soldes : solde calculé (08/10/2026)
+
+- Quand aucune cellule Solde du fichier n'est remplie, chaque solde = solde précédent − débit + crédit, dans l'ordre chronologique, depuis un solde d'ouverture : ligne SOLDE INITIAL du fichier, sinon le dernier solde connu du compte avant la 1re opération (dernière opération importée avec un solde, ou dernier solde du jour, le plus récent), sinon saisi par l'utilisateur (confirmation refusée sans lui).
+- Étape Validation : champ « Solde d'ouverture » pré-rempli et modifiable ; soldes recalculés en direct. Le serveur refait le calcul sur les lignes retenues.
+- Enregistrement : `solde_calcule = true` (migration 0018) ; le solde de clôture devient le solde du jour. Affichage identique à un solde du fichier.
+- Relevé déjà importé sans soldes : `python -m app.cli recalculer-soldes --releve N --solde-ouverture X`.

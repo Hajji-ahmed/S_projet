@@ -455,6 +455,7 @@ def confirm_entries(
     garder_doublons: list[int] | None,
     ecarter_erreurs: bool,
     acteur_id: int,
+    lignes_choisies: list[int] | None = None,
     ip: str | None = None,
     today: date | None = None,
 ) -> EntriesImport:
@@ -473,27 +474,35 @@ def confirm_entries(
     if analysis.deja_importe:
         raise ConflictError("Ce fichier a déjà été importé pour cette société.")
     errors = [line for line in analysis.lignes if line.statut == "Erreur"]
-    if errors and not ecarter_erreurs:
-        plural = "s" if len(errors) > 1 else ""
-        raise ConflictError(
-            f"{len(errors)} ligne{plural} en erreur : corrigez l'export dans Sage, "
-            f"ou confirmez en l'écartant{plural}."
-        )
-    keep = set(garder_doublons or [])
     by_number = {line.numero: line for line in analysis.lignes}
-    for numero in sorted(keep):
-        line = by_number.get(numero)
-        if line is None or line.doublon_de is None:
+    if lignes_choisies is not None:
+        # Cases cochées (08/10/2026) : seules ces lignes sont importées
+        chosen = set(lignes_choisies)
+        _check_chosen(chosen, by_number)
+        lines = [line for line in analysis.lignes if line.numero in chosen]
+        keep = {line.numero for line in lines if line.statut == "Doublon"}
+    else:
+        if errors and not ecarter_erreurs:
+            plural = "s" if len(errors) > 1 else ""
             raise ConflictError(
-                f"La ligne {numero} n'est pas identique à une autre ligne du fichier : "
-                "elle ne peut pas être gardée."
+                f"{len(errors)} ligne{plural} en erreur : corrigez l'export dans Sage, "
+                f"ou confirmez en l'écartant{plural}."
             )
-    lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
+        keep = set(garder_doublons or [])
+        for numero in sorted(keep):
+            line = by_number.get(numero)
+            if line is None or line.doublon_de is None:
+                raise ConflictError(
+                    f"La ligne {numero} n'est pas identique à une autre ligne du fichier : "
+                    "elle ne peut pas être gardée."
+                )
+        lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
     if not lines:
         raise ConflictError("Aucune écriture de banque à importer dans ce fichier.")
 
     company = analysis.company
     nb_doublons = sum(1 for line in analysis.lignes if line.statut == "Doublon") - len(keep)
+    nb_ecartees = len(analysis.lignes) - len(lines) - nb_doublons
     batch = ImportBatch(
         type=TYPE_IMPORT,
         company_id=company.id,
@@ -545,6 +554,7 @@ def confirm_entries(
             },
             "erreurs_ecartees": len(errors),
             "doublons_gardes": sorted(keep),
+            "lignes_decochees": None if lignes_choisies is None else nb_ecartees,
         },
         ip=ip,
     )
@@ -563,6 +573,18 @@ def confirm_entries(
         periode_fin=summary.periode_fin,
         modele_enregistre=modele,
     )
+
+
+def _check_chosen(chosen: set[int], by_number: dict[int, "EntryLine"]) -> None:
+    """Une ligne cochée doit exister, ne pas être en erreur ni déjà importée."""
+    for numero in sorted(chosen):
+        line = by_number.get(numero)
+        if line is None:
+            raise ConflictError(f"Ligne {numero} : introuvable dans le fichier.")
+        if line.statut == "Erreur":
+            raise ConflictError(f"Ligne {numero} : en erreur, à corriger dans Sage ou à décocher.")
+        if line.statut == "Doublon" and line.doublon_de is None:
+            raise ConflictError(f"Ligne {numero} : déjà importée, elle ne peut pas être cochée.")
 
 
 # --- Lecture ---------------------------------------------------------------------------------------

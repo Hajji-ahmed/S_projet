@@ -97,11 +97,26 @@ def confirm_entries(
     ecarter_erreurs: Annotated[
         bool, Form(description="Importer malgré des lignes en erreur, en les écartant")
     ] = False,
+    lignes_choisies: Annotated[
+        str | None, Form(description="JSON [numéros des lignes cochées] : seules celles-ci")
+    ] = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_import),
 ) -> ConfirmationComptableOut:
     """Enregistre l'export (même fichier, même correspondance que l'aperçu validé)."""
     kept = _json_field(LignesGardeesIn, "garder_doublons", garder_doublons)
+    chosen = _json_field(LignesGardeesIn, "lignes_choisies", lignes_choisies)
+    if chosen is not None and (kept is not None or ecarter_erreurs):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("body", "lignes_choisies"),
+                    "msg": "lignes_choisies remplace garder_doublons et ecarter_erreurs.",
+                    "input": lignes_choisies,
+                }
+            ]
+        )
     result = accounting_import_service.confirm_entries(
         db,
         company_id=company_id,
@@ -111,6 +126,7 @@ def confirm_entries(
         feuille=feuille or None,
         garder_doublons=None if kept is None else kept.root,
         ecarter_erreurs=ecarter_erreurs,
+        lignes_choisies=None if chosen is None else chosen.root,
         acteur_id=user.id,
         ip=client_ip(request),
     )

@@ -17,7 +17,15 @@ import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { pageOf, sageLinesFor, toggleVue, type VueLignes } from "@/lib/importLines";
+import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
+import {
+  cochable,
+  defaultChecked,
+  pageOf,
+  sageLinesFor,
+  toggleVue,
+  type VueLignes,
+} from "@/lib/importLines";
 import { fileProblem } from "@/lib/statements";
 import { analyseEntries, confirmEntries } from "@/services/accounting";
 import type {
@@ -77,11 +85,11 @@ export function AccountingImportWizard({
   const [analysis, setAnalysis] = useState<AnalyseComptable | null>(null);
   const [mapping, setMapping] = useState<AccountingMapping>({});
   const [feuille, setFeuille] = useState<string | undefined>(undefined);
-  const [ecarter, setEcarter] = useState(false);
   // Tuile choisie à l'étape Validation : le tableau ne montre que ces lignes
   const [vue, setVue] = useState<VueLignes>("toutes");
   const [pageLignes, setPageLignes] = useState(1);
-  const [garder, setGarder] = useState<Set<number>>(new Set());
+  // Cases cochées (08/10/2026) : seules ces lignes sont importées
+  const [coches, setCoches] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,8 +104,7 @@ export function AccountingImportWizard({
       setAnalysis(result);
       setMapping(result.mapping);
       setFeuille(result.feuille);
-      setEcarter(false);
-      setGarder(new Set());
+      setCoches(defaultChecked(result.lignes));
       setStep(result.erreurs_mapping.length > 0 ? 0 : 1);
     } catch (caught) {
       setAnalysis(null);
@@ -115,13 +122,21 @@ export function AccountingImportWizard({
     if (!problem) void run(chosen);
   }
 
-  const resume = analysis?.resume;
-  const toImport = (resume?.nb_valides ?? 0) + garder.size;
-  const blocked =
-    !analysis ||
-    analysis.deja_importe ||
-    toImport === 0 ||
-    ((resume?.nb_erreurs ?? 0) > 0 && !ecarter);
+  const toImport = coches.size;
+  // Une ligne en erreur se corrige dans Sage : cochée, elle bloque jusqu'à ce qu'on la décoche
+  const checkedErrors =
+    analysis?.lignes.filter((line) => line.statut === "Erreur" && coches.has(line.numero)).length ??
+    0;
+  const blocked = !analysis || analysis.deja_importe || toImport === 0 || checkedErrors > 0;
+
+  function toggle(numero: number, value: boolean) {
+    setCoches((current) => {
+      const next = new Set(current);
+      if (value) next.add(numero);
+      else next.delete(numero);
+      return next;
+    });
+  }
 
   async function confirm() {
     if (!file || blocked) return;
@@ -132,8 +147,7 @@ export function AccountingImportWizard({
         await confirmEntries(file, companyId, {
           mapping,
           feuille,
-          garderDoublons: [...garder],
-          ecarterErreurs: ecarter,
+          lignesChoisies: [...coches],
         }),
       );
     } catch (caught) {
@@ -252,6 +266,20 @@ export function AccountingImportWizard({
     const summary = current.resume;
     const columns: Column<LigneComptable>[] = [
       {
+        key: "choix",
+        header: "Importer",
+        render: (line) => (
+          <input
+            type="checkbox"
+            aria-label={`Importer la ligne ${line.numero}`}
+            title={cochable(line) ? undefined : "Déjà importée : elle ne peut pas être cochée."}
+            checked={coches.has(line.numero)}
+            disabled={!cochable(line)}
+            onChange={(event) => toggle(line.numero, event.target.checked)}
+          />
+        ),
+      },
+      {
         key: "statut",
         header: "État",
         render: (line) => (
@@ -263,21 +291,9 @@ export function AccountingImportWizard({
               </span>
             ))}
             {line.doublon_de !== null && (
-              <label className="mt-1 flex items-center gap-1.5 text-xs text-simtis-text">
-                <input
-                  type="checkbox"
-                  checked={garder.has(line.numero)}
-                  onChange={(event) =>
-                    setGarder((value) => {
-                      const next = new Set(value);
-                      if (event.target.checked) next.add(line.numero);
-                      else next.delete(line.numero);
-                      return next;
-                    })
-                  }
-                />
-                Garder la ligne {line.numero}
-              </label>
+              <span className="mt-1 block text-xs text-simtis-muted">
+                Identique à la ligne {line.doublon_de}
+              </span>
             )}
           </span>
         ),
@@ -332,7 +348,7 @@ export function AccountingImportWizard({
       ["doublons", "Doublons", summary.nb_doublons, "text-simtis-warning"],
       ["ignorees", "Lignes ignorées", summary.nb_ignorees, "text-simtis-muted"],
     ];
-    const shown = sageLinesFor(current.lignes, vue, garder);
+    const shown = sageLinesFor(current.lignes, vue, coches);
     // 100 lignes par page ; les tuiles et les totaux portent sur tout le fichier
     const pageLignesView = pageOf(shown, pageLignes);
     const tiles: [string, ReactNode][] = [
@@ -400,6 +416,14 @@ export function AccountingImportWizard({
             ))}
           </ul>
         )}
+        {vue !== "ignorees" && (
+          <CheckAllButtons
+            checked={coches.size}
+            total={defaultChecked(current.lignes).size}
+            onCheckAll={() => setCoches(defaultChecked(current.lignes))}
+            onUncheckAll={() => setCoches(new Set())}
+          />
+        )}
         {vue === "ignorees" ? (
           <IgnoredLinesTable lignes={current.lignes_ignorees ?? []} />
         ) : (
@@ -426,16 +450,11 @@ export function AccountingImportWizard({
             )}
           </>
         )}
-        {summary.nb_erreurs > 0 && (
-          <label className="mt-4 flex items-center gap-2 text-sm text-simtis-text">
-            <input
-              type="checkbox"
-              checked={ecarter}
-              onChange={(event) => setEcarter(event.target.checked)}
-            />
-            Écarter les lignes en erreur ({summary.nb_erreurs}) : elles se corrigent dans Sage.
-          </label>
-        )}
+        <p className="mt-4 text-sm text-simtis-muted" aria-live="polite">
+          {checkedErrors > 0
+            ? `${checkedErrors} ligne${checkedErrors > 1 ? "s" : ""} cochée${checkedErrors > 1 ? "s" : ""} en erreur : corrigez l'export dans Sage ou décochez-la${checkedErrors > 1 ? "s" : ""}.`
+            : `${toImport} écriture${toImport > 1 ? "s" : ""} seront enregistrée${toImport > 1 ? "s" : ""}.`}
+        </p>
         <div className="mt-6 flex flex-wrap justify-end gap-3">
           <Button
             variant="secondary"

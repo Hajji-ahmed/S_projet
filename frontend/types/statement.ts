@@ -36,6 +36,8 @@ export type AnalysedLine = {
   credit: string | null;
   montant: string | null;
   solde: string | null;
+  /** Fichier sans soldes : solde calculé depuis le solde d'ouverture choisi (aperçu). */
+  solde_apercu: string | null;
   /** Valeur lue dans le fichier, telle quelle. */
   pointage: string | null;
   pointage_type_id: number | null;
@@ -86,6 +88,12 @@ export type Analysis = {
   lignes: AnalysedLine[];
   /** Lignes non retenues et leur raison (jamais importées). */
   lignes_ignorees: LigneIgnoree[];
+  /** Le fichier n'a pas de soldes : SIMTIS les calcule (08/10/2026). */
+  soldes_calcules: boolean;
+  /** Solde d'ouverture proposé pour le calcul ; null : à saisir. */
+  solde_ouverture_propose: string | null;
+  /** D'où vient la proposition (« Ligne SOLDE INITIAL du fichier », « À saisir »…). */
+  solde_ouverture_source: string | null;
   resume: AnalysisSummary;
 };
 
@@ -189,6 +197,8 @@ export type ImportRequest = {
   /** Absent : la correspondance est détectée (ou reprise du modèle de la banque). */
   mapping?: ColumnMapping;
   feuille?: string;
+  /** Fichier sans soldes : solde d'ouverture du calcul (« 5000000.00 »). */
+  soldeOuverture?: string;
 };
 
 /** Une ligne du fichier telle que l'aperçu modifiable l'envoie (corrigée ou non). Pas d'ajout. */

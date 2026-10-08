@@ -7,6 +7,7 @@ import {
   checkDraft,
   draftToLigne,
   lineMotifs,
+  runningBalances,
   sameDraft,
   summariseDrafts,
   type LineDraft,
@@ -113,6 +114,7 @@ describe("lineMotifs", () => {
     credit: "45000.00",
     montant: "45000.00",
     solde: null,
+    solde_apercu: null,
     pointage: null,
     pointage_type_id: null,
     pointage_libelle: null,
@@ -179,5 +181,51 @@ describe("summariseDrafts", () => {
   it("ne conclut rien sans soldes", () => {
     const sansSolde = lines.map((line) => ({ ...line, solde: "" }));
     expect(summariseDrafts(sansSolde, null, null).coherent).toBeNull();
+  });
+});
+
+describe("runningBalances", () => {
+  const draft = (numero: number, date: string, debit: string, credit: string) => ({
+    numero,
+    date_operation: date,
+    date_valeur: "",
+    libelle: "VIR",
+    reference: "",
+    debit,
+    credit,
+    solde: "",
+    pointage_type_id: null,
+    lettrage_escompte: "",
+    commentaire: "",
+  });
+
+  it("calcule solde précédent − débit + crédit, en centimes exacts", () => {
+    const result = runningBalances(
+      [draft(2, "2026-09-02", "", "1 000"), draft(3, "2026-09-03", "250,10", "")],
+      "5000000",
+    );
+    expect([...result.soldes]).toEqual([
+      [2, "5001000.00"],
+      [3, "5000749.90"],
+    ]);
+    expect(result.cloture).toBe("5000749.90");
+  });
+
+  it("lit un relevé du plus récent au plus ancien dans l'ordre chronologique", () => {
+    const result = runningBalances(
+      [draft(2, "2026-09-03", "250", ""), draft(3, "2026-09-02", "", "1000")],
+      "0",
+    );
+    expect(result.soldes.get(3)).toBe("1000.00");
+    expect(result.soldes.get(2)).toBe("750.00");
+  });
+
+  it("laisse sans solde une ligne au montant illisible, sans casser la suite", () => {
+    const result = runningBalances(
+      [draft(2, "2026-09-02", "dix", ""), draft(3, "2026-09-03", "", "5")],
+      "-100",
+    );
+    expect(result.soldes.get(2)).toBeNull();
+    expect(result.soldes.get(3)).toBe("-95.00");
   });
 });

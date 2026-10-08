@@ -518,3 +518,62 @@ def test_already_imported_entries_are_found_across_hash_batches(
 
     assert {line["statut"] for line in body["lignes"]} == {"Doublon"}
     assert len(body["lignes"]) == 5
+
+
+# --- Cases à cocher : lignes choisies (08/10/2026) -------------------------------------------------
+
+
+def test_only_the_chosen_lines_are_imported(client, comptable, db, journals):
+    body = confirm(client, comptable, db, xlsx(EXPORT), lignes_choisies="[5]").json()
+
+    assert body["nb_importees"] == 1
+    [entry] = db.scalars(select(AccountingEntry)).all()
+    assert entry.numero_piece == "P002"
+
+
+def test_a_chosen_line_in_error_is_refused(client, comptable, db, journals):
+    bad = [date(2025, 9, 4), "BQ1", "5141", "P9", None, 5, None, None, None]
+    content = xlsx([*EXPORT, bad])
+    numero = len(EXPORT) + 1
+
+    refused = confirm(client, comptable, db, content, lignes_choisies=f"[3, {numero}]")
+    accepted = confirm(client, comptable, db, content, lignes_choisies="[3, 5]")
+
+    assert refused.status_code == 409
+    assert refused.json() == {
+        "detail": f"Ligne {numero} : en erreur, à corriger dans Sage ou à décocher."
+    }
+    assert accepted.status_code == 201
+    assert accepted.json()["nb_importees"] == 2
+
+
+def test_a_chosen_line_already_imported_is_refused(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx(EXPORT))
+    newer = [*EXPORT, [date(2025, 9, 5), "BQ1", "5141", "P003", "FRAIS", 50, None, None, None]]
+
+    response = confirm(client, comptable, db, xlsx(newer), lignes_choisies="[3]")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Ligne 3 : déjà importée, elle ne peut pas être cochée."}
+
+
+def test_a_chosen_internal_duplicate_is_imported(client, comptable, db, journals):
+    row = [date(2025, 9, 2), "BQ1", "5141", "P1", "FRAIS", 10, None, None, None]
+
+    body = confirm(client, comptable, db, xlsx([HEADER, row, row]), lignes_choisies="[2, 3]").json()
+
+    assert (body["nb_importees"], body["nb_doublons_ecartes"]) == (2, 0)
+
+
+def test_chosen_lines_cannot_be_mixed_with_the_old_options(client, comptable, db, journals):
+    response = confirm(
+        client, comptable, db, xlsx(EXPORT), lignes_choisies="[3]", ecarter_erreurs="true"
+    )
+
+    assert response.status_code == 422
+
+
+def test_no_chosen_line_is_refused(client, comptable, db, journals):
+    response = confirm(client, comptable, db, xlsx(EXPORT), lignes_choisies="[]")
+
+    assert response.status_code == 409

@@ -10,19 +10,31 @@ export function toggleVue(current: VueLignes, clicked: VueLignes): VueLignes {
   return current === clicked ? "toutes" : clicked;
 }
 
-/** Lignes d'un export Sage à montrer selon la tuile choisie (« importer » : lignes valides et
- *  doublons internes gardés). */
+type LigneCochable = { numero: number; statut: string; doublon_de: number | null };
+
+/** Une ligne déjà importée (doublon sans ligne d'origine dans le fichier) ne se coche jamais. */
+export function cochable(line: LigneCochable): boolean {
+  return !(line.statut === "Doublon" && line.doublon_de === null);
+}
+
+/**
+ * Cases cochées par défaut (08/10/2026) : toutes les lignes cochables, valides, en erreur et
+ * doublons internes au fichier. Une ligne en erreur cochée bloque la confirmation tant qu'elle
+ * n'est pas corrigée (relevés) ou décochée. Sert aussi au bouton « Tout cocher ».
+ */
+export function defaultChecked(lines: readonly LigneCochable[]): Set<number> {
+  return new Set(lines.filter(cochable).map((line) => line.numero));
+}
+
+/** Lignes d'un export Sage à montrer selon la tuile choisie (« importer » : lignes cochées). */
 export function sageLinesFor<T extends { numero: number; statut: string }>(
   lines: readonly T[],
   vue: VueLignes,
-  gardees: ReadonlySet<number>,
+  cochees: ReadonlySet<number>,
 ): T[] {
   switch (vue) {
     case "importer":
-      return lines.filter(
-        (line) =>
-          line.statut === "Valide" || (line.statut === "Doublon" && gardees.has(line.numero)),
-      );
+      return lines.filter((line) => cochees.has(line.numero));
     case "erreurs":
       return lines.filter((line) => line.statut === "Erreur");
     case "doublons":

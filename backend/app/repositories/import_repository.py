@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     BalanceCheck,
     BankAccount,
+    BankAccountBalance,
     BankStatement,
     BankTransaction,
     ColumnMapping,
@@ -139,3 +141,45 @@ def pointages_of_company(db: Session, company_id: int) -> list[tuple[str, int]]:
         .where(BankAccount.company_id == company_id, PointageType.actif.is_(True))
     )
     return [(row[0], row[1]) for row in rows]
+
+
+def last_known_balance(
+    db: Session, account_id: int, before: date
+) -> tuple[date, Decimal, str] | None:
+    """Dernier solde connu du compte avant une date : (jour, solde, origine), le plus récent entre
+    la dernière opération importée qui porte un solde et le dernier solde du jour enregistré ; à
+    date égale, l'opération l'emporte."""
+    operation = db.execute(
+        select(BankTransaction.date_operation, BankTransaction.solde)
+        .where(
+            BankTransaction.bank_account_id == account_id,
+            BankTransaction.date_operation < before,
+            BankTransaction.solde.is_not(None),
+        )
+        .order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
+        .limit(1)
+    ).first()
+    balance = db.execute(
+        select(BankAccountBalance.date_solde, BankAccountBalance.solde)
+        .where(
+            BankAccountBalance.bank_account_id == account_id,
+            BankAccountBalance.date_solde < before,
+        )
+        .order_by(BankAccountBalance.date_solde.desc())
+        .limit(1)
+    ).first()
+    if operation is not None and (balance is None or operation[0] >= balance[0]):
+        return operation[0], operation[1], "operation"
+    if balance is not None:
+        return balance[0], balance[1], "solde"
+    return None
+
+
+def statement_transactions_in_order(db: Session, statement_id: int) -> list[BankTransaction]:
+    """Opérations d'un relevé, par date puis ordre d'import."""
+    query = (
+        select(BankTransaction)
+        .where(BankTransaction.statement_id == statement_id)
+        .order_by(BankTransaction.date_operation, BankTransaction.id)
+    )
+    return list(db.scalars(query))

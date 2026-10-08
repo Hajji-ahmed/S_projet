@@ -209,3 +209,35 @@ export function summariseDrafts(
   }
   return result;
 }
+
+/**
+ * Fichier sans soldes (08/10/2026) : solde de chaque ligne = solde précédent − débit + crédit,
+ * depuis `ouverture`, dans le même ordre que le serveur (ordre du fichier, inversé s'il va du plus
+ * récent au plus ancien). Une ligne au montant illisible n'a pas de solde. Centimes exacts.
+ */
+export function runningBalances(
+  drafts: LineDraft[],
+  ouverture: string,
+): { soldes: Map<number, string | null>; cloture: string } {
+  const lines = drafts.map(draftToLigne);
+  const order = lines.map((_, index) => index);
+  if ((lines[0]?.date_operation ?? "") > (lines.at(-1)?.date_operation ?? "")) order.reverse();
+  const soldes = new Map<number, string | null>();
+  let solde = toCents(ouverture);
+  for (const index of order) {
+    const draft = drafts[index];
+    const { debit, credit } = lines[index];
+    // Montant illisible (saisi mais non reconnu) ou absent : pas de solde pour cette ligne
+    const unreadable =
+      (draft.debit.trim() !== "" && debit === null) ||
+      (draft.credit.trim() !== "" && credit === null) ||
+      (debit === null && credit === null);
+    if (unreadable) {
+      soldes.set(draft.numero, null);
+      continue;
+    }
+    solde = solde - toCents(debit ?? "0") + toCents(credit ?? "0");
+    soldes.set(draft.numero, fromCents(solde));
+  }
+  return { soldes, cloture: fromCents(solde) };
+}

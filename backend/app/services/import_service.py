@@ -127,6 +127,11 @@ class AnalysedLine:
     commentaire: str | None = None
     # « Corrigée » quand l'aperçu modifiable a changé au moins un champ (confirmation avec `lignes`)
     origine: str = "Fichier"
+    # Solde calculé par SIMTIS : le fichier n'a pas de soldes (décision du 08/10/2026)
+    solde_calcule: bool = False
+    # Aperçu seulement : solde calculé depuis le solde d'ouverture choisi. Il ne va jamais dans
+    # `solde`, qui entre dans l'empreinte de la ligne et dans la comparaison avec l'envoi de l'écran
+    solde_apercu: Decimal | None = None
     hash_ligne: str | None = None
     # Doublon interne au fichier : numéro de la première ligne identique (gardable à la confirmation)
     doublon_de: int | None = None
@@ -172,6 +177,11 @@ class StatementAnalysis:
     solde_final_fichier: Decimal | None = None
     # Lignes non retenues (titres, totaux, soldes) et leur raison : affichées, jamais importées
     lignes_ignorees: list[IgnoredLine] = field(default_factory=list)
+    # Fichier sans soldes : SIMTIS les calcule depuis un solde d'ouverture (08/10/2026)
+    soldes_calcules: bool = False
+    solde_ouverture_propose: Decimal | None = None
+    solde_ouverture_source: str | None = None
+    solde_ouverture_choisi: Decimal | None = None
 
 
 # --- Lecture du classeur et correspondance (module commun `import_file`) --------------------------
@@ -496,6 +506,63 @@ def _summarise(
     return summary
 
 
+# --- Relevés sans soldes : solde calculé (décision du 08/10/2026) ---------------------------------
+
+OUVERTURE_A_SAISIR = (
+    "Indiquez le solde d'ouverture : le fichier n'a pas de soldes et aucun solde connu du compte "
+    "ne précède sa première opération."
+)
+
+
+def _chronological(lines: list[AnalysedLine]) -> list[AnalysedLine]:
+    """Lignes dans l'ordre chronologique : un relevé du plus récent au plus ancien est retourné."""
+    dated = [line for line in lines if line.date_operation is not None]
+    if dated and dated[0].date_operation > dated[-1].date_operation:
+        return lines[::-1]
+    return list(lines)
+
+
+def running_balances(
+    lines: list[AnalysedLine], opening: Decimal, *, apercu: bool = False
+) -> Decimal:
+    """Solde de chaque ligne = solde précédent − débit + crédit, depuis `opening` ; retourne le
+    solde de clôture. `apercu` : le résultat va dans `solde_apercu` (analyse), sinon dans `solde`
+    (enregistrement). Une ligne sans montant lisible n'a pas de solde."""
+    solde = opening
+    for line in _chronological(lines):
+        value = None if line.montant is None else solde + line.montant
+        if value is not None:
+            solde = value
+        if apercu:
+            line.solde_apercu = value
+        else:
+            line.solde, line.solde_calcule = value, True
+    return solde
+
+
+def _proposed_opening(
+    db: Session, account: BankAccount, lines: list[AnalysedLine], file_opening: Decimal | None
+) -> tuple[Decimal | None, str]:
+    """Solde d'ouverture proposé : la ligne SOLDE INITIAL du fichier, sinon le dernier solde connu
+    du compte avant la première opération à importer, sinon rien (à saisir)."""
+    if file_opening is not None:
+        return file_opening, "Ligne SOLDE INITIAL du fichier"
+    dates = [
+        line.date_operation
+        for line in lines
+        if line.date_operation is not None and line.statut != "Doublon"
+    ]
+    if not dates:
+        return None, "À saisir"
+    known = import_repository.last_known_balance(db, account.id, min(dates))
+    if known is None:
+        return None, "À saisir"
+    jour, solde, origine = known
+    if origine == "operation":
+        return solde, f"Solde de la dernière opération importée, le {jour:%d/%m/%Y}"
+    return solde, f"Solde du jour enregistré le {jour:%d/%m/%Y}"
+
+
 def _no_amount(value: object) -> bool:
     """Cellule de montant vide, à zéro (0, « 0,00 ») ou tiret : ce que les banques écrivent
     dans Débit / Crédit sur une ligne de solde."""
@@ -536,8 +603,12 @@ def analyse_statement(
     mapping: Mapping | None = None,
     feuille: str | None = None,
     today: date | None = None,
+    solde_ouverture: Decimal | None = None,
 ) -> StatementAnalysis:
-    """Analyse un relevé pour un compte. Ne modifie pas la base."""
+    """Analyse un relevé pour un compte. Ne modifie pas la base.
+
+    Fichier sans soldes : `solde_ouverture` (saisi à l'étape Validation) remplace le solde
+    d'ouverture proposé, et les soldes de l'aperçu en sont calculés."""
     account = account_service.get_account(db, account_id)
     if not account.actif:
         raise ConflictError(
@@ -583,6 +654,8 @@ def analyse_statement(
     today = today or position_service.business_today()
     pointages = _pointages(db, account.company_id)
     lines, ignored = [], 0
+    # Une cellule Solde remplie (même illisible) : le fichier a ses soldes, rien n'est calculé
+    solde_dans_le_fichier = False
     for offset, row in enumerate(data):
         if all(is_blank(cell) for cell in row):
             continue
@@ -612,11 +685,28 @@ def analyse_statement(
             ignored += 1
             analysis.lignes_ignorees.append(import_file.ignored_line(numero, raison, row))
             continue
+        solde_dans_le_fichier = solde_dans_le_fichier or not is_blank(cells.get("solde"))
         lines.append(_read_line(numero, cells, mapping, account.bank, today, pointages))
 
     _direction_from_balances(lines, mapping, analysis.solde_initial_fichier, pointages)
     _mark_duplicates(db, account, lines)
     analysis.lignes = lines
+    # Pas de soldes dans le fichier : ils sont calculés depuis un solde d'ouverture
+    if lines and not solde_dans_le_fichier:
+        analysis.soldes_calcules = True
+        proposed, source = _proposed_opening(db, account, lines, analysis.solde_initial_fichier)
+        analysis.solde_ouverture_propose, analysis.solde_ouverture_source = proposed, source
+        opening = solde_ouverture if solde_ouverture is not None else proposed
+        analysis.solde_ouverture_choisi = opening
+        closing = None
+        if opening is not None:
+            valid = [line for line in lines if line.statut == "Valide"]
+            closing = running_balances(valid, opening, apercu=True) if valid else None
+        analysis.resume = _summarise(lines, ignored, opening, closing)
+        # Ces soldes ne viennent pas d'une ligne SOLDE INITIAL / SOLDE FINAL du fichier
+        analysis.resume.solde_ouverture_fichier = analysis.solde_initial_fichier is not None
+        analysis.resume.solde_cloture_fichier = False
+        return analysis
     analysis.resume = _summarise(
         lines, ignored, analysis.solde_initial_fichier, analysis.solde_final_fichier
     )
@@ -956,6 +1046,7 @@ def confirm_statement(
     acteur_id: int,
     ip: str | None = None,
     today: date | None = None,
+    solde_ouverture: Decimal | None = None,
 ) -> StatementImport:
     """Enregistre un relevé : le fichier est analysé à nouveau, puis ses lignes retenues sont importées.
 
@@ -971,6 +1062,7 @@ def confirm_statement(
         mapping=mapping,
         feuille=feuille,
         today=today,
+        solde_ouverture=solde_ouverture,
     )
     account = analysis.account
     if analysis.erreurs_mapping:
@@ -987,7 +1079,18 @@ def confirm_statement(
         selection = _file_selection(analysis, garder_doublons, ecarter_erreurs)
     lines = selection.lines
     dates = [line.date_operation for line in lines]
-    balances = _balances(lines, analysis.solde_initial_fichier, analysis.solde_final_fichier)
+    if analysis.soldes_calcules:
+        # Le serveur refait le calcul sur les lignes retenues, jamais celui de l'écran
+        if analysis.solde_ouverture_choisi is None:
+            raise ConflictError(OUVERTURE_A_SAISIR)
+        running_balances(lines, analysis.solde_ouverture_choisi)
+    balances = _balances(
+        lines,
+        analysis.solde_ouverture_choisi
+        if analysis.soldes_calcules
+        else analysis.solde_initial_fichier,
+        analysis.solde_final_fichier,
+    )
     total_debit = sum((line.debit for line in lines), Decimal("0.00"))
     total_credit = sum((line.credit for line in lines), Decimal("0.00"))
 
@@ -1033,6 +1136,7 @@ def confirm_statement(
                     commentaire=line.commentaire,
                     hash_ligne=line.hash_ligne,
                     origine=line.origine,
+                    solde_calcule=line.solde_calcule,
                 )
                 for line in lines
             ),
@@ -1324,3 +1428,75 @@ def export_account_statement(
         f"{result.periode_debut}_{result.periode_fin}.xlsx"
     )
     return filename, _standard_workbook(account, result.rows)
+
+
+# --- Relevé déjà importé sans soldes : recalcul (08/10/2026) ---------------------------------------
+
+
+@dataclass
+class Recalcul:
+    statement: BankStatement
+    nb_operations: int
+    solde_ouverture: Decimal
+    solde_cloture: Decimal
+    solde_du_jour: str | None
+
+
+def recompute_statement_balances(
+    db: Session,
+    statement_id: int,
+    solde_ouverture: Decimal,
+    *,
+    acteur_id: int | None = None,
+    ip: str | None = None,
+) -> Recalcul:
+    """Calcule les soldes d'un relevé importé sans soldes (solde précédent − débit + crédit, par
+    date puis ordre d'import), met à jour ses soldes d'ouverture et de clôture et le solde du jour
+    de clôture, avec audit. Refusé si le relevé a des soldes lus dans le fichier."""
+    statement = import_repository.get_statement(db, statement_id)
+    if statement is None:
+        raise NotFoundError("Relevé introuvable.")
+    operations = import_repository.statement_transactions_in_order(db, statement.id)
+    if not operations:
+        raise ConflictError("Ce relevé n'a aucune opération.")
+    if any(op.solde is not None and not op.solde_calcule for op in operations):
+        raise ConflictError("Ce relevé a déjà ses soldes, lus dans le fichier : rien à calculer.")
+    avant = {
+        "solde_ouverture": statement.solde_ouverture,
+        "solde_cloture": statement.solde_cloture,
+    }
+    solde = solde_ouverture
+    for operation in operations:
+        solde = solde + operation.montant
+        operation.solde, operation.solde_calcule = solde, True
+    statement.solde_ouverture, statement.solde_cloture = solde_ouverture, solde
+    # Période du relevé (solde du jour de clôture), déduite des opérations si elle manque
+    statement.periode_debut = statement.periode_debut or operations[0].date_operation
+    statement.periode_fin = statement.periode_fin or operations[-1].date_operation
+    db.flush()
+    batch = db.get(ImportBatch, statement.import_batch_id) if statement.import_batch_id else None
+    _, solde_du_jour = _closing_balance(
+        db,
+        statement.bank_account,
+        statement,
+        Balances(solde_ouverture, solde, True),
+        batch.fichier_nom if batch else f"n° {statement.id}",
+        acteur_id,
+        ip,
+    )
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="recalcul_soldes",
+        entite="bank_statement",
+        entite_id=statement.id,
+        avant=avant,
+        apres={
+            "solde_ouverture": solde_ouverture,
+            "solde_cloture": solde,
+            "operations": len(operations),
+        },
+        ip=ip,
+    )
+    db.commit()
+    return Recalcul(statement, len(operations), solde_ouverture, solde, solde_du_jour)

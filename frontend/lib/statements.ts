@@ -61,6 +61,7 @@ export function importForm(request: ImportRequest, options?: ConfirmOptions): Fo
     form.append("mapping", JSON.stringify(mapped));
   }
   if (request.feuille) form.append("feuille", request.feuille);
+  if (request.soldeOuverture) form.append("solde_ouverture", request.soldeOuverture);
   if (options && "lignes" in options) {
     // Aperçu modifiable : les lignes remplacent garder_doublons / ecarter_erreurs. Envoyées comme
     // un fichier JSON : le serveur limite un champ de formulaire à 1 Mo (environ 3 700 lignes).

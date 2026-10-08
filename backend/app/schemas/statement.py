@@ -92,6 +92,9 @@ class LigneAnalyseOut(BaseModel):
     credit: Decimal | None
     montant: Decimal | None
     solde: Decimal | None
+    solde_apercu: Decimal | None = Field(
+        None, description="Fichier sans soldes : solde calculé depuis le solde d'ouverture choisi"
+    )
     pointage: str | None = Field(description="Valeur lue dans le fichier, telle quelle")
     pointage_type_id: int | None
     pointage_libelle: str | None
@@ -142,6 +145,13 @@ class AnalyseOut(BaseModel):
     mapping_source: Literal["Détection", "Modèle de la banque", "Utilisateur"]
     erreurs_mapping: list[str]
     lignes: list[LigneAnalyseOut]
+    soldes_calcules: bool = Field(
+        False, description="Le fichier n'a pas de soldes : SIMTIS les calcule (08/10/2026)"
+    )
+    solde_ouverture_propose: Decimal | None = Field(
+        None, description="Solde d'ouverture proposé pour le calcul (None : à saisir)"
+    )
+    solde_ouverture_source: str | None = None
     lignes_ignorees: list["LigneIgnoreeOut"] = Field(
         default_factory=list, description="Lignes non retenues et leur raison (jamais importées)"
     )
@@ -170,6 +180,9 @@ class AnalyseOut(BaseModel):
             mapping_source=analysis.mapping_source,
             erreurs_mapping=analysis.erreurs_mapping,
             lignes=[LigneAnalyseOut.model_validate(line) for line in analysis.lignes],
+            soldes_calcules=analysis.soldes_calcules,
+            solde_ouverture_propose=analysis.solde_ouverture_propose,
+            solde_ouverture_source=analysis.solde_ouverture_source,
             lignes_ignorees=[
                 LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
             ],

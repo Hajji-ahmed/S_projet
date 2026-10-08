@@ -49,3 +49,14 @@ describe("accountingForm", () => {
     expect([...form.keys()]).toEqual(["fichier", "company_id"]);
   });
 });
+
+describe("accountingForm, lignes cochées", () => {
+  it("envoie les numéros des lignes cochées, triés", () => {
+    const file = new File(["x"], "sage.xlsx");
+    const form = accountingForm(file, 3, { lignesChoisies: [9, 2] });
+
+    expect(form.get("lignes_choisies")).toBe("[2,9]");
+    expect(form.get("garder_doublons")).toBeNull();
+    expect(form.get("ecarter_erreurs")).toBeNull();
+  });
+});

@@ -47,7 +47,7 @@ export function AppSidebar({
     >
       <div
         className={cn(
-          "flex h-[88px] shrink-0 items-center bg-simtis-card px-5 md:justify-center md:px-2",
+          "flex h-[88px] shrink-0 items-center border-r-2 border-simtis-primary bg-simtis-card px-5 md:justify-center md:px-2",
           collapsed ? "lg:justify-center lg:px-2" : "lg:justify-start lg:px-5",
         )}
       >

@@ -1,14 +1,16 @@
 """Commande de gestion des comptes : `python -m app.cli`."""
 
 from contextlib import nullcontext
+from datetime import date
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
 from app import cli
 from app.core.security import verify_password
-from app.models import AuditLog, User, UserSession
-from tests.helpers import login, make_auth_user
+from app.models import AuditLog, BankAccountBalance, BankTransaction, User, UserSession
+from tests.helpers import build_transaction, login, make_auth_user, make_world, save
 
 
 @pytest.fixture
@@ -110,3 +112,74 @@ def test_set_password_for_unknown_email_is_refused(run, reference):
 
     assert code == 1
     assert "Aucun compte" in err
+
+
+# --- Recalcul des soldes d'un relevé importé sans soldes (08/10/2026) ------------------------------
+
+
+def _statement_without_balances(db):
+    world = make_world(db)
+    for jour, montant in ((2, "1000"), (3, "-250"), (3, "50")):
+        value = Decimal(montant)
+        save(
+            db,
+            build_transaction(
+                world.statement,
+                date_operation=date(2026, 9, jour),
+                debit=max(-value, Decimal(0)),
+                credit=max(value, Decimal(0)),
+                montant=value,
+            ),
+        )
+    return world
+
+
+def test_recompute_balances_of_an_imported_statement(run, db):
+    world = _statement_without_balances(db)
+
+    code, out, _ = run(
+        "recalculer-soldes", "--releve", str(world.statement.id), "--solde-ouverture", "5000000"
+    )
+
+    assert code == 0, out
+    assert "3 soldes calculés" in out
+    rows = db.scalars(
+        select(BankTransaction)
+        .filter_by(statement_id=world.statement.id)
+        .order_by(BankTransaction.date_operation, BankTransaction.id)
+    ).all()
+    assert [(row.solde, row.solde_calcule) for row in rows] == [
+        (Decimal("5001000.00"), True),
+        (Decimal("5000750.00"), True),
+        (Decimal("5000800.00"), True),
+    ]
+    db.refresh(world.statement)
+    assert (world.statement.solde_ouverture, world.statement.solde_cloture) == (
+        Decimal("5000000.00"),
+        Decimal("5000800.00"),
+    )
+    balance = db.scalar(select(BankAccountBalance).filter_by(bank_account_id=world.account.id))
+    assert (balance.date_solde.isoformat(), balance.solde, balance.source) == (
+        "2026-09-03",
+        Decimal("5000800.00"),
+        "Relevé",
+    )
+    [log] = db.scalars(select(AuditLog).filter_by(action="recalcul_soldes")).all()
+    assert log.nouvelle_valeur["operations"] == 3
+
+
+def test_recompute_refuses_a_statement_with_file_balances_or_a_bad_amount(run, db):
+    world = _statement_without_balances(db)
+    first = db.scalars(select(BankTransaction).filter_by(statement_id=world.statement.id)).first()
+    first.solde = Decimal("10")
+    db.flush()
+
+    refused = run(
+        "recalculer-soldes", "--releve", str(world.statement.id), "--solde-ouverture", "0"
+    )
+    bad = run("recalculer-soldes", "--releve", str(world.statement.id), "--solde-ouverture", "x")
+    missing = run("recalculer-soldes", "--releve", "999999", "--solde-ouverture", "0")
+
+    assert refused[0] == 1 and "déjà ses soldes" in refused[2]
+    assert bad[0] == 1 and "illisible" in bad[2]
+    assert missing[0] == 1 and "introuvable" in missing[2]

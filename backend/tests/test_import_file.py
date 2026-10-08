@@ -12,12 +12,15 @@ from app.services.import_file import (
     check_file,
     columns_of,
     detect_header,
+    field_for_header,
     headers_of,
     mapping_errors,
     mapping_from_headers,
     propose_mapping,
     read_sheet,
 )
+from app.services.import_service import STATEMENT_FIELDS
+from app.services.normalization_service import normalize_header
 from tests.helpers import big_xlsx, xls
 
 FIELDS = (
@@ -162,3 +165,70 @@ def test_a_sheet_of_50000_lines_is_read_and_one_more_is_refused():
     too_long = big_xlsx(["Date", "Libellé", "Débit"], 50_000 + 31, row)
     with pytest.raises(ConflictError, match="50 000 lignes au plus"):
         read_sheet(too_long, None)
+
+
+# --- Abréviations des en-têtes (08/10/2026) --------------------------------------------------------
+
+STATEMENT_HEADERS = (
+    ImportField("date_operation", "Date d'opération", True, ("date operation", "date op", "date")),
+    ImportField("date_valeur", "Date de valeur", False, ("date valeur", "valeur")),
+    ImportField("libelle", "Libellé", True, ("libelle", "operation")),
+    ImportField("debit", "Débit", False, ("debit", "montant debit")),
+    ImportField("credit", "Crédit", False, ("credit",)),
+    ImportField("montant", "Montant signé", False, ("montant",)),
+)
+
+
+@pytest.mark.parametrize(
+    ("entete", "expected"),
+    [
+        ("DT opération", ("date_operation", 2)),  # relevé Attijariwafa
+        ("DT valeur", ("date_valeur", 2)),
+        ("Libellé large", ("libelle", 1)),  # commence par « Libellé »
+        ("Lib", ("libelle", 2)),
+        ("Mnt", ("montant", 2)),
+        ("Mt débit", ("debit", 2)),  # « montant debit »
+        ("Déb", ("debit", 2)),
+        ("Cred", ("credit", 2)),
+        ("DTX", (None, 0)),  # une abréviation se lit en mot entier seulement
+    ],
+)
+def test_common_abbreviations_are_understood(entete, expected):
+    assert field_for_header(normalize_header(entete), STATEMENT_HEADERS) == expected
+
+
+def test_awb_statement_headers_are_detected():
+    content = xlsx(
+        [
+            ["ATTIJARIWAFA BANK"],
+            [
+                None,
+                "DT opération",
+                None,
+                None,
+                "DT valeur",
+                None,
+                "Libellé large",
+                "Débit",
+                "Crédit",
+            ],
+            [
+                None,
+                "06/10/2026",
+                None,
+                None,
+                "06/10/2026",
+                None,
+                "PAIEMENT CHEQUE 6723309",
+                500,
+                None,
+            ],
+        ]
+    )
+    _, _, rows = read_sheet(content, None)
+    index = detect_header(rows, STATEMENT_FIELDS)
+    mapping = propose_mapping(columns_of(rows[index], rows[index + 1 :]), STATEMENT_FIELDS)
+
+    assert index == 1
+    assert (mapping["date_operation"], mapping["date_valeur"], mapping["libelle"]) == (1, 4, 6)
+    assert (mapping["debit"], mapping["credit"]) == (7, 8)
