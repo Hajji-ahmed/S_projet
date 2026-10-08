@@ -31,7 +31,7 @@ can_view = require_any_permission(
     PermissionCode.STATEMENTS_IMPORT, PermissionCode.RECONCILIATION_VIEW
 )
 
-Fichier = Annotated[UploadFile, File(description="Relevé Excel .xlsx, 5 Mo au plus")]
+Fichier = Annotated[UploadFile, File(description="Relevé Excel .xlsx ou .xls, 20 Mo au plus")]
 CompteId = Annotated[int, Form(description="Compte du relevé")]
 MappingForm = Annotated[
     str | None, Form(description="JSON {champ: index de colonne} ; absent = détection")
@@ -160,8 +160,8 @@ def export_account_statement(
     return _xlsx(*import_service.export_account_statement(db, account_id, date_from, date_to))
 
 
-# 5 000 lignes au plus, chacune de quelques centaines d'octets : 20 Mo laissent une large marge
-MAX_LINES_BYTES = 20 * 1024 * 1024
+# 50 000 lignes au plus, chacune de quelques centaines d'octets : 60 Mo laissent une large marge
+MAX_LINES_BYTES = 60 * 1024 * 1024
 
 
 def _lines_text(lignes: UploadFile | None) -> str | None:

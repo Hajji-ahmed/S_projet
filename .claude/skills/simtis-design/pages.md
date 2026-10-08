@@ -167,3 +167,12 @@ Les pages `/previsions` et `/devises` ont été **supprimées le 05/10/2026** (d
 ## Rapports (`/rapports`) · Administration (`/administration`)
 
 Mêmes composants : PageHeader, cartes, DataTable, FilterBar, Modal. Aucun style spécifique.
+
+
+## Changements du 08/10/2026
+
+- **Barre latérale** : sur grand écran, un bouton en bas (« Réduire le menu », icônes `PanelLeftClose` / `PanelLeftOpen`) la réduit aux icônes (largeur `--simtis-sidebar-collapsed-width`, nom de la page au survol) ou l'agrandit ; le choix est mémorisé dans le navigateur. Tablette : toujours réduite. Mobile : tiroir.
+- **Banques** (`/banques`) : chaque carte n'affiche que le Solde (22px, `simtis-primary`, rouge si négatif), puis les soldes des autres comptes dans leur devise. Crédit disponible et Position disponible restent sur la page de la banque.
+- **Comptes** : seuls les comptes actifs sont listés (plus de colonne ni de filtre Statut). Action « Supprimer » (icône `Trash2`, fenêtre de confirmation) pour un compte sans historique, « Désactiver » (icône `PowerOff`) pour un compte qui en a un.
+- **Imports (relevés et Sage), étape Validation** : tuiles cliquables `FilterTile` (bordure `simtis-primary` + `bg-simtis-light` quand active) ; « Lignes ignorées » affiche `IgnoredLinesTable` (Ligne · Raison · Contenu de la ligne). Zone de dépôt : « Excel .xlsx ou .xls, 5 Mo au plus ».
+- **Imports, gros fichiers** : l'aperçu de l'étape Validation (relevés, Sage, lignes ignorées) affiche 100 lignes par page avec le composant `Pagination` (`components/ui/Pagination.tsx` : « N lignes · Page X sur Y », Précédent / Suivant) ; changer de tuile revient à la page 1. Zone de dépôt : « Excel .xlsx ou .xls, 20 Mo au plus ».

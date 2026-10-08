@@ -3,7 +3,6 @@
 import { Ban, History } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Pagination } from "@/components/rapprochement/TransactionsPane";
 import { ScoreBadge } from "@/components/rapprochement/Score";
 import { StatButton } from "@/components/rapprochement/StatButton";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +11,7 @@ import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { Pagination } from "@/components/ui/Pagination";
 import { Modal } from "@/components/ui/Modal";
 import { pageCount } from "@/lib/accounting";
 import { ApiError } from "@/lib/api";

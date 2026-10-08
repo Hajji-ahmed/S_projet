@@ -32,7 +32,7 @@ can_read = require_any_permission(
     PermissionCode.ACCOUNTING_IMPORT, PermissionCode.RECONCILIATION_VIEW
 )
 
-Fichier = Annotated[UploadFile, File(description="Export Sage / SI .xlsx, 5 Mo au plus")]
+Fichier = Annotated[UploadFile, File(description="Export Sage / SI .xlsx ou .xls, 20 Mo au plus")]
 SocieteId = Annotated[int, Form(description="Société de l'export")]
 MappingForm = Annotated[
     str | None, Form(description="JSON {champ: index de colonne} ; absent = détection")

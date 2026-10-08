@@ -10,10 +10,12 @@ from app.services.normalization_service import (
     clean_libelle,
     extract_reference,
     guess_pointage,
+    label_key,
     line_hash,
     normalize_header,
     parse_amount,
     parse_date,
+    pointage_code,
 )
 
 
@@ -105,26 +107,65 @@ def test_reference_is_extracted_from_the_label(libelle, reference):
     assert extract_reference(libelle) == reference
 
 
+CATEGORIES = (
+    "A voir",
+    "AGIOS",
+    "AGIOS D'ECHELLE",
+    "CNSS",
+    "VIR CNSS",
+    "COM",
+    "FRAIS",
+    "FRAIS D'APPROCHE",
+    "LA PAIE",
+    "INTERET",
+    "RESTITUTION INTERETS DEBITEURS/FC",
+    "REMBOURSEMENT PRÊT",
+    "SIMTIS-TEFIL",
+    "TVA",
+)
+
+
 @pytest.mark.parametrize(
-    ("libelle", "debit", "credit", "expected"),
+    ("libelle", "expected"),
     [
-        ("COMMISSION BANCAIRE", "250", None, "FRAIS_BANCAIRES"),
-        ("AGIOS / FRAIS DE FINANCEMENT", "690", None, "FRAIS_BANCAIRES"),
-        ("frais tenue de compte", "150", None, "FRAIS_BANCAIRES"),
-        ("COMMISSIONS SUR REMISE", None, "5", "FRAIS_BANCAIRES"),  # le mot-clé passe avant le sens
-        ("VIR CLIENT ATLAS TEXTILE", None, "45000", "ENCAISSEMENT"),
-        ("REMISE CHÈQUES CLIENTS", None, "20000", "ENCAISSEMENT"),
-        ("VIR FOURNISSEUR ABC", "18000", None, "DECAISSEMENT"),
-        ("PRÉLÈVEMENT ASSURANCE", "3200", None, "DECAISSEMENT"),
-        ("CHQ N°458721", "12500", None, "DECAISSEMENT"),
-        ("FRAISIER SA", None, "10", "ENCAISSEMENT"),  # mot entier seulement
-        ("SANS MONTANT", None, None, None),
+        ("AGIOS TRIMESTRE 3", "AGIOS"),
+        ("Agios d'échelle T3", "AGIOS D'ECHELLE"),  # le plus long nom gagne
+        ("VIR CNSS SEPTEMBRE", "VIR CNSS"),
+        ("PRLV CNSS", "CNSS"),
+        ("COMMISSION SUR REMISE", "COM"),  # synonyme
+        ("COM/VIREMENT", "COM"),  # la ponctuation sépare les mots
+        ("FRAIS TENUE DE COMPTE", "FRAIS"),
+        ("FRAIS D'APPROCHE IMPORT", "FRAIS D'APPROCHE"),
+        ("VIR SALAIRES SEPT", "LA PAIE"),
+        ("INTERETS DEBITEURS", "INTERET"),
+        ("RESTITUTION INTERETS DEBITEURS/FC", "RESTITUTION INTERETS DEBITEURS/FC"),
+        ("REMBOURSEMENT PRET 12", "REMBOURSEMENT PRÊT"),
+        ("VIREMENT SIMTIS TEFIL", "SIMTIS-TEFIL"),
+        ("COMPTE COURANT", None),  # « COM » en mot entier seulement
+        ("FRAISIER SA", None),
+        ("A VOIR AVEC LA BANQUE", None),  # « A voir » n'est jamais automatique
+        ("VIR CLIENT ATLAS", None),
+        ("", None),
+        (None, None),
     ],
 )
-def test_pointage_is_guessed_from_label_then_direction(libelle, debit, credit, expected):
-    amount = lambda value: None if value is None else Decimal(value)  # noqa: E731
+def test_pointage_is_the_category_named_in_the_label(libelle, expected):
+    assert guess_pointage(libelle, CATEGORIES) == expected
 
-    assert guess_pointage(libelle, amount(debit), amount(credit)) == expected
+
+def test_label_key_and_code_ignore_accents_case_and_punctuation():
+    assert label_key("  Agios d'échelle ") == "AGIOS D ECHELLE"
+    assert pointage_code("ENCAISSEMENT HORS GROUP/DECATHLON") == "ENCAISSEMENT_HORS_GROUP_DECATHLON"
+    assert pointage_code("REMBOURSEMENT PRÊT") == "REMBOURSEMENT_PRET"
+
+
+def test_the_74_categories_have_distinct_codes_that_fit_the_column():
+    from app.seeds.pointages import CATEGORIES_POINTAGE
+
+    codes = [pointage_code(libelle) for libelle in CATEGORIES_POINTAGE]
+    assert len(CATEGORIES_POINTAGE) == 74
+    assert len(set(codes)) == 74
+    assert max(len(code) for code in codes) <= 60
 
 
 @pytest.mark.parametrize(

@@ -35,3 +35,8 @@ export function setAccountStatus(id: number, actif: boolean) {
     body: JSON.stringify({ actif }),
   });
 }
+
+/** Supprime un compte sans historique (et ses soldes saisis) ; 409 s'il a un historique. */
+export function deleteAccount(id: number) {
+  return apiFetch<void>(`/accounts/${id}`, { method: "DELETE" });
+}

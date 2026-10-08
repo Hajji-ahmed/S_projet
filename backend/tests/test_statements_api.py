@@ -23,8 +23,9 @@ from app.models import (
     ImportBatch,
     PointageType,
 )
+from app.repositories import import_repository
 from app.services.position_service import business_today
-from tests.helpers import bearer, build_account, login, make_auth_user, save
+from tests.helpers import bearer, big_xlsx, build_account, login, make_auth_user, save, xls
 
 URL = "/api/statements/import/analyse"
 TODAY = business_today()
@@ -139,10 +140,10 @@ def test_lines_are_normalised(client, tresorerie, account, db):
         "montant": "50000.00",
         "solde": "1050000.00",
         "pointage": None,
-        # Pas de colonne Pointage : déduit du sens (crédit → Encaissement)
-        "pointage_type_id": pointage_id(db, "ENCAISSEMENT"),
-        "pointage_libelle": "Encaissement",
-        "pointage_auto": True,
+        # Aucune catégorie nommée dans le libellé : sans pointage, à choisir (08/10/2026)
+        "pointage_type_id": None,
+        "pointage_libelle": None,
+        "pointage_auto": False,
         "lettrage_escompte": None,
         "commentaire": None,
         "hash_ligne": None,
@@ -154,9 +155,9 @@ def test_lines_are_normalised(client, tresorerie, account, db):
         "-12500.50",
     )
     assert cheque["reference"] == "1234567"
-    assert cheque["pointage_libelle"] == "Décaissement"
+    assert cheque["pointage_libelle"] is None
     assert fees["libelle"] == "FRAIS TENUE DE COMPTE"
-    assert fees["pointage_libelle"] == "Frais bancaires"
+    assert (fees["pointage_libelle"], fees["pointage_auto"]) == ("FRAIS", True)
     assert len({line["hash_ligne"] for line in body["lignes"]}) == 3
 
 
@@ -328,9 +329,9 @@ def test_unsigned_amount_takes_its_direction_from_the_balance(client, tresorerie
         (line["libelle"], line["debit"], line["credit"], line["statut"], line["pointage_libelle"])
         for line in body["lignes"]
     ] == [
-        ("VIR RECU ALPHA MODE", "0.00", "38500.00", "Valide", "Encaissement"),
-        ("PRLV FOURNISSEUR TEXTILE", "12800.00", "0.00", "Valide", "Décaissement"),
-        ("COMMISSION BANCAIRE", "175.00", "0.00", "Valide", "Frais bancaires"),
+        ("VIR RECU ALPHA MODE", "0.00", "38500.00", "Valide", None),
+        ("PRLV FOURNISSEUR TEXTILE", "12800.00", "0.00", "Valide", None),
+        ("COMMISSION BANCAIRE", "175.00", "0.00", "Valide", "COM"),  # synonyme
     ]
     assert body["resume"]["soldes_coherents"] is True
     assert (body["resume"]["total_debit"], body["resume"]["total_credit"]) == (
@@ -612,14 +613,14 @@ def test_sheet_can_be_chosen(client, tresorerie, account):
 @pytest.mark.parametrize(
     ("nom", "content", "detail"),
     [
-        ("releve.csv", b"Date;Libelle", "Seuls les fichiers Excel .xlsx sont acceptés."),
+        ("releve.csv", b"Date;Libelle", "Seuls les fichiers Excel .xlsx ou .xls sont acceptés."),
         ("releve.xlsx", b"", "Le fichier est vide."),
         (
             "releve.xlsx",
             b"pas un classeur",
-            "Fichier illisible : ce n'est pas un classeur Excel .xlsx valide.",
+            "Fichier illisible : ce n'est pas un classeur Excel .xlsx ou .xls valide.",
         ),
-        ("releve.xlsx", b"x" * (5 * 1024 * 1024 + 1), "Fichier trop volumineux : 5 Mo au plus."),
+        ("releve.xlsx", b"x" * (20 * 1024 * 1024 + 1), "Fichier trop volumineux : 20 Mo au plus."),
     ],
 )
 def test_refused_file_gives_409(client, tresorerie, account, nom, content, detail):
@@ -954,27 +955,27 @@ def test_mapping_with_a_column_without_header_is_not_saved(client, tresorerie, a
 def test_pointage_of_the_file_wins_and_is_guessed_otherwise(client, tresorerie, account, db):
     rows = [
         ["Date", "Libellé", "Débit", "Crédit", "Pointage"],
-        ["24/09/2026", "VIR INTERNE", 10, None, "frais bancaires"],  # le fichier l'emporte
-        ["24/09/2026", "AUTRE", 20, None, "Virement interne"],  # inconnu → déduit
-        ["24/09/2026", "AGIOS TRIMESTRE", 30, None, None],  # vide → mot-clé
-        ["24/09/2026", "VIR CLIENT", None, 40, None],  # vide → sens
+        ["24/09/2026", "VIR INTERNE", 10, None, "tva"],  # le fichier l'emporte
+        ["24/09/2026", "DGI ACOMPTE", 20, None, "Virement interne"],  # inconnu → libellé
+        ["24/09/2026", "AGIOS D'ECHELLE T3", 30, None, None],  # vide → le plus long nom
+        ["24/09/2026", "VIR CLIENT", None, 40, None],  # rien de reconnu → sans pointage
     ]
 
     preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
     confirm(client, tresorerie, account.id, xlsx(("Relevé", rows)))
 
     assert [(line["pointage_libelle"], line["pointage_auto"]) for line in preview] == [
-        ("Frais bancaires", False),
-        ("Décaissement", True),  # une valeur inconnue ne bloque jamais la ligne
-        ("Frais bancaires", True),
-        ("Encaissement", True),
+        ("TVA", False),
+        ("DGI", True),  # une valeur inconnue ne bloque jamais la ligne
+        ("AGIOS D'ECHELLE", True),
+        (None, False),
     ]
     assert {line["statut"] for line in preview} == {"Valide"}
     assert [row.pointage_type_id for row in transactions(db, account)] == [
-        pointage_id(db, "FRAIS_BANCAIRES"),
-        pointage_id(db, "DECAISSEMENT"),
-        pointage_id(db, "FRAIS_BANCAIRES"),
-        pointage_id(db, "ENCAISSEMENT"),
+        pointage_id(db, "TVA"),
+        pointage_id(db, "DGI"),
+        pointage_id(db, "AGIOS_D_ECHELLE"),
+        None,
     ]
 
 
@@ -1062,7 +1063,7 @@ def test_history_needs_a_company(client, tresorerie):
 def test_statement_transactions_are_listed_in_order(client, tresorerie, account, db):
     rows = [
         ["Date", "Libellé", "Débit", "Crédit", "Pointage"],
-        ["25/09/2026", "CHQ N° 1234567", "12 500,50", None, "Décaissement"],
+        ["25/09/2026", "CHQ N° 1234567", "12 500,50", None, "Cheque de banque"],
         ["24/09/2026", "VIR RECU", None, 50000, None],
     ]
     body = confirm(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
@@ -1076,12 +1077,12 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
     assert (first["date_operation"], first["credit"], first["pointage"]) == (
         "2026-09-24",
         "50000.00",
-        "Encaissement",  # pas de pointage dans le fichier : déduit du sens
+        None,  # pas de pointage dans le fichier, rien de reconnu dans le libellé
     )
     assert second | {"id": 0} == {
         "id": 0,
         "societe": "Simtis",
-        "pointage": "Décaissement",
+        "pointage": "Cheque de banque",
         "banque": "CIH",
         "date_operation": "2026-09-25",
         "date_valeur": None,
@@ -1095,7 +1096,7 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
         "montant": "-12500.50",
         "statut": "Non rapprochée",
         "origine": "Fichier",
-        "pointage_type_id": pointage_id(db, "DECAISSEMENT"),
+        "pointage_type_id": pointage_id(db, "CHEQUE_DE_BANQUE"),
     }
     # Les 11 champs du format standard d'abord, dans leur ordre
     assert list(second)[1:12] == [
@@ -1144,7 +1145,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
             None,
             50000,
             1050000,
-            "encaissement",
+            "encaissement client",
             "L-12",
             None,
         ],
@@ -1177,7 +1178,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
     ]
     assert values[1] == [
         "Simtis",
-        "Encaissement",
+        "ENCAISSEMENT CLIENT",
         "CIH",
         datetime(2026, 9, 24),
         datetime(2026, 9, 24),
@@ -1189,7 +1190,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
         None,
     ]
     # Pointage inconnu du fichier : déduit du libellé (FRAIS) ; montants en vrais nombres
-    assert values[2][:3] == ["Simtis", "Frais bancaires", "CIH"]
+    assert values[2][:3] == ["Simtis", "FRAIS", "CIH"]
     assert (values[2][6], values[2][8], values[2][10]) == (12.5, 1049987.5, "à justifier")
     assert sheet["D2"].number_format == "DD/MM/YYYY"
     assert sheet["H2"].number_format == "#,##0.00"
@@ -1506,7 +1507,7 @@ def test_submitted_line_already_imported_is_refused(client, tresorerie, account,
 def test_submitted_inactive_pointage_is_refused(client, tresorerie, account, db):
     content = xlsx(("Relevé", EDITABLE))
     lines = submitted(client, tresorerie, account, content)
-    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
+    frais = db.scalar(select(PointageType).filter_by(code="FRAIS"))
     frais.actif = False
     db.flush()
 
@@ -1553,8 +1554,13 @@ def test_malformed_lines(client, tresorerie, account, value, status):
 
 
 def first_transaction(client, tresorerie, account, db) -> BankTransaction:
+    """Première opération du relevé STATEMENT, pointée « TVA » (le libellé ne nomme aucune
+    catégorie) pour que les tests de modification partent d'un pointage connu."""
     confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
-    return transactions(db, account)[0]
+    transaction = transactions(db, account)[0]
+    transaction.pointage_type_id = pointage_id(db, "TVA")
+    db.flush()
+    return transaction
 
 
 def patch(client, headers, transaction_id, body):
@@ -1565,7 +1571,7 @@ def patch(client, headers, transaction_id, body):
 
 def test_business_fields_can_be_changed_and_are_audited(client, tresorerie, account, db):
     transaction = first_transaction(client, tresorerie, account, db)
-    frais = pointage_id(db, "FRAIS_BANCAIRES")
+    frais = pointage_id(db, "FRAIS")
 
     response = patch(
         client,
@@ -1581,14 +1587,14 @@ def test_business_fields_can_be_changed_and_are_audited(client, tresorerie, acco
     assert response.status_code == 200, response.text
     body = response.json()
     assert (body["pointage"], body["lettrage_escompte"], body["commentaire"], body["origine"]) == (
-        "Frais bancaires",
+        "FRAIS",
         "L-12",
         "Vu avec la banque",
         "Fichier",
     )
     [entry] = db.scalars(select(AuditLog).filter_by(action="modification_operation")).all()
     assert entry.ancienne_valeur == {
-        "pointage_type_id": pointage_id(db, "ENCAISSEMENT"),
+        "pointage_type_id": pointage_id(db, "TVA"),
         "lettrage_escompte": None,
         "commentaire": None,
     }
@@ -1620,7 +1626,7 @@ def test_bank_fields_cannot_be_changed(client, tresorerie, account, db, field):
 
 def test_inactive_pointage_is_refused(client, tresorerie, account, db):
     transaction = first_transaction(client, tresorerie, account, db)
-    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
+    frais = db.scalar(select(PointageType).filter_by(code="FRAIS"))
     frais.actif = False
     db.flush()
 
@@ -1754,3 +1760,124 @@ def test_unchanged_inactive_pointage_does_not_block_other_changes(client, tresor
 
     assert response.status_code == 200, response.text
     assert (response.json()["pointage"], response.json()["commentaire"]) == (current.libelle, "Vu")
+
+
+def test_xls_statement_is_analysed_like_the_xlsx(client, tresorerie, account):
+    as_xlsx = analyse(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+    response = analyse(
+        client, tresorerie, account.id, xls(("Relevé", STATEMENT)), nom="RELEVE_BP.xls"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["mapping"] == as_xlsx["mapping"]
+    assert [(line["statut"], line["debit"], line["credit"]) for line in body["lignes"]] == [
+        (line["statut"], line["debit"], line["credit"]) for line in as_xlsx["lignes"]
+    ]
+
+
+# --- Lignes ignorées et leur raison (08/10/2026) ----------------------------------------------------
+
+
+def test_ignored_lines_come_back_with_their_reason(client, tresorerie, account):
+    rows = [
+        HEADER,
+        ["01/09/2026", None, "SOLDE INITIAL", None, None, 120000],
+        [date(2026, 9, 2), None, "VIR CLIENT", None, 1000, 121000],
+        [None, None, "Sous-titre du relevé", None, None, None],
+        [None, None, "TOTAL", None, 1000, None],
+        [None, None, "SOLDE FINAL", None, None, 121000],
+    ]
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
+
+    assert [(line["numero"], line["raison"]) for line in body["lignes_ignorees"]] == [
+        (2, "Ligne SOLDE INITIAL : donne le solde d'ouverture du fichier"),
+        (4, "Ligne de titre ou sans montant"),
+        (5, "Ligne de total ou de solde"),
+        (6, "Ligne SOLDE FINAL : donne le solde de clôture du fichier"),
+    ]
+    assert body["lignes_ignorees"][2]["cellules"] == ["", "", "TOTAL", "", "1000"]
+    assert body["resume"]["nb_ignorees"] == len(body["lignes_ignorees"])
+    assert [line["numero"] for line in body["lignes"]] == [3]
+
+
+# --- Catégories de pointage et mémoire (08/10/2026) -----------------------------------------------
+
+
+def test_pointage_is_remembered_per_label_within_the_company(client, tresorerie, account, db):
+    """Un libellé déjà pointé par quelqu'un reprend le même pointage, avant les mots-clés."""
+    first = [["Date", "Libellé", "Débit", "Crédit"], ["01/09/2026", "PRLV ONEE  ", 500, None]]
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", first)))
+    [done] = transactions(db, account)
+    done.pointage_type_id = pointage_id(db, "REDEVANCE")  # choisi par un utilisateur
+    db.flush()
+    rows = [
+        ["Date", "Libellé", "Débit", "Crédit"],
+        ["02/09/2026", "prlv onee", 600, None],  # même libellé, casse et espaces près
+        ["02/09/2026", "PRLV ONEE TVA", 700, None],  # autre libellé : mot-clé
+    ]
+
+    preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    assert [(line["pointage_libelle"], line["pointage_auto"]) for line in preview] == [
+        ("REDEVANCE", True),
+        ("TVA", True),
+    ]
+
+
+def test_pointage_memory_never_crosses_companies(client, tresorerie, account, db):
+    other_company = db.scalar(select(Company).filter_by(code="SOCX"))
+    other = save(
+        db,
+        build_account(other_company, account.bank, numero=f"RIB-SOCX-{next(_numeros):06d}"),
+    )
+    first = [["Date", "Libellé", "Débit", "Crédit"], ["01/09/2026", "PRLV ONEE", 500, None]]
+    confirm(client, tresorerie, other.id, xlsx(("Relevé", first)))
+    [done] = transactions(db, other)
+    done.pointage_type_id = pointage_id(db, "REDEVANCE")
+    db.flush()
+
+    preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", first))).json()["lignes"]
+
+    assert preview[0]["pointage_libelle"] is None
+
+
+# --- Gros fichiers : 50 000 lignes au plus (08/10/2026) -------------------------------------------
+
+
+def _big_statement(rows: int) -> bytes:
+    return big_xlsx(
+        ["Date", "Libellé", "Débit", "Crédit"],
+        rows,
+        lambda index: ["01/09/2026", f"VIR CLIENT {index}", None, index + 1],
+    )
+
+
+def test_a_statement_of_50000_lines_is_analysed(client, tresorerie, account):
+    response = analyse(client, tresorerie, account.id, _big_statement(50_000))
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["lignes"]) == 50_000
+    assert {line["statut"] for line in body["lignes"]} == {"Valide"}
+
+
+def test_a_statement_of_50001_lines_is_refused(client, tresorerie, account):
+    response = analyse(client, tresorerie, account.id, _big_statement(50_001))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Fichier trop long : 50 000 lignes au plus par relevé."}
+
+
+def test_already_imported_lines_are_found_across_hash_batches(
+    client, tresorerie, account, monkeypatch
+):
+    """Les empreintes sont cherchées par paquets : un doublon est trouvé dans chacun."""
+    monkeypatch.setattr(import_repository, "HASH_BATCH", 2)
+    content = _big_statement(5)
+    confirm(client, tresorerie, account.id, content)
+
+    body = analyse(client, tresorerie, account.id, content).json()
+
+    assert [line["motifs"] for line in body["lignes"]] == [["Déjà importée pour ce compte."]] * 5

@@ -1,6 +1,8 @@
 """Lecture d'un classeur d'import, commune aux relevés bancaires et aux exports comptables.
 
-Fichiers Excel `.xlsx` seulement (décision §3.3), 5 Mo et 5 000 lignes au plus. La ligne d'en-tête
+Fichiers Excel `.xlsx` ou `.xls` (l'ancien format, accepté depuis le 08/10/2026), 20 Mo et
+50 000 lignes au plus (limites relevées le 08/10/2026, 5 Mo et 5 000 lignes avant). Le format est reconnu au contenu du fichier, pas seulement à son nom ; les deux
+donnent les mêmes valeurs (dates en `datetime`, nombres, textes, cellule vide = None). La ligne d'en-tête
 est celle qui reconnaît le plus de champs parmi les 30 premières ; la correspondance colonnes /
 champs se propose par synonymes d'en-têtes, ou se reprend d'un modèle mémorisé (par en-tête).
 """
@@ -12,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
 
+import xlrd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
@@ -19,9 +22,13 @@ from openpyxl.utils.exceptions import InvalidFileException
 from app.services.errors import ConflictError
 from app.services.normalization_service import clean_text, is_blank, normalize_header
 
-MAX_FILE_BYTES = 5 * 1024 * 1024
-MAX_ROWS = 5000
+MAX_FILE_BYTES = 20 * 1024 * 1024
+MAX_ROWS = 50_000
 HEADER_SCAN_ROWS = 30
+# Limite écrite dans les messages, avec l'espace des milliers
+MAX_ROWS_TEXTE = f"{MAX_ROWS:,}".replace(",", " ")
+# Recherche des doublons par paquets : une requête ne porte jamais sur 50 000 empreintes
+HASH_BATCH = 5000
 SAMPLES = 3
 
 Mapping = dict[str, int | None]
@@ -44,13 +51,19 @@ class Column:
     exemples: list[str]
 
 
+EXTENSIONS = (".xlsx", ".xls")
+FORMATS_ACCEPTES = "Seuls les fichiers Excel .xlsx ou .xls sont acceptés."
+# Signature d'un .xls (document OLE2 / BIFF) ; tout le reste est lu comme un .xlsx (archive zip)
+_OLE2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
 def check_file(fichier_nom: str, content: bytes) -> None:
-    if not fichier_nom.lower().endswith(".xlsx"):
-        raise ConflictError("Seuls les fichiers Excel .xlsx sont acceptés.")
+    if not fichier_nom.lower().endswith(EXTENSIONS):
+        raise ConflictError(FORMATS_ACCEPTES)
     if not content:
         raise ConflictError("Le fichier est vide.")
     if len(content) > MAX_FILE_BYTES:
-        raise ConflictError("Fichier trop volumineux : 5 Mo au plus.")
+        raise ConflictError("Fichier trop volumineux : 20 Mo au plus.")
 
 
 def read_sheet(
@@ -58,28 +71,86 @@ def read_sheet(
 ) -> tuple[list[str], str, list[tuple]]:
     """Feuilles du classeur, feuille lue et ses lignes (sans les lignes vides de la fin).
     `unite` nomme ce qu'est le fichier dans le message de taille (« relevé », « fichier »)."""
-    try:
-        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError, ValueError) as error:
-        raise ConflictError(
-            "Fichier illisible : ce n'est pas un classeur Excel .xlsx valide."
-        ) from error
-    try:
-        names = list(workbook.sheetnames)
-        name = feuille or names[0]
-        if name not in names:
-            raise ConflictError(f"Feuille introuvable dans le fichier : « {name} ».")
-        rows: list[tuple] = []
-        for row in workbook[name].iter_rows(values_only=True):
-            rows.append(tuple(row))
-            if len(rows) > MAX_ROWS + HEADER_SCAN_ROWS:
-                raise ConflictError(f"Fichier trop long : {MAX_ROWS} lignes au plus par {unite}.")
-    finally:
-        workbook.close()
+    if content.startswith(_OLE2):
+        names, name, rows = _read_xls(content, feuille, unite)
+    else:
+        names, name, rows = _read_xlsx(content, feuille, unite)
     while rows and all(is_blank(cell) for cell in rows[-1]):
         rows.pop()
     if not rows:
         raise ConflictError(f"La feuille « {name} » est vide.")
+    return names, name, rows
+
+
+_ILLISIBLE = "Fichier illisible : ce n'est pas un classeur Excel .xlsx ou .xls valide."
+
+
+def _too_long(rows: list, unite: str) -> None:
+    if len(rows) > MAX_ROWS + HEADER_SCAN_ROWS:
+        raise ConflictError(f"Fichier trop long : {MAX_ROWS_TEXTE} lignes au plus par {unite}.")
+
+
+def _sheet_name(names: list[str], feuille: str | None) -> str:
+    name = feuille or names[0]
+    if name not in names:
+        raise ConflictError(f"Feuille introuvable dans le fichier : « {name} ».")
+    return name
+
+
+def _read_xlsx(content: bytes, feuille: str | None, unite: str) -> tuple[list[str], str, list]:
+    try:
+        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError, ValueError) as error:
+        raise ConflictError(_ILLISIBLE) from error
+    try:
+        names = list(workbook.sheetnames)
+        name = _sheet_name(names, feuille)
+        rows: list[tuple] = []
+        for row in workbook[name].iter_rows(values_only=True):
+            rows.append(tuple(row))
+            _too_long(rows, unite)
+    finally:
+        workbook.close()
+    return names, name, rows
+
+
+def _xls_value(cell: xlrd.sheet.Cell, datemode: int) -> object:
+    """Valeur d'une cellule .xls comme openpyxl la donnerait pour un .xlsx."""
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate.xldate_as_datetime(cell.value, datemode)
+        except (xlrd.xldate.XLDateError, ValueError, OverflowError):
+            return cell.value
+    if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK, xlrd.XL_CELL_ERROR):
+        return None
+    if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+        return bool(cell.value)
+    if cell.ctype == xlrd.XL_CELL_NUMBER and float(cell.value).is_integer():
+        return int(cell.value)
+    return cell.value
+
+
+def _read_xls(content: bytes, feuille: str | None, unite: str) -> tuple[list[str], str, list]:
+    try:
+        workbook = xlrd.open_workbook(file_contents=content, on_demand=True)
+    except (
+        xlrd.XLRDError,
+        xlrd.compdoc.CompDocError,
+        OSError,
+        ValueError,
+        AssertionError,
+    ) as error:
+        raise ConflictError(_ILLISIBLE) from error
+    try:
+        names = list(workbook.sheet_names())
+        name = _sheet_name(names, feuille)
+        sheet = workbook.sheet_by_name(name)
+        rows: list[tuple] = []
+        for index in range(sheet.nrows):
+            rows.append(tuple(_xls_value(cell, workbook.datemode) for cell in sheet.row(index)))
+            _too_long(rows, unite)
+    finally:
+        workbook.release_resources()
     return names, name, rows
 
 
@@ -108,6 +179,23 @@ def detect_header(rows: list[tuple], fields: Sequence[ImportField]) -> int:
     if best_index is not None and best_score >= 2:
         return best_index
     return next(i for i, row in enumerate(rows) if not all(is_blank(cell) for cell in row))
+
+
+@dataclass
+class IgnoredLine:
+    """Ligne du fichier qui n'est ni importée ni en erreur, avec la raison (aperçu seulement)."""
+
+    numero: int  # numéro de la ligne dans le fichier Excel
+    raison: str
+    cellules: list[str]
+
+
+def ignored_line(numero: int, raison: str, row: tuple) -> IgnoredLine:
+    """Ligne ignorée telle qu'elle s'affiche : cellules en texte, sans les vides de la fin."""
+    cellules = [_display(value) for value in row]
+    while cellules and not cellules[-1]:
+        cellules.pop()
+    return IgnoredLine(numero=numero, raison=raison, cellules=cellules)
 
 
 def _display(value: object) -> str:

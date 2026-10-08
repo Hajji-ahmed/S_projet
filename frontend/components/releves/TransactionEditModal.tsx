@@ -96,7 +96,7 @@ export function TransactionEditModal({
         <Select
           id="operation-pointage"
           value={pointage}
-          placeholder="Aucun"
+          placeholder="Sans pointage"
           options={options}
           onChange={(event) => setPointage(event.target.value)}
         />

@@ -145,7 +145,7 @@ export function AccountStatementCard({
   // Les 11 colonnes du relevé standard, dans leur ordre, puis le statut de rapprochement
   const columns: Column<Transaction>[] = [
     { key: "societe", header: "Société" },
-    { key: "pointage", header: "Pointage", render: (row) => row.pointage ?? "-" },
+    { key: "pointage", header: "Pointage", render: (row) => row.pointage ?? "À choisir" },
     {
       key: "banque",
       header: "Banque",

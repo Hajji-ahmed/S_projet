@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleAlert, PenLine, Pencil, Plus, Power, PowerOff, WalletCards } from "lucide-react";
+import { CircleAlert, PenLine, Pencil, Plus, PowerOff, Trash2, WalletCards } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AccountFormModal } from "@/components/accounts/AccountFormModal";
@@ -18,34 +18,30 @@ import { FilterBar, FilterItem } from "@/components/ui/FilterBar";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
 import { formatPercent } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
-import { listAccounts, setAccountStatus } from "@/services/accounts";
+import { deleteAccount, listAccounts, setAccountStatus } from "@/services/accounts";
 import { listBanks } from "@/services/banks";
 import { listCurrencies } from "@/services/referentiel";
 import type { Account, AccountFilters } from "@/types/account";
 import type { Bank } from "@/types/bank";
 import type { Currency } from "@/types/company";
 
-type FilterValues = { bank_id: string; devise: string; statut: string };
+type FilterValues = { bank_id: string; devise: string };
 type FormState = null | { mode: "create" } | { mode: "edit"; account: Account };
 
-const NO_FILTER: FilterValues = { bank_id: "", devise: "", statut: "" };
-const STATUT_OPTIONS = [
-  { value: "actif", label: "Actifs" },
-  { value: "inactif", label: "Inactifs" },
-];
+const NO_FILTER: FilterValues = { bank_id: "", devise: "" };
 
 function toApiFilters(filters: FilterValues): AccountFilters {
   return {
     bank_id: filters.bank_id ? Number(filters.bank_id) : undefined,
     devise: filters.devise || undefined,
-    actif: filters.statut ? filters.statut === "actif" : undefined,
+    // Les comptes désactivés ne s'affichent plus (décision du 08/10/2026)
+    actif: true,
   };
 }
 
@@ -91,6 +87,8 @@ export function AccountsView() {
   const [form, setForm] = useState<FormState>(null);
   const [toDeactivate, setToDeactivate] = useState<Account | null>(null);
   const [deactivateError, setDeactivateError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<Account | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [balanceFor, setBalanceFor] = useState<Account | null>(null);
 
@@ -149,13 +147,19 @@ export function AccountsView() {
     reload();
   }
 
-  async function reactivate(account: Account) {
+  async function confirmDeletion() {
+    if (!toDelete) return;
+    setBusy(true);
+    setDeleteError(null);
     try {
-      await setAccountStatus(account.id, true);
-      toast(`Compte ${account.bank_code} ${account.devise} réactivé.`);
+      await deleteAccount(toDelete.id);
+      toast(`Compte ${toDelete.bank_code} ${toDelete.devise} supprimé.`);
+      setToDelete(null);
       reload();
     } catch (error) {
-      toast(errorMessage(error), "error");
+      setDeleteError(errorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -215,11 +219,6 @@ export function AccountsView() {
       align: "right",
       render: (row) => formatPercent(row.taux_interet_pct),
     },
-    {
-      key: "actif",
-      header: "Statut",
-      render: (row) => <StatusBadge status={row.actif ? "Actif" : "Inactif"} />,
-    },
   ];
 
   if (canManage) {
@@ -234,14 +233,13 @@ export function AccountsView() {
             icon={Pencil}
             onClick={() => setForm({ mode: "edit", account: row })}
           />
-          {row.actif && (
-            <IconAction
-              label={`Saisir le solde du compte ${row.bank_code} ${row.devise}`}
-              icon={PenLine}
-              onClick={() => setBalanceFor(row)}
-            />
-          )}
-          {row.actif ? (
+          <IconAction
+            label={`Saisir le solde du compte ${row.bank_code} ${row.devise}`}
+            icon={PenLine}
+            onClick={() => setBalanceFor(row)}
+          />
+          {/* Sans historique : supprimé ; avec un historique : seulement désactivé (masqué) */}
+          {row.a_historique ? (
             <IconAction
               label={`Désactiver le compte ${row.bank_code} ${row.devise}`}
               icon={PowerOff}
@@ -249,9 +247,9 @@ export function AccountsView() {
             />
           ) : (
             <IconAction
-              label={`Réactiver le compte ${row.bank_code} ${row.devise}`}
-              icon={Power}
-              onClick={() => reactivate(row)}
+              label={`Supprimer le compte ${row.bank_code} ${row.devise}`}
+              icon={Trash2}
+              onClick={() => setToDelete(row)}
             />
           )}
         </span>
@@ -259,7 +257,7 @@ export function AccountsView() {
     });
   }
 
-  const filtered = filters.bank_id !== "" || filters.devise !== "" || filters.statut !== "";
+  const filtered = filters.bank_id !== "" || filters.devise !== "";
 
   return (
     <>
@@ -305,17 +303,6 @@ export function AccountsView() {
                 label: currency.code,
               }))}
               placeholder="Toutes"
-            />
-          </Field>
-        </FilterItem>
-        <FilterItem>
-          <Field label="Statut" htmlFor="filtre-statut">
-            <Select
-              id="filtre-statut"
-              value={filters.statut}
-              onChange={(event) => changeFilter("statut", event.target.value)}
-              options={STATUT_OPTIONS}
-              placeholder="Tous"
             />
           </Field>
         </FilterItem>
@@ -400,8 +387,53 @@ export function AccountsView() {
             </div>
           )}
           <p className="text-simtis-text">
-            {toDeactivate.libelle} ({toDeactivate.numero}) ne sera plus proposé dans les nouveaux
-            traitements. Son historique est conservé ; un autre compte pourra prendre sa place.
+            {toDeactivate.libelle} ({toDeactivate.numero}) a un historique (relevés, écritures ou
+            imports) : il ne peut pas être supprimé. Désactivé, il disparaît de la liste et des
+            nouveaux traitements ; son historique est conservé et un autre compte pourra prendre sa
+            place.
+          </p>
+        </Modal>
+      )}
+
+      {toDelete && (
+        <Modal
+          open
+          title={`Supprimer le compte ${toDelete.bank_code} ${toDelete.devise} ?`}
+          onClose={() => {
+            setToDelete(null);
+            setDeleteError(null);
+          }}
+          footer={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setToDelete(null);
+                  setDeleteError(null);
+                }}
+                disabled={busy}
+              >
+                Annuler
+              </Button>
+              <Button variant="danger" icon={Trash2} onClick={confirmDeletion} disabled={busy}>
+                {busy ? "Suppression..." : "Supprimer"}
+              </Button>
+            </>
+          }
+        >
+          {deleteError && (
+            <div
+              role="alert"
+              className="mb-4 flex items-start gap-2 rounded-lg bg-simtis-danger-bg px-3 py-2.5 text-simtis-danger-fg"
+            >
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <span>{deleteError}</span>
+            </div>
+          )}
+          <p className="text-simtis-text">
+            {toDelete.libelle} ({toDelete.numero}) n&apos;a ni relevé ni écriture : il sera
+            définitivement supprimé, avec ses soldes saisis à la main. La suppression reste tracée
+            dans l&apos;historique.
           </p>
         </Modal>
       )}

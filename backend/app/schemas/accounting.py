@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from app.models import AccountingEntry
-from app.schemas.statement import ChampOut, ColonneOut
+from app.schemas.statement import ChampOut, ColonneOut, LigneIgnoreeOut
 from app.services.accounting_import_service import (
     ACCOUNTING_FIELDS,
     AccountingAnalysis,
@@ -101,6 +101,9 @@ class AnalyseComptableOut(BaseModel):
     mapping_source: Literal["Détection", "Modèle de la société", "Utilisateur"]
     erreurs_mapping: list[str]
     lignes: list[LigneComptableOut]
+    lignes_ignorees: list[LigneIgnoreeOut] = Field(
+        default_factory=list, description="Lignes non retenues et leur raison (jamais importées)"
+    )
     resume: ResumeComptableOut
 
     @classmethod
@@ -122,6 +125,9 @@ class AnalyseComptableOut(BaseModel):
             mapping_source=analysis.mapping_source,
             erreurs_mapping=analysis.erreurs_mapping,
             lignes=[LigneComptableOut.model_validate(line) for line in analysis.lignes],
+            lignes_ignorees=[
+                LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
+            ],
             resume=ResumeComptableOut.model_validate(analysis.resume),
         )
 

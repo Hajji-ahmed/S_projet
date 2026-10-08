@@ -59,6 +59,16 @@ class ChampOut(BaseModel):
     obligatoire: bool
 
 
+class LigneIgnoreeOut(BaseModel):
+    """Ligne du fichier ni importée ni en erreur (titre, total, solde, autre journal…)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    numero: int = Field(description="Numéro de la ligne dans le fichier Excel")
+    raison: str
+    cellules: list[str]
+
+
 class ColonneOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -132,6 +142,9 @@ class AnalyseOut(BaseModel):
     mapping_source: Literal["Détection", "Modèle de la banque", "Utilisateur"]
     erreurs_mapping: list[str]
     lignes: list[LigneAnalyseOut]
+    lignes_ignorees: list["LigneIgnoreeOut"] = Field(
+        default_factory=list, description="Lignes non retenues et leur raison (jamais importées)"
+    )
     resume: ResumeOut
 
     @classmethod
@@ -157,6 +170,9 @@ class AnalyseOut(BaseModel):
             mapping_source=analysis.mapping_source,
             erreurs_mapping=analysis.erreurs_mapping,
             lignes=[LigneAnalyseOut.model_validate(line) for line in analysis.lignes],
+            lignes_ignorees=[
+                LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
+            ],
             resume=ResumeOut.model_validate(analysis.resume),
         )
 

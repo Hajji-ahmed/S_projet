@@ -1,7 +1,18 @@
-from sqlalchemy import case, select
+from sqlalchemy import case, delete, select, union
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Bank, BankAccount, Company, Currency
+from app.models import (
+    AccountingEntry,
+    BalanceCheck,
+    Bank,
+    BankAccount,
+    BankAccountBalance,
+    BankStatement,
+    BankTransaction,
+    Company,
+    Currency,
+    ImportBatch,
+)
 
 
 def list_companies(db: Session) -> list[Company]:
@@ -97,3 +108,37 @@ def add(db: Session, account: BankAccount) -> BankAccount:
     db.add(account)
     db.flush()
     return account
+
+
+# Tables dont une ligne attache un compte à son historique bancaire ou comptable : un compte qui en a
+# une ne peut pas être effacé. Les soldes saisis à la main, eux, s'effacent avec le compte.
+_HISTORIQUE = (
+    BankStatement.bank_account_id,
+    BankTransaction.bank_account_id,
+    AccountingEntry.bank_account_id,
+    ImportBatch.bank_account_id,
+    BalanceCheck.bank_account_id,
+)
+
+
+def accounts_with_history(db: Session, account_ids: list[int]) -> set[int]:
+    """Comptes, parmi ceux demandés, qui ont un relevé, une opération, une écriture, un import ou un
+    contrôle de solde."""
+    if not account_ids:
+        return set()
+    query = union(*(select(column).where(column.in_(account_ids)) for column in _HISTORIQUE))
+    return {row[0] for row in db.execute(query)}
+
+
+def manual_balances_count(db: Session, account_id: int) -> int:
+    return len(
+        db.scalars(
+            select(BankAccountBalance.id).where(BankAccountBalance.bank_account_id == account_id)
+        ).all()
+    )
+
+
+def delete_account(db: Session, account: BankAccount) -> None:
+    """Efface le compte et ses soldes saisis (l'appelant a vérifié qu'il n'a pas d'historique)."""
+    db.execute(delete(BankAccountBalance).where(BankAccountBalance.bank_account_id == account.id))
+    db.delete(account)

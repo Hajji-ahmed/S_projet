@@ -21,7 +21,8 @@ can_manage = require_permission(PermissionCode.BANKS_MANAGE)
 def _out(db: Session, account: BankAccount) -> AccountOut:
     """Compte avec ses chiffres à aujourd'hui."""
     figures = balance_service.figures_for_accounts(db, [account])
-    return AccountOut.from_model(account, figures[account.id])
+    history = account_service.accounts_with_history(db, [account.id])
+    return AccountOut.from_model(account, figures[account.id], account.id in history)
 
 
 @router.get("", response_model=list[AccountOut])
@@ -42,7 +43,11 @@ def list_accounts(
         actif=actif,
     )
     figures = balance_service.figures_for_accounts(db, accounts)
-    return [AccountOut.from_model(account, figures[account.id]) for account in accounts]
+    history = account_service.accounts_with_history(db, [account.id for account in accounts])
+    return [
+        AccountOut.from_model(account, figures[account.id], account.id in history)
+        for account in accounts
+    ]
 
 
 @router.get("/{account_id}", response_model=AccountOut)
@@ -99,6 +104,17 @@ def set_account_status(
         db, account_id, actif=body.actif, acteur_id=user.id, ip=client_ip(request)
     )
     return _out(db, account)
+
+
+@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    account_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_manage),
+) -> None:
+    """Efface un compte sans historique, avec ses soldes saisis ; sinon 409 (à désactiver)."""
+    account_service.delete_account(db, account_id, acteur_id=user.id, ip=client_ip(request))
 
 
 @router.get("/{account_id}/balances", response_model=list[BalanceOut])

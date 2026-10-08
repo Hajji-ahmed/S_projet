@@ -1,14 +1,18 @@
 "use client";
 
 import { Check, CircleAlert, PenLine, RotateCcw } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { FilterTile } from "@/components/releves/FilterTile";
+import { IgnoredLinesTable } from "@/components/releves/IgnoredLinesTable";
 import { DateInput, NumberInput, Select, TextInput } from "@/components/ui/Field";
+import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
+import { pageOf, toggleVue, type VueLignes } from "@/lib/importLines";
 import {
   lineMotifs,
   draftToLigne,
@@ -53,15 +57,6 @@ export function draftStatus(line: AnalysedLine | undefined, motifs: string[]): L
   return line?.statut === "Doublon" ? "Doublon" : "Valide";
 }
 
-function Tile({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return (
-    <div className="rounded-[12px] border border-simtis-border bg-simtis-card px-4 py-3">
-      <p className="text-xs text-simtis-muted">{label}</p>
-      <p className={cn("mt-1 text-2xl font-semibold tabular-nums", tone)}>{value}</p>
-    </div>
-  );
-}
-
 /**
  * Étape Validation : le relevé tel qu'il sera enregistré, au format standard, modifiable ligne
  * par ligne (décision métier du 02/10/2026 : correction seulement, aucun ajout de ligne).
@@ -96,6 +91,21 @@ export function EditablePreview({
     lineMotifs(lines.get(draft.numero), draft, originalOf.get(draft.numero) ?? draft, today);
   const errors = checkedDrafts.filter((draft) => motifsOf(draft).length > 0).length;
   const duplicates = analysis.lignes.filter((line) => line.statut === "Doublon").length;
+  // Tuile choisie : le tableau ne montre que ces lignes (second clic : toutes)
+  const [vue, setVue] = useState<VueLignes>("toutes");
+  const [page, setPage] = useState(1);
+  function choose(next: VueLignes) {
+    setVue((current) => toggleVue(current, next));
+    setPage(1);
+  }
+  const shownDrafts = drafts.filter((draft) => {
+    if (vue === "importer") return checked.has(draft.numero);
+    if (vue === "erreurs") return checked.has(draft.numero) && motifsOf(draft).length > 0;
+    if (vue === "doublons") return lines.get(draft.numero)?.statut === "Doublon";
+    return true;
+  });
+  // 100 lignes par page ; les totaux et le filtre portent sur tout le fichier
+  const pageDrafts = pageOf(shownDrafts, page);
 
   function amount(value: string | null, typed: string): ReactNode {
     if (value !== null) return formatAmount(value, suffix, { dashForZero: true });
@@ -118,10 +128,34 @@ export function EditablePreview({
   return (
     <>
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Tile label="Lignes à importer" value={summary.count} tone="text-simtis-success" />
-        <Tile label="Lignes en erreur" value={errors} tone="text-simtis-danger" />
-        <Tile label="Doublons" value={duplicates} tone="text-simtis-warning" />
-        <Tile label="Lignes ignorées" value={resume.nb_ignorees} tone="text-simtis-muted" />
+        <FilterTile
+          label="Lignes à importer"
+          value={summary.count}
+          tone="text-simtis-success"
+          active={vue === "importer"}
+          onClick={() => choose("importer")}
+        />
+        <FilterTile
+          label="Lignes en erreur"
+          value={errors}
+          tone="text-simtis-danger"
+          active={vue === "erreurs"}
+          onClick={() => choose("erreurs")}
+        />
+        <FilterTile
+          label="Doublons"
+          value={duplicates}
+          tone="text-simtis-warning"
+          active={vue === "doublons"}
+          onClick={() => choose("doublons")}
+        />
+        <FilterTile
+          label="Lignes ignorées"
+          value={resume.nb_ignorees}
+          tone="text-simtis-muted"
+          active={vue === "ignorees"}
+          onClick={() => choose("ignorees")}
+        />
       </div>
       {summary.coherent === false && (
         <div
@@ -174,9 +208,20 @@ export function EditablePreview({
         </div>
       </dl>
 
+      {vue === "ignorees" && <IgnoredLinesTable lignes={analysis.lignes_ignorees ?? []} />}
+      {vue !== "ignorees" && shownDrafts.length === 0 && (
+        <p className="rounded-[12px] border border-simtis-border px-4 py-6 text-center text-sm text-simtis-muted">
+          Aucune ligne dans ce filtre.
+        </p>
+      )}
       {/* « relative » : les textes réservés aux lecteurs d'écran (sr-only, en position absolue)
           restent dans la zone qui défile au lieu d'élargir toute la page */}
-      <div className="relative overflow-x-auto rounded-[12px] border border-simtis-border bg-simtis-card">
+      <div
+        className={cn(
+          "relative overflow-x-auto rounded-[12px] border border-simtis-border bg-simtis-card",
+          (vue === "ignorees" || shownDrafts.length === 0) && "hidden",
+        )}
+      >
         <table className="w-full border-collapse text-[13.5px] text-simtis-text">
           <thead>
             <tr className="bg-simtis-light/60 text-[13px] font-semibold text-simtis-primary-dark">
@@ -225,7 +270,7 @@ export function EditablePreview({
             </tr>
           </thead>
           <tbody>
-            {drafts.map((draft) => {
+            {pageDrafts.rows.map((draft) => {
               const line = lines.get(draft.numero);
               const original = originalOf.get(draft.numero) ?? draft;
               const motifs = lineMotifs(line, draft, original, today);
@@ -275,7 +320,7 @@ export function EditablePreview({
                           value={
                             draft.pointage_type_id === null ? "" : String(draft.pointage_type_id)
                           }
-                          placeholder="Automatique"
+                          placeholder="Sans pointage"
                           options={pointages.map((item) => ({
                             value: String(item.id),
                             label: item.libelle,
@@ -292,7 +337,7 @@ export function EditablePreview({
                       ) : (
                         <span className="whitespace-nowrap">
                           {draft.pointage_type_id === null
-                            ? "Automatique"
+                            ? "À choisir"
                             : (pointageLabel.get(draft.pointage_type_id) ?? "-")}
                         </span>
                       )}
@@ -412,6 +457,16 @@ export function EditablePreview({
           </tbody>
         </table>
       </div>
+      {vue !== "ignorees" && shownDrafts.length > 0 && (
+        <Pagination
+          label="Pages de l'aperçu"
+          page={pageDrafts.page}
+          pages={pageDrafts.pages}
+          total={shownDrafts.length}
+          noun="ligne"
+          onPage={setPage}
+        />
+      )}
     </>
   );
 }

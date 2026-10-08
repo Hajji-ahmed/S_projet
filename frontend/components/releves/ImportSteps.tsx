@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
+import { ACCEPT_EXCEL } from "@/lib/statements";
 
 // Deux étapes : le mapping des colonnes ne s'affiche qu'en secours, dans l'étape Fichier
 export const STEPS = ["Fichier", "Validation"] as const;
@@ -108,7 +109,7 @@ export function FileDropzone({ file, onFile, disabled }: FileDropzoneProps) {
       <input
         ref={inputRef}
         type="file"
-        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        accept={ACCEPT_EXCEL}
         className="hidden"
         data-testid="releve-fichier"
         onChange={(event) => {
@@ -117,7 +118,7 @@ export function FileDropzone({ file, onFile, disabled }: FileDropzoneProps) {
           event.target.value = ""; // permet de rechoisir le même fichier
         }}
       />
-      <p className="text-xs text-simtis-muted">Excel .xlsx, 5 Mo au plus</p>
+      <p className="text-xs text-simtis-muted">Excel .xlsx ou .xls, 20 Mo au plus</p>
     </div>
   );
 }

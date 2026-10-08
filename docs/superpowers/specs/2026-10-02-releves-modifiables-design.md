@@ -91,3 +91,18 @@ Sans `lignes`, la confirmation garde son fonctionnement actuel (`garder_doublons
 
 **Navigateur (Edge, Société X, données nettoyées ensuite)**
 - Fichier avec SOLDE INITIAL et une ligne en erreur : correction dans l'aperçu (la ligne devient Valide et se coche), « Annuler les corrections », décochage d'une ligne, résumé recalculé, absence de bouton d'ajout, enregistrement ; mention « corrigée » visible dans le relevé continu ; modification d'un Pointage et d'un commentaire après l'import ; Direction sans icône « Modifier » ; mobile sans débordement.
+
+
+## Changements du 08/10/2026
+
+- Formats acceptés : `.xlsx` et `.xls`.
+- Les tuiles de l'étape Validation filtrent le tableau (second clic : toutes les lignes). « Lignes ignorées » affiche les lignes non retenues et leur raison : SOLDE INITIAL (solde d'ouverture), SOLDE FINAL (solde de clôture), ligne de total ou de solde, ligne de titre ou sans montant. Lecture seule.
+
+
+## Pointage : les 74 catégories du métier (08/10/2026)
+
+- Les pointages sont les 74 catégories fournies par le métier (`backend/app/seeds/pointages.py`), libellés inchangés ; Encaissement / Décaissement / Frais bancaires sont désactivés.
+- Pointage d'une ligne à l'import : valeur du fichier ; sinon mémoire de la société (même libellé, pointage le plus fréquent) ; sinon catégorie nommée en mots entiers dans le libellé (la plus longue gagne, synonymes COMMISSION → COM, TENUE DE COMPTE → FRAIS, SALAIRE → LA PAIE, INTERETS → INTERET, REMBOURSEMENT PRET) ; sinon vide, affiché « À choisir ». « A voir » n'est jamais automatique. Jamais bloquant.
+- Migration 0017 : catégories créées, anciens types désactivés, opérations existantes re-pointées par les mots-clés (audit `repointage`).
+
+- Gros fichiers (08/10/2026) : 50 000 lignes et 20 Mo au plus ; aperçu de l'étape Validation par pages de 100 lignes (les tuiles filtrent et les totaux portent sur tout le fichier). Mesuré : 50 000 lignes analysées en 3 à 7 s, confirmées en 10 à 19 s.

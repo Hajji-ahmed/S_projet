@@ -3,15 +3,23 @@
  */
 import type { ColumnMapping, ConfirmOptions, FieldCode, ImportRequest } from "@/types/statement";
 
-/** Taille maximale acceptée par l'API (`import_service.MAX_FILE_BYTES`). */
-export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+/** Taille maximale acceptée par l'API (`import_file.MAX_FILE_BYTES`, 20 Mo depuis le 08/10/2026). */
+export const MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+/** Formats acceptés (relevés et exports Sage) : .xlsx, et l'ancien .xls depuis le 08/10/2026. */
+export const EXTENSIONS = [".xlsx", ".xls"] as const;
+
+/** Valeur de l'attribut `accept` des zones de dépôt. */
+export const ACCEPT_EXCEL =
+  ".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
 
 /** Vérification faite avant l'envoi ; l'API refait toujours la sienne. */
 export function fileProblem(file: { name: string; size: number }): string | null {
-  if (!file.name.toLowerCase().endsWith(".xlsx"))
-    return "Seuls les fichiers Excel .xlsx sont acceptés.";
+  const name = file.name.toLowerCase();
+  if (!EXTENSIONS.some((extension) => name.endsWith(extension)))
+    return "Seuls les fichiers Excel .xlsx ou .xls sont acceptés.";
   if (file.size === 0) return "Le fichier est vide.";
-  if (file.size > MAX_FILE_BYTES) return "Fichier trop volumineux : 5 Mo au plus.";
+  if (file.size > MAX_FILE_BYTES) return "Fichier trop volumineux : 20 Mo au plus.";
   return null;
 }
 

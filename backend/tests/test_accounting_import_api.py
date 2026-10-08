@@ -19,7 +19,8 @@ from app.models import (
     Company,
     ImportBatch,
 )
-from tests.helpers import bearer, build_account, login, make_auth_user, save
+from app.repositories import accounting_repository
+from tests.helpers import bearer, big_xlsx, build_account, login, make_auth_user, save, xls
 
 ANALYSE = "/api/accounting/import/analyse"
 CONFIRM = "/api/accounting/import/confirm"
@@ -443,3 +444,77 @@ def test_file_without_bank_line_is_refused(client, comptable, db, journals):
 
 def test_direction_cannot_confirm(client, direction, db, journals):
     assert confirm(client, direction, db, xlsx(EXPORT)).status_code == 403
+
+
+def test_xls_export_is_analysed_like_the_xlsx(client, comptable, db, journals):
+    as_xlsx = analyse(client, comptable, db, xlsx(EXPORT)).json()
+    response = analyse(client, comptable, db, xls(("Export", EXPORT)), nom="sage.xls")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [
+        (line["journal"], line["bank_account_id"], line["debit"], line["credit"])
+        for line in body["lignes"]
+    ] == [
+        (line["journal"], line["bank_account_id"], line["debit"], line["credit"])
+        for line in as_xlsx["lignes"]
+    ]
+    assert body["resume"]["nb_ignorees"] == as_xlsx["resume"]["nb_ignorees"]
+
+
+def test_ignored_lines_come_back_with_their_reason(client, comptable, db, journals):
+    body = analyse(client, comptable, db, xlsx(EXPORT)).json()
+
+    assert [(line["numero"], line["raison"]) for line in body["lignes_ignorees"]] == [
+        (4, "Compte 3421 : contrepartie, pas la ligne banque (5141…) du journal BQ1"),
+        (6, "Journal « ACH » : pas le journal Sage d'un compte bancaire"),
+    ]
+    assert body["lignes_ignorees"][1]["cellules"][:5] == [
+        "03/09/2025",
+        "ACH",
+        "4411",
+        "F77",
+        "FACTURE ACHAT",
+    ]
+    assert body["resume"]["nb_ignorees"] == len(body["lignes_ignorees"])
+
+
+# --- Gros fichiers : 50 000 lignes au plus (08/10/2026) -------------------------------------------
+
+
+def _big_export(rows: int) -> bytes:
+    return big_xlsx(
+        HEADER,
+        rows,
+        lambda index: [
+            date(2025, 9, 2),
+            "BQ1",
+            "5141",
+            f"P{index}",
+            "REG",
+            index + 1,
+            None,
+            None,
+            None,
+        ],
+    )
+
+
+def test_an_export_of_50001_lines_is_refused(client, comptable, db, journals):
+    response = analyse(client, comptable, db, _big_export(50_001))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Fichier trop long : 50 000 lignes au plus par fichier."}
+
+
+def test_already_imported_entries_are_found_across_hash_batches(
+    client, comptable, db, journals, monkeypatch
+):
+    monkeypatch.setattr(accounting_repository, "HASH_BATCH", 2)
+    content = _big_export(5)
+    post(client, CONFIRM, comptable, db, content)
+
+    body = analyse(client, comptable, db, content).json()
+
+    assert {line["statut"] for line in body["lignes"]} == {"Doublon"}
+    assert len(body["lignes"]) == 5

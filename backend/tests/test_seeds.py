@@ -70,7 +70,7 @@ def test_reference_seed_creates_the_expected_rows(db):
         companies=2,
         banks=5,
         currencies=3,
-        pointage_types=3,
+        # Les 74 catégories de pointage sont déjà créées par la migration 0017
         forecast_categories=7,
         permissions=12,
         roles=5,

@@ -8,6 +8,7 @@ français destiné à l'utilisateur quand la valeur n'est pas lisible.
 import hashlib
 import re
 import unicodedata
+from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -161,13 +162,27 @@ def extract_reference(libelle: str | None) -> str | None:
     return None
 
 
-# --- Pointage automatique (décision métier du 02/10/2026) -----------------------------------------
+# --- Pointage automatique (décision métier du 08/10/2026, remplace celle du 02/10/2026) -----------
+#
+# Les pointages sont les 74 catégories du métier (seeds, migration 0017). À l'import, une ligne sans
+# pointage dans le fichier prend, dans l'ordre : le pointage le plus fréquent des opérations de la
+# société qui ont le même libellé (mémoire, dans `import_service`), sinon la catégorie dont le nom
+# apparaît en mots entiers dans le libellé (`guess_pointage`), sinon rien. Jamais bloquant.
 
-POINTAGE_FRAIS = "FRAIS_BANCAIRES"
-POINTAGE_ENCAISSEMENT = "ENCAISSEMENT"
-POINTAGE_DECAISSEMENT = "DECAISSEMENT"
-# Même règle que la migration 0005, qui l'applique aux opérations importées avant elle
-_FRAIS = re.compile(r"\b(COMMISSIONS?|AGIOS|FRAIS|TENUE DE COMPTE)\b")
+# Mots du libellé bancaire → catégorie, quand le nom de la catégorie n'y figure pas tel quel
+POINTAGE_SYNONYMES = {
+    "COMMISSION": "COM",
+    "COMMISSIONS": "COM",
+    "TENUE DE COMPTE": "FRAIS",
+    "SALAIRE": "LA PAIE",
+    "SALAIRES": "LA PAIE",
+    "INTERETS": "INTERET",
+    "REMBOURSEMENT PRET": "REMBOURSEMENT PRET",
+}
+# Catégories que seul un humain choisit
+POINTAGE_JAMAIS_AUTO = frozenset({"A VOIR"})
+
+_NON_ALNUM = re.compile(r"[^A-Z0-9]+")
 
 
 def _plain(text: str) -> str:
@@ -176,21 +191,43 @@ def _plain(text: str) -> str:
     return "".join(char for char in raw if not unicodedata.combining(char)).upper()
 
 
-def guess_pointage(
-    libelle: str | None, debit: Decimal | None, credit: Decimal | None
-) -> str | None:
-    """Code du type d'opération déduit du libellé, puis du sens de l'opération.
+def label_key(text: str | None) -> str:
+    """Libellé comparable : majuscules sans accents, mots séparés par une espace
+    (« Agios d'échelle » → « AGIOS D ECHELLE »). Clé de la mémoire des pointages."""
+    return " ".join(_NON_ALNUM.sub(" ", _plain(text or "")).split())
 
-    COMMISSION, AGIOS, FRAIS, TENUE DE COMPTE → Frais bancaires ; sinon un crédit → Encaissement,
-    un débit → Décaissement. None si l'opération n'a pas de montant.
-    """
-    if libelle and _FRAIS.search(_plain(libelle)):
-        return POINTAGE_FRAIS
-    if credit:
-        return POINTAGE_ENCAISSEMENT
-    if debit:
-        return POINTAGE_DECAISSEMENT
-    return None
+
+def pointage_code(libelle: str) -> str:
+    """Code interne d'une catégorie de pointage, tiré de son libellé
+    (« ENCAISSEMENT HORS GROUP/DECATHLON » → « ENCAISSEMENT_HORS_GROUP_DECATHLON »)."""
+    return label_key(libelle).replace(" ", "_")
+
+
+def _contains_words(text: str, words: str) -> bool:
+    return bool(words) and f" {words} " in f" {text} "
+
+
+def guess_pointage(libelle: str | None, categories: Iterable[str]) -> str | None:
+    """Catégorie (libellé tel qu'en base) dont le nom, ou un synonyme, apparaît en mots entiers
+    dans le libellé bancaire ; la plus longue gagne (« AGIOS D'ECHELLE » avant « AGIOS »).
+    None si rien ne correspond. « A voir » n'est jamais choisi automatiquement."""
+    text = label_key(libelle)
+    if not text:
+        return None
+    by_key = {label_key(category): category for category in categories}
+    by_key = {key: value for key, value in by_key.items() if key not in POINTAGE_JAMAIS_AUTO}
+    found: list[tuple[int, str, str]] = []
+    for key, category in by_key.items():
+        if _contains_words(text, key):
+            found.append((len(key), key, category))
+    for word, target in POINTAGE_SYNONYMES.items():
+        target_key = label_key(target)
+        if target_key in by_key and _contains_words(text, label_key(word)):
+            found.append((len(label_key(word)), target_key, by_key[target_key]))
+    if not found:
+        return None
+    found.sort(key=lambda item: (-item[0], item[1]))
+    return found[0][2]
 
 
 # --- Lignes de solde d'un relevé -------------------------------------------------------------------

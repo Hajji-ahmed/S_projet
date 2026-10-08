@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Landmark, Search } from "lucide-react";
+import { Landmark, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
@@ -9,6 +9,7 @@ import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { pageCount } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
@@ -194,55 +195,5 @@ export function TransactionsPane({
         </>
       )}
     </Card>
-  );
-}
-
-/** « N opérations · Page 1 sur 3 » avec Précédent / Suivant (seulement s'il y a plusieurs pages). */
-export function Pagination({
-  label,
-  page,
-  pages,
-  total,
-  noun,
-  onPage,
-}: {
-  label: string;
-  page: number;
-  pages: number;
-  total: number;
-  noun: string;
-  onPage: (page: number) => void;
-}) {
-  return (
-    <nav
-      aria-label={label}
-      className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"
-    >
-      <p className="text-simtis-muted">
-        {total} {noun}
-        {total > 1 ? "s" : ""}
-        {pages > 1 && ` · Page ${page} sur ${pages}`}
-      </p>
-      {pages > 1 && (
-        <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            icon={ChevronLeft}
-            disabled={page <= 1}
-            onClick={() => onPage(page - 1)}
-          >
-            Précédent
-          </Button>
-          <Button
-            variant="secondary"
-            icon={ChevronRight}
-            disabled={page >= pages}
-            onClick={() => onPage(page + 1)}
-          >
-            Suivant
-          </Button>
-        </div>
-      )}
-    </nav>
   );
 }

@@ -5,7 +5,7 @@ colonnes → correspondance colonnes / champs standard (proposée, ou choisie pa
 contrôle et normalisation de chaque ligne → aperçu : lignes valides, en erreur, en double.
 
 Règles :
-- fichiers Excel `.xlsx` uniquement (décision §3.3), 5 Mo et 5 000 lignes au plus ;
+- fichiers Excel `.xlsx` ou `.xls`, 20 Mo et 50 000 lignes au plus (`import_file`) ;
 - le compte choisi doit être actif ; il fixe la société et la banque du relevé ;
 - une ligne sans date d'opération ni montant (titre, « Solde initial »), ou une ligne de total ou de
   solde sans date, est ignorée ; toute autre ligne incomplète est en erreur, jamais corrigée en silence ;
@@ -17,7 +17,7 @@ Règles :
 """
 
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -43,7 +43,7 @@ from app.models import (
 from app.repositories import account_repository, balance_repository, import_repository
 from app.services import account_service, audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
-from app.services.import_file import MAX_ROWS, Column, ImportField, Mapping
+from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
 from app.services.normalization_service import (
     balance_line_kind,
     clean_libelle,
@@ -52,6 +52,7 @@ from app.services.normalization_service import (
     file_hash,
     guess_pointage,
     is_blank,
+    label_key,
     line_hash,
     normalize_header,
     parse_amount,
@@ -169,6 +170,8 @@ class StatementAnalysis:
     # Montants des lignes SOLDE INITIAL et SOLDE FINAL du fichier, s'il en a
     solde_initial_fichier: Decimal | None = None
     solde_final_fichier: Decimal | None = None
+    # Lignes non retenues (titres, totaux, soldes) et leur raison : affichées, jamais importées
+    lignes_ignorees: list[IgnoredLine] = field(default_factory=list)
 
 
 # --- Lecture du classeur et correspondance (module commun `import_file`) --------------------------
@@ -203,23 +206,43 @@ def _bank_matches(value: object, bank: Bank) -> bool:
 
 @dataclass
 class Pointages:
-    """Types de pointage actifs : retrouvés par code ou libellé (sans casse ni accents)."""
+    """Types de pointage actifs : retrouvés par code ou libellé (sans casse ni accents), et la
+    mémoire de la société (libellé → pointage le plus fréquent)."""
 
     by_key: dict[str, int]
     labels: dict[int, str]
+    memory: dict[str, int] = field(default_factory=dict)
 
     def find(self, text: str | None) -> int | None:
         return self.by_key.get(normalize_header(text)) if text else None
 
+    def guess(self, libelle: str | None) -> int | None:
+        """Pointage d'une ligne sans valeur dans le fichier (décision du 08/10/2026) : la mémoire
+        de la société pour ce libellé, sinon la catégorie nommée dans le libellé, sinon None."""
+        remembered = self.memory.get(label_key(libelle))
+        if remembered is not None:
+            return remembered
+        return self.find(guess_pointage(libelle, self.labels.values()))
 
-def _pointages(db: Session) -> Pointages:
+
+def _pointages(db: Session, company_id: int) -> Pointages:
     by_key: dict[str, int] = {}
     labels: dict[int, str] = {}
     for item in import_repository.active_pointage_types(db):
         by_key[normalize_header(item.code)] = item.id
         by_key[normalize_header(item.libelle)] = item.id
         labels[item.id] = item.libelle
-    return Pointages(by_key, labels)
+    counts: dict[str, Counter[int]] = defaultdict(Counter)
+    for libelle, pointage_type_id in import_repository.pointages_of_company(db, company_id):
+        key = label_key(libelle)
+        if key:
+            counts[key][pointage_type_id] += 1
+    # Le plus fréquent ; à égalité, le plus petit identifiant (résultat stable)
+    memory = {
+        key: min(counter.items(), key=lambda item: (-item[1], item[0]))[0]
+        for key, counter in counts.items()
+    }
+    return Pointages(by_key, labels, memory)
 
 
 def _read_line(
@@ -282,14 +305,12 @@ def _read_line(
     line.solde = amount("solde")
     reference = clean_text(cells.get("reference")) or extract_reference(line.libelle)
     line.reference = reference[:REFERENCE_MAX] if reference else None
-    # Pointage : la valeur connue du fichier l'emporte ; sinon il est déduit du libellé puis du sens
+    # Pointage : la valeur connue du fichier l'emporte ; sinon la mémoire, puis le libellé
     # (décision métier du 02/10/2026). Une valeur inconnue ne bloque jamais la ligne.
     line.pointage = clean_text(cells.get("pointage"))
     line.pointage_type_id = pointages.find(line.pointage)
     if line.pointage_type_id is None:
-        line.pointage_type_id = pointages.find(
-            guess_pointage(line.libelle, line.debit, line.credit)
-        )
+        line.pointage_type_id = pointages.guess(line.libelle)
         line.pointage_auto = line.pointage_type_id is not None
     line.pointage_libelle = pointages.labels.get(line.pointage_type_id)
     line.lettrage_escompte = clean_text(cells.get("lettrage_escompte"))
@@ -353,25 +374,31 @@ def _direction_from_balances(
         if sens == "debit":
             line.debit, line.credit = line.credit, Decimal("0.00")
             line.montant = -line.debit
-            if line.pointage_auto:
-                line.pointage_type_id = pointages.find(
-                    guess_pointage(line.libelle, line.debit, line.credit)
-                )
-                line.pointage_libelle = pointages.labels.get(line.pointage_type_id)
         elif sens is None:
             line.motifs.append(SENS_INTROUVABLE)
             line.statut = "Erreur"
 
 
-def _is_ignored(cells: dict[str, object]) -> bool:
-    """Ligne de titre, de total ou de solde, sans date d'opération."""
+def _ignored_reason(cells: dict[str, object]) -> str | None:
+    """Raison d'ignorer une ligne sans date d'opération (titre, total, solde), sinon None."""
     if not is_blank(cells.get("date_operation")):
-        return False
+        return None
+    libelle = clean_libelle(cells.get("libelle")) or ""
     amounts = ("debit", "credit", "montant")
     if all(is_blank(cells.get(code)) for code in amounts):
-        return True
-    libelle = clean_libelle(cells.get("libelle")) or ""
-    return bool(_SUMMARY_LINE.match(libelle))
+        return (
+            "Ligne de total ou de solde"
+            if _SUMMARY_LINE.match(libelle)
+            else ("Ligne de titre ou sans montant")
+        )
+    if _SUMMARY_LINE.match(libelle):
+        return "Ligne de total ou de solde"
+    return None
+
+
+def _is_ignored(cells: dict[str, object]) -> bool:
+    """Ligne de titre, de total ou de solde, sans date d'opération."""
+    return _ignored_reason(cells) is not None
 
 
 def _line_key(line: AnalysedLine) -> tuple:
@@ -521,8 +548,10 @@ def analyse_statement(
     feuilles, feuille, rows = import_file.read_sheet(content, feuille, unite="relevé")
     header_index = import_file.detect_header(rows, STATEMENT_FIELDS)
     data = rows[header_index + 1 :]
-    if len(data) > MAX_ROWS:
-        raise ConflictError(f"Fichier trop long : {MAX_ROWS} lignes au plus par relevé.")
+    if len(data) > import_file.MAX_ROWS:
+        raise ConflictError(
+            f"Fichier trop long : {import_file.MAX_ROWS_TEXTE} lignes au plus par relevé."
+        )
     columns = import_file.columns_of(rows[header_index], data)
 
     if mapping is not None:
@@ -552,11 +581,12 @@ def analyse_statement(
         return analysis  # pas de lecture des lignes tant que la correspondance est incomplète
 
     today = today or position_service.business_today()
-    pointages = _pointages(db)
+    pointages = _pointages(db, account.company_id)
     lines, ignored = [], 0
     for offset, row in enumerate(data):
         if all(is_blank(cell) for cell in row):
             continue
+        numero = header_index + 2 + offset
         cells = {
             code: row[index] if index < len(row) else None
             for code, index in mapping.items()
@@ -566,15 +596,22 @@ def analyse_statement(
         if balance is not None:
             ignored += 1
             kind, value = balance
+            raison = (
+                "Ligne SOLDE INITIAL : donne le solde d'ouverture du fichier"
+                if kind == "ouverture"
+                else "Ligne SOLDE FINAL : donne le solde de clôture du fichier"
+            )
+            analysis.lignes_ignorees.append(import_file.ignored_line(numero, raison, row))
             if kind == "ouverture" and analysis.solde_initial_fichier is None:
                 analysis.solde_initial_fichier = value
             elif kind == "cloture" and value is not None:
                 analysis.solde_final_fichier = value
             continue
-        if _is_ignored(cells):
+        raison = _ignored_reason(cells)
+        if raison is not None:
             ignored += 1
+            analysis.lignes_ignorees.append(import_file.ignored_line(numero, raison, row))
             continue
-        numero = header_index + 2 + offset
         lines.append(_read_line(numero, cells, mapping, account.bank, today, pointages))
 
     _direction_from_balances(lines, mapping, analysis.solde_initial_fichier, pointages)
@@ -823,7 +860,7 @@ def _submitted_selection(
     if not lignes:
         raise ConflictError("Aucune ligne à importer dans ce fichier.")
     account = analysis.account
-    pointages = _pointages(db)
+    pointages = _pointages(db, account.company_id)
     originals = {line.numero: line for line in analysis.lignes}
     lines: list[AnalysedLine] = []
     corrections: list[dict] = []
@@ -1133,8 +1170,12 @@ def update_transaction(
 
 
 def list_pointage_types(db: Session) -> list[PointageType]:
-    """Types de pointage actifs, par libellé (liste de choix de l'aperçu et de la modification)."""
-    return sorted(import_repository.active_pointage_types(db), key=lambda item: item.libelle)
+    """Types de pointage actifs, par ordre alphabétique sans casse ni accents (liste de choix de
+    l'aperçu et de la modification)."""
+    return sorted(
+        import_repository.active_pointage_types(db),
+        key=lambda item: (label_key(item.libelle), item.libelle),
+    )
 
 
 def statement_transactions(

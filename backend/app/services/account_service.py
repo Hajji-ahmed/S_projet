@@ -323,3 +323,50 @@ def set_account_status(
     )
     db.commit()
     return account
+
+
+ATTRIBUTS_AUDIT_SUPPRESSION = (
+    "company_id",
+    "bank_id",
+    "libelle",
+    "numero",
+    "devise",
+    "type_compte",
+    "compte_comptable",
+    "journal_sage",
+    "credit_autorise",
+    "taux_interet",
+    "actif",
+)
+
+
+def accounts_with_history(db: Session, account_ids: list[int]) -> set[int]:
+    return account_repository.accounts_with_history(db, account_ids)
+
+
+def delete_account(db: Session, account_id: int, *, acteur_id: int, ip: str | None = None) -> None:
+    """Efface un compte sans historique (aucun relevé, opération, écriture, import ni contrôle de
+    solde), avec ses soldes saisis à la main. Un compte qui a un historique ne peut être que
+    désactivé (décision du 08/10/2026)."""
+    account = get_account(db, account_id)
+    if account_repository.accounts_with_history(db, [account.id]):
+        raise ConflictError(
+            "Ce compte a un historique (relevés, écritures ou imports) : il ne peut être que "
+            "désactivé."
+        )
+    avant = {
+        **_snapshot(account, ATTRIBUTS_AUDIT_SUPPRESSION),
+        "banque": account.bank.code,
+        "soldes_saisis_effaces": account_repository.manual_balances_count(db, account.id),
+    }
+    account_repository.delete_account(db, account)
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="suppression_compte",
+        entite="bank_account",
+        entite_id=account_id,
+        avant=avant,
+        ip=ip,
+    )
+    db.commit()

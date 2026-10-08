@@ -17,6 +17,8 @@ from app.models import (
     Role,
 )
 from app.seeds.common import get_or_create
+from app.seeds.pointages import CATEGORIES_POINTAGE
+from app.services.normalization_service import pointage_code
 
 # (code, nom). Le nom de la 2e société est provisoire : il se modifie en base, sans toucher au code.
 COMPANIES = [
@@ -40,12 +42,9 @@ CURRENCIES = [
     ("USD", "Dollar américain"),
 ]
 
-# Liste ouverte : l'administrateur peut en ajouter (P16)
-POINTAGE_TYPES = [
-    ("ENCAISSEMENT", "Encaissement"),
-    ("DECAISSEMENT", "Décaissement"),
-    ("FRAIS_BANCAIRES", "Frais bancaires"),
-]
+# Les 74 catégories du métier (décision du 08/10/2026) ; liste ouverte, l'administrateur pourra en
+# ajouter (P16). Code interne tiré du libellé.
+POINTAGE_TYPES = [(pointage_code(libelle), libelle) for libelle in CATEGORIES_POINTAGE]
 
 # (code, libellé, sens par défaut). Le sens n'est renseigné que lorsqu'il est certain : Escompte,
 # Refinancement, Chèques et Autre restent à trancher avec le métier. Chaque prévision porte son propre sens.

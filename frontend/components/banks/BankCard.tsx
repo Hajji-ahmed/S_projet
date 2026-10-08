@@ -80,25 +80,13 @@ export function BankCard({ bank, canManage, onEdit, onToggleStatus }: BankCardPr
       </div>
 
       {figures ? (
-        <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <div>
-            <dt className="text-simtis-muted">Solde</dt>
-            <dd className="mt-0.5 font-semibold text-simtis-text">
-              <Amount value={figures.solde} />
-            </dd>
-          </div>
-          <div>
-            <dt className="text-simtis-muted">Crédit disponible</dt>
-            <dd className="mt-0.5 font-semibold">
-              <Amount value={figures.credit_disponible} emphasis="success" />
-            </dd>
-          </div>
-          <div className="col-span-2">
-            <dt className="text-simtis-muted">Position disponible</dt>
-            <dd className="mt-0.5 text-lg font-semibold">
-              <Amount value={figures.position_disponible} emphasis="primary" />
-            </dd>
-          </div>
+        // Seulement le solde (décision du 08/10/2026) : crédit et position disponibles restent sur la
+        // page de la banque
+        <dl className="mt-5 text-sm">
+          <dt className="text-simtis-muted">Solde</dt>
+          <dd className="mt-0.5 text-[22px] leading-tight font-semibold">
+            <Amount value={figures.solde} emphasis="primary" />
+          </dd>
         </dl>
       ) : (
         <p className="mt-5 text-sm text-simtis-muted">Aucun compte courant en MAD.</p>

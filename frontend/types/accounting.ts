@@ -1,5 +1,5 @@
 /** Import Sage et écritures comptables (`backend/app/schemas/accounting.py`). Montants en texte. */
-import type { ImportColumn, LineStatus } from "@/types/statement";
+import type { ImportColumn, LigneIgnoree, LineStatus } from "@/types/statement";
 
 export type AccountingFieldCode =
   | "date_ecriture"
@@ -76,6 +76,8 @@ export type AnalyseComptable = {
   mapping_source: "Détection" | "Modèle de la société" | "Utilisateur";
   erreurs_mapping: string[];
   lignes: LigneComptable[];
+  /** Lignes non retenues et leur raison (autre journal, contrepartie, titre). */
+  lignes_ignorees: LigneIgnoree[];
   resume: ResumeComptable;
 };
 

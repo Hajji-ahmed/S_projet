@@ -182,3 +182,47 @@ def login(client, email: str, password: str = TEST_PASSWORD) -> str:
 
 def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+# --- Fichiers Excel .xls (ancien format) -----------------------------------------------------------
+
+
+def xls(*sheets: tuple[str, list[list]]) -> bytes:
+    """Classeur .xls (BIFF) : mêmes feuilles et valeurs qu'un .xlsx ; les dates sont de vraies
+    dates Excel (format de date), comme dans un fichier de banque."""
+    from datetime import date, datetime
+    from io import BytesIO
+
+    import xlwt
+
+    workbook = xlwt.Workbook()
+    date_style = xlwt.easyxf(num_format_str="DD/MM/YYYY")
+    for title, rows in sheets:
+        sheet = workbook.add_sheet(title)
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                if value is None:
+                    continue
+                if isinstance(value, date | datetime):
+                    sheet.write(r, c, value, date_style)
+                else:
+                    sheet.write(r, c, value)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def big_xlsx(header: list, rows: int, make_row) -> bytes:
+    """Classeur .xlsx d'un en-tête et de `rows` lignes, écrit en flux (rapide pour 50 000 lignes)."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet("Feuille")
+    sheet.append(header)
+    for index in range(rows):
+        sheet.append(make_row(index))
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()

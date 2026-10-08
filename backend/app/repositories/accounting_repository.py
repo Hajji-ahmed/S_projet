@@ -7,6 +7,7 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AccountingEntry, Bank, BankAccount, ColumnMapping, ImportBatch, User
+from app.services.import_file import HASH_BATCH
 
 
 def bank_journals(db: Session, company_id: int) -> list[BankAccount]:
@@ -21,12 +22,15 @@ def bank_journals(db: Session, company_id: int) -> list[BankAccount]:
 
 def existing_entry_hashes(db: Session, company_id: int, hashes: list[str]) -> set[str]:
     """Empreintes déjà enregistrées pour la société, parmi celles demandées."""
-    if not hashes:
-        return set()
-    query = select(AccountingEntry.hash_ligne).where(
-        AccountingEntry.company_id == company_id, AccountingEntry.hash_ligne.in_(hashes)
-    )
-    return set(db.scalars(query))
+    found: set[str] = set()
+    # Par paquets : un fichier de 50 000 lignes ne fait pas une requête de 50 000 valeurs
+    for start in range(0, len(hashes), HASH_BATCH):
+        batch = hashes[start : start + HASH_BATCH]
+        query = select(AccountingEntry.hash_ligne).where(
+            AccountingEntry.company_id == company_id, AccountingEntry.hash_ligne.in_(batch)
+        )
+        found.update(db.scalars(query))
+    return found
 
 
 def latest_company_mapping(db: Session, company_id: int, type_import: str) -> ColumnMapping | None:

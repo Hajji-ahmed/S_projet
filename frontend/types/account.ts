@@ -21,6 +21,9 @@ export type Account = {
   /** Taux d'intérêt en pourcentage, en texte : "4.5" = 4,5 %. */
   taux_interet_pct: string | null;
   actif: boolean;
+  /** Relevés, opérations, écritures, imports ou contrôles : le compte ne peut alors être que
+   * désactivé, jamais supprimé. */
+  a_historique: boolean;
   /** Chiffres à aujourd'hui (solde, crédit et position disponibles). */
   figures: Figures | null;
 };

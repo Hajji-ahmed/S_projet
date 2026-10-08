@@ -1,12 +1,20 @@
 """Comptes bancaires : une société à la fois, règles de création et de modification, audit."""
 
+from datetime import date
 from decimal import Decimal
 from itertools import count
 
 import pytest
 from sqlalchemy import select
 
-from app.models import AuditLog, Bank, BankAccount, Company
+from app.models import (
+    AuditLog,
+    Bank,
+    BankAccount,
+    BankAccountBalance,
+    BankStatement,
+    Company,
+)
 from tests.helpers import bearer, build_account, login, make_auth_user, save
 
 ACCOUNTS = "/api/accounts"
@@ -478,3 +486,57 @@ def test_reactivating_an_account_whose_journal_is_taken_is_refused(client, treso
 
     assert response.status_code == 409
     assert "BQ1" in response.json()["detail"]
+
+
+# --- Suppression d'un compte sans historique (08/10/2026) -----------------------------------------
+
+
+def test_an_account_without_history_is_deleted_with_its_manual_balances(client, tresorerie, db):
+    account = add(db, "SIMTIS", "CIH", actif=False)
+    save(
+        db,
+        BankAccountBalance(
+            bank_account_id=account.id,
+            date_solde=date(2026, 10, 1),
+            solde=Decimal("100"),
+            source="Saisie",
+        ),
+    )
+    account_id = account.id
+
+    response = client.delete(f"{ACCOUNTS}/{account_id}", headers=tresorerie)
+
+    assert response.status_code == 204, response.text
+    db.expire_all()
+    assert db.get(BankAccount, account_id) is None
+    assert (
+        db.scalars(
+            select(BankAccountBalance).where(BankAccountBalance.bank_account_id == account_id)
+        ).all()
+        == []
+    )
+    [log] = audit(db, "suppression_compte")
+    assert log.ancienne_valeur["numero"] == account.numero
+    assert log.ancienne_valeur["soldes_saisis_effaces"] == 1
+
+
+def test_an_account_with_history_can_only_be_deactivated(client, tresorerie, db):
+    account = add(db, "SIMTIS", "CIH")
+    save(db, BankStatement(bank_account_id=account.id))
+
+    listed = client.get(
+        ACCOUNTS, params={"company_id": account.company_id}, headers=tresorerie
+    ).json()
+    response = client.delete(f"{ACCOUNTS}/{account.id}", headers=tresorerie)
+
+    assert next(a for a in listed if a["id"] == account.id)["a_historique"] is True
+    assert response.status_code == 409
+    assert "désactivé" in response.json()["detail"]
+    assert db.get(BankAccount, account.id) is not None
+
+
+def test_deleting_an_account_needs_the_permission(client, direction, db):
+    account = add(db, "SIMTIS", "CIH")
+
+    assert client.delete(f"{ACCOUNTS}/{account.id}", headers=direction).status_code == 403
+    assert client.delete(f"{ACCOUNTS}/999999", headers=direction).status_code == 403

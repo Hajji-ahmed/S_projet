@@ -50,12 +50,17 @@ describe("lignes affichées d'une longue liste", () => {
 describe("fileProblem", () => {
   it("accepte un .xlsx de taille raisonnable", () => {
     expect(fileProblem({ name: "Relevé CIH.XLSX", size: 2048 })).toBeNull();
+    // L'ancien format Excel est accepté aussi (décision du 08/10/2026)
+    expect(fileProblem({ name: "RELEVE_BP.XLS", size: 2048 })).toBeNull();
   });
 
   it("refuse les autres formats, le fichier vide et le fichier trop gros", () => {
-    expect(fileProblem({ name: "releve.csv", size: 10 })).toMatch(/\.xlsx/);
+    expect(fileProblem({ name: "releve.csv", size: 10 })).toBe(
+      "Seuls les fichiers Excel .xlsx ou .xls sont acceptés.",
+    );
     expect(fileProblem({ name: "releve.xlsx", size: 0 })).toBe("Le fichier est vide.");
-    expect(fileProblem({ name: "releve.xlsx", size: 5 * 1024 * 1024 + 1 })).toMatch(/5 Mo/);
+    expect(fileProblem({ name: "releve.xlsx", size: 20 * 1024 * 1024 })).toBeNull();
+    expect(fileProblem({ name: "releve.xlsx", size: 20 * 1024 * 1024 + 1 })).toMatch(/20 Mo/);
   });
 });
 

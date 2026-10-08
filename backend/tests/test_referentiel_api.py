@@ -54,16 +54,17 @@ def test_pointage_types_are_listed_for_any_logged_in_user(client, reference):
     response = client.get("/api/pointage-types", headers=headers)
 
     assert response.status_code == 200
-    assert [item["libelle"] for item in response.json()] == [
-        "Décaissement",
-        "Encaissement",
-        "Frais bancaires",
-    ]
+    libelles = [item["libelle"] for item in response.json()]
+    # Les 74 catégories du métier (08/10/2026), par ordre alphabétique sans casse ni accents
+    assert len(libelles) == 74
+    assert libelles[:3] == ["A NOUVEAU", "A voir", "AGIOS"]
+    assert libelles.index("Cheque de banque") < libelles.index("CHEQUE SOFT")
+    assert not {"Encaissement", "Décaissement", "Frais bancaires"} & set(libelles)
     assert set(response.json()[0]) == {"id", "code", "libelle"}
 
 
 def test_inactive_pointage_types_are_not_listed(client, reference, db):
-    frais = db.scalar(select(PointageType).filter_by(code="FRAIS_BANCAIRES"))
+    frais = db.scalar(select(PointageType).filter_by(code="FRAIS"))
     frais.actif = False
     db.flush()
     make_auth_user(reference, "DIRECTION", email="direction.pointage2@example.com")
@@ -72,7 +73,7 @@ def test_inactive_pointage_types_are_not_listed(client, reference, db):
         "/api/pointage-types", headers=bearer(login(client, "direction.pointage2@example.com"))
     ).json()
 
-    assert "FRAIS_BANCAIRES" not in {item["code"] for item in body}
+    assert "FRAIS" not in {item["code"] for item in body}
 
 
 def test_pointage_types_need_a_login(client):

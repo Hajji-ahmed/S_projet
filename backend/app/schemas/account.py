@@ -47,12 +47,18 @@ class AccountOut(BaseModel):
     credit_autorise: Decimal
     taux_interet_pct: Decimal | None
     actif: bool
+    # Vrai si le compte a des relevés, opérations, écritures, imports ou contrôles : il ne peut alors
+    # être que désactivé, jamais effacé
+    a_historique: bool = False
     # Chiffres à aujourd'hui (solde, crédit et position disponibles), calculés à partir des soldes saisis
     figures: FiguresOut | None = None
 
     @classmethod
     def from_model(
-        cls, account: BankAccount, figures: AccountFigures | None = None
+        cls,
+        account: BankAccount,
+        figures: AccountFigures | None = None,
+        a_historique: bool = False,
     ) -> "AccountOut":
         return cls(
             id=account.id,
@@ -70,6 +76,7 @@ class AccountOut(BaseModel):
             credit_autorise=account.credit_autorise,
             taux_interet_pct=fraction_to_pct(account.taux_interet),
             actif=account.actif,
+            a_historique=a_historique,
             figures=FiguresOut.from_figures(figures) if figures else None,
         )
 

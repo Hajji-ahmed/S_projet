@@ -84,6 +84,8 @@ export type Analysis = {
   mapping_source: "Détection" | "Modèle de la banque" | "Utilisateur";
   erreurs_mapping: string[];
   lignes: AnalysedLine[];
+  /** Lignes non retenues et leur raison (jamais importées). */
+  lignes_ignorees: LigneIgnoree[];
   resume: AnalysisSummary;
 };
 
@@ -216,4 +218,12 @@ export type TransactionUpdate = {
   pointage_type_id: number | null;
   lettrage_escompte: string | null;
   commentaire: string | null;
+};
+
+/** Ligne du fichier ni importée ni en erreur (titre, total, solde, autre journal…), avec sa raison. */
+export type LigneIgnoree = {
+  /** Numéro de la ligne dans le fichier Excel. */
+  numero: number;
+  raison: string;
+  cellules: string[];
 };

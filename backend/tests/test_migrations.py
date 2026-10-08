@@ -101,7 +101,7 @@ def test_migration_0005_fills_only_empty_pointages(empty_database):
             )
         )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0005")  # la migration 0017 re-pointe ensuite
 
     with engine.connect() as connection:
         rows = connection.execute(
@@ -224,7 +224,7 @@ def test_migration_0008_fixes_debits_proven_by_the_balance(empty_database):
                 },
             )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0008")  # la migration 0017 re-pointe ensuite
 
     with engine.connect() as connection:
         result = connection.execute(
@@ -541,6 +541,123 @@ def test_migration_0015_needs_an_administrator_to_close(empty_database):
 
     with pytest.raises(Exception, match="aucun administrateur actif"):
         command.upgrade(config, "0015")
+
+
+def test_migration_0016_deletes_inactive_accounts_without_history(empty_database):
+    """Décision du 08/10/2026 : un compte désactivé sans historique est effacé avec ses soldes
+    saisis ; un compte actif, ou désactivé avec un historique, reste."""
+    config, engine = empty_database
+    command.upgrade(config, "0015")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'Banque');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise, actif)
+                    OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, 'Actif', 'N1', 'MAD', true),
+                    (2, 1, 1, 'Désactivé sans historique', 'N2', 'MAD', false),
+                    (3, 1, 1, 'Désactivé avec relevé', 'N3', 'MAD', false);
+                INSERT INTO bank_account_balances (bank_account_id, date_solde, solde, source)
+                    VALUES (1, '2026-10-01', 10, 'Saisie'), (2, '2026-10-01', 20, 'Saisie');
+                INSERT INTO bank_statements (bank_account_id) VALUES (3);
+                """
+            )
+        )
+
+    command.upgrade(config, "0016")
+
+    with engine.connect() as connection:
+        comptes = connection.execute(text("SELECT id FROM bank_accounts ORDER BY id")).scalars()
+        soldes = connection.execute(
+            text("SELECT bank_account_id FROM bank_account_balances ORDER BY 1")
+        ).scalars()
+        audit = connection.execute(
+            text(
+                "SELECT entite_id, ancienne_valeur ->> 'soldes_saisis_effaces' FROM audit_logs "
+                "WHERE action = 'suppression_compte'"
+            )
+        ).all()
+        assert list(comptes) == [1, 3]
+        assert list(soldes) == [1]
+    assert [tuple(row) for row in audit] == [("2", "1")]
+
+
+def test_migration_0017_creates_the_74_categories_and_repoints(empty_database):
+    """Décision du 08/10/2026 : les 74 catégories remplacent les trois anciens types ; les opérations
+    sont re-pointées par les mots-clés, sinon vides, avec une trace d'audit chacune."""
+    config, engine = empty_database
+    command.upgrade(config, "0016")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'Banque');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+                INSERT INTO bank_statements (id, bank_account_id) OVERRIDING SYSTEM VALUE
+                    VALUES (1, 1);
+                INSERT INTO pointage_types (id, code, libelle) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 'ENCAISSEMENT', 'Encaissement'),
+                    (2, 'DECAISSEMENT', 'Décaissement'),
+                    (3, 'FRAIS_BANCAIRES', 'Frais bancaires');
+                INSERT INTO bank_transactions (id, statement_id, bank_account_id, date_operation,
+                    libelle, debit, credit, montant, hash_ligne, pointage_type_id)
+                    OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '2026-09-01', 'COMMISSION BANCAIRE', 5, 0, -5, 'h1', 3),
+                    (2, 1, 1, '2026-09-02', 'VIR CLIENT ATLAS', 0, 100, 100, 'h2', 1),
+                    (3, 1, 1, '2026-09-03', 'AGIOS D''ECHELLE T3', 9, 0, -9, 'h3', 3),
+                    (4, 1, 1, '2026-09-04', 'A VOIR AVEC LA BANQUE', 7, 0, -7, 'h4', 2);
+                """
+            )
+        )
+
+    command.upgrade(config, "0017")
+
+    with engine.connect() as connection:
+        actifs = connection.execute(
+            text("SELECT count(*) FROM pointage_types WHERE actif")
+        ).scalar_one()
+        anciens = connection.execute(
+            text("SELECT code FROM pointage_types WHERE NOT actif ORDER BY code")
+        ).scalars()
+        pointes = connection.execute(
+            text(
+                "SELECT t.id, p.libelle FROM bank_transactions t "
+                "LEFT JOIN pointage_types p ON p.id = t.pointage_type_id ORDER BY t.id"
+            )
+        ).all()
+        audit = connection.execute(
+            text(
+                "SELECT entite_id, ancienne_valeur ->> 'pointage', nouvelle_valeur ->> 'pointage' "
+                "FROM audit_logs WHERE action = 'repointage' ORDER BY entite_id"
+            )
+        ).all()
+        longueur = connection.execute(
+            text(
+                "SELECT character_maximum_length FROM information_schema.columns "
+                "WHERE table_name = 'pointage_types' AND column_name = 'code'"
+            )
+        ).scalar_one()
+        assert actifs == 74
+        assert list(anciens) == ["DECAISSEMENT", "ENCAISSEMENT", "FRAIS_BANCAIRES"]
+    assert [tuple(row) for row in pointes] == [
+        (1, "COM"),  # synonyme COMMISSION
+        (2, None),  # rien de reconnu : à choisir
+        (3, "AGIOS D'ECHELLE"),  # le plus long nom gagne
+        (4, None),  # « A voir » n'est jamais automatique
+    ]
+    assert [tuple(row) for row in audit] == [
+        ("1", "Frais bancaires", "COM"),
+        ("2", "Encaissement", None),
+        ("3", "Frais bancaires", "AGIOS D'ECHELLE"),
+        ("4", "Décaissement", None),
+    ]
+    assert longueur == 60
 
 
 def test_migration_matches_models(empty_database):

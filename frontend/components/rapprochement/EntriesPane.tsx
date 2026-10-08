@@ -3,13 +3,13 @@
 import { BookText, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Pagination } from "@/components/rapprochement/TransactionsPane";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { STATUTS_RAPPROCHEMENT, pageCount } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";

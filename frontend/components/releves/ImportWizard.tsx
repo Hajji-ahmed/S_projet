@@ -97,7 +97,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         if (!cancelled) setAccountsError(true);
       },
     );
-    // Sans la liste des Pointages, la ligne garde son pointage (le choix « Automatique » reste)
+    // Sans la liste des Pointages, la ligne garde son pointage (sans pointage : « À choisir »)
     listPointageTypes().then(
       (list) => {
         if (!cancelled) setPointages(list);

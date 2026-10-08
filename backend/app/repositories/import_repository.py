@@ -13,16 +13,20 @@ from app.models import (
     PointageType,
     User,
 )
+from app.services.import_file import HASH_BATCH
 
 
 def existing_line_hashes(db: Session, account_id: int, hashes: list[str]) -> set[str]:
     """Empreintes déjà enregistrées pour ce compte, parmi celles demandées."""
-    if not hashes:
-        return set()
-    query = select(BankTransaction.hash_ligne).where(
-        BankTransaction.bank_account_id == account_id, BankTransaction.hash_ligne.in_(hashes)
-    )
-    return set(db.scalars(query))
+    found: set[str] = set()
+    # Par paquets : un fichier de 50 000 lignes ne fait pas une requête de 50 000 valeurs
+    for start in range(0, len(hashes), HASH_BATCH):
+        batch = hashes[start : start + HASH_BATCH]
+        query = select(BankTransaction.hash_ligne).where(
+            BankTransaction.bank_account_id == account_id, BankTransaction.hash_ligne.in_(batch)
+        )
+        found.update(db.scalars(query))
+    return found
 
 
 def confirmed_file(
@@ -123,3 +127,15 @@ def add(db: Session, *rows: object) -> None:
     """Ajoute les lignes et les envoie à la base (les identifiants deviennent disponibles)."""
     db.add_all(rows)
     db.flush()
+
+
+def pointages_of_company(db: Session, company_id: int) -> list[tuple[str, int]]:
+    """(libellé, pointage) des opérations de la société qui ont un pointage encore actif : la
+    mémoire du pointage automatique."""
+    rows = db.execute(
+        select(BankTransaction.libelle, BankTransaction.pointage_type_id)
+        .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
+        .join(PointageType, PointageType.id == BankTransaction.pointage_type_id)
+        .where(BankAccount.company_id == company_id, PointageType.actif.is_(True))
+    )
+    return [(row[0], row[1]) for row in rows]

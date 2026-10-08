@@ -21,7 +21,7 @@ from app.models import AccountingEntry, BankAccount, ColumnMapping, Company, Imp
 from app.repositories import account_repository, accounting_repository, import_repository
 from app.services import audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
-from app.services.import_file import Column, ImportField, Mapping
+from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
 from app.services.normalization_service import (
     clean_libelle,
     clean_text,
@@ -126,6 +126,8 @@ class AccountingAnalysis:
     erreurs_mapping: list[str]
     lignes: list[EntryLine] = field(default_factory=list)
     resume: EntriesSummary = field(default_factory=EntriesSummary)
+    # Lignes non retenues (titres, autres journaux, contreparties) et leur raison : affichées seulement
+    lignes_ignorees: list[IgnoredLine] = field(default_factory=list)
 
 
 def _company(db: Session, company_id: int) -> Company:
@@ -148,6 +150,24 @@ def _is_ignored(cells: dict[str, object]) -> bool:
     amounts = ("debit", "credit", "montant")
     return is_blank(cells.get("date_ecriture")) and all(
         is_blank(cells.get(code)) for code in amounts
+    )
+
+
+def _ignored_reason(cells: dict[str, object], journals: dict[str, BankAccount]) -> str:
+    """Pourquoi une ligne n'est pas une ligne banque d'un journal de banque."""
+    if _is_ignored(cells):
+        return "Ligne de titre ou de total : ni date ni montant"
+    journal = _code(cells.get("journal"))
+    account = journals.get(journal)
+    if account is None:
+        return (
+            f"Journal « {journal} » : pas le journal Sage d'un compte bancaire"
+            if journal
+            else "Pas de journal"
+        )
+    return (
+        f"Compte {_code(cells.get('compte')) or '(vide)'} : contrepartie, pas la ligne banque "
+        f"({account.compte_comptable}…) du journal {journal}"
     )
 
 
@@ -327,7 +347,7 @@ def analyse_entries(
     data = rows[header_index + 1 :]
     if len(data) > import_file.MAX_ROWS:
         raise ConflictError(
-            f"Fichier trop long : {import_file.MAX_ROWS} lignes au plus par fichier."
+            f"Fichier trop long : {import_file.MAX_ROWS_TEXTE} lignes au plus par fichier."
         )
     columns = import_file.columns_of(rows[header_index], data)
 
@@ -372,11 +392,15 @@ def analyse_entries(
             for code, index in mapping.items()
             if index is not None
         }
+        numero = header_index + 2 + offset
         account = None if _is_ignored(cells) else _bank_account_of(cells, journals)
         if account is None:
             ignored += 1
+            analysis.lignes_ignorees.append(
+                import_file.ignored_line(numero, _ignored_reason(cells, journals), row)
+            )
             continue
-        lines.append(_read_entry(header_index + 2 + offset, cells, mapping, account, today))
+        lines.append(_read_entry(numero, cells, mapping, account, today))
 
     _mark_duplicates(db, company.id, lines)
     analysis.lignes = lines

@@ -103,3 +103,11 @@ Frontend : Vitest pour les règles pures (filtres → requête, pagination, libe
 ## Documentation
 
 `CLAUDE.md`, `docs/specs/Plan_Phases_Realisation_SIMTIS.md` (statut P10), `docs/modele-donnees.md` (`journal_sage`), `.claude/skills/simtis-design/pages.md` (page Écritures).
+
+
+## Changements du 08/10/2026
+
+- Formats acceptés : `.xlsx` et `.xls` (l'ancien format), pour les relevés comme pour les exports Sage. Le format est reconnu au contenu du fichier ; les deux donnent les mêmes valeurs.
+- Étape Validation : les tuiles Lignes à importer · Lignes en erreur · Doublons · Lignes ignorées sont cliquables et filtrent le tableau. L'analyse renvoie les lignes ignorées avec leur numéro de ligne Excel, leur contenu et leur raison : ligne de titre ou de total, journal qui n'est le journal Sage d'aucun compte, compte de contrepartie (pas la ligne banque du journal).
+
+- Gros fichiers (08/10/2026) : 50 000 lignes et 20 Mo au plus ; aperçu de l'étape Validation par pages de 100 lignes (les tuiles filtrent et les totaux portent sur tout le fichier). Mesuré : 50 000 lignes analysées en 3 à 7 s, confirmées en 10 à 19 s.

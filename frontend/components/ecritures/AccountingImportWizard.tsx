@@ -5,15 +5,19 @@ import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { FilterTile } from "@/components/releves/FilterTile";
+import { IgnoredLinesTable } from "@/components/releves/IgnoredLinesTable";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { Field, Select } from "@/components/ui/Field";
+import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
+import { pageOf, sageLinesFor, toggleVue, type VueLignes } from "@/lib/importLines";
 import { fileProblem } from "@/lib/statements";
 import { analyseEntries, confirmEntries } from "@/services/accounting";
 import type {
@@ -74,6 +78,9 @@ export function AccountingImportWizard({
   const [mapping, setMapping] = useState<AccountingMapping>({});
   const [feuille, setFeuille] = useState<string | undefined>(undefined);
   const [ecarter, setEcarter] = useState(false);
+  // Tuile choisie à l'étape Validation : le tableau ne montre que ces lignes
+  const [vue, setVue] = useState<VueLignes>("toutes");
+  const [pageLignes, setPageLignes] = useState(1);
   const [garder, setGarder] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -319,11 +326,16 @@ export function AccountingImportWizard({
       },
       { key: "tiers", header: "Tiers", render: (line) => line.tiers ?? "-" },
     ];
+    const filters: [VueLignes, string, number, string][] = [
+      ["importer", "Lignes à importer", toImport, "text-simtis-success"],
+      ["erreurs", "Lignes en erreur", summary.nb_erreurs, "text-simtis-danger"],
+      ["doublons", "Doublons", summary.nb_doublons, "text-simtis-warning"],
+      ["ignorees", "Lignes ignorées", summary.nb_ignorees, "text-simtis-muted"],
+    ];
+    const shown = sageLinesFor(current.lignes, vue, garder);
+    // 100 lignes par page ; les tuiles et les totaux portent sur tout le fichier
+    const pageLignesView = pageOf(shown, pageLignes);
     const tiles: [string, ReactNode][] = [
-      ["Lignes à importer", toImport],
-      ["En erreur", summary.nb_erreurs],
-      ["En double", summary.nb_doublons],
-      ["Ignorées", summary.nb_ignorees],
       [
         "Total débit / crédit",
         `${formatAmount(summary.total_debit, "DH")} / ${formatAmount(summary.total_credit, "DH")}`,
@@ -345,7 +357,22 @@ export function AccountingImportWizard({
           (journal Sage de vos comptes) ; les contreparties et les autres journaux sont ignorés.
         </p>
         {sheetPicker(current)}
-        <dl className="mb-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {filters.map(([value, label, count, tone]) => (
+            <FilterTile
+              key={value}
+              label={label}
+              value={count}
+              tone={tone}
+              active={vue === value}
+              onClick={() => {
+                setVue((currentVue) => toggleVue(currentVue, value));
+                setPageLignes(1);
+              }}
+            />
+          ))}
+        </div>
+        <dl className="mb-4 grid gap-3 sm:grid-cols-2">
           {tiles.map(([label, value]) => (
             <div
               key={label}
@@ -373,12 +400,32 @@ export function AccountingImportWizard({
             ))}
           </ul>
         )}
-        <DataTable
-          columns={columns}
-          rows={current.lignes}
-          getRowKey={(line) => String(line.numero)}
-          emptyMessage="Aucune ligne banque dans ce fichier."
-        />
+        {vue === "ignorees" ? (
+          <IgnoredLinesTable lignes={current.lignes_ignorees ?? []} />
+        ) : (
+          <>
+            <DataTable
+              columns={columns}
+              rows={pageLignesView.rows}
+              getRowKey={(line) => String(line.numero)}
+              emptyMessage={
+                vue === "toutes"
+                  ? "Aucune ligne banque dans ce fichier."
+                  : "Aucune ligne dans ce filtre."
+              }
+            />
+            {shown.length > 0 && (
+              <Pagination
+                label="Pages de l'aperçu"
+                page={pageLignesView.page}
+                pages={pageLignesView.pages}
+                total={shown.length}
+                noun="ligne"
+                onPage={setPageLignes}
+              />
+            )}
+          </>
+        )}
         {summary.nb_erreurs > 0 && (
           <label className="mt-4 flex items-center gap-2 text-sm text-simtis-text">
             <input

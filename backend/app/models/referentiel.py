@@ -54,12 +54,12 @@ class Currency(Base):
 
 
 class PointageType(TimestampMixin, Base):
-    """Type d'opération du champ « Pointage » des relevés (encaissement, décaissement, frais...)."""
+    """Catégorie du champ « Pointage » des relevés (les 74 catégories du métier, 08/10/2026)."""
 
     __tablename__ = "pointage_types"
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
-    code: Mapped[str] = mapped_column(String(30), unique=True)
+    code: Mapped[str] = mapped_column(String(60), unique=True)
     libelle: Mapped[str] = mapped_column(String(80))
     actif: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
