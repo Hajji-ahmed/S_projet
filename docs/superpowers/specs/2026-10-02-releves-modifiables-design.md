@@ -137,3 +137,13 @@ Pour un fichier sans soldes, le solde d'ouverture est repris automatiquement, da
 4. sinon, à saisir.
 
 La saisie n'est possible qu'au **premier import** du compte, c'est-à-dire quand aucune opération n'a été importée avant ce fichier (un relevé plus ancien que ceux déjà importés compte comme un premier import). L'analyse renvoie `solde_ouverture_modifiable` ; l'écran désactive alors le champ et ne l'envoie pas. Le serveur refuse (409) un `solde_ouverture` différent du solde verrouillé. La commande `recalculer-soldes` garde la saisie (outil d'administration).
+
+## Colonne Solde remplie à moitié (09/10/2026)
+
+Certaines banques n'écrivent le solde que sur quelques lignes (par exemple en fin de journée). Désormais :
+
+- toute case Solde vide d'une ligne lisible est calculée (solde précédent − débit + crédit), dans l'ordre chronologique ; une ligne en erreur ne déclenche pas le calcul ;
+- un solde écrit par la banque est gardé tel quel (`solde_calcule = false`) et le calcul repart de lui ;
+- s'il ne suit pas le calcul, la ligne affiche « Écart avec le calcul : N » en orange (`ecart_solde`, aperçu seulement) ; ce contrôle ne bloque jamais l'import ;
+- si la première opération porte le solde de la banque, le solde d'ouverture est ce solde moins son montant (verrouillé, « Solde de la banque sur la première opération du fichier ») ; sinon la règle du 09/10/2026 s'applique (SOLDE INITIAL, relevé précédent, tableau Banques, saisie au premier import) ;
+- à l'étape Validation, corriger un débit ou un crédit recalcule en direct les soldes calculés (`runningBalances`), affichés en gris ; les soldes de la banque restent en noir.

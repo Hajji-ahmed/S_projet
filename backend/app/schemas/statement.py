@@ -92,6 +92,9 @@ class LigneAnalyseOut(BaseModel):
     credit: Decimal | None
     montant: Decimal | None
     solde: Decimal | None
+    ecart_solde: Decimal | None = Field(
+        None, description="Solde de la banque − solde attendu, quand ils diffèrent (contrôle)"
+    )
     solde_apercu: Decimal | None = Field(
         None, description="Fichier sans soldes : solde calculé depuis le solde d'ouverture choisi"
     )

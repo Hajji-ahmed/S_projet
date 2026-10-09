@@ -140,6 +140,7 @@ def test_lines_are_normalised(client, tresorerie, account, db):
         "montant": "50000.00",
         "solde": "1050000.00",
         "solde_apercu": None,  # le fichier a ses soldes : rien n'est calculé
+        "ecart_solde": None,
         "pointage": None,
         # Aucune catégorie nommée dans le libellé : sans pointage, à choisir (08/10/2026)
         "pointage_type_id": None,
@@ -2227,3 +2228,56 @@ def test_an_older_statement_is_a_first_import(client, tresorerie, account):
     body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
 
     assert body["solde_ouverture_modifiable"] is True
+
+
+# --- Colonne Solde remplie à moitié (09/10/2026) ---------------------------------------------------
+
+HALF_FILLED = [
+    ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+    ["01/09/2026", "VIR A", None, 120, 1120],
+    ["02/09/2026", "CHQ B1", 20, None, None],
+    ["02/09/2026", "VIR B2", None, 30, 1130],
+    ["03/09/2026", "FRAIS", 10, None, None],
+]
+
+
+def test_empty_balance_cells_are_filled_from_the_bank_balances(client, tresorerie, account, db):
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", HALF_FILLED))).json()
+
+    assert body["soldes_calcules"] is True
+    # La banque donne l'ouverture par la première ligne : 1120 − 120
+    assert (body["solde_ouverture_propose"], body["solde_ouverture_modifiable"]) == (
+        "1000.00",
+        False,
+    )
+    assert (
+        body["solde_ouverture_source"] == "Solde de la banque sur la première opération du fichier"
+    )
+    assert [(line["solde"], line["solde_apercu"]) for line in body["lignes"]] == [
+        ("1120.00", None),
+        (None, "1100.00"),
+        ("1130.00", None),
+        (None, "1120.00"),
+    ]
+    assert {line["ecart_solde"] for line in body["lignes"]} == {None}
+
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", HALF_FILLED)), solde_ouverture=None)
+
+    saved = transactions(db, account)
+    assert [(row.solde, row.solde_calcule) for row in saved] == [
+        (Decimal("1120.00"), False),
+        (Decimal("1100.00"), True),
+        (Decimal("1130.00"), False),
+        (Decimal("1120.00"), True),
+    ]
+
+
+def test_a_bank_balance_that_does_not_follow_is_flagged_not_blocked(client, tresorerie, account):
+    rows = [row[:] for row in HALF_FILLED]
+    rows[3][4] = 1150  # la banque dit 1150, le calcul donne 1130
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
+
+    assert [line["ecart_solde"] for line in body["lignes"]] == [None, None, "20.00", None]
+    assert body["lignes"][3]["solde_apercu"] == "1140.00"  # le calcul repart du solde de la banque
+    assert {line["statut"] for line in body["lignes"]} == {"Valide"}

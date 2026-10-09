@@ -132,6 +132,9 @@ class AnalysedLine:
     # Aperçu seulement : solde calculé depuis le solde d'ouverture choisi. Il ne va jamais dans
     # `solde`, qui entre dans l'empreinte de la ligne et dans la comparaison avec l'envoi de l'écran
     solde_apercu: Decimal | None = None
+    # Aperçu seulement : solde de la banque − solde attendu (précédent − débit + crédit), s'ils
+    # diffèrent (contrôle, 09/10/2026) ; jamais bloquant
+    ecart_solde: Decimal | None = None
     hash_ligne: str | None = None
     # Doublon interne au fichier : numéro de la première ligne identique (gardable à la confirmation)
     doublon_de: int | None = None
@@ -530,10 +533,20 @@ def running_balances(
     lines: list[AnalysedLine], opening: Decimal, *, apercu: bool = False
 ) -> Decimal:
     """Solde de chaque ligne = solde précédent − débit + crédit, depuis `opening` ; retourne le
-    solde de clôture. `apercu` : le résultat va dans `solde_apercu` (analyse), sinon dans `solde`
+    solde de clôture. Une ligne qui porte le solde de la banque le garde et le calcul repart de lui
+    (colonne Solde remplie à moitié, 09/10/2026). `apercu` : le résultat va dans `solde_apercu` (analyse), sinon dans `solde`
     (enregistrement). Une ligne sans montant lisible n'a pas de solde."""
     solde = opening
     for line in _chronological(lines):
+        if line.solde is not None and not line.solde_calcule:
+            # Solde écrit par la banque : gardé, contrôlé, et le calcul repart de lui (09/10/2026)
+            if apercu:
+                attendu = None if line.montant is None else solde + line.montant
+                line.ecart_solde = (
+                    None if attendu is None or attendu == line.solde else line.solde - attendu
+                )
+            solde = line.solde
+            continue
         value = None if line.montant is None else solde + line.montant
         if value is not None:
             solde = value
@@ -556,6 +569,7 @@ class Ouverture:
 
 
 SOURCE_FICHIER = "Ligne SOLDE INITIAL du fichier"
+SOURCE_PREMIERE_LIGNE = "Solde de la banque sur la première opération du fichier"
 
 
 def _proposed_opening(
@@ -583,6 +597,9 @@ def _proposed_opening(
     precedent = (
         import_repository.last_operation_before(db, account.id, min(dates)) if dates else None
     )
+    source = SOURCE_FICHIER
+    if file_opening is None:
+        file_opening, source = _bank_opening(nouvelles), SOURCE_PREMIERE_LIGNE
     if file_opening is not None:
         avertissement = None
         if precedent is not None and precedent[1] != file_opening:
@@ -592,7 +609,7 @@ def _proposed_opening(
                 f"au solde de clôture du relevé précédent ({_texte_montant(solde)}, le "
                 f"{jour:%d/%m/%Y}) : une période manque peut-être."
             )
-        return Ouverture(file_opening, SOURCE_FICHIER, avertissement, modifiable=False)
+        return Ouverture(file_opening, source, avertissement, modifiable=False)
     if precedent is not None:
         jour, solde = precedent
         return Ouverture(
@@ -605,6 +622,18 @@ def _proposed_opening(
         jour, solde, _ = known
         return Ouverture(solde, f"Solde du jour enregistré le {jour:%d/%m/%Y} (tableau Banques)")
     return _opening_backwards(db, account, nouvelles, max(dates))
+
+
+def _bank_opening(lines: list[AnalysedLine]) -> Decimal | None:
+    """Colonne Solde remplie à moitié : si la première opération (dans l'ordre chronologique) porte
+    le solde de la banque, le solde d'ouverture est ce solde moins son montant."""
+    ordered = _chronological(lines)
+    if not ordered:
+        return None
+    first = ordered[0]
+    if first.solde is None or first.montant is None:
+        return None
+    return first.solde - first.montant
 
 
 def _texte_montant(value: Decimal) -> str:
@@ -731,7 +760,6 @@ def analyse_statement(
     pointages = _pointages(db, account.company_id)
     lines, ignored = [], 0
     # Une cellule Solde remplie (même illisible) : le fichier a ses soldes, rien n'est calculé
-    solde_dans_le_fichier = False
     for offset, row in enumerate(data):
         if all(is_blank(cell) for cell in row):
             continue
@@ -761,14 +789,16 @@ def analyse_statement(
             ignored += 1
             analysis.lignes_ignorees.append(import_file.ignored_line(numero, raison, row))
             continue
-        solde_dans_le_fichier = solde_dans_le_fichier or not is_blank(cells.get("solde"))
         lines.append(_read_line(numero, cells, mapping, account.bank, today, pointages))
 
     _direction_from_balances(lines, mapping, analysis.solde_initial_fichier, pointages)
     _mark_duplicates(db, account, lines)
     analysis.lignes = lines
     # Pas de soldes dans le fichier : ils sont calculés depuis un solde d'ouverture
-    if lines and not solde_dans_le_fichier:
+    # Une case Solde vide sur une ligne lisible (colonne absente ou remplie à moitié) : SIMTIS la
+    # calcule (09/10/2026). Une ligne en erreur ne compte pas : elle n'est pas importée telle quelle
+    solde_manquant = any(line.solde is None for line in lines if line.statut != "Erreur")
+    if lines and solde_manquant:
         analysis.soldes_calcules = True
         ouverture = _proposed_opening(db, account, lines, analysis.solde_initial_fichier)
         proposed = ouverture.solde
@@ -778,8 +808,8 @@ def analyse_statement(
         analysis.solde_ouverture_modifiable = ouverture.modifiable
         if solde_ouverture is not None and not ouverture.modifiable and solde_ouverture != proposed:
             origine = (
-                "de la banque (ligne SOLDE INITIAL du fichier)"
-                if ouverture.source == SOURCE_FICHIER
+                f"de la banque ({ouverture.source[0].lower()}{ouverture.source[1:]})"
+                if ouverture.source in (SOURCE_FICHIER, SOURCE_PREMIERE_LIGNE)
                 else "du relevé précédent (son solde de clôture)"
             )
             raise ConflictError(

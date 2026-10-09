@@ -394,13 +394,26 @@ export function EditablePreview({
                         : amount(ligne.credit, draft.credit)}
                     </td>
                     <td className={cn(CELL, "text-right whitespace-nowrap tabular-nums")}>
-                      {analysis.soldes_calcules
-                        ? formatAmount(computed?.soldes.get(draft.numero) ?? null, suffix)
-                        : isEditing
-                          ? field(draft, "solde", "Solde")
-                          : ligne.solde !== null
-                            ? formatAmount(ligne.solde, suffix)
-                            : amount(null, draft.solde)}
+                      {analysis.soldes_calcules ? (
+                        <>
+                          {/* Solde calculé en gris ; un solde de la banque reste en noir */}
+                          <span className={cn(!draft.solde.trim() && "text-simtis-muted")}>
+                            {formatAmount(computed?.soldes.get(draft.numero) ?? null, suffix)}
+                          </span>
+                          {computed?.ecarts.has(draft.numero) && (
+                            <span className="mt-1 block text-xs font-normal text-simtis-warning-fg">
+                              Écart avec le calcul :{" "}
+                              {formatAmount(computed.ecarts.get(draft.numero) ?? null, suffix)}
+                            </span>
+                          )}
+                        </>
+                      ) : isEditing ? (
+                        field(draft, "solde", "Solde")
+                      ) : ligne.solde !== null ? (
+                        formatAmount(ligne.solde, suffix)
+                      ) : (
+                        amount(null, draft.solde)
+                      )}
                     </td>
                     <td className={CELL}>
                       {isEditing

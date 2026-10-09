@@ -211,22 +211,42 @@ export function summariseDrafts(
 }
 
 /**
- * Fichier sans soldes (08/10/2026) : solde de chaque ligne = solde précédent − débit + crédit,
+ * Fichier sans soldes, ou colonne Solde remplie à moitié (09/10/2026 : un solde de la banque est
+ * gardé et le calcul repart de lui) : solde de chaque ligne = solde précédent − débit + crédit,
  * depuis `ouverture`, dans le même ordre que le serveur (ordre du fichier, inversé s'il va du plus
  * récent au plus ancien). Une ligne au montant illisible n'a pas de solde. Centimes exacts.
  */
 export function runningBalances(
   drafts: LineDraft[],
   ouverture: string,
-): { soldes: Map<number, string | null>; cloture: string } {
+): {
+  soldes: Map<number, string | null>;
+  cloture: string;
+  /** Solde de la banque − solde attendu, quand ils diffèrent (contrôle, 09/10/2026). */
+  ecarts: Map<number, string>;
+} {
   const lines = drafts.map(draftToLigne);
   const order = lines.map((_, index) => index);
   if ((lines[0]?.date_operation ?? "") > (lines.at(-1)?.date_operation ?? "")) order.reverse();
   const soldes = new Map<number, string | null>();
+  const ecarts = new Map<number, string>();
   let solde = toCents(ouverture);
   for (const index of order) {
     const draft = drafts[index];
     const { debit, credit } = lines[index];
+    const banque = lines[index].solde;
+    if (banque !== null && /^-?\d+(\.\d+)?$/.test(banque)) {
+      // Solde écrit par la banque : gardé, contrôlé, et le calcul repart de lui
+      const lisible =
+        (debit !== null || credit !== null) && !(draft.debit.trim() && debit === null);
+      const attendu = solde - toCents(debit ?? "0") + toCents(credit ?? "0");
+      if (lisible && attendu !== toCents(banque)) {
+        ecarts.set(draft.numero, fromCents(toCents(banque) - attendu));
+      }
+      solde = toCents(banque);
+      soldes.set(draft.numero, fromCents(solde));
+      continue;
+    }
     // Montant illisible (saisi mais non reconnu) ou absent : pas de solde pour cette ligne
     const unreadable =
       (draft.debit.trim() !== "" && debit === null) ||
@@ -239,5 +259,5 @@ export function runningBalances(
     solde = solde - toCents(debit ?? "0") + toCents(credit ?? "0");
     soldes.set(draft.numero, fromCents(solde));
   }
-  return { soldes, cloture: fromCents(solde) };
+  return { soldes, cloture: fromCents(solde), ecarts };
 }

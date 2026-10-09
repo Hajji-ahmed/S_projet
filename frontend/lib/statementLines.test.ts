@@ -229,3 +229,41 @@ describe("runningBalances", () => {
     expect(result.soldes.get(3)).toBe("-95.00");
   });
 });
+
+describe("runningBalances, colonne Solde remplie à moitié", () => {
+  const draft = (
+    numero: number,
+    jour: string,
+    debit: string,
+    credit: string,
+    solde: string,
+  ): LineDraft => ({
+    numero,
+    date_operation: jour,
+    date_valeur: "",
+    libelle: `L${numero}`,
+    reference: "",
+    debit,
+    credit,
+    solde,
+    pointage_type_id: null,
+    lettrage_escompte: "",
+    commentaire: "",
+  });
+
+  it("garde les soldes de la banque, calcule les cases vides et signale un écart", () => {
+    const result = runningBalances(
+      [
+        draft(2, "2026-09-01", "", "120", "1120"),
+        draft(3, "2026-09-02", "20", "", ""),
+        draft(4, "2026-09-02", "", "30", "1150"),
+        draft(5, "2026-09-03", "10", "", ""),
+      ],
+      "1000",
+    );
+
+    expect([...result.soldes.values()]).toEqual(["1120.00", "1100.00", "1150.00", "1140.00"]);
+    expect([...result.ecarts.entries()]).toEqual([[4, "20.00"]]);
+    expect(result.cloture).toBe("1140.00");
+  });
+});
