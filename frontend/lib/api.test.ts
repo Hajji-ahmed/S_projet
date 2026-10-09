@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   API_URL,
+  apiUrlFor,
   ApiError,
   apiDownload,
   apiFetch,
@@ -178,5 +179,18 @@ describe("refreshAccessToken", () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
 
     await expect(refreshAccessToken()).resolves.toBeNull();
+  });
+});
+
+describe("apiUrlFor", () => {
+  it("prend l'adresse imposée, sinon celle de la page, port 8000", () => {
+    const phone = { protocol: "http:", hostname: "192.168.137.1" };
+
+    expect(apiUrlFor("https://api.simtis.ma/api", phone)).toBe("https://api.simtis.ma/api");
+    expect(apiUrlFor("", phone)).toBe("http://192.168.137.1:8000/api");
+    expect(apiUrlFor(undefined, { protocol: "http:", hostname: "localhost" })).toBe(
+      "http://localhost:8000/api",
+    );
+    expect(apiUrlFor(undefined, undefined)).toBe("http://localhost:8000/api");
   });
 });

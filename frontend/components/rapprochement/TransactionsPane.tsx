@@ -116,7 +116,11 @@ export function TransactionsPane({
   ];
 
   return (
-    <Card title="Transactions bancaires" icon={Landmark}>
+    <Card
+      title="Transactions bancaires"
+      icon={Landmark}
+      className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
+    >
       <form
         className="mb-4 flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
@@ -171,6 +175,10 @@ export function TransactionsPane({
       {state === "ready" && data && (
         <>
           <DataTable
+            // Nouvelle page : le tableau repart en haut
+            key={data.page}
+            stickyHeader
+            className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             columns={columns}
             rows={data.operations}
             getRowKey={(row) => String(row.id)}

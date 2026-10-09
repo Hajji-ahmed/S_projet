@@ -55,6 +55,30 @@ Rôles : `ADMIN`, `TRESORERIE`, `COMPTABLE`, `RESPONSABLE`, `DIRECTION` (`--role
 
 Règles : session de 12 h (reconnexion chaque jour), compte verrouillé 15 min après 5 mots de passe faux, droits relus à chaque requête (un rôle retiré ou un compte désactivé prend effet immédiatement). Paramètres dans `.env.example`.
 
+## Accès depuis le réseau local (téléphone, autre PC)
+
+En développement, l'application n'écoute que sur ce PC. Pour l'ouvrir depuis un téléphone (partage
+de connexion du PC) ou un autre PC du même réseau :
+
+1. Dans `.env` (copie de `.env.example`) :
+   ```
+   BIND_ADDRESS=0.0.0.0
+   CORS_ORIGIN_REGEX=http://(192\.168|10)\.\d{1,3}\.\d{1,3}(\.\d{1,3})?:3000
+   ALLOWED_DEV_ORIGINS=192.168.137.1,192.168.123.204
+   ```
+   `ALLOWED_DEV_ORIGINS` = les adresses IPv4 de ce PC (`ipconfig`) : en général `192.168.137.1`
+   pour le partage de connexion Windows, et celle de la carte Wi-Fi ou Ethernet.
+2. `docker compose up -d --wait` (les conteneurs sont recréés avec les nouveaux réglages).
+3. Une fois, dans PowerShell **en administrateur** :
+   ```powershell
+   New-NetFirewallRule -DisplayName "SIMTIS dev (3000, 8000)" -Direction Inbound -Protocol TCP -LocalPort 3000,8000 -Action Allow -Profile Private
+   ```
+   Le réseau doit être de type **Privé** (Paramètres → Réseau → propriétés de la connexion).
+4. Sur l'autre appareil : `http://<IP de ce PC>:3000`. L'API est appelée sur la même adresse.
+
+Pour revenir à « ce PC seulement » : `BIND_ADDRESS=127.0.0.1` (ou supprimer ces lignes), puis
+`docker compose up -d --wait`. La base de données n'est jamais ouverte au réseau.
+
 ## Commandes courantes
 
 ```bash

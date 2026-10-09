@@ -19,7 +19,7 @@ Règles :
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
 
@@ -646,25 +646,18 @@ def _texte_montant(value: Decimal) -> str:
 def _opening_backwards(
     db: Session, account: BankAccount, lines: list[AnalysedLine], dernier_jour: date
 ) -> Ouverture:
-    """Solde d'ouverture = solde du tableau Banques (jour J ≥ dernier jour du fichier) − crédits
-    + débits du fichier. Exact seulement si le fichier contient toutes les opérations jusqu'à J."""
+    """Solde d'ouverture = solde du tableau Banques du dernier jour du fichier − crédits + débits du
+    fichier. Seulement quand ce solde est daté du dernier jour du fichier (décision du 09/10/2026) :
+    un solde postérieur supposerait qu'aucune opération n'a eu lieu entre les deux dates, la
+    proposition serait souvent fausse ; le solde est alors à saisir (premier import)."""
     later = import_repository.first_balance_from(db, account.id, dernier_jour)
-    if later is None:
+    if later is None or later[0] != dernier_jour:
         return Ouverture(None, "À saisir")
     jour, solde = later
     mouvements = sum((line.montant for line in lines if line.montant is not None), Decimal(0))
-    avertissement = None
-    if jour > dernier_jour:
-        lendemain = dernier_jour + timedelta(days=1)
-        avertissement = (
-            f"Le solde du {jour:%d/%m/%Y} est postérieur au dernier jour du fichier "
-            f"({dernier_jour:%d/%m/%Y}) : des opérations du {lendemain:%d/%m/%Y} au "
-            f"{jour:%d/%m/%Y} absentes du fichier fausseraient le calcul. Vérifiez."
-        )
     return Ouverture(
         solde - mouvements,
         f"Calculé à rebours depuis le solde du {jour:%d/%m/%Y} (tableau Banques)",
-        avertissement,
     )
 
 

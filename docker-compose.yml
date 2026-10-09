@@ -38,6 +38,8 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simtis}:${POSTGRES_PASSWORD:-simtis_dev_password}@db:5432/${POSTGRES_DB:-simtis}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # Accès depuis le réseau local (téléphone, autre PC) : voir « Accès depuis le réseau local »
+      CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
       # `:-` couvre aussi une variable vide (JWT_SECRET= dans .env). Valeur de développement uniquement :
       # en production, APP_ENV=production refuse de démarrer sans un vrai secret.
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-before-any-real-deployment}
@@ -50,7 +52,8 @@ services:
     volumes:
       - ./backend:/app
     ports:
-      - "127.0.0.1:8000:8000"
+      # 127.0.0.1 par défaut : seul ce PC ; BIND_ADDRESS=0.0.0.0 ouvre au réseau local
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -70,7 +73,10 @@ services:
     # Mode webpack : Turbopack ne détecte pas les modifications de fichiers dans un dossier monté depuis Windows.
     command: ["npm", "run", "dev", "--", "--webpack", "--hostname", "0.0.0.0", "--port", "3000"]
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+      # Vide : le navigateur appelle l'API sur la même adresse que la page, port 8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      # Adresses (IP) autorisées à charger le serveur de développement, séparées par des virgules
+      ALLOWED_DEV_ORIGINS: ${ALLOWED_DEV_ORIGINS:-}
       # Rechargement à chaud fiable sur les dossiers montés depuis Windows
       WATCHPACK_POLLING: "true"
     volumes:
@@ -79,7 +85,7 @@ services:
       - frontend_node_modules:/app/node_modules
       - frontend_next:/app/.next
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:3000:3000"
     depends_on:
       backend:
         condition: service_healthy

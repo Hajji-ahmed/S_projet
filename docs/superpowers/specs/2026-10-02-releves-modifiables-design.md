@@ -147,3 +147,7 @@ Certaines banques n'écrivent le solde que sur quelques lignes (par exemple en f
 - s'il ne suit pas le calcul, la ligne affiche « Écart avec le calcul : N » en orange (`ecart_solde`, aperçu seulement) ; ce contrôle ne bloque jamais l'import ;
 - si la première opération porte le solde de la banque, le solde d'ouverture est ce solde moins son montant (verrouillé, « Solde de la banque sur la première opération du fichier ») ; sinon la règle du 09/10/2026 s'applique (SOLDE INITIAL, relevé précédent, tableau Banques, saisie au premier import) ;
 - à l'étape Validation, corriger un débit ou un crédit recalcule en direct les soldes calculés (`runningBalances`), affichés en gris ; les soldes de la banque restent en noir.
+
+## Calcul à rebours limité au dernier jour du fichier (09/10/2026)
+
+Le calcul à rebours depuis le tableau Banques n'utilise plus qu'un solde **daté du dernier jour du fichier** : il est alors exact. Un solde postérieur (par exemple une saisie du 03/10 pour un fichier qui s'arrête au 31/08) supposait qu'aucune opération n'avait eu lieu entre les deux dates ; la proposition était souvent fausse. Dans ce cas, le solde d'ouverture est « À saisir » (premier import) et l'avertissement orange disparaît.

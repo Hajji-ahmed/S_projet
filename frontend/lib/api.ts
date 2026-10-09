@@ -1,7 +1,23 @@
 import type { TokenResponse } from "@/types/auth";
 
-/** URL de l'API vue depuis le navigateur (voir NEXT_PUBLIC_API_URL dans .env.example). */
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+/**
+ * URL de l'API vue depuis le navigateur. NEXT_PUBLIC_API_URL l'impose ; sinon l'API est appelée sur
+ * la même adresse que la page, port 8000 : un téléphone qui ouvre http://192.168.137.1:3000 appelle
+ * http://192.168.137.1:8000/api (accès depuis le réseau local, 09/10/2026).
+ */
+export function apiUrlFor(
+  configured: string | undefined,
+  page: { protocol: string; hostname: string } | undefined,
+): string {
+  if (configured?.trim()) return configured.trim();
+  if (!page) return "http://localhost:8000/api";
+  return `${page.protocol}//${page.hostname}:8000/api`;
+}
+
+export const API_URL = apiUrlFor(
+  process.env.NEXT_PUBLIC_API_URL,
+  typeof window === "undefined" ? undefined : window.location,
+);
 
 export const REFRESH_PATH = "/auth/refresh";
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  trierCandidats,
   absolute,
   defaultPeriod,
   defaultSelection,
@@ -16,7 +17,7 @@ import {
   toggleStatut,
   validable,
 } from "./reconciliation";
-import type { Correspondance } from "@/types/reconciliation";
+import type { Candidat, Correspondance } from "@/types/reconciliation";
 
 describe("defaultPeriod", () => {
   it("part du 1er du mois précédent", () => {
@@ -162,5 +163,26 @@ describe("statutsVolet", () => {
   it("ne propose « Écart » que si la fonction Écarts est active", () => {
     expect(statutsVolet(false)).toEqual(["Non rapprochée", "Rapprochée"]);
     expect(statutsVolet(true)).toEqual(["Non rapprochée", "Rapprochée", "Écart"]);
+  });
+});
+
+describe("trierCandidats", () => {
+  const candidat = (id: number, montant: string, score: string) =>
+    ({ score, ecriture: { id, montant } }) as unknown as Candidat;
+
+  it("garde le même montant ou un score au seuil, replie les autres", () => {
+    const { utiles, autres } = trierCandidats(
+      "88976.64",
+      [
+        candidat(1, "-88976.64", "40.00"),
+        candidat(2, "-500.00", "55.00"),
+        candidat(3, "-77.50", "35.79"),
+        candidat(4, "-2.50", "34.57"),
+      ],
+      "50.00",
+    );
+
+    expect(utiles.map((c) => c.ecriture.id)).toEqual([1, 2]);
+    expect(autres.map((c) => c.ecriture.id)).toEqual([3, 4]);
   });
 });

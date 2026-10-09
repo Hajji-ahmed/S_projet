@@ -114,7 +114,11 @@ export function EntriesPane({
   ];
 
   return (
-    <Card title="Écritures comptables" icon={BookText}>
+    <Card
+      title="Écritures comptables"
+      icon={BookText}
+      className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
+    >
       <form
         className="mb-4 flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
@@ -173,6 +177,10 @@ export function EntriesPane({
       {state === "ready" && data && (
         <>
           <DataTable
+            // Nouvelle page : le tableau repart en haut
+            key={data.page}
+            stickyHeader
+            className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             columns={columns}
             rows={data.ecritures}
             getRowKey={(row) => String(row.id)}

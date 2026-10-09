@@ -2072,17 +2072,16 @@ def test_the_opening_is_computed_backwards_from_the_closing_day_balance(
     assert body["lignes"][-1]["solde_apercu"] == "5000800.00"
 
 
-def test_a_later_balance_gives_a_warning(client, tresorerie, account, db):
+def test_a_later_balance_is_not_used_backwards(client, tresorerie, account, db):
+    """Décision du 09/10/2026 : un solde du tableau postérieur au fichier ne sert plus au calcul à
+    rebours (des opérations manquantes le fausseraient) ; premier import : à saisir."""
     _day_balance(db, account, date(2026, 10, 3), "5000800")
 
     body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
 
-    assert body["solde_ouverture_propose"] == "5000000.00"
-    assert body["solde_ouverture_avertissement"] == (
-        "Le solde du 03/10/2026 est postérieur au dernier jour du fichier (03/09/2026) : "
-        "des opérations du 04/09/2026 au 03/10/2026 absentes du fichier fausseraient le calcul. "
-        "Vérifiez."
-    )
+    assert (body["solde_ouverture_propose"], body["solde_ouverture_source"]) == (None, "À saisir")
+    assert body["solde_ouverture_avertissement"] is None
+    assert body["solde_ouverture_modifiable"] is True
 
 
 def test_an_earlier_balance_wins_over_the_backwards_computation(client, tresorerie, account, db):

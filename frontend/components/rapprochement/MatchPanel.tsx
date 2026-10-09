@@ -29,7 +29,14 @@ import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { ECARTS_ACTIFS } from "@/lib/features";
 import { formatAmount } from "@/lib/format";
-import { absolute, ecartManuel, rapprochable, sensBanque, sensSage } from "@/lib/reconciliation";
+import {
+  absolute,
+  ecartManuel,
+  rapprochable,
+  sensBanque,
+  sensSage,
+  trierCandidats,
+} from "@/lib/reconciliation";
 import { formatDateTime } from "@/lib/statements";
 import {
   cancelMatch,
@@ -40,7 +47,7 @@ import {
   validateMatch,
 } from "@/services/reconciliation";
 import type { Ecriture } from "@/types/accounting";
-import type { Candidats, Correspondance, Operation } from "@/types/reconciliation";
+import type { Candidat, Candidats, Correspondance, Operation } from "@/types/reconciliation";
 
 type MatchPanelProps = {
   companyId: number;
@@ -503,6 +510,67 @@ function CandidatesList({
   onRetry: () => void;
   onChoose: (ecritureId: number) => void;
 }) {
+  // 09/10/2026 : seules les écritures utiles sont dépliées (même montant ou score au seuil)
+  const { utiles, autres } =
+    data && operation
+      ? trierCandidats(operation.montant, data.candidats, data.seuil_proposition)
+      : { utiles: [], autres: [] };
+
+  function renderCandidat(candidat: Candidat) {
+    if (!operation || !data) return null;
+    const ok = rapprochable(operation.montant, candidat.ecriture.montant);
+    const forte = Number(candidat.score) >= Number(data.seuil_fort);
+    return (
+      <li
+        key={candidat.ecriture.id}
+        className="space-y-1 rounded-[12px] border border-simtis-border p-3"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium tabular-nums">
+              {formatAmount(absolute(candidat.ecriture.montant), "DH")}
+            </p>
+            <p className="truncate text-sm">{candidat.ecriture.libelle}</p>
+            <p className="text-xs text-simtis-muted">
+              {formatDate(candidat.ecriture.date_ecriture)}
+              {candidat.ecriture.numero_piece && ` · Pièce ${candidat.ecriture.numero_piece}`}
+            </p>
+          </div>
+          <ScoreBadge score={candidat.score} forte={forte} />
+        </div>
+        {candidat.rejetee && (
+          <p className="text-xs text-simtis-warning-fg">Déjà rejetée pour cette opération.</p>
+        )}
+        {candidat.proposee_ailleurs && (
+          <p className="text-xs text-simtis-warning-fg">
+            Proposée pour une autre opération : la choisir rejette cette proposition.
+          </p>
+        )}
+        {!ok && (
+          <p className="text-xs text-simtis-muted">
+            Montant différent : écart de{" "}
+            {formatAmount(
+              absolute(ecartManuel(operation.montant, candidat.ecriture.montant)),
+              "DH",
+            )}
+            .
+          </p>
+        )}
+        {canValidate && (
+          <Button
+            variant="secondary"
+            icon={Link2}
+            disabled={busy || !ok || candidat.ecriture.statut === "Rapprochée"}
+            onClick={() => onChoose(candidat.ecriture.id)}
+            className="w-full"
+          >
+            Rapprocher avec cette écriture
+          </Button>
+        )}
+      </li>
+    );
+  }
+
   return (
     <div>
       <p className="mb-2 text-xs font-semibold tracking-wide text-simtis-muted uppercase">
@@ -514,69 +582,21 @@ function CandidatesList({
       )}
       {state === "ready" && data && operation && (
         <>
-          {data.candidats.length === 0 ? (
+          {utiles.length === 0 ? (
             <p className="text-sm text-simtis-muted">
-              Aucune écriture du même compte, de sens opposé, à moins de quelques jours.
+              Aucune écriture Sage de {formatAmount(absolute(operation.montant), "DH")} à ± 10 jours
+              sur ce compte. L&apos;écriture n&apos;est peut-être pas encore importée.
             </p>
           ) : (
-            <ul className="space-y-2">
-              {data.candidats.map((candidat) => {
-                const ok = rapprochable(operation.montant, candidat.ecriture.montant);
-                const forte = Number(candidat.score) >= Number(data.seuil_fort);
-                return (
-                  <li
-                    key={candidat.ecriture.id}
-                    className="space-y-1 rounded-[12px] border border-simtis-border p-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium tabular-nums">
-                          {formatAmount(absolute(candidat.ecriture.montant), "DH")}
-                        </p>
-                        <p className="truncate text-sm">{candidat.ecriture.libelle}</p>
-                        <p className="text-xs text-simtis-muted">
-                          {formatDate(candidat.ecriture.date_ecriture)}
-                          {candidat.ecriture.numero_piece &&
-                            ` · Pièce ${candidat.ecriture.numero_piece}`}
-                        </p>
-                      </div>
-                      <ScoreBadge score={candidat.score} forte={forte} />
-                    </div>
-                    {candidat.rejetee && (
-                      <p className="text-xs text-simtis-warning-fg">
-                        Déjà rejetée pour cette opération.
-                      </p>
-                    )}
-                    {candidat.proposee_ailleurs && (
-                      <p className="text-xs text-simtis-warning-fg">
-                        Proposée pour une autre opération : la choisir rejette cette proposition.
-                      </p>
-                    )}
-                    {!ok && (
-                      <p className="text-xs text-simtis-muted">
-                        Montant différent : écart de{" "}
-                        {formatAmount(
-                          absolute(ecartManuel(operation.montant, candidat.ecriture.montant)),
-                          "DH",
-                        )}
-                        .
-                      </p>
-                    )}
-                    {canValidate && (
-                      <Button
-                        variant="secondary"
-                        icon={Link2}
-                        disabled={busy || !ok || candidat.ecriture.statut === "Rapprochée"}
-                        onClick={() => onChoose(candidat.ecriture.id)}
-                        className="w-full"
-                      >
-                        Rapprocher avec cette écriture
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+            <ul className="space-y-2">{utiles.map(renderCandidat)}</ul>
+          )}
+          {autres.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm font-medium text-simtis-primary">
+                Voir les autres écritures proches ({autres.length})
+              </summary>
+              <ul className="mt-2 space-y-2">{autres.map(renderCandidat)}</ul>
+            </details>
           )}
         </>
       )}

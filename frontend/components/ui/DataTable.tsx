@@ -27,6 +27,8 @@ type DataTableProps<T> = {
   rowLabel?: (row: T) => string;
   /** Ligne mise en retrait (texte grisé), par exemple une ligne décochée d'un aperçu d'import. */
   isRowMuted?: (row: T) => boolean;
+  /** Ligne d'en-tête toujours visible quand le tableau défile dans un conteneur de hauteur fixe. */
+  stickyHeader?: boolean;
 };
 
 /**
@@ -45,6 +47,7 @@ export function DataTable<T extends Record<string, unknown>>({
   isRowSelected,
   rowLabel,
   isRowMuted,
+  stickyHeader = false,
 }: DataTableProps<T>) {
   const cellClass = (column: Column<T>) =>
     cn("px-4 py-3", column.align === "right" && "text-right whitespace-nowrap tabular-nums");
@@ -58,7 +61,13 @@ export function DataTable<T extends Record<string, unknown>>({
     >
       <table className="w-full border-collapse text-[13.5px] text-simtis-text">
         <thead>
-          <tr className="bg-simtis-light/60 text-[13px] font-semibold text-simtis-primary-dark">
+          <tr
+            className={cn(
+              "text-[13px] font-semibold text-simtis-primary-dark",
+              // En-tête collant : fond opaque, sinon les lignes défilent à travers
+              stickyHeader ? "sticky top-0 z-10 bg-simtis-light" : "bg-simtis-light/60",
+            )}
+          >
             {columns.map((column) => (
               <th
                 key={column.key}

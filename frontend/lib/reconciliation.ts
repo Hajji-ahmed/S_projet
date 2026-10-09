@@ -2,7 +2,7 @@
 import { ECARTS_ACTIFS } from "@/lib/features";
 import { fromCents, toCents } from "@/lib/statementLines";
 import type { StatutRapprochement } from "@/types/accounting";
-import type { Correspondance, Operation } from "@/types/reconciliation";
+import type { Candidat, Correspondance, Operation } from "@/types/reconciliation";
 
 export type ReconciliationFilter = {
   bankAccountId?: number;
@@ -166,3 +166,23 @@ export function statutsVolet(ecartsActifs: boolean): StatutRapprochement[] {
 }
 
 export const STATUTS_VOLET = statutsVolet(ECARTS_ACTIFS);
+
+/**
+ * Écritures possibles d'une opération (09/10/2026) : « utiles » = même montant (rapprochables) ou
+ * score au moins égal au seuil de proposition ; les autres (même jour, sans rapport) sont repliées.
+ */
+export function trierCandidats(
+  montantOperation: string,
+  candidats: readonly Candidat[],
+  seuilProposition: string,
+): { utiles: Candidat[]; autres: Candidat[] } {
+  const seuil = toCents(seuilProposition);
+  const utiles: Candidat[] = [];
+  const autres: Candidat[] = [];
+  for (const candidat of candidats) {
+    const utile =
+      rapprochable(montantOperation, candidat.ecriture.montant) || toCents(candidat.score) >= seuil;
+    (utile ? utiles : autres).push(candidat);
+  }
+  return { utiles, autres };
+}

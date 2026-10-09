@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://simtis:simtis_dev_password@db:5432/simtis"
     # Origines autorisées à appeler l'API depuis le navigateur, séparées par des virgules
     cors_origins: str = "http://localhost:3000"
+    # Motif d'origines en plus (accès depuis le réseau local en développement : téléphone, autre PC).
+    # Vide par défaut : seules les origines de `cors_origins` sont acceptées
+    cors_origin_regex: str | None = None
 
     # Authentification
     jwt_secret: str = DEV_JWT_SECRET
