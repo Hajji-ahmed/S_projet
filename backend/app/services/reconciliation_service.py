@@ -38,6 +38,8 @@ from app.services.reconciliation_scoring import (
     comparable,
     proposer,
     score,
+    type_ecriture,
+    type_operation,
 )
 
 PAGE_SIZE = 50
@@ -108,6 +110,7 @@ def _ecriture(entry: AccountingEntry) -> Ecriture:
         tiers=entry.tiers,
         montant=entry.montant,
         bank_account_id=entry.bank_account_id,
+        echeance=entry.echeance,
     )
 
 
@@ -597,6 +600,11 @@ def match_manually(
         )
     if "Écart" in (tx.statut, entry.statut):
         raise ConflictError("Une ligne en écart se traite dans l'écran Écarts.")
+    type_tx, type_ec = type_operation(tx.libelle), type_ecriture(entry.libelle)
+    if type_tx and type_ec and type_tx != type_ec:
+        raise ConflictError(
+            f"Une opération {type_tx} ne se rapproche pas d'une écriture {type_ec}."
+        )
 
     remplacees = release_pending_matches(
         db,

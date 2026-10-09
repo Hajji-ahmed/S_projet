@@ -299,10 +299,14 @@ class ManuelIn(BaseModel):
     commentaire: Commentaire | None = None
 
 
+# Propositions au plus par validation en lot (5 000 depuis le 09/10/2026 ; 500 avant)
+LOT_MAX = 5000
+
+
 class ValidationLotIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    ids: Annotated[list[int], Field(min_length=1, max_length=500)]
+    ids: Annotated[list[int], Field(min_length=1, max_length=LOT_MAX)]
 
 
 class ValidationLotOut(BaseModel):

@@ -14,6 +14,8 @@ from app.services.reconciliation_scoring import (
     proposer,
     ratio_date,
     score,
+    type_ecriture,
+    type_operation,
 )
 
 JOUR = date(2026, 9, 24)
@@ -131,10 +133,24 @@ def test_date_points_decrease_until_the_tolerance():
     assert ratio_date(0, 0) == 1 and ratio_date(1, 0) == 0
 
 
-def test_value_date_is_used_when_closer():
-    resultat = score(op(jour=date(2026, 9, 28), valeur=JOUR), ec())
+def test_value_date_counts_only_for_an_effet():
+    """09/10/2026 : la date de valeur sert aux effets ; les autres types prennent la date
+    d'opération (la banque décale la date de valeur)."""
+    banque = op(jour=date(2026, 9, 28), valeur=JOUR)
 
-    assert resultat.detail["date"] == Decimal("30.00")
+    assert score(banque, ec(libelle="EAR° 3308407 LAHNINE")).detail["date"] == Decimal("30.00")
+    assert score(banque, ec(libelle="EAR1° AXK 173813")).detail["date"] == Decimal("0.00")
+
+
+def test_an_effet_is_compared_at_its_due_date():
+    effet = ec(libelle="EAR° 3308407 LAHNINE", jour=date(2026, 8, 1), echeance=JOUR)
+    sans_echeance = ec(libelle="EAR° 3308407 LAHNINE", jour=date(2026, 8, 1))
+    cheque = ec(libelle="EAR1° AXK 173813", jour=date(2026, 8, 1), echeance=JOUR)
+
+    assert score(op(), effet).detail["date"] == Decimal("30.00")
+    assert proposer([op()], [effet]).propositions
+    assert not comparable(op(), sans_echeance, GRILLE_PAR_DEFAUT)  # hors fenêtre de 10 jours
+    assert not comparable(op(), cheque, GRILLE_PAR_DEFAUT)  # l'échéance ne sert qu'aux effets
 
 
 def test_entries_outside_the_window_are_not_compared():
@@ -321,3 +337,30 @@ def test_the_prefilter_gives_the_same_result_as_scoring_every_pair():
     }
 
     assert attendus <= retenus
+
+
+# --- Type d'opération (09/10/2026) ---------------------------------------------------------------
+
+
+def test_types_are_read_from_the_labels_of_each_side():
+    assert type_ecriture("EAR1° AXK 173813 JAID") == "Chèque"
+    assert type_ecriture("EAR° 3308407 LAHNINE") == "Effet"
+    assert type_ecriture("ESP N 1234") == "Espèces"
+    assert type_ecriture("VIR CLIENT ATLAS") is None
+    assert type_operation("ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW") == "Chèque"
+    assert type_operation("ENCAISSEMENT EFFET N 3100821") == "Effet"
+    assert type_operation("REMISE D'EFFETS N 5812970") == "Effet"
+    assert type_operation("VERSEMENT DEPLACE PAR UN TIERS") == "Espèces"
+    assert type_operation("FRAIS RECUPERES PAR LA BANQUE") is None
+
+
+def test_different_types_are_never_compared():
+    cheque = op(libelle="ENCAISSEMENT CHEQUE N 0173813")
+    especes = op(libelle="VERSEMENT DEPLACE PAR UN TIERS")
+    virement = op(libelle="VIR CLIENT ATLAS")
+    ecriture_cheque = ec(libelle="EAR1° AXK 173813")
+
+    assert comparable(cheque, ecriture_cheque, GRILLE_PAR_DEFAUT)
+    assert not comparable(especes, ecriture_cheque, GRILLE_PAR_DEFAUT)
+    assert comparable(virement, ecriture_cheque, GRILLE_PAR_DEFAUT)  # autre : comparable
+    assert proposer([especes], [ecriture_cheque]).propositions == []

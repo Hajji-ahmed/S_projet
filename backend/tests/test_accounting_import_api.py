@@ -577,3 +577,39 @@ def test_no_chosen_line_is_refused(client, comptable, db, journals):
     response = confirm(client, comptable, db, xlsx(EXPORT), lignes_choisies="[]")
 
     assert response.status_code == 409
+
+
+# --- Modèle complété par la détection (09/10/2026) -------------------------------------------------
+
+
+def test_a_saved_model_is_completed_with_new_columns(client, comptable, db, journals):
+    """Le modèle de la société ne connaît ni la pièce ni l'échéance : elles sont lues quand même."""
+    save(
+        db,
+        ColumnMapping(
+            type="Comptabilité",
+            company_id=company(db).id,
+            nom="Ancien modèle",
+            mapping={
+                "date_ecriture": "DATE",
+                "libelle": "LIBELLE",
+                "debit": "DEBIT",
+                "credit": "CREDIT",
+                "compte": "COMPTE",
+                "journal": "JOURNAL",
+            },
+        ),
+    )
+    rows = [
+        ["DATE", "LIBELLE", "DEBIT", "CREDIT", "N° DE PIECES", "echeance", "COMPTE", "JOURNAL"],
+        [
+            date(2025, 9, 2), "EAR° 3308407 LAHNINE", None, 30000, "RMS010001632",
+            date(2025, 10, 30), "5141", "BQ1",
+        ],
+    ]  # fmt: skip
+
+    body = analyse(client, comptable, db, xlsx(rows)).json()
+
+    assert body["mapping_source"] == "Modèle de la société"
+    [line] = body["lignes"]
+    assert (line["numero_piece"], line["echeance"]) == ("RMS010001632", "2025-10-30")

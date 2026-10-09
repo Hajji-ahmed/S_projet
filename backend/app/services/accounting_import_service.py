@@ -56,7 +56,22 @@ ACCOUNTING_FIELDS: tuple[ImportField, ...] = (
     ImportField("credit", "Crédit", False, ("credit", "montant credit")),
     ImportField("montant", "Montant signé", False, ("montant", "montant signe")),
     ImportField(
-        "numero_piece", "N° pièce", False, ("n piece", "numero piece", "piece", "no piece")
+        "numero_piece",
+        "N° pièce",
+        False,
+        (
+            "n piece",
+            "numero piece",
+            "piece",
+            "no piece",
+            "n de piece",
+            "n de pieces",
+            "numero de piece",
+            "numero de pieces",
+            "pieces",
+            "n pieces",
+            "no de piece",
+        ),  # fmt: skip
     ),
     ImportField("echeance", "Échéance", False, ("echeance", "date echeance")),
     ImportField("tiers", "Tiers", False, ("tiers", "compte tiers", "client fournisseur")),

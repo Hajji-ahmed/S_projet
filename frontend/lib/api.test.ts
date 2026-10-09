@@ -126,6 +126,16 @@ describe("apiFetch", () => {
 
     await expect(apiFetch("/health")).rejects.toThrow("Une erreur est survenue.");
   });
+
+  it("traduit une erreur 422 de validation en message lisible", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(422, { detail: [{ loc: ["body", "ids"], msg: "too long" }] }),
+    );
+
+    await expect(apiFetch("/reconciliation/matches/validate-batch")).rejects.toThrow(
+      "Requête refusée : données invalides.",
+    );
+  });
 });
 
 describe("apiDownload", () => {

@@ -821,3 +821,41 @@ def test_a_strong_proposal_with_a_close_competitor_is_flagged(client, comptable,
         "92.50",
         True,
     )
+
+
+# --- Validation en lot : jusqu'à 5 000 propositions (09/10/2026) ----------------------------------
+
+
+def test_a_batch_of_more_than_500_proposals_is_validated(client, comptable, db):
+    compte = account(db)
+    for i in range(600):
+        jour = date(2026, 9, 1 + i % 30)
+        operation(db, compte, montant=str(1000 + i), jour=jour, libelle=f"VIR {i}")
+        ecriture(db, compte, montant=str(-(1000 + i)), jour=jour, libelle=f"VIR {i}", tiers=None)
+    run(client, comptable, db)
+    ids = [p["id"] for p in proposals(client, comptable, db).json()["correspondances"]]
+    assert len(ids) == 600
+
+    response = client.post(BATCH, json={"ids": ids}, headers=comptable)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["nb_validees"] == 600
+
+
+def test_a_batch_above_the_limit_is_refused(client, comptable):
+    response = client.post(BATCH, json={"ids": list(range(1, 5002))}, headers=comptable)
+
+    assert response.status_code == 422
+
+
+def test_a_manual_match_between_two_types_is_refused(client, comptable, db):
+    compte = account(db)
+    tx = operation(db, compte, libelle="VERSEMENT DEPLACE PAR UN TIERS")
+    entry = ecriture(db, compte, libelle="EAR1° AXK 173813")
+
+    response = manual(client, comptable, tx, entry)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Une opération Espèces ne se rapproche pas d'une écriture Chèque."
+    }

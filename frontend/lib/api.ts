@@ -64,6 +64,8 @@ async function errorMessage(response: Response): Promise<string> {
   } catch {
     // corps vide ou non JSON : message générique ci-dessous
   }
+  // 422 sans message métier : validation de la requête (champ invalide, liste trop longue…)
+  if (response.status === 422) return "Requête refusée : données invalides.";
   return response.statusText || "Une erreur est survenue.";
 }
 

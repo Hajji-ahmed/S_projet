@@ -98,6 +98,8 @@ class Ecriture:
     montant: Decimal
     # Compte bancaire du journal Sage de l'écriture
     bank_account_id: int | None = None
+    # Échéance Sage : date comparée pour un effet (09/10/2026)
+    echeance: date | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +178,46 @@ def _contient(texte_plain: str, cle: str) -> bool:
     return re.search(rf"(?<![A-Z0-9]){motif}(?![A-Z0-9])", texte_plain) is not None
 
 
+# --- Type d'opération lu dans le libellé (décision du 09/10/2026) ------------------------------------
+# Une ligne Chèque ne se rapproche jamais d'une ligne Effet ou Espèces ; « Autre » (virements, frais…)
+# reste comparable à tout. Préfixes cherchés au début du libellé normalisé (`_plain`).
+TYPES_SAGE: tuple[tuple[str, str], ...] = (
+    ("EAR1", "Chèque"),  # « EAR1° … »
+    ("EAR", "Effet"),  # « EAR° … »
+    ("ESP", "Espèces"),
+)
+TYPES_BANQUE: tuple[tuple[str, str], ...] = (
+    ("ENCAISSEMENT CHEQUE", "Chèque"),
+    ("ENCAISSEMENT EFFET", "Effet"),
+    ("REMISE D EFFETS", "Effet"),
+    ("VERSEMENT DEPLACE", "Espèces"),
+)
+
+
+def _type(libelle: str | None, regles: tuple[tuple[str, str], ...]) -> str | None:
+    texte = _plain(libelle)
+    for prefixe, nom in regles:
+        if texte == prefixe or texte.startswith(prefixe + " "):
+            return nom
+    return None
+
+
+def type_operation(libelle: str | None) -> str | None:
+    """Type d'une opération bancaire (Chèque, Effet, Espèces) ; None = autre."""
+    return _type(libelle, TYPES_BANQUE)
+
+
+def type_ecriture(libelle: str | None) -> str | None:
+    """Type d'une écriture Sage (Chèque, Effet, Espèces) ; None = autre."""
+    return _type(libelle, TYPES_SAGE)
+
+
+def types_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
+    """Deux types connus et différents ne se rapprochent jamais ; un type inconnu (autre) passe."""
+    a, b = type_operation(operation.libelle), type_ecriture(ecriture.libelle)
+    return a is None or b is None or a == b
+
+
 def numeros(*textes: str | None) -> set[str]:
     """Numéros de 5 chiffres ou plus des textes, sans les zéros en tête (« 0173813 » → « 173813 »)."""
     return set().union(*(_numeros_du_texte(texte) for texte in textes if texte))
@@ -214,10 +256,24 @@ def critere_reference(operation: Operation, ecriture: Ecriture) -> bool:
     return any(len(cle) >= 3 and _contient(texte, cle) for cle in cles_ecriture for texte in textes)
 
 
+def date_comparee(ecriture: Ecriture) -> date:
+    """Date Sage comparée (09/10/2026) : l'échéance pour un effet qui en a une (un effet est payé à
+    son échéance), sinon la date de l'écriture."""
+    if ecriture.echeance is not None and type_ecriture(ecriture.libelle) == "Effet":
+        return ecriture.echeance
+    return ecriture.date_ecriture
+
+
 def ecart_jours(operation: Operation, ecriture: Ecriture) -> int:
-    """Plus petit écart, en jours, entre l'écriture et la date d'opération ou de valeur."""
-    dates = [operation.date_operation] + ([operation.date_valeur] if operation.date_valeur else [])
-    return min(abs((jour - ecriture.date_ecriture).days) for jour in dates)
+    """Écart, en jours, entre la date Sage comparée et la date bancaire (09/10/2026) : pour un effet,
+    la plus proche de la date de valeur et de la date d'opération ; pour les autres types (chèque,
+    espèces, virement…), la date d'opération seulement, la date de valeur étant décalée par la
+    banque."""
+    jour_sage = date_comparee(ecriture)
+    dates = [operation.date_operation]
+    if operation.date_valeur and type_ecriture(ecriture.libelle) == "Effet":
+        dates.append(operation.date_valeur)
+    return min(abs((jour - jour_sage).days) for jour in dates)
 
 
 def ratio_date(ecart: int, tolerance: int) -> Decimal:
@@ -251,13 +307,15 @@ def critere_tiers(operation: Operation, ecriture: Ecriture) -> bool:
 
 
 def comparable(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool:
-    """Pré-filtre : même compte bancaire, sens opposés (crédit banque ↔ débit Sage) et dates dans
-    la fenêtre."""
+    """Pré-filtre : même compte bancaire, sens opposés (crédit banque ↔ débit Sage), même type
+    d'opération quand les deux sont connus (09/10/2026) et dates dans la fenêtre."""
     if operation.bank_account_id != ecriture.bank_account_id:
         return False
     if operation.montant == 0 or ecriture.montant == 0:
         return False
     if (operation.montant > 0) == (ecriture.montant > 0):
+        return False
+    if not types_compatibles(operation, ecriture):
         return False
     return ecart_jours(operation, ecriture) <= grille.fenetre_jours
 
@@ -386,7 +444,7 @@ def _paires_comparables(
     parcourt que les jours de sa fenêtre, jamais toutes les écritures."""
     par_jour: dict[date, list[Ecriture]] = {}
     for ecriture in ecritures:
-        par_jour.setdefault(ecriture.date_ecriture, []).append(ecriture)
+        par_jour.setdefault(date_comparee(ecriture), []).append(ecriture)
     for operation in operations:
         vues: set[int] = set()
         jours = {operation.date_operation}

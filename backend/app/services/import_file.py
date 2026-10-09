@@ -268,7 +268,9 @@ def propose_mapping(columns: list[Column], fields: Sequence[ImportField]) -> Map
 def mapping_from_headers(
     saved: dict[str, str | None], columns: list[Column], fields: Sequence[ImportField]
 ) -> Mapping | None:
-    """Modèle mémorisé (champ → en-tête), s'il retrouve toutes ses colonnes dans le fichier."""
+    """Modèle mémorisé (champ → en-tête), s'il retrouve toutes ses colonnes dans le fichier. Un champ
+    que le modèle ne connaît pas est complété par la détection, si le fichier a cette colonne
+    (09/10/2026 : une colonne Échéance ou N° pièce ajoutée à l'export n'est plus ignorée)."""
     by_header = {
         normalize_header(column.entete): column.index for column in columns if column.entete
     }
@@ -280,6 +282,11 @@ def mapping_from_headers(
         if index is None:
             return None
         mapping[code] = index
+    used = {index for index in mapping.values() if index is not None}
+    for code, index in propose_mapping(columns, fields).items():
+        if mapping.get(code) is None and index is not None and index not in used:
+            mapping[code] = index
+            used.add(index)
     return mapping
 
 

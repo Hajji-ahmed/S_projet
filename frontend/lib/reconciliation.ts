@@ -186,3 +186,6 @@ export function trierCandidats(
   }
   return { utiles, autres };
 }
+
+/** Propositions au plus par validation en lot, comme le serveur (`LOT_MAX`, 09/10/2026). */
+export const LOT_MAX = 5000;

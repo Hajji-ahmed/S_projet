@@ -143,3 +143,24 @@ Décisions de l'utilisateur du 07/10/2026 : le compteur « À vérifier » dispa
 
 - « Lancer le rapprochement » accepte une période de **5 ans au plus** (366 jours avant). La limite reste un garde-fou contre une année mal saisie.
 - Le moteur compare chaque opération à toutes les écritures de sens opposé à ± 10 jours, quel que soit le montant (1 million de paires sur 5 ans de données de dev). Une paire qui ne peut pas atteindre le seuil de proposition, même avec un libellé parfait, n'est plus comparée sur le libellé (`_peut_atteindre`) ; les libellés normalisés sont mis en cache. Le résultat est identique (1 509 propositions, 45 ambiguës) ; la durée passe de 51 s à 9 s.
+
+## Types d'opération (09/10/2026)
+
+Le libellé donne le type de chaque ligne (début du libellé normalisé) :
+
+| Type | Écriture Sage | Opération bancaire |
+|---|---|---|
+| Chèque | `EAR1° …` | `ENCAISSEMENT CHEQUE N …` |
+| Effet | `EAR° …` | `ENCAISSEMENT EFFET N …`, `REMISE D'EFFETS …` |
+| Espèces | `ESP …` | `VERSEMENT DEPLACE PAR …` |
+
+Deux types connus et différents ne sont jamais comparés : ni proposition, ni candidat, et le rapprochement manuel est refusé (409). Une ligne sans type (virements, frais…) reste comparable à toutes. Le rapprochement reste 1 transaction → 1 écriture.
+
+## Dates comparées par type (09/10/2026)
+
+| Type | Date Sage | Date banque |
+|---|---|---|
+| Effet | Échéance (sinon date de l'écriture) | Date de valeur ou date d'opération, la plus proche |
+| Chèque, Espèces, Autres (virements…) | Date de l'écriture | Date d'opération seulement |
+
+La tolérance reste de 3 jours et la fenêtre de 10 jours ; un effet est aussi cherché par son échéance. Constat du 09/10/2026 : aucune écriture Sage importée n'a d'échéance, et les opérations bancaires de type Chèque et Effet n'ont pas de date de valeur ; la règle des effets s'appliquera quand l'export Sage la contiendra.

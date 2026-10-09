@@ -85,8 +85,11 @@ def free_entries(
         .where(
             AccountingEntry.company_id == company_id,
             AccountingEntry.bank_account_id.in_(account_ids),
-            AccountingEntry.date_ecriture >= date_from,
-            AccountingEntry.date_ecriture <= date_to,
+            # Un effet est comparé à son échéance (09/10/2026) : il est aussi cherché par elle
+            or_(
+                AccountingEntry.date_ecriture.between(date_from, date_to),
+                AccountingEntry.echeance.between(date_from, date_to),
+            ),
             AccountingEntry.statut.not_in(STATUTS_FIGES),
             AccountingEntry.id.not_in(_active_entry_ids()),
         )
@@ -504,8 +507,11 @@ def candidate_entries(
         and_(
             AccountingEntry.company_id == company_id,
             AccountingEntry.bank_account_id == transaction.bank_account_id,
-            AccountingEntry.date_ecriture >= date_from,
-            AccountingEntry.date_ecriture <= date_to,
+            # Un effet est comparé à son échéance (09/10/2026) : il est aussi cherché par elle
+            or_(
+                AccountingEntry.date_ecriture.between(date_from, date_to),
+                AccountingEntry.echeance.between(date_from, date_to),
+            ),
             AccountingEntry.statut != "Écart",
             AccountingEntry.id.not_in(validated_entry_ids),
         )

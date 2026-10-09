@@ -19,6 +19,7 @@ import { formatAmount } from "@/lib/format";
 import {
   defaultSelection,
   filterProposals,
+  LOT_MAX,
   formatScore,
   selectionSummary,
   validable,
@@ -301,6 +302,12 @@ export function ProposalsTab({
                   · dont {plural(summary.faibles, "proposition")} à vérifier
                 </span>
               )}
+              {summary.nb > LOT_MAX && (
+                <span role="alert" className="block text-simtis-danger-fg">
+                  Sélection trop grande ({summary.nb}) : {LOT_MAX} au plus par validation. Filtrez
+                  par compte ou par période.
+                </span>
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -322,7 +329,7 @@ export function ProposalsTab({
               </Button>
               <Button
                 icon={CheckCheck}
-                disabled={busy || summary.nb === 0}
+                disabled={busy || summary.nb === 0 || summary.nb > LOT_MAX}
                 onClick={() => setConfirming(true)}
               >
                 Valider la sélection ({summary.nb})
