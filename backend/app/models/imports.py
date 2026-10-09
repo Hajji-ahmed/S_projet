@@ -127,6 +127,9 @@ class BankTransaction(TimestampMixin, Base):
     origine: Mapped[str] = mapped_column(String(10), default="Fichier", server_default="Fichier")
     # Solde calculé par SIMTIS (solde précédent − débit + crédit) : le fichier n'avait pas de soldes
     solde_calcule: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Rang chronologique dans son relevé (08/10/2026) : un fichier du plus récent au plus ancien est
+    # importé dans son ordre, l'id ne dit donc pas quelle opération est la dernière du jour
+    ordre: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     statement: Mapped[BankStatement] = relationship()
     pointage_type: Mapped[PointageType | None] = relationship()

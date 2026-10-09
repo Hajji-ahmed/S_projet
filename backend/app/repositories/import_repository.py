@@ -86,6 +86,17 @@ def get_statement(db: Session, statement_id: int) -> BankStatement | None:
     return db.get(BankStatement, statement_id)
 
 
+# Ordre chronologique des opérations d'un compte : par date, puis relevé (ordre d'import), puis rang
+# dans le relevé (`ordre`, 08/10/2026), puis id pour les lignes créées sans rang
+ORDRE_CHRONOLOGIQUE = (
+    BankTransaction.date_operation,
+    BankTransaction.statement_id,
+    BankTransaction.ordre,
+    BankTransaction.id,
+)
+ORDRE_ANTECHRONOLOGIQUE = tuple(colonne.desc() for colonne in ORDRE_CHRONOLOGIQUE)
+
+
 def statement_transactions(
     db: Session, statement_id: int
 ) -> list[tuple[BankTransaction, str | None]]:
@@ -94,7 +105,7 @@ def statement_transactions(
         select(BankTransaction, PointageType.libelle)
         .outerjoin(PointageType, PointageType.id == BankTransaction.pointage_type_id)
         .where(BankTransaction.statement_id == statement_id)
-        .order_by(BankTransaction.date_operation, BankTransaction.id)
+        .order_by(*ORDRE_CHRONOLOGIQUE)
     )
     return [(row, pointage) for row, pointage in db.execute(query)]
 
@@ -102,13 +113,13 @@ def statement_transactions(
 def account_transactions(
     db: Session, account_id: int, date_from: date | None, date_to: date | None
 ) -> list[tuple[BankTransaction, str | None]]:
-    """Toutes les opérations importées d'un compte, quel que soit le fichier : par date, puis dans
-    l'ordre d'import. Avec le libellé de leur pointage."""
+    """Toutes les opérations importées d'un compte, quel que soit le fichier, dans l'ordre
+    chronologique (`ORDRE_CHRONOLOGIQUE`). Avec le libellé de leur pointage."""
     query = (
         select(BankTransaction, PointageType.libelle)
         .outerjoin(PointageType, PointageType.id == BankTransaction.pointage_type_id)
         .where(BankTransaction.bank_account_id == account_id)
-        .order_by(BankTransaction.date_operation, BankTransaction.id)
+        .order_by(*ORDRE_CHRONOLOGIQUE)
     )
     if date_from is not None:
         query = query.where(BankTransaction.date_operation >= date_from)
@@ -156,7 +167,7 @@ def last_known_balance(
             BankTransaction.date_operation < before,
             BankTransaction.solde.is_not(None),
         )
-        .order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
+        .order_by(*ORDRE_ANTECHRONOLOGIQUE)
         .limit(1)
     ).first()
     balance = db.execute(
@@ -168,7 +179,8 @@ def last_known_balance(
         .order_by(BankAccountBalance.date_solde.desc())
         .limit(1)
     ).first()
-    if operation is not None and (balance is None or operation[0] >= balance[0]):
+    # Un compte alimenté par un relevé ne lit que son relevé (08/10/2026)
+    if operation is not None:
         return operation[0], operation[1], "operation"
     if balance is not None:
         return balance[0], balance[1], "solde"
@@ -176,11 +188,11 @@ def last_known_balance(
 
 
 def statement_transactions_in_order(db: Session, statement_id: int) -> list[BankTransaction]:
-    """Opérations d'un relevé, par date puis ordre d'import."""
+    """Opérations d'un relevé, dans l'ordre chronologique."""
     query = (
         select(BankTransaction)
         .where(BankTransaction.statement_id == statement_id)
-        .order_by(BankTransaction.date_operation, BankTransaction.id)
+        .order_by(*ORDRE_CHRONOLOGIQUE)
     )
     return list(db.scalars(query))
 
@@ -194,6 +206,24 @@ def first_balance_from(db: Session, account_id: int, day: date) -> tuple[date, D
             BankAccountBalance.date_solde >= day,
         )
         .order_by(BankAccountBalance.date_solde)
+        .limit(1)
+    ).first()
+    return None if row is None else (row[0], row[1])
+
+
+def last_operation_before(
+    db: Session, account_id: int, before: date
+) -> tuple[date, Decimal] | None:
+    """(jour, solde) de la dernière opération importée avant `before` qui porte un solde, dans
+    l'ordre chronologique : le solde de clôture du relevé précédent."""
+    row = db.execute(
+        select(BankTransaction.date_operation, BankTransaction.solde)
+        .where(
+            BankTransaction.bank_account_id == account_id,
+            BankTransaction.date_operation < before,
+            BankTransaction.solde.is_not(None),
+        )
+        .order_by(*ORDRE_ANTECHRONOLOGIQUE)
         .limit(1)
     ).first()
     return None if row is None else (row[0], row[1])

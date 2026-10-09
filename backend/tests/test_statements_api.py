@@ -1965,9 +1965,7 @@ def test_the_opening_comes_from_the_last_imported_operation(client, tresorerie, 
     body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
 
     assert body["solde_ouverture_propose"] == "4200.00"
-    assert (
-        body["solde_ouverture_source"] == "Solde de la dernière opération importée, le 01/09/2026"
-    )
+    assert body["solde_ouverture_source"] == "Solde de clôture du relevé précédent, le 01/09/2026"
     assert body["lignes"][0]["solde_apercu"] == "5200.00"
 
 
@@ -1984,7 +1982,9 @@ def test_the_opening_comes_from_a_saved_balance_otherwise(client, tresorerie, ac
 
     body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
 
-    assert body["solde_ouverture_source"] == "Solde du jour enregistré le 31/08/2026"
+    assert (
+        body["solde_ouverture_source"] == "Solde du jour enregistré le 31/08/2026 (tableau Banques)"
+    )
     assert body["lignes"][0]["solde_apercu"] == "1700.00"
 
 
@@ -1996,13 +1996,16 @@ def test_the_file_opening_line_wins_and_the_user_can_override_it(client, tresore
     ]
 
     proposed = analyse(client, tresorerie, account.id, xlsx(("Relevé", with_opening))).json()
+    # 09/10/2026 : le solde de la banque est verrouillé, même au premier import
     overridden = analyse(
         client, tresorerie, account.id, xlsx(("Relevé", with_opening)), solde_ouverture="100"
-    ).json()
+    )
 
     assert proposed["solde_ouverture_source"] == "Ligne SOLDE INITIAL du fichier"
+    assert proposed["solde_ouverture_modifiable"] is False
     assert proposed["lignes"][0]["solde_apercu"] == "1300.00"
-    assert overridden["lignes"][0]["solde_apercu"] == "1100.00"
+    assert overridden.status_code == 409
+    assert "de la banque" in overridden.json()["detail"]
 
 
 def test_balances_of_the_file_are_never_recomputed(client, tresorerie, account):
@@ -2114,3 +2117,113 @@ def test_the_backwards_opening_is_used_at_confirmation(client, tresorerie, accou
 
     assert response.status_code == 201, response.text
     assert [row.solde for row in transactions(db, account)][-1] == Decimal("5000800.00")
+
+
+# --- Relevé du plus récent au plus ancien : ordre chronologique (08/10/2026) -----------------------
+
+NEWEST_FIRST = [
+    ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+    ["02/09/2026", "VIR B2", None, 30, 1130],
+    ["02/09/2026", "CHQ B1", 20, None, 1100],
+    ["01/09/2026", "VIR A", None, 120, 1120],
+]
+
+
+def test_a_newest_first_statement_is_read_in_chronological_order(client, tresorerie, account, db):
+    from app.repositories import position_repository
+
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", NEWEST_FIRST)))
+
+    body = continuous(client, tresorerie, account.id).json()
+    soldes = position_repository.last_operation_soldes(db, [account.id], date(2026, 9, 30))
+
+    assert [(op["libelle"], op["solde"]) for op in body["operations"]] == [
+        ("VIR A", "1120.00"),
+        ("CHQ B1", "1100.00"),
+        ("VIR B2", "1130.00"),
+    ]
+    assert body["solde_cloture"] == "1130.00"
+    # Le tableau Banques lit la vraie dernière opération du 02/09, pas la dernière ligne importée
+    assert soldes[-1] == (account.id, date(2026, 9, 2), Decimal("1130.00"))
+
+
+# --- Solde d'ouverture verrouillé après le premier import (09/10/2026) -----------------------------
+
+LATER = [
+    ["Date", "Libellé", "Débit", "Crédit"],
+    ["10/09/2026", "VIR SUIVANT", None, 100],
+]
+
+
+def test_the_first_import_lets_the_user_enter_the_opening(client, tresorerie, account):
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert (body["solde_ouverture_source"], body["solde_ouverture_modifiable"]) == (
+        "À saisir",
+        True,
+    )
+    assert (
+        confirm(
+            client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE)), solde_ouverture="5000000"
+        ).status_code
+        == 201
+    )
+
+
+def test_the_next_import_takes_the_previous_closing_and_refuses_an_entry(
+    client, tresorerie, account, db
+):
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE)), solde_ouverture="5000000")
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", LATER))).json()
+    refused = confirm(client, tresorerie, account.id, xlsx(("Relevé", LATER)), solde_ouverture="1")
+    same = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", LATER)), solde_ouverture="5000800"
+    )
+    accepted = confirm(
+        client, tresorerie, account.id, xlsx(("Relevé", LATER)), solde_ouverture=None
+    )
+
+    assert (body["solde_ouverture_propose"], body["solde_ouverture_modifiable"]) == (
+        "5000800.00",
+        False,
+    )
+    assert body["solde_ouverture_source"] == "Solde de clôture du relevé précédent, le 03/09/2026"
+    assert refused.status_code == 409
+    assert "du relevé précédent" in refused.json()["detail"]
+    assert same.status_code == 200  # la même valeur n'est pas une saisie
+    assert accepted.status_code == 201, accepted.text
+    assert transactions(db, account)[-1].solde == Decimal("5000900.00")
+
+
+def test_a_file_opening_different_from_the_previous_closing_gives_a_warning(
+    client, tresorerie, account
+):
+    confirm(
+        client,
+        tresorerie,
+        account.id,
+        xlsx(("Relevé", [NO_BALANCE[0] + ["Solde"]] + [[*row, None] for row in NO_BALANCE[1:]])),
+        solde_ouverture="5000000",
+    )
+    with_opening = [
+        ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+        [None, "SOLDE INITIAL", None, None, 4000000],
+        ["10/09/2026", "VIR SUIVANT", None, 100, None],
+    ]
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", with_opening))).json()
+
+    assert body["solde_ouverture_propose"] == "4000000.00"
+    assert body["solde_ouverture_avertissement"] == (
+        "Le solde initial du fichier (4 000 000,00) ne correspond pas au solde de clôture du "
+        "relevé précédent (5 000 800,00, le 03/09/2026) : une période manque peut-être."
+    )
+
+
+def test_an_older_statement_is_a_first_import(client, tresorerie, account):
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", LATER)), solde_ouverture="100")
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", NO_BALANCE))).json()
+
+    assert body["solde_ouverture_modifiable"] is True

@@ -32,12 +32,16 @@ def _soldes(
     db: Session, account_ids: list[int], date_fin: date
 ) -> dict[int, tuple[tuple[date, Decimal], ...]]:
     """Soldes par compte et par jour jusqu'à `date_fin` : la dernière opération du jour l'emporte
-    sur le solde du jour (décision du 03/10/2026)."""
+    sur le solde du jour (décision du 03/10/2026). Un compte qui a un relevé importé ne lit que son
+    relevé : ses soldes saisis sont ignorés, pour que « Disponible Fc reel » soit le solde de
+    clôture du relevé (décision du 08/10/2026)."""
+    alimentes = position_repository.comptes_alimentes_par_releve(db, account_ids)
     saisies: dict[int, list[tuple[date, Decimal]]] = defaultdict(list)
     for account_id, date_solde, solde in position_repository.soldes_until(
         db, account_ids, date_fin
     ):
-        saisies[account_id].append((date_solde, solde))
+        if account_id not in alimentes:
+            saisies[account_id].append((date_solde, solde))
     operations: dict[int, list[tuple[date, Decimal]]] = defaultdict(list)
     for account_id, jour, solde in position_repository.last_operation_soldes(
         db, account_ids, date_fin

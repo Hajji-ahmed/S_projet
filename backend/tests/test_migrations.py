@@ -699,3 +699,86 @@ def test_migration_0019_strong_threshold_is_80(empty_database):
         "Écart de points sous lequel une 2e écriture est signalée comme proche",
     )
     assert before["SEUIL_FORT"][0] == 90
+
+
+def test_migration_0020_cheque_number_criterion_is_enabled(empty_database):
+    """Décision du 08/10/2026 : le n° de chèque / référence revient, à 40 points."""
+    config, engine = empty_database
+    command.upgrade(config, "0019")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO reconciliation_rules (code, libelle, critere, poids, tolerance, actif) "
+                "VALUES ('REFERENCE', 'Ancien', 'reference', 40, NULL, false)"
+            )
+        )
+
+    def reference() -> tuple[int, bool, str]:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT poids, actif, libelle FROM reconciliation_rules WHERE code = 'REFERENCE'"
+                )
+            ).one()
+            return int(row[0]), row[1], row[2]
+
+    command.upgrade(config, "0020")
+    after = reference()
+    command.downgrade(config, "0019")
+
+    assert after == (40, True, "N° chèque / référence identique")
+    assert reference()[1] is False
+
+
+def test_migration_0021_ranks_operations_of_a_newest_first_statement(empty_database):
+    """Un relevé importé du plus récent au plus ancien est rangé à l'envers de l'ordre d'import."""
+    config, engine = empty_database
+    command.upgrade(config, "0020")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'Société');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'Banque');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+                INSERT INTO bank_statements (id, bank_account_id) OVERRIDING SYSTEM VALUE
+                    VALUES (1, 1), (2, 1);
+                """
+            )
+        )
+        recents, anciens = 1, 2
+        for statement_id, jours in ((recents, (6, 6, 5)), (anciens, (1, 2, 2))):
+            for numero, jour in enumerate(jours):
+                connection.execute(
+                    text(
+                        "INSERT INTO bank_transactions (statement_id, bank_account_id, "
+                        "date_operation, libelle, credit, montant, hash_ligne) VALUES "
+                        "(:s, 1, :d, :l, 1, 1, :h)"
+                    ),
+                    {
+                        "s": statement_id,
+                        "d": f"2026-10-0{jour}",
+                        "l": f"L{numero}",
+                        "h": f"{statement_id}-{numero}",
+                    },
+                )
+
+    command.upgrade(config, "0021")
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT statement_id, libelle, ordre FROM bank_transactions ORDER BY id")
+        ).all()
+    command.downgrade(config, "0020")
+
+    assert [(row[1], row[2]) for row in rows if row[0] == recents] == [
+        ("L0", 3),
+        ("L1", 2),
+        ("L2", 1),
+    ]
+    assert [(row[1], row[2]) for row in rows if row[0] == anciens] == [
+        ("L0", 1),
+        ("L1", 2),
+        ("L2", 3),
+    ]

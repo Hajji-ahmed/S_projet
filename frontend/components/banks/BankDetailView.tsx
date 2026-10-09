@@ -182,7 +182,7 @@ export function BankDetailView({ bankId }: { bankId: number }) {
         row.actif ? (
           <button
             type="button"
-            onClick={() => setEntryFor(row)}
+            onClick={() => setEntryFor({ ...row, soldeReleve: !!row.figures?.solde_releve })}
             aria-label={`Saisir le solde du compte ${row.bank_code} ${row.devise}`}
             title="Saisir le solde"
             className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"

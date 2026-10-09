@@ -239,7 +239,11 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
             accountId: account.id,
             mapping,
             feuille,
-            soldeOuverture: analysis.soldes_calcules ? (ouverture ?? undefined) : undefined,
+            // Solde verrouillé (banque ou relevé précédent) : le serveur le retrouve seul
+            soldeOuverture:
+              analysis.soldes_calcules && analysis.solde_ouverture_modifiable !== false
+                ? (ouverture ?? undefined)
+                : undefined,
           },
           { lignes: toImport.map(draftToLigne) },
         ),
@@ -444,6 +448,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
                   value={ouvertureText}
                   inputMode="decimal"
                   placeholder="À saisir"
+                  disabled={current.solde_ouverture_modifiable === false}
                   onChange={(event) => setOuvertureText(event.target.value)}
                 />
               </Field>
@@ -451,9 +456,11 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
             <p className="max-w-xl pb-2 text-sm text-simtis-muted">
               Ce fichier n&apos;a pas de soldes : chaque solde est calculé (solde précédent − débit
               + crédit) à partir de ce solde d&apos;ouverture.{" "}
-              {current.solde_ouverture_source && current.solde_ouverture_propose !== null
-                ? `Proposé : ${current.solde_ouverture_source.toLowerCase()}.`
-                : "Aucun solde connu ne précède la première opération : saisissez-le."}
+              {current.solde_ouverture_modifiable === false
+                ? `Repris automatiquement : ${current.solde_ouverture_source?.toLowerCase()} (il ne se modifie pas après le premier import).`
+                : current.solde_ouverture_source && current.solde_ouverture_propose !== null
+                  ? `Proposé : ${current.solde_ouverture_source.toLowerCase()} (premier import : modifiable).`
+                  : "Premier import de ce compte, aucun solde connu : saisissez-le."}
             </p>
             {current.solde_ouverture_avertissement && (
               <p

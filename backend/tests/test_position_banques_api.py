@@ -207,10 +207,14 @@ def test_last_operation_of_the_day_gives_the_balance(client, direction, db):
     assert cell(body, body["disponible"], "AWB")["valeur"] == "20.00"
 
 
-def test_day_balance_is_used_when_the_day_has_no_operation(client, direction, db):
+def test_an_account_with_a_statement_ignores_entered_balances(client, direction, db):
+    """Décision du 08/10/2026 : un compte alimenté par un relevé ne lit que son relevé, pour que
+    « Disponible Fc reel » soit son solde de clôture ; une saisie plus récente est ignorée."""
     awb = account(db, "AWB")
     operations(db, awb, (J28, "5"))
     balance(db, awb, J29, "7")
+    cih = account(db, "CIH")
+    balance(db, cih, J29, "7")  # sans relevé : la saisie compte
     other = account(db, "BP", company_code="SOCX")
     operations(db, other, (J30, "123456"))  # autre société : jamais comptée
 
@@ -218,10 +222,11 @@ def test_day_balance_is_used_when_the_day_has_no_operation(client, direction, db
 
     assert [cell(body, jour, "AWB")["valeur"] for jour in body["jours"]] == [
         "5.00",
-        "7.00",
-        "7.00",
+        "5.00",
+        "5.00",
     ]
     assert cell(body, body["jours"][-1], "AWB")["reprise"] is True
+    assert cell(body, body["jours"][-1], "CIH")["valeur"] == "7.00"
     assert cell(body, body["jours"][-1], "BP")["valeur"] is None
 
 

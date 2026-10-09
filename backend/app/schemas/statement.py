@@ -152,6 +152,9 @@ class AnalyseOut(BaseModel):
         None, description="Solde d'ouverture proposé pour le calcul (None : à saisir)"
     )
     solde_ouverture_source: str | None = None
+    solde_ouverture_modifiable: bool = Field(
+        True, description="Saisie permise seulement au premier import du compte (09/10/2026)"
+    )
     solde_ouverture_avertissement: str | None = Field(
         None, description="Proposition calculée à rebours depuis un solde postérieur : à vérifier"
     )
@@ -187,6 +190,7 @@ class AnalyseOut(BaseModel):
             solde_ouverture_propose=analysis.solde_ouverture_propose,
             solde_ouverture_source=analysis.solde_ouverture_source,
             solde_ouverture_avertissement=analysis.solde_ouverture_avertissement,
+            solde_ouverture_modifiable=analysis.solde_ouverture_modifiable,
             lignes_ignorees=[
                 LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
             ],

@@ -6,6 +6,8 @@ export type Figures = {
   position_disponible: string | null;
   /** Date de la dernière saisie, « AAAA-MM-JJ ». */
   date_maj: string | null;
+  /** Solde = solde de clôture du relevé importé : il ne se saisit pas (08/10/2026). */
+  solde_releve?: boolean;
 };
 
 export type Balance = {

@@ -121,3 +121,12 @@ Contrôle Edge : Société X avec des soldes de test (écran d'ordinateur, mobil
 ## Documentation à mettre à jour
 
 `CLAUDE.md` (état actuel), `docs/specs/Plan_Phases_Realisation_SIMTIS.md` (statut de P8.1), `.claude/skills/simtis-design/pages.md` (tableau Banques : ligne par jour, reprise, bouton « Afficher plus »).
+
+## Le relevé fait foi (08/10/2026)
+
+Décision : **Solde (carte) = Disponible Fc reel = Solde de clôture du relevé**. Pour un compte qui a au moins une opération importée portant un solde :
+- le tableau Banques ne lit que les soldes des opérations ; les soldes saisis à la main sont ignorés (ils restent en base) ;
+- la carte et la fiche banque affichent le solde de la dernière opération importée (ordre chronologique), c'est-à-dire le solde de clôture ;
+- la saisie d'un solde est refusée (409, « Ce compte est alimenté par ses relevés… ») ; le crédit utilisé se saisit toujours ; le formulaire désactive le champ Solde (`solde_releve`).
+
+Un compte sans relevé garde la saisie manuelle. Le solde d'ouverture proposé à l'import ne lit plus une saisie quand une opération est connue avant le fichier.

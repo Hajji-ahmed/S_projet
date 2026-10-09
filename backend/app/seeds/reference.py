@@ -64,7 +64,7 @@ FORECAST_CATEGORIES = [
 # existante). Elle se modifie en base ; un nouveau seed ne l'écrase jamais.
 # Codes lus par `reconciliation_service.grille()` ; valeurs par défaut : `reconciliation_scoring.Grille`.
 RECONCILIATION_RULES = [
-    ("REFERENCE", "Référence / n° chèque / n° pièce identique", "reference", "40", None, False),
+    ("REFERENCE", "N° chèque / référence identique", "reference", "40", None, True),
     ("MONTANT", "Montant exact, sens opposé", "montant", "50", None, True),
     ("DATE", "Date dans la tolérance (jours), dégressif", "date", "30", "3", True),
     ("LIBELLE", "Libellé similaire", "libelle", "20", None, True),

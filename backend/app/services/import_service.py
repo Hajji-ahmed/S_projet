@@ -183,6 +183,8 @@ class StatementAnalysis:
     solde_ouverture_source: str | None = None
     # Calcul à rebours depuis un solde postérieur au fichier : à vérifier (08/10/2026)
     solde_ouverture_avertissement: str | None = None
+    # Saisie du solde d'ouverture permise : premier import du compte seulement (09/10/2026)
+    solde_ouverture_modifiable: bool = True
     solde_ouverture_choisi: Decimal | None = None
 
 
@@ -549,17 +551,27 @@ class Ouverture:
     solde: Decimal | None
     source: str
     avertissement: str | None = None
+    # Saisie manuelle permise seulement au premier import du compte (09/10/2026)
+    modifiable: bool = True
+
+
+SOURCE_FICHIER = "Ligne SOLDE INITIAL du fichier"
 
 
 def _proposed_opening(
     db: Session, account: BankAccount, lines: list[AnalysedLine], file_opening: Decimal | None
 ) -> Ouverture:
-    """Solde d'ouverture proposé, dans cet ordre : la ligne SOLDE INITIAL du fichier ; le dernier
-    solde connu du compte avant la première opération à importer ; à rebours, le premier solde du
-    tableau Banques à partir du dernier jour du fichier, moins les mouvements du fichier
-    (08/10/2026) ; sinon rien (à saisir)."""
-    if file_opening is not None:
-        return Ouverture(file_opening, "Ligne SOLDE INITIAL du fichier")
+    """Solde d'ouverture, dans cet ordre (décision du 09/10/2026) :
+
+    1. la banque : la ligne SOLDE INITIAL du fichier (verrouillé) ;
+    2. le solde de clôture du relevé précédent : la dernière opération importée avant la première
+       opération du fichier (verrouillé) ;
+    3. le tableau de position bancaire : le dernier solde du jour avant le fichier, sinon un calcul
+       à rebours depuis un solde postérieur ; modifiable, c'est un premier import ;
+    4. sinon, à saisir (premier import seulement).
+
+    « Premier import » = aucune opération importée avant ce fichier sur ce compte.
+    """
     # Les lignes déjà importées pour ce compte ne comptent pas : elles ne seront pas enregistrées
     nouvelles = [
         line
@@ -567,16 +579,39 @@ def _proposed_opening(
         if line.date_operation is not None
         and not (line.statut == "Doublon" and line.doublon_de is None)
     ]
-    if not nouvelles:
-        return Ouverture(None, "À saisir")
     dates = [line.date_operation for line in nouvelles]
+    precedent = (
+        import_repository.last_operation_before(db, account.id, min(dates)) if dates else None
+    )
+    if file_opening is not None:
+        avertissement = None
+        if precedent is not None and precedent[1] != file_opening:
+            jour, solde = precedent
+            avertissement = (
+                f"Le solde initial du fichier ({_texte_montant(file_opening)}) ne correspond pas "
+                f"au solde de clôture du relevé précédent ({_texte_montant(solde)}, le "
+                f"{jour:%d/%m/%Y}) : une période manque peut-être."
+            )
+        return Ouverture(file_opening, SOURCE_FICHIER, avertissement, modifiable=False)
+    if precedent is not None:
+        jour, solde = precedent
+        return Ouverture(
+            solde, f"Solde de clôture du relevé précédent, le {jour:%d/%m/%Y}", modifiable=False
+        )
+    if not dates:
+        return Ouverture(None, "À saisir")
     known = import_repository.last_known_balance(db, account.id, min(dates))
     if known is not None:
-        jour, solde, origine = known
-        if origine == "operation":
-            return Ouverture(solde, f"Solde de la dernière opération importée, le {jour:%d/%m/%Y}")
-        return Ouverture(solde, f"Solde du jour enregistré le {jour:%d/%m/%Y}")
+        jour, solde, _ = known
+        return Ouverture(solde, f"Solde du jour enregistré le {jour:%d/%m/%Y} (tableau Banques)")
     return _opening_backwards(db, account, nouvelles, max(dates))
+
+
+def _texte_montant(value: Decimal) -> str:
+    """« 1 234 567,89 » : montant lisible dans un message."""
+    entier, decimales = f"{abs(value):.2f}".split(".")
+    groupes = f"{int(entier):,}".replace(",", " ")
+    return f"{'-' if value < 0 else ''}{groupes},{decimales}"
 
 
 def _opening_backwards(
@@ -740,6 +775,17 @@ def analyse_statement(
         analysis.solde_ouverture_propose = proposed
         analysis.solde_ouverture_source = ouverture.source
         analysis.solde_ouverture_avertissement = ouverture.avertissement
+        analysis.solde_ouverture_modifiable = ouverture.modifiable
+        if solde_ouverture is not None and not ouverture.modifiable and solde_ouverture != proposed:
+            origine = (
+                "de la banque (ligne SOLDE INITIAL du fichier)"
+                if ouverture.source == SOURCE_FICHIER
+                else "du relevé précédent (son solde de clôture)"
+            )
+            raise ConflictError(
+                f"Le solde d'ouverture vient {origine} : il ne se saisit pas. La saisie n'est "
+                "possible qu'au premier import du compte."
+            )
         opening = solde_ouverture if solde_ouverture is not None else proposed
         analysis.solde_ouverture_choisi = opening
         closing = None
@@ -1161,6 +1207,8 @@ def confirm_statement(
             solde_cloture=balances.solde_cloture,
         )
         import_repository.add(db, statement)
+        # Même ordre que le calcul des soldes : un fichier du plus récent au plus ancien est retourné
+        rang = {id(line): numero for numero, line in enumerate(_chronological(lines), start=1)}
         import_repository.add(
             db,
             *(
@@ -1181,6 +1229,7 @@ def confirm_statement(
                     hash_ligne=line.hash_ligne,
                     origine=line.origine,
                     solde_calcule=line.solde_calcule,
+                    ordre=rang[id(line)],
                 )
                 for line in lines
             ),

@@ -308,7 +308,12 @@ def ambiguous_transactions(
         BankTransaction.id.not_in(_active_transaction_ids()),
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    page = query.order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
+    page = query.order_by(
+        BankTransaction.date_operation.desc(),
+        BankTransaction.statement_id.desc(),
+        BankTransaction.ordre.desc(),
+        BankTransaction.id.desc(),
+    )
     return total, list(db.scalars(page.offset(offset).limit(limit)))
 
 
@@ -331,7 +336,12 @@ def page_of_transactions(
         .join(filtered, filtered.c.id == BankTransaction.id)
         .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
         .join(Bank, Bank.id == BankAccount.bank_id)
-        .order_by(BankTransaction.date_operation.desc(), BankTransaction.id.desc())
+        .order_by(
+            BankTransaction.date_operation.desc(),
+            BankTransaction.statement_id.desc(),
+            BankTransaction.ordre.desc(),
+            BankTransaction.id.desc(),
+        )
         .offset(offset)
         .limit(limit)
     )

@@ -120,3 +120,20 @@ Sans `lignes`, la confirmation garde son fonctionnement actuel (`garder_doublons
 Fichier sans soldes, sans ligne SOLDE INITIAL et sans solde connu avant sa première opération : le solde d'ouverture proposé est calculé **à rebours** depuis le tableau Banques. SIMTIS prend le premier solde du jour enregistré à partir du dernier jour du fichier (jour J), puis calcule `solde de J − crédits + débits du fichier`. Les lignes déjà importées sont exclues. L'origine s'affiche sous le champ (« Calculé à rebours depuis le solde du JJ/MM/AAAA (tableau Banques) »).
 
 Si J est postérieur au dernier jour du fichier, un avertissement orange (`solde_ouverture_avertissement`) prévient que des opérations absentes entre les deux dates fausseraient le calcul. La valeur reste modifiable, et le serveur refait le calcul à la confirmation.
+
+## Ordre chronologique des opérations (08/10/2026)
+
+Un relevé listé du plus récent au plus ancien (cas AWB) est importé dans l'ordre du fichier : l'id ne dit donc pas quelle opération est la dernière d'un jour. Le tableau Banques et la page Relevés lisaient le solde de la plus ancienne opération du 06/10 (20 807 737,72) au lieu de la vraie clôture (20 351 468,30).
+
+`bank_transactions.ordre` garde le rang chronologique de chaque opération dans son relevé, dans le même ordre que le calcul des soldes (`_chronological`). Toutes les lectures trient par date, relevé, `ordre`, puis id (`ORDRE_CHRONOLOGIQUE`). La migration 0021 a rangé les relevés déjà importés : un relevé dont la première ligne importée est plus récente que la dernière est retourné.
+
+## Solde d'ouverture verrouillé après le premier import (09/10/2026)
+
+Pour un fichier sans soldes, le solde d'ouverture est repris automatiquement, dans cet ordre :
+
+1. **la banque** : la ligne SOLDE INITIAL du fichier (verrouillé). S'il diffère du solde de clôture du relevé précédent, un avertissement orange le signale (« une période manque peut-être ») ;
+2. **le solde de clôture du relevé précédent** : la dernière opération importée avant la première opération du fichier, dans l'ordre chronologique (verrouillé) ;
+3. **le tableau de position bancaire** : le dernier solde du jour avant le fichier, sinon le calcul à rebours ;
+4. sinon, à saisir.
+
+La saisie n'est possible qu'au **premier import** du compte, c'est-à-dire quand aucune opération n'a été importée avant ce fichier (un relevé plus ancien que ceux déjà importés compte comme un premier import). L'analyse renvoie `solde_ouverture_modifiable` ; l'écran désactive alors le champ et ne l'envoie pas. Le serveur refuse (409) un `solde_ouverture` différent du solde verrouillé. La commande `recalculer-soldes` garde la saisie (outil d'administration).

@@ -52,6 +52,8 @@ class AccountFigures:
     credit_disponible: Decimal | None
     position_disponible: Decimal | None
     date_maj: date | None
+    # Le solde vient du relevé importé (solde de clôture), jamais d'une saisie (08/10/2026)
+    solde_releve: bool = False
 
 
 def credit_disponible(credit_autorise: Decimal, credit_utilise: Decimal | None) -> Decimal | None:
@@ -93,7 +95,9 @@ def latest_values(balances: Iterable[BalanceLike], as_of: date | None = None) ->
     )
 
 
-def account_figures(credit_autorise: Decimal, latest: LatestValues) -> AccountFigures:
+def account_figures(
+    credit_autorise: Decimal, latest: LatestValues, *, solde_releve: bool = False
+) -> AccountFigures:
     dispo = credit_disponible(credit_autorise, latest.credit_utilise)
     return AccountFigures(
         solde=latest.solde,
@@ -101,6 +105,7 @@ def account_figures(credit_autorise: Decimal, latest: LatestValues) -> AccountFi
         credit_disponible=dispo,
         position_disponible=position_disponible(latest.solde, dispo),
         date_maj=latest.date_maj,
+        solde_releve=solde_releve,
     )
 
 

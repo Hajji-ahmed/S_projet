@@ -41,7 +41,8 @@ from app.services.reconciliation_scoring import (
 )
 
 PAGE_SIZE = 50
-PERIODE_MAX_JOURS = 366
+# Garde-fou contre une année mal saisie (« 0026 ») : 5 ans au plus par lancement (08/10/2026)
+PERIODE_MAX_JOURS = 1827
 NB_CANDIDATS = 20
 COMMENTAIRE_MAX = 500
 ENTITE = "reconciliation_match"
@@ -174,7 +175,7 @@ def run(
     """
     _check_period(date_from, date_to)
     if (date_to - date_from).days >= PERIODE_MAX_JOURS:
-        raise ConflictError(f"La période ne peut pas dépasser {PERIODE_MAX_JOURS} jours.")
+        raise ConflictError("La période ne peut pas dépasser 5 ans.")
     company = _company(db, company_id, lock=True)
     accounts = repo.company_accounts(db, company.id, bank_account_id)
     if bank_account_id is not None and not accounts:

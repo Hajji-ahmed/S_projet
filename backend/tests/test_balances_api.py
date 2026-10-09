@@ -244,6 +244,7 @@ def test_account_figures_follow_the_cdc_formulas(client, tresorerie, db):
         "credit_disponible": "400000.00",
         "position_disponible": "700000.00",
         "date_maj": TODAY.isoformat(),
+        "solde_releve": False,
     }
 
 
@@ -297,6 +298,7 @@ def test_account_without_any_balance_has_empty_figures(client, direction, db):
         "credit_disponible": None,
         "position_disponible": None,
         "date_maj": None,
+        "solde_releve": False,
     }
 
 
@@ -349,3 +351,44 @@ def test_inactive_accounts_are_not_on_the_card(client, tresorerie, db):
     db.flush()
 
     assert bank_item(client, tresorerie, company(db, "SIMTIS").id, "CIH")["figures"] is None
+
+
+# --- Compte alimenté par un relevé (08/10/2026) ----------------------------------------------------
+
+
+def _with_statement(db, account, closing="1500.00", jour=TODAY - timedelta(days=3)):
+    from app.models import BankStatement
+    from tests.helpers import build_transaction
+
+    statement = save(db, BankStatement(bank_account_id=account.id))
+    save(db, build_transaction(statement, date_operation=jour, solde=Decimal("900")))
+    save(db, build_transaction(statement, date_operation=jour, solde=Decimal(closing)))
+
+
+def test_the_card_balance_is_the_statement_closing_balance(client, tresorerie, db):
+    account = add(db, "SIMTIS", "CIH", credit_autorise=Decimal("500000"))
+    # Une ancienne saisie plus récente que le relevé ne compte plus
+    save(
+        db,
+        BankAccountBalance(
+            bank_account_id=account.id, date_solde=TODAY, solde=Decimal("650000"), source="Saisie"
+        ),
+    )
+    _with_statement(db, account)
+
+    figures = client.get(f"/api/accounts/{account.id}", headers=tresorerie).json()["figures"]
+
+    assert (figures["solde"], figures["solde_releve"]) == ("1500.00", True)
+
+
+def test_a_balance_cannot_be_entered_on_an_account_fed_by_statements(client, tresorerie, db):
+    account = add(db, "SIMTIS", "CIH", credit_autorise=Decimal("500000"))
+    _with_statement(db, account)
+
+    refused = client.put(url(account), json={"solde": "1"}, headers=tresorerie)
+    credit = client.put(url(account), json={"credit_utilise": "100"}, headers=tresorerie)
+
+    assert refused.status_code == 409
+    assert "alimenté par ses relevés" in refused.json()["detail"]
+    assert credit.status_code == 200, credit.text
+    assert credit.json()["solde"] is None

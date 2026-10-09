@@ -20,6 +20,9 @@ class FiguresOut(BaseModel):
     credit_disponible: Decimal | None
     position_disponible: Decimal | None
     date_maj: date | None
+    solde_releve: bool = Field(
+        False, description="Solde = solde de clôture du relevé importé ; il ne se saisit pas"
+    )
 
     @classmethod
     def from_figures(cls, figures: AccountFigures) -> "FiguresOut":
@@ -29,6 +32,7 @@ class FiguresOut(BaseModel):
             credit_disponible=figures.credit_disponible,
             position_disponible=figures.position_disponible,
             date_maj=figures.date_maj,
+            solde_releve=figures.solde_releve,
         )
 
 

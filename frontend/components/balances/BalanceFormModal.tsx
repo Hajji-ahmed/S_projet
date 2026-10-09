@@ -24,6 +24,8 @@ export type BalanceTarget = {
   bank_code: string;
   devise: string;
   libelle: string;
+  /** Compte alimenté par ses relevés : seul le crédit utilisé se saisit (08/10/2026). */
+  soldeReleve?: boolean;
 };
 
 type BalanceFormModalProps = {
@@ -76,7 +78,11 @@ export function BalanceFormModal({ account, onClose, onSaved }: BalanceFormModal
     setValues((current) => ({ ...current, [field]: value }));
 
   async function handleSubmit() {
-    const found = validateBalanceForm(values, today);
+    // Compte alimenté par ses relevés : le solde ne se saisit pas, seul le crédit utilisé compte
+    const found = validateBalanceForm(
+      account.soldeReleve ? { ...values, solde: "" } : values,
+      today,
+    );
     setErrors(found);
     setApiError(found.global ?? null);
     if (Object.keys(found).length > 0) return;
@@ -84,7 +90,10 @@ export function BalanceFormModal({ account, onClose, onSaved }: BalanceFormModal
     setSubmitting(true);
     try {
       const saved = await saveBalance(account.id, values.jour, {
-        solde: values.solde.trim() ? normalizeSignedAmountInput(values.solde) : null,
+        solde:
+          !account.soldeReleve && values.solde.trim()
+            ? normalizeSignedAmountInput(values.solde)
+            : null,
         credit_utilise: values.credit_utilise.trim()
           ? normalizeAmountInput(values.credit_utilise)
           : null,
@@ -140,15 +149,19 @@ export function BalanceFormModal({ account, onClose, onSaved }: BalanceFormModal
           label={`Solde (${suffix})`}
           htmlFor="balance-solde"
           error={errors.solde}
-          hint="Négatif en cas de découvert."
+          hint={
+            account.soldeReleve
+              ? "Alimenté par les relevés importés : importez le relevé pour le mettre à jour."
+              : "Négatif en cas de découvert."
+          }
         >
           <NumberInput
             id="balance-solde"
-            value={values.solde}
+            value={account.soldeReleve ? "" : values.solde}
             onChange={(event) => set("solde")(event.target.value)}
-            disabled={submitting}
+            disabled={submitting || account.soldeReleve}
             inputMode="decimal"
-            autoFocus
+            autoFocus={!account.soldeReleve}
             invalid={!!errors.solde}
           />
         </Field>

@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import BankAccount, BankAccountBalance
-from app.repositories import balance_repository
+from app.repositories import balance_repository, position_repository
 from app.services import account_service, audit_service, position_service
 from app.services.errors import ConflictError
 from app.services.position_service import AccountFigures, LatestValues
@@ -34,7 +34,11 @@ def figures_for_accounts(
     """Chiffres de chaque compte à la date `as_of` (aujourd'hui au Maroc par défaut)."""
     accounts = list(accounts)
     as_of = as_of or position_service.business_today()
-    soldes, utilises = balance_repository.latest_by_field(db, [a.id for a in accounts], as_of)
+    ids = [a.id for a in accounts]
+    soldes, utilises = balance_repository.latest_by_field(db, ids, as_of)
+    # Compte alimenté par un relevé : le solde est le solde de clôture du relevé (08/10/2026)
+    soldes.update(position_repository.dernier_solde_releve(db, ids, as_of))
+    alimentes = position_repository.comptes_alimentes_par_releve(db, ids)
 
     figures = {}
     for account in accounts:
@@ -46,7 +50,9 @@ def figures_for_accounts(
             credit_utilise=utilise[1] if utilise else None,
             date_maj=max(dates) if dates else None,
         )
-        figures[account.id] = position_service.account_figures(account.credit_autorise, latest)
+        figures[account.id] = position_service.account_figures(
+            account.credit_autorise, latest, solde_releve=account.id in alimentes
+        )
     return figures
 
 
@@ -87,6 +93,12 @@ def save_balance(
         raise ConflictError(
             f"Le compte {account.bank.code} {account.devise} est inactif : réactivez-le d'abord."
         )
+    alimente = bool(position_repository.comptes_alimentes_par_releve(db, [account.id]))
+    if alimente and solde is not None:
+        raise ConflictError(
+            "Ce compte est alimenté par ses relevés : importez le relevé pour mettre à jour son "
+            "solde. Seul le crédit utilisé se saisit ici."
+        )
 
     new_values = {
         "solde": _amount(solde),
@@ -94,6 +106,9 @@ def save_balance(
         "commentaire": commentaire.strip() if commentaire and commentaire.strip() else None,
     }
     balance = balance_repository.get(db, account.id, jour)
+    if alimente and balance is not None:
+        # Le solde déjà enregistré ce jour-là (relevé ou ancienne saisie) n'est pas effacé
+        new_values["solde"] = balance.solde
 
     if balance is None:
         balance = balance_repository.add(

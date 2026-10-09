@@ -72,7 +72,8 @@ def last_operation_soldes(
     db: Session, account_ids: list[int], date_fin: date
 ) -> list[tuple[int, date, Decimal]]:
     """(compte, date d'opération, solde) de la dernière opération de chaque jour qui a un solde,
-    jusqu'à `date_fin` incluse. « Dernière » = ordre du relevé continu (date puis ordre d'import)."""
+    jusqu'à `date_fin` incluse. « Dernière » = ordre chronologique du relevé continu (date,
+    relevé, rang dans le relevé), jamais l'ordre des lignes du fichier."""
     if not account_ids:
         return []
     query = (
@@ -86,12 +87,60 @@ def last_operation_soldes(
             BankTransaction.date_operation <= date_fin,
             BankTransaction.solde.is_not(None),
         )
-        # Une ligne par compte et par jour : la plus récente (id le plus grand)
+        # Une ligne par compte et par jour : la dernière dans l'ordre chronologique
         .ext(distinct_on(BankTransaction.bank_account_id, BankTransaction.date_operation))
         .order_by(
             BankTransaction.bank_account_id,
             BankTransaction.date_operation,
+            BankTransaction.statement_id.desc(),
+            BankTransaction.ordre.desc(),
             BankTransaction.id.desc(),
         )
     )
     return [(row[0], row[1], row[2]) for row in db.execute(query)]
+
+
+def comptes_alimentes_par_releve(db: Session, account_ids: list[int]) -> set[int]:
+    """Comptes qui ont au moins une opération importée portant un solde : leur solde vient du
+    relevé, jamais d'une saisie (décision du 08/10/2026)."""
+    if not account_ids:
+        return set()
+    query = (
+        select(BankTransaction.bank_account_id)
+        .where(
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.solde.is_not(None),
+        )
+        .distinct()
+    )
+    return set(db.scalars(query))
+
+
+def dernier_solde_releve(
+    db: Session, account_ids: list[int], date_fin: date
+) -> dict[int, tuple[date, Decimal]]:
+    """Par compte : (jour, solde) de la dernière opération importée jusqu'à `date_fin`, dans l'ordre
+    chronologique du relevé continu : le solde de clôture."""
+    if not account_ids:
+        return {}
+    query = (
+        select(
+            BankTransaction.bank_account_id,
+            BankTransaction.date_operation,
+            BankTransaction.solde,
+        )
+        .where(
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.date_operation <= date_fin,
+            BankTransaction.solde.is_not(None),
+        )
+        .ext(distinct_on(BankTransaction.bank_account_id))
+        .order_by(
+            BankTransaction.bank_account_id,
+            BankTransaction.date_operation.desc(),
+            BankTransaction.statement_id.desc(),
+            BankTransaction.ordre.desc(),
+            BankTransaction.id.desc(),
+        )
+    )
+    return {row[0]: (row[1], row[2]) for row in db.execute(query)}

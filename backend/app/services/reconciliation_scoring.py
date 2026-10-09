@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from difflib import SequenceMatcher
+from functools import lru_cache
 
 from app.services.normalization_service import extract_reference
 
@@ -24,7 +25,7 @@ ZERO = Decimal("0.00")
 # Codes des critères, dans l'ordre d'affichage du détail du score
 CRITERES = ("reference", "montant", "date", "libelle", "tiers")
 LIBELLES_CRITERES = {
-    "reference": "Référence / N° pièce",
+    "reference": "N° chèque / référence",
     "montant": "Montant",
     "date": "Date",
     "libelle": "Libellé",
@@ -36,11 +37,12 @@ LIBELLES_CRITERES = {
 class Grille:
     """Grille de score (table `reconciliation_rules`) ; non encore validée par le métier.
 
-    Décision du 07/10/2026 : pour le moment, le score ne repose que sur le montant, la date et le
-    libellé (50 + 30 + 20) ; la référence et le tiers sont désactivés (0 point).
+    Décision du 07/10/2026 : montant, date et libellé (50 + 30 + 20). Décision du 08/10/2026 : le
+    n° de chèque / référence revient (40), lu aussi dans les libellés ; le total reste plafonné à
+    100. Le tiers est désactivé (0 point).
     """
 
-    reference: Decimal = Decimal("0")
+    reference: Decimal = Decimal("40")
     montant: Decimal = Decimal("50")
     date: Decimal = Decimal("30")
     libelle: Decimal = Decimal("20")
@@ -134,8 +136,15 @@ _MOTS_VIDES = frozenset(
     }
 )  # fmt: skip
 _NON_ALNUM = re.compile(r"[^A-Z0-9]+")
+# N° de chèque, d'effet ou de remise : 5 chiffres ou plus (« EAR1° » n'en est pas un)
+_NUMERO = re.compile(r"\d{5,}")
 
 
+# Un même libellé revient dans des milliers de paires : sa forme normalisée est calculée une fois
+_CACHE = 65536
+
+
+@lru_cache(maxsize=_CACHE)
 def _plain(text: str | None) -> str:
     """Majuscules sans accents, ponctuation remplacée par des espaces."""
     if not text:
@@ -145,9 +154,12 @@ def _plain(text: str | None) -> str:
     return " ".join(_NON_ALNUM.sub(" ", upper).split())
 
 
-def _mots(text: str | None) -> set[str]:
+@lru_cache(maxsize=_CACHE)
+def _mots(text: str | None) -> frozenset[str]:
     """Mots significatifs d'un libellé : sans mots vides, d'au moins 2 caractères."""
-    return {mot for mot in _plain(text).split() if len(mot) >= 2 and mot not in _MOTS_VIDES}
+    return frozenset(
+        mot for mot in _plain(text).split() if len(mot) >= 2 and mot not in _MOTS_VIDES
+    )
 
 
 def _cle(value: str | None) -> str:
@@ -164,6 +176,16 @@ def _contient(texte_plain: str, cle: str) -> bool:
     return re.search(rf"(?<![A-Z0-9]){motif}(?![A-Z0-9])", texte_plain) is not None
 
 
+def numeros(*textes: str | None) -> set[str]:
+    """Numéros de 5 chiffres ou plus des textes, sans les zéros en tête (« 0173813 » → « 173813 »)."""
+    return set().union(*(_numeros_du_texte(texte) for texte in textes if texte))
+
+
+@lru_cache(maxsize=_CACHE)
+def _numeros_du_texte(texte: str) -> frozenset[str]:
+    return frozenset(numero.lstrip("0") or "0" for numero in _NUMERO.findall(texte))
+
+
 # --- Critères --------------------------------------------------------------------------------------
 
 
@@ -174,10 +196,16 @@ def _points(poids: Decimal, ratio: Decimal) -> Decimal:
 def critere_reference(operation: Operation, ecriture: Ecriture) -> bool:
     """Même référence / n° de chèque / n° de pièce des deux côtés.
 
-    Clés de l'écriture : sa référence et son N° pièce. Clés de l'opération : sa référence et celle
+    Un même numéro de 5 chiffres ou plus dans les libellés ou références des deux côtés, sans les
+    zéros en tête (« CHEQUE N 0173813 » ↔ « EAR1° AXK 173813 », décision du 08/10/2026). Sinon,
+    clés de l'écriture : sa référence et son N° pièce ; clés de l'opération : sa référence et celle
     trouvée dans son libellé. Une clé de l'écriture (3 caractères au moins) écrite dans le libellé
     ou la référence bancaire compte aussi (« CHQ 1234567 » contient la pièce 1234567).
     """
+    if numeros(operation.libelle, operation.reference) & numeros(
+        ecriture.libelle, ecriture.reference, ecriture.numero_piece
+    ):
+        return True
     cles_ecriture = {_cle(ecriture.reference), _cle(ecriture.numero_piece)} - {""}
     cles_operation = {_cle(operation.reference), _cle(extract_reference(operation.libelle))} - {""}
     if cles_ecriture & cles_operation:
@@ -278,6 +306,8 @@ def proposer(
     for operation, ecriture in _paires_comparables(operations, ecritures, grille):
         if (operation.id, ecriture.id) in paires_rejetees:
             continue
+        if not _peut_atteindre(operation, ecriture, grille):
+            continue
         resultat = score(operation, ecriture, grille)
         if resultat.total >= grille.seuil_proposition:
             candidats[(operation.id, ecriture.id)] = resultat
@@ -330,6 +360,23 @@ def proposer(
 
     resultat.propositions.sort(key=lambda item: (item.operation_id, item.ecriture_id))
     return resultat
+
+
+def _peut_atteindre(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool:
+    """Le score de la paire peut-il atteindre le seuil de proposition, même avec un libellé et un
+    tiers parfaits ? Sinon, le libellé (le calcul le plus coûteux) n'est pas comparé : une paire
+    écartée ici aurait de toute façon un score sous le seuil, le résultat ne change pas."""
+    plafond = (
+        (grille.montant if operation.montant == -ecriture.montant else ZERO)
+        + _points(grille.date, ratio_date(ecart_jours(operation, ecriture), grille.tolerance_jours))
+        + grille.libelle
+        + grille.tiers
+    )
+    if plafond >= grille.seuil_proposition:
+        return True
+    if grille.reference and critere_reference(operation, ecriture):
+        plafond += grille.reference
+    return plafond >= grille.seuil_proposition
 
 
 def _paires_comparables(

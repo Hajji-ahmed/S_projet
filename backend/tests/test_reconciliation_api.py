@@ -136,8 +136,9 @@ def test_example_of_the_functional_architecture_is_proposed_then_validated(clien
     )
     # Forte, mais jamais validée sans un utilisateur
     assert proposal["forte"] is True
-    # Pour le moment, seuls le montant, la date et le libellé comptent (décision du 07/10/2026)
+    # N° de chèque / référence, montant, date et libellé (décisions du 07 et du 08/10/2026)
     assert [(c["code"], c["points"]) for c in proposal["criteres"]] == [
+        ("reference", "0.00"),
         ("montant", "50.00"),
         ("date", "30.00"),
         ("libelle", "20.00"),
@@ -241,11 +242,17 @@ def test_run_checks_period_and_account(client, comptable, db):
     other = account(db, "SOCX")
 
     inverted = run(client, comptable, db, du="2026-09-30", au="2026-09-01")
-    too_long = run(client, comptable, db, du="2025-01-01", au="2026-09-30")
+    # 5 ans au plus par lancement (08/10/2026) : plus d'un an passe, une année mal saisie non
+    over_a_year = run(client, comptable, db, du="2025-01-01", au="2026-09-30")
+    five_years = run(client, comptable, db, du="2021-10-01", au="2026-09-30")
+    too_long = run(client, comptable, db, du="0026-01-01", au="2026-09-30")
     foreign = run(client, comptable, db, bank_account_id=other.id)
 
     assert inverted.status_code == 409
+    assert over_a_year.status_code == 200, over_a_year.text
+    assert five_years.status_code == 200, five_years.text
     assert too_long.status_code == 409
+    assert too_long.json() == {"detail": "La période ne peut pas dépasser 5 ans."}
     assert foreign.status_code == 404
 
 
@@ -513,7 +520,12 @@ def test_one_match_can_be_read_with_its_score_detail(client, direction, comptabl
 
     assert response.status_code == 200
     assert response.json()["operation"]["id"] == tx.id
-    assert [c["code"] for c in response.json()["criteres"]] == ["montant", "date", "libelle"]
+    assert [c["code"] for c in response.json()["criteres"]] == [
+        "reference",
+        "montant",
+        "date",
+        "libelle",
+    ]
     assert missing.status_code == 404
 
 
@@ -528,7 +540,7 @@ def test_a_proposal_with_different_amounts_cannot_be_validated(client, comptable
         f"/api/reconciliation/matches/{proposal['id']}/validate", headers=comptable
     )
 
-    assert proposal["criteres"][0] == {"code": "montant", "libelle": "Montant", "points": "0.00"}
+    assert proposal["criteres"][1] == {"code": "montant", "libelle": "Montant", "points": "0.00"}
     assert response.status_code == 409
     assert "Montant différent" in response.json()["detail"]
     assert statuses(db, tx, entry) == ["À vérifier", "À vérifier"]
@@ -650,17 +662,18 @@ def test_batch_validation_never_mixes_companies(client, comptable, db):
 
 def test_a_disabled_criterion_is_worth_zero_and_can_be_enabled_again(reference):
     seeded = grille(reference)
-    rule = reference.scalar(select(ReconciliationRule).filter_by(code="REFERENCE"))
+    rule = reference.scalar(select(ReconciliationRule).filter_by(code="TIERS"))
     rule.actif = True
     reference.flush()
 
-    assert (seeded.reference, seeded.tiers) == (Decimal("0"), Decimal("0"))
+    # Tiers désactivé (07/10/2026) ; n° de chèque / référence réactivé (08/10/2026)
+    assert (seeded.reference, seeded.tiers) == (Decimal("40"), Decimal("0"))
     assert (seeded.montant, seeded.date, seeded.libelle) == (
         Decimal("50"),
         Decimal("30"),
         Decimal("20"),
     )
-    assert grille(reference).reference == Decimal("40")
+    assert grille(reference).tiers == Decimal("5")
 
 
 def test_an_older_score_still_shows_the_points_it_got():

@@ -96,6 +96,8 @@ export type Analysis = {
   solde_ouverture_source: string | null;
   /** Proposition calculée à rebours depuis un solde postérieur au fichier : à vérifier. */
   solde_ouverture_avertissement?: string | null;
+  /** Saisie permise : premier import du compte seulement (09/10/2026). */
+  solde_ouverture_modifiable?: boolean;
   resume: AnalysisSummary;
 };
 

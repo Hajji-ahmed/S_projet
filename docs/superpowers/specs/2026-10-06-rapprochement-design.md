@@ -131,3 +131,15 @@ Décisions de l'utilisateur du 07/10/2026 : le compteur « À vérifier » dispa
 - **Concurrente proche** : le score du meilleur autre candidat est gardé dans `detail_score.second`. S'il est à moins de `ECART_AMBIGUITE` (10) points, l'API renvoie `concurrente_proche: true` et `score_second`. La carte affiche le badge « Concurrente proche · 2e à N ». Une telle proposition n'est jamais cochée d'office, même forte.
 - **Seuil fort** : `SEUIL_FORT` passe à **80** (migration 0019, données seulement). Les libellés des filtres lisent le seuil renvoyé par le serveur.
 - Les propositions et les ambiguës existantes ont été calculées avec l'ancienne règle : relancer le moteur sur la période. « Forte » est calculé à la lecture et change tout de suite.
+
+## N° de chèque dans les libellés (08/10/2026)
+
+- Le n° de chèque, d'effet ou de remise se trouve dans le libellé, des deux côtés : « ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW » (Sage, N° pièce vide) et « EAR1° AXK 173813 JAID… » (banque).
+- Le critère **« N° chèque / référence » (40 points)** est réactivé (migration 0020). Il rapporte ses points quand les deux côtés ont un même numéro de 5 chiffres ou plus, comparé sans les zéros en tête (`numeros()`), ou quand l'ancienne règle (référence, N° pièce) s'applique. Les nombres courts (« EAR1° ») sont ignorés. Le total reste plafonné à 100.
+- La tolérance de date reste de 3 jours (décision du 08/10/2026) : la date continue de départager deux chèques de même montant.
+- Cas réel du 28/08/2026 (60 000 DH) : le bon chèque (173813, passé 4 jours plus tôt en banque) passe de 57,89 à 97,89 et devance le chèque voisin 173814 (87,37) ; la proposition porte le badge « Concurrente proche ».
+
+## Période de 5 ans et performance (08/10/2026)
+
+- « Lancer le rapprochement » accepte une période de **5 ans au plus** (366 jours avant). La limite reste un garde-fou contre une année mal saisie.
+- Le moteur compare chaque opération à toutes les écritures de sens opposé à ± 10 jours, quel que soit le montant (1 million de paires sur 5 ans de données de dev). Une paire qui ne peut pas atteindre le seuil de proposition, même avec un libellé parfait, n'est plus comparée sur le libellé (`_peut_atteindre`) ; les libellés normalisés sont mis en cache. Le résultat est identique (1 509 propositions, 45 ambiguës) ; la durée passe de 51 s à 9 s.
