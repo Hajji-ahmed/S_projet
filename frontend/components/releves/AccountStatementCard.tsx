@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { DateInput, Field } from "@/components/ui/Field";
+import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
@@ -18,6 +18,7 @@ import { currencySuffix, formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
+  commentaireAEnregistrer,
   OPERATIONS_AFFICHEES,
   exportFilename,
   saveFile,
@@ -25,7 +26,11 @@ import {
   type Period,
 } from "@/lib/statements";
 import { listPointageTypes } from "@/services/referentiel";
-import { exportAccountStatement, getAccountStatement } from "@/services/statements";
+import {
+  exportAccountStatement,
+  getAccountStatement,
+  updateTransaction,
+} from "@/services/statements";
 import type { AccountStatement, PointageType, Transaction } from "@/types/statement";
 import type { Status } from "@/types/status";
 
@@ -119,6 +124,27 @@ export function AccountStatementCard({
     };
   }, [selectedId, period, reloadKey, retryKey]);
 
+  // Pointage et commentaire modifiés directement dans le tableau, enregistrés aussitôt (10/10/2026)
+  async function saveInline(
+    row: Transaction,
+    changes: { pointage_type_id?: number | null; commentaire?: string | null },
+    message: string,
+  ) {
+    try {
+      replaceOperation(
+        await updateTransaction(row.id, {
+          pointage_type_id: row.pointage_type_id,
+          lettrage_escompte: row.lettrage_escompte,
+          commentaire: row.commentaire,
+          ...changes,
+        }),
+      );
+      toast(message);
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "Enregistrement impossible.", "error");
+    }
+  }
+
   function changePeriod(next: Period) {
     setState("loading");
     setPeriod(next);
@@ -145,7 +171,29 @@ export function AccountStatementCard({
   // Les 11 colonnes du relevé standard, dans leur ordre, puis le statut de rapprochement
   const columns: Column<Transaction>[] = [
     { key: "societe", header: "Société" },
-    { key: "pointage", header: "Pointage", render: (row) => row.pointage ?? "À choisir" },
+    {
+      key: "pointage",
+      header: "Pointage",
+      render: (row) =>
+        canEdit ? (
+          <Select
+            aria-label={`Pointage de l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
+            className="h-9 min-w-[150px]"
+            value={row.pointage_type_id === null ? "" : String(row.pointage_type_id)}
+            placeholder="À choisir"
+            options={pointages.map((item) => ({ value: String(item.id), label: item.libelle }))}
+            onChange={(event) =>
+              saveInline(
+                row,
+                { pointage_type_id: event.target.value ? Number(event.target.value) : null },
+                "Pointage enregistré.",
+              )
+            }
+          />
+        ) : (
+          (row.pointage ?? "À choisir")
+        ),
+    },
     {
       key: "banque",
       header: "Banque",
@@ -202,7 +250,33 @@ export function AccountStatementCard({
       header: "Lettrage / Escompte",
       render: (row) => row.lettrage_escompte ?? "-",
     },
-    { key: "commentaire", header: "Commentaire", render: (row) => row.commentaire ?? "-" },
+    {
+      key: "commentaire",
+      header: "Commentaire",
+      render: (row) =>
+        canEdit ? (
+          <TextInput
+            // Recréé après chaque enregistrement : le champ repart de la valeur enregistrée
+            key={`${row.id}-${row.commentaire ?? ""}`}
+            aria-label={`Commentaire de l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
+            className="h-9 min-w-[180px]"
+            defaultValue={row.commentaire ?? ""}
+            maxLength={1000}
+            placeholder="Ajouter un commentaire"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            onBlur={(event) => {
+              const valeur = commentaireAEnregistrer(row.commentaire, event.target.value);
+              if (valeur !== undefined) {
+                void saveInline(row, { commentaire: valeur }, "Commentaire enregistré.");
+              }
+            }}
+          />
+        ) : (
+          (row.commentaire ?? "-")
+        ),
+    },
     {
       key: "statut",
       header: "Statut",
@@ -219,7 +293,7 @@ export function AccountStatementCard({
           type="button"
           onClick={() => setEditing(row)}
           aria-label={`Modifier l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
-          title="Modifier Pointage, Lettrage / Escompte, Commentaire"
+          title="Modifier Lettrage / Escompte (et Pointage, Commentaire)"
           className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
         >
           <PenLine className="h-4 w-4" aria-hidden />

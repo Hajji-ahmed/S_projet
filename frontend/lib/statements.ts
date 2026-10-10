@@ -179,3 +179,15 @@ export function formatDateTime(iso: string): string {
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")}`;
 }
+
+/**
+ * Commentaire tapé directement dans le tableau (10/10/2026) : la valeur à enregistrer (texte sans
+ * espaces autour, ou null si vide), ou undefined si rien n'a changé.
+ */
+export function commentaireAEnregistrer(
+  avant: string | null,
+  saisi: string,
+): string | null | undefined {
+  const valeur = saisi.trim() || null;
+  return valeur === (avant ?? null) ? undefined : valeur;
+}

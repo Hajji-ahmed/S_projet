@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  commentaireAEnregistrer,
   accountsWithStatements,
   assignField,
   exportFilename,
@@ -207,5 +208,14 @@ describe("formatDateTime", () => {
     // Date passée : l'heure légale du Maroc en 2026 dépend de la version des données de fuseaux
     // (tzdata 2026c : UTC+0 en octobre 2026). Le navigateur et le serveur font foi.
     expect(formatDateTime("2025-10-01T09:30:00+00:00")).toBe("01/10/2025 10:30");
+  });
+});
+
+describe("commentaireAEnregistrer", () => {
+  it("n'enregistre que ce qui a changé, un champ vide efface", () => {
+    expect(commentaireAEnregistrer(null, "  ")).toBeUndefined();
+    expect(commentaireAEnregistrer("Vu", " Vu ")).toBeUndefined();
+    expect(commentaireAEnregistrer("Vu", "Vu avec Salma")).toBe("Vu avec Salma");
+    expect(commentaireAEnregistrer("Vu", "")).toBeNull();
   });
 });

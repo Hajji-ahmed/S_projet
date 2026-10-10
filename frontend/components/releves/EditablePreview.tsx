@@ -324,7 +324,8 @@ export function EditablePreview({
                     </td>
                     <td className={cn(CELL, "whitespace-nowrap")}>{societe}</td>
                     <td className={CELL}>
-                      {isEditing ? (
+                      {/* Toujours modifiable, sans passer par le crayon (10/10/2026) */}
+                      {!locked ? (
                         <Select
                           aria-label={`Pointage de la ligne ${draft.numero}`}
                           className="h-9 min-w-[150px]"
@@ -421,7 +422,7 @@ export function EditablePreview({
                         : (ligne.lettrage_escompte ?? "-")}
                     </td>
                     <td className={CELL}>
-                      {isEditing
+                      {!locked
                         ? field(draft, "commentaire", "Commentaire")
                         : (ligne.commentaire ?? "-")}
                     </td>
