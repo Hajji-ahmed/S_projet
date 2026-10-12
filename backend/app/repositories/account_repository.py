@@ -1,4 +1,4 @@
-from sqlalchemy import case, delete, select, union
+from sqlalchemy import case, delete, func, literal, select, union
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
@@ -98,7 +98,8 @@ def find_active_by_journal(db: Session, *, company_id: int, journal: str) -> Ban
     """Le compte actif de la société qui porte déjà ce journal Sage, s'il existe."""
     query = select(BankAccount).where(
         BankAccount.company_id == company_id,
-        BankAccount.journal_sage == journal,
+        # Liste « 5243,5543 » : le journal est l'un de ses éléments (12/10/2026)
+        literal(journal) == func.any(func.string_to_array(BankAccount.journal_sage, ",")),
         BankAccount.actif.is_(True),
     )
     return db.scalar(query)

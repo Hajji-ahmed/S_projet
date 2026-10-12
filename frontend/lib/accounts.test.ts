@@ -115,6 +115,13 @@ describe("validateAccountForm", () => {
     expect(validateAccountForm({ ...valid, journal_sage: " bq1 " }, "create")).toEqual({});
   });
 
+  it("accepte plusieurs journaux séparés par des virgules", () => {
+    expect(validateAccountForm({ ...valid, journal_sage: "5243, 5543" }, "create")).toEqual({});
+    expect(
+      validateAccountForm({ ...valid, journal_sage: "5243, 55-43" }, "create").journal_sage,
+    ).toBeDefined();
+  });
+
   it("accepte un taux vide et un compte comptable vide", () => {
     expect(validateAccountForm({ ...valid, taux: "", compte_comptable: "" }, "create")).toEqual({});
   });

@@ -241,15 +241,19 @@ def test_future_date_is_an_error(client, comptable, db, journals):
     assert "Date dans le futur." in line["motifs"]
 
 
-def test_identical_lines_in_the_file_are_duplicates(client, comptable, db, journals):
+def test_identical_lines_in_the_file_are_two_entries(client, comptable, db, journals):
+    """12/10/2026 : un doublon est une écriture déjà en base, pas une ligne répétée du fichier."""
     row = [date(2025, 9, 2), "BQ1", "5141", "P1", "FRAIS", 10, None, None, None]
+    content = xlsx([HEADER, row, row])
 
-    lines = analyse(client, comptable, db, xlsx([HEADER, row, row])).json()["lignes"]
+    lines = analyse(client, comptable, db, content).json()["lignes"]
+    body = confirm(client, comptable, db, content).json()
+    again = analyse(client, comptable, db, content, nom="copie.xlsx").json()["lignes"]
 
-    assert [(line["statut"], line["doublon_de"]) for line in lines] == [
-        ("Valide", None),
-        ("Doublon", 2),
-    ]
+    assert [line["statut"] for line in lines] == ["Valide", "Valide"]
+    assert body["nb_importees"] == 2
+    # Réimportées : les deux sont reconnues déjà en base, une à une
+    assert [line["statut"] for line in again] == ["Doublon", "Doublon"]
 
 
 def test_company_without_sage_journal_is_refused(client, comptable, db, reference):
@@ -421,18 +425,12 @@ def test_lines_already_imported_are_skipped_in_a_new_file(client, comptable, db,
     assert (body["nb_importees"], body["nb_doublons_ecartes"]) == (1, 2)
 
 
-def test_internal_duplicate_can_be_kept(client, comptable, db, journals):
-    row = [date(2025, 9, 2), "BQ1", "5141", "P1", "FRAIS", 10, None, None, None]
-
-    body = confirm(client, comptable, db, xlsx([HEADER, row, row]), garder_doublons="[3]").json()
-
-    assert body["nb_importees"] == 2
-
-
-def test_a_line_that_is_not_an_internal_duplicate_cannot_be_kept(client, comptable, db, journals):
+def test_garder_doublons_is_accepted_without_effect(client, comptable, db, journals):
+    """12/10/2026 : plus de doublon interne, l'ancien champ ne change rien."""
     response = confirm(client, comptable, db, xlsx(EXPORT), garder_doublons="[3]")
 
-    assert response.status_code == 409
+    assert response.status_code == 201
+    assert response.json()["nb_importees"] == 2
 
 
 def test_file_without_bank_line_is_refused(client, comptable, db, journals):
@@ -613,3 +611,23 @@ def test_a_saved_model_is_completed_with_new_columns(client, comptable, db, jour
     assert body["mapping_source"] == "Modèle de la société"
     [line] = body["lignes"]
     assert (line["numero_piece"], line["echeance"]) == ("RMS010001632", "2025-10-30")
+
+
+# --- Plusieurs journaux Sage par compte (12/10/2026) -----------------------------------------------
+
+
+def test_lines_of_every_journal_of_the_account_are_imported(client, comptable, db, reference):
+    bp = account(db, "BP", "5243,5543", compte_comptable="55410003")
+    rows = [
+        HEADER,
+        [date(2026, 1, 2), "5243", "55410003", "P1", "EAR1° AXK 173813", 1000, None, None, None],
+        [date(2026, 1, 2), "5543", "55410003", "P2", "COM", None, 143, None, None],
+        [date(2026, 1, 1), "9000", "55410003", "AN1", "A.N. au 010126", 5, None, None, None],
+    ]
+
+    body = analyse(client, comptable, db, xlsx(rows)).json()
+
+    assert [line["journal"] for line in body["lignes"]] == ["5243", "5543"]
+    assert {line["bank_account_id"] for line in body["lignes"]} == {bp.id}
+    [ignoree] = body["lignes_ignorees"]
+    assert "Journal « 9000 »" in ignoree["raison"]

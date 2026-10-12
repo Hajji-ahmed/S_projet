@@ -192,3 +192,13 @@ def test_line_hash_is_stable_and_separates_identical_lines():
     assert line_hash(1, parts, 1) == line_hash(1, parts, 1)
     assert line_hash(1, parts, 1) != line_hash(1, parts, 2)  # deux frais identiques le même jour
     assert line_hash(1, parts, 1) != line_hash(2, parts, 1)  # même ligne, autre compte
+
+
+def test_solde_au_lines_are_recognised():
+    from app.services.normalization_service import is_solde_au
+
+    assert is_solde_au("SOLDE AU 31/12/2024")
+    assert is_solde_au("  solde au 31/12/2024 ")
+    assert not is_solde_au("SOLDE AUTOMATIQUE")
+    assert not is_solde_au("VIR SOLDE AU CLIENT")
+    assert not is_solde_au(None)

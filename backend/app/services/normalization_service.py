@@ -249,6 +249,17 @@ def balance_line_kind(libelle: str | None) -> str | None:
     return None
 
 
+# « SOLDE AU 31/12/2024 » : solde à une date, même quand la ligne porte un montant (12/10/2026)
+_SOLDE_AU = re.compile(r"^SOLDE AU\b")
+
+
+def is_solde_au(libelle: str | None) -> bool:
+    """Libellé « SOLDE AU JJ/MM/AAAA » (sans accents ni casse) : un solde, jamais une opération."""
+    if not libelle:
+        return False
+    return _SOLDE_AU.match(" ".join(_plain(libelle).split())) is not None
+
+
 def file_hash(content: bytes) -> str:
     """Empreinte SHA-256 du contenu : un même fichier, quel que soit son nom, a la même empreinte."""
     return hashlib.sha256(content).hexdigest()

@@ -540,3 +540,28 @@ def test_deleting_an_account_needs_the_permission(client, direction, db):
 
     assert client.delete(f"{ACCOUNTS}/{account.id}", headers=direction).status_code == 403
     assert client.delete(f"{ACCOUNTS}/999999", headers=direction).status_code == 403
+
+
+# --- Plusieurs journaux Sage par compte (12/10/2026) -----------------------------------------------
+
+
+def test_several_sage_journals_are_saved_as_a_list(client, tresorerie, db):
+    response = client.post(
+        ACCOUNTS, json=payload(db, journal_sage=" 5243 ; 5543, 5243 "), headers=tresorerie
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["journal_sage"] == "5243,5543"
+
+
+def test_a_journal_of_the_list_used_elsewhere_is_refused(client, tresorerie, db):
+    add(db, "SIMTIS", "AWB", journal_sage="5543")
+
+    response = client.post(
+        ACCOUNTS, json=payload(db, journal_sage="5243, 5543"), headers=tresorerie
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Le journal Sage 5543 est déjà celui du compte AWB MAD de cette société."
+    }

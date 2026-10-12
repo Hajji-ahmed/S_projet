@@ -98,6 +98,8 @@ export type Analysis = {
   solde_ouverture_avertissement?: string | null;
   /** Saisie permise : premier import du compte seulement (09/10/2026). */
   solde_ouverture_modifiable?: boolean;
+  /** La colonne Solde recopiait le montant de chaque ligne : ignorée (12/10/2026). */
+  solde_colonne_ignoree?: boolean;
   resume: AnalysisSummary;
 };
 

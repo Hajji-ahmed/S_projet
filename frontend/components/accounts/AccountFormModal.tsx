@@ -251,17 +251,17 @@ export function AccountFormModal({
       </div>
 
       <Field
-        label="Journal Sage"
+        label="Journaux Sage"
         htmlFor="account-journal-sage"
         error={errors.journal_sage}
-        hint="Code du journal de banque dans Sage, ex. BQ1 : rattache les écritures importées."
+        hint="Journaux de banque dans Sage, séparés par des virgules (ex. 5243, 5543) : rattachent les écritures importées."
       >
         <TextInput
           id="account-journal-sage"
           value={values.journal_sage}
           onChange={(event) => set("journal_sage")(event.target.value)}
           disabled={submitting}
-          maxLength={10}
+          maxLength={120}
           autoComplete="off"
           invalid={!!errors.journal_sage}
         />

@@ -107,3 +107,18 @@ export function blocageImport(etat: {
   }
   return null;
 }
+
+/** Coche ou décoche d'un clic un groupe de lignes (les erreurs), sans toucher aux autres. Depuis
+ * le 12/10/2026, un doublon est une ligne déjà en base, jamais cochable : pas de groupe Doublons. */
+export function basculerGroupe(
+  cochees: ReadonlySet<number>,
+  groupe: readonly number[],
+  cocher: boolean,
+): Set<number> {
+  const next = new Set(cochees);
+  for (const numero of groupe) {
+    if (cocher) next.add(numero);
+    else next.delete(numero);
+  }
+  return next;
+}

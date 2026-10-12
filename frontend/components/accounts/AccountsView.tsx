@@ -201,7 +201,7 @@ export function AccountsView() {
     },
     {
       key: "journal_sage",
-      header: "Journal Sage",
+      header: "Journaux Sage",
       render: (row) => row.journal_sage ?? "-",
     },
     {

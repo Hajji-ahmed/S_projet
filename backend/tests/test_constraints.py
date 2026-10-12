@@ -936,9 +936,21 @@ def test_one_active_account_per_sage_journal_and_company(db, world):
 
     assert_rejected(
         db,
-        "uq_bank_accounts_journal_sage_actif",
+        "Journal Sage deja utilise",
         build_account(world.company, save(db, build_bank()), journal_sage="BQ1"),
     )
+
+
+def test_a_journal_in_two_lists_of_the_same_company_is_refused(db, world):
+    """Déclencheur de la migration 0022 : plusieurs journaux par compte, chacun à un seul compte."""
+    save(db, build_account(world.company, save(db, build_bank()), journal_sage="5243,5543"))
+
+    assert_rejected(
+        db,
+        "Journal Sage deja utilise",
+        build_account(world.company, save(db, build_bank()), journal_sage="9000,5543"),
+    )
+    save(db, build_account(world.company, save(db, build_bank()), journal_sage="52430"))
 
 
 def test_inactive_account_frees_its_sage_journal(db, world):

@@ -782,3 +782,26 @@ def test_migration_0021_ranks_operations_of_a_newest_first_statement(empty_datab
         ("L1", 2),
         ("L2", 3),
     ]
+
+
+def test_migration_0022_allows_several_journals_per_account(empty_database):
+    """Plusieurs journaux par compte ; le déclencheur garde un journal par compte actif."""
+    config, engine = empty_database
+    command.upgrade(config, "0022")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'B', 'B');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (company_id, bank_id, libelle, numero, devise, journal_sage)
+                    VALUES (1, 1, 'Compte', 'N1', 'MAD', '5243,5543');
+                """
+            )
+        )
+    command.downgrade(config, "0021")
+    with engine.connect() as connection:
+        journal = connection.execute(text("SELECT journal_sage FROM bank_accounts")).scalar_one()
+
+    assert journal == "5243"

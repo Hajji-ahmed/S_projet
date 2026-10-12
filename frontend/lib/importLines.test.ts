@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  basculerGroupe,
   blocageImport,
   cellulesText,
   defaultChecked,
@@ -98,5 +99,12 @@ describe("blocageImport", () => {
     expect(blocageImport({ ...ok, erreursCochees: 1, correction: "Sage" })?.message).toBe(
       "1 ligne cochée en erreur : corrigez l'export dans Sage ou décochez-la.",
     );
+  });
+});
+
+describe("groupes de lignes", () => {
+  it("coche ou décoche un groupe sans toucher aux autres lignes", () => {
+    expect([...basculerGroupe(new Set([3, 5]), [5], false)]).toEqual([3]);
+    expect([...basculerGroupe(new Set([3]), [5, 7], true)].sort()).toEqual([3, 5, 7]);
   });
 });

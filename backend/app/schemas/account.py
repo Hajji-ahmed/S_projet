@@ -105,12 +105,25 @@ def _clean_compte_comptable(value: str | None) -> str | None:
 
 
 def _clean_journal_sage(value: str | None) -> str | None:
+    """Un ou plusieurs journaux, séparés par des virgules, des points-virgules ou des espaces
+    (« 5243, 5543 » → « 5243,5543 », 12/10/2026). Chacun : 1 à 10 lettres ou chiffres."""
     if value is None or not value.strip():
         return None
-    value = value.strip().upper()
-    if not JOURNAL_SAGE_PATTERN.match(value):
-        raise ValueError("Le journal Sage contient 1 à 10 lettres ou chiffres (ex. BQ1).")
-    return value
+    journaux: list[str] = []
+    for item in re.split(r"[,;\s]+", value.strip().upper()):
+        if not item:
+            continue
+        if not JOURNAL_SAGE_PATTERN.match(item):
+            raise ValueError(
+                "Chaque journal Sage contient 1 à 10 lettres ou chiffres, séparés par des "
+                "virgules (ex. 5243, 5543)."
+            )
+        if item not in journaux:
+            journaux.append(item)
+    texte = ",".join(journaux)
+    if len(texte) > 120:
+        raise ValueError("Trop de journaux Sage pour un compte.")
+    return texte or None
 
 
 class AccountCreate(BaseModel):

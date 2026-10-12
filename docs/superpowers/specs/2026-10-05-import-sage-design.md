@@ -112,3 +112,7 @@ Frontend : Vitest pour les règles pures (filtres → requête, pagination, libe
 
 - Gros fichiers (08/10/2026) : 50 000 lignes et 20 Mo au plus ; aperçu de l'étape Validation par pages de 100 lignes (les tuiles filtrent et les totaux portent sur tout le fichier). Mesuré : 50 000 lignes analysées en 3 à 7 s, confirmées en 10 à 19 s.
 - Abréviations des en-têtes (08/10/2026) : un en-tête est aussi lu avec ses abréviations développées en mots entiers (DT → date, VAL → valeur, LIB → libellé, MNT / MT → montant, OPE / OPER → opération, DEB → débit, CRED → crédit). Exemple : relevé AWB « DT opération », « DT valeur ».
+
+## Plusieurs journaux Sage par compte (12/10/2026)
+
+Un compte bancaire peut avoir plusieurs journaux Sage, saisis « 5243, 5543 » dans l'écran Comptes et enregistrés « 5243,5543 » (`bank_accounts.journal_sage`, 120 caractères). Une ligne de l'export est retenue si son journal est l'un des journaux d'un compte actif de la société et si son compte commence par le compte comptable de ce compte. Un journal ne sert qu'à un compte actif par société : vérifié par le service (message « Le journal Sage X est déjà celui du compte … ») et par le déclencheur `bank_accounts_journaux_uniques` (migration 0022, qui remplace l'index partiel). Exemple BP : 5243 (encaissements) et 5543 (frais, commissions, remboursements de crédit) ; le journal 9000 (à-nouveaux) reste ignoré.

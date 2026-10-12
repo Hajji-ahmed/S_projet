@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AccountingEntry, BankAccount, ColumnMapping, Company, ImportBatch
 from app.repositories import account_repository, accounting_repository, import_repository
-from app.services import audit_service, import_file, position_service
+from app.services import account_service, audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
 from app.services.normalization_service import (
@@ -290,7 +290,9 @@ def _line_key(line: EntryLine) -> tuple:
 
 
 def _mark_duplicates(db: Session, company_id: int, lines: list[EntryLine]) -> None:
-    first_seen: dict[tuple, int] = {}
+    """Doublon = ligne déjà présente en base (12/10/2026). Deux lignes identiques du même fichier
+    sont deux vraies opérations (deux frais le même jour) : elles restent valides ; leur rang parmi
+    les lignes identiques entre dans l'empreinte, si bien qu'un réimport les reconnaît une à une."""
     occurrences: Counter[tuple] = Counter()
     for line in lines:
         if line.statut != "Valide":
@@ -298,12 +300,6 @@ def _mark_duplicates(db: Session, company_id: int, lines: list[EntryLine]) -> No
         key = _line_key(line)
         occurrences[key] += 1
         line.hash_ligne = line_hash(company_id, key, occurrences[key])
-        if key in first_seen:
-            line.statut = "Doublon"
-            line.doublon_de = first_seen[key]
-            line.motifs.append(f"Ligne identique à la ligne {first_seen[key]} du fichier.")
-        else:
-            first_seen[key] = line.numero
     # Une ligne déjà importée l'emporte sur « identique dans le fichier » : elle ne peut être gardée
     hashes = [line.hash_ligne for line in lines if line.hash_ligne]
     known = accounting_repository.existing_entry_hashes(db, company_id, hashes)
@@ -350,9 +346,11 @@ def analyse_entries(
 ) -> AccountingAnalysis:
     """Analyse un export Sage pour une société. Ne modifie pas la base."""
     company = _company(db, company_id)
+    # Un compte peut avoir plusieurs journaux (BP : 5243 et 5543, 12/10/2026)
     journals = {
-        account.journal_sage: account
+        journal: account
         for account in accounting_repository.bank_journals(db, company.id)
+        for journal in account_service.journaux_sage(account.journal_sage)
     }
     if not journals:
         raise ConflictError("Renseignez le journal Sage de vos comptes bancaires (écran Comptes).")
@@ -503,14 +501,8 @@ def confirm_entries(
                 f"{len(errors)} ligne{plural} en erreur : corrigez l'export dans Sage, "
                 f"ou confirmez en l'écartant{plural}."
             )
-        keep = set(garder_doublons or [])
-        for numero in sorted(keep):
-            line = by_number.get(numero)
-            if line is None or line.doublon_de is None:
-                raise ConflictError(
-                    f"La ligne {numero} n'est pas identique à une autre ligne du fichier : "
-                    "elle ne peut pas être gardée."
-                )
+        # `garder_doublons` n'a plus d'effet (12/10/2026) : seul un doublon déjà importé existe
+        keep = set()
         lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
     if not lines:
         raise ConflictError("Aucune écriture de banque à importer dans ce fichier.")

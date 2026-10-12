@@ -129,15 +129,24 @@ def _check_slot_free(
 def _check_journal_free(
     db: Session, *, company_id: int, journal: str | None, account_id: int | None = None
 ) -> None:
-    """Un journal Sage ne sert qu'à un compte actif par société (P10)."""
+    """Un journal Sage ne sert qu'à un compte actif par société (P10) ; `journal` peut en lister
+    plusieurs (« 5243,5543 », 12/10/2026) : chacun est vérifié."""
     if journal is None:
         return
-    occupant = account_repository.find_active_by_journal(db, company_id=company_id, journal=journal)
-    if occupant is not None and occupant.id != account_id:
-        raise ConflictError(
-            f"Le journal Sage {journal} est déjà celui du compte "
-            f"{occupant.bank.code} {occupant.devise} de cette société."
+    for item in journaux_sage(journal):
+        occupant = account_repository.find_active_by_journal(
+            db, company_id=company_id, journal=item
         )
+        if occupant is not None and occupant.id != account_id:
+            raise ConflictError(
+                f"Le journal Sage {item} est déjà celui du compte "
+                f"{occupant.bank.code} {occupant.devise} de cette société."
+            )
+
+
+def journaux_sage(valeur: str | None) -> list[str]:
+    """Journaux d'un compte : « 5243,5543 » → [« 5243 », « 5543 »]."""
+    return [item for item in (valeur or "").split(",") if item]
 
 
 def _check_dh_convertible(type_compte: str, devise: str) -> None:

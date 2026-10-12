@@ -447,15 +447,15 @@ def test_invalid_lines_are_reported_with_their_reasons(client, tresorerie, accou
     assert body["resume"]["total_debit"] == "10.00"  # seules les lignes valides comptent
 
 
-def test_identical_lines_in_the_file_are_flagged(client, tresorerie, account):
+def test_identical_lines_in_the_file_are_two_operations(client, tresorerie, account):
+    """12/10/2026 : deux frais identiques le même jour sont deux opérations, pas un doublon."""
     rows = [HEADER, *[["24/09/2026", None, "FRAIS SMS", 10, None, None]] * 2]
 
     lines = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
 
-    assert [line["statut"] for line in lines] == ["Valide", "Doublon"]
-    assert lines[1]["motifs"] == ["Ligne identique à la ligne 2 du fichier."]
-    assert lines[1]["doublon_de"] == 2
-    # Si l'utilisateur garde les deux, elles restent distinctes
+    assert [line["statut"] for line in lines] == ["Valide", "Valide"]
+    assert [line["doublon_de"] for line in lines] == [None, None]
+    # Leur rang les distingue : un réimport les reconnaît une à une
     assert lines[0]["hash_ligne"] != lines[1]["hash_ligne"]
 
 
@@ -801,28 +801,26 @@ def test_lines_in_error_can_be_discarded(client, tresorerie, account, db):
     assert db.scalar(select(ImportBatch).filter_by(bank_account_id=account.id)).nb_erreurs == 1
 
 
-@pytest.mark.parametrize(("kept", "expected"), [([], 1), ([3], 2)])
-def test_identical_line_in_the_file_is_kept_only_on_request(
-    client, tresorerie, account, db, kept, expected
+def test_identical_lines_are_both_imported_and_recognised_on_reimport(
+    client, tresorerie, account, db
 ):
     rows = [HEADER, *[["24/09/2026", None, "FRAIS SMS", 10, None, None]] * 2]
+    content = xlsx(("Relevé", rows))
 
-    body = confirm(
-        client, tresorerie, account.id, xlsx(("Relevé", rows)), garder_doublons=kept
-    ).json()
+    body = confirm(client, tresorerie, account.id, content).json()
+    again = analyse(client, tresorerie, account.id, content, nom="copie.xlsx").json()["lignes"]
 
-    assert body["nb_importees"] == expected
-    assert body["nb_doublons_ecartes"] == 2 - expected
-    assert len({row.hash_ligne for row in transactions(db, account)}) == expected
+    assert (body["nb_importees"], body["nb_doublons_ecartes"]) == (2, 0)
+    assert len({row.hash_ligne for row in transactions(db, account)}) == 2
+    assert [line["statut"] for line in again] == ["Doublon", "Doublon"]
 
 
-def test_only_identical_lines_of_the_file_can_be_kept(client, tresorerie, account):
+def test_garder_doublons_is_accepted_without_effect(client, tresorerie, account):
     response = confirm(
         client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)), garder_doublons=[5]
     )
 
-    assert response.status_code == 409
-    assert "La ligne 5 n'est pas identique" in response.json()["detail"]
+    assert response.status_code == 201
 
 
 @pytest.mark.parametrize("value", ["[0]", "{}", "pas du json", '["a"]'])
@@ -2280,3 +2278,45 @@ def test_a_bank_balance_that_does_not_follow_is_flagged_not_blocked(client, tres
     assert [line["ecart_solde"] for line in body["lignes"]] == [None, None, "20.00", None]
     assert body["lignes"][3]["solde_apercu"] == "1140.00"  # le calcul repart du solde de la banque
     assert {line["statut"] for line in body["lignes"]} == {"Valide"}
+
+
+# --- Ligne « SOLDE AU » et fausse colonne Solde (12/10/2026) ---------------------------------------
+
+COPIE = [
+    ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+    ["31/12/2025", "SOLDE AU 31/12/2024", 19591867.99, None, 19591867.99],
+    ["02/01/2026", "ENCAISSEMENT CHEQUE N 1550018", None, 10000, 10000],
+    ["02/01/2026", "DROIT DE TIMBRE SUR VERSEMENT", 1, None, 1],
+    ["02/01/2026", "DROIT DE TIMBRE SUR VERSEMENT", 1, None, 1],
+    ["02/01/2026", "TAXE SUR VALEUR AJOUTEE", 2.5, None, 2.5],
+]
+
+
+def test_a_solde_au_line_gives_the_opening_even_with_an_amount(client, tresorerie, account):
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", COPIE))).json()
+
+    assert "SOLDE AU 31/12/2024" not in [line["libelle"] for line in body["lignes"]]
+    # Solde débiteur : en colonne Débit, donc négatif
+    assert body["solde_ouverture_propose"] == "-19591867.99"
+    assert body["solde_ouverture_source"] == "Ligne SOLDE INITIAL du fichier"
+
+
+def test_a_solde_column_copying_the_amounts_is_ignored(client, tresorerie, account):
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", COPIE))).json()
+
+    assert body["solde_colonne_ignoree"] is True
+    assert body["soldes_calcules"] is True
+    # Deux timbres identiques le même jour : deux vraies opérations (12/10/2026)
+    assert [line["solde_apercu"] for line in body["lignes"]] == [
+        "-19581867.99",
+        "-19581868.99",
+        "-19581869.99",
+        "-19581872.49",
+    ]
+
+
+def test_a_real_running_balance_is_kept(client, tresorerie, account):
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+
+    assert body["solde_colonne_ignoree"] is False
+    assert body["soldes_calcules"] is False

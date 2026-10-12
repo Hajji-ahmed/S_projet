@@ -7,7 +7,7 @@ import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountPicker } from "@/components/releves/AccountPicker";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import { EditablePreview, alreadyImported } from "@/components/releves/EditablePreview";
-import { blocageImport, defaultChecked } from "@/lib/importLines";
+import { basculerGroupe, blocageImport, defaultChecked } from "@/lib/importLines";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -92,6 +92,8 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   const [originals, setOriginals] = useState<LineDraft[]>([]);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<number | null>(null);
+  // « Modifier les colonnes » depuis l'étape Validation (12/10/2026)
+  const [editingColumns, setEditingColumns] = useState(false);
   // Fichier sans soldes : solde d'ouverture du calcul, tel que saisi (pré-rempli par la proposition)
   const [ouvertureText, setOuvertureText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -152,6 +154,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
       // ligne déjà importée. Une ligne en erreur cochée bloque jusqu'à sa correction.
       setChecked(defaultChecked(result.lignes));
       setEditing(null);
+      setEditingColumns(false);
       setStep(result.erreurs_mapping.length > 0 ? 0 : 1);
     } catch (caught) {
       setAnalysis(null);
@@ -363,20 +366,24 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         aria-label="Colonnes non reconnues"
         className="mt-6 rounded-[12px] border border-simtis-warning/40 bg-simtis-background p-4"
       >
-        <h3 className="text-[15px] font-semibold text-simtis-text">Colonnes non reconnues</h3>
+        <h3 className="text-[15px] font-semibold text-simtis-text">
+          {current.erreurs_mapping.length > 0 ? "Colonnes non reconnues" : "Colonnes du fichier"}
+        </h3>
         <p className="mt-1 mb-4 text-sm text-simtis-muted">
           {current.fichier_nom} · en-têtes lus à la ligne {current.ligne_entete}. Associez chaque
           colonne utile à son champ, une seule fois : la correspondance sera reprise automatiquement
           au prochain relevé {current.bank_code}.
         </p>
         {sheetPicker(current)}
-        <Alert tone="warning">
-          <ul className="space-y-0.5">
-            {current.erreurs_mapping.map((message) => (
-              <li key={message}>{message}</li>
-            ))}
-          </ul>
-        </Alert>
+        {current.erreurs_mapping.length > 0 && (
+          <Alert tone="warning">
+            <ul className="space-y-0.5">
+              {current.erreurs_mapping.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
         <DataTable
           columns={columns}
           rows={current.colonnes}
@@ -462,6 +469,13 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
                   ? `Proposé : ${current.solde_ouverture_source.toLowerCase()} (premier import : modifiable).`
                   : "Premier import de ce compte, aucun solde connu : saisissez-le."}
             </p>
+            {current.solde_colonne_ignoree && (
+              <p className="flex w-full items-start gap-2 rounded-lg bg-simtis-warning-bg px-3 py-2 text-sm text-simtis-warning-fg">
+                <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                La colonne Solde du fichier recopie le montant de chaque ligne : ce n&apos;est pas
+                un solde. Elle est ignorée et les soldes sont calculés.
+              </p>
+            )}
             {current.solde_ouverture_avertissement && (
               <p
                 role="alert"
@@ -478,6 +492,25 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
           total={defaultChecked(current.lignes).size}
           onCheckAll={() => setChecked(defaultChecked(current.lignes))}
           onUncheckAll={() => setChecked(new Set())}
+          selection={checked}
+          groupes={[
+            // Erreurs : les lignes qui ont encore un motif, comme la tuile « Lignes en erreur »
+            {
+              label: "Erreurs",
+              numeros: drafts
+                .filter((draft) => {
+                  const line = lines.get(draft.numero);
+                  return (
+                    !alreadyImported(line) &&
+                    lineMotifs(line, draft, originalOf.get(draft.numero) ?? draft, today).length > 0
+                  );
+                })
+                .map((draft) => draft.numero),
+            },
+          ]}
+          onGroupe={(numeros, cocher) =>
+            setChecked((value) => basculerGroupe(value, numeros, cocher))
+          }
         />
         <EditablePreview
           ouverture={ouverture}
@@ -533,6 +566,16 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
           >
             Changer de fichier
           </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setEditingColumns(true);
+              setStep(0);
+            }}
+            disabled={busy}
+          >
+            Modifier les colonnes
+          </Button>
           <Button icon={Upload} onClick={confirm} disabled={busy || blocked}>
             {busy ? "Import en cours..." : "Confirmer l'import"}
           </Button>
@@ -549,7 +592,9 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
       {step === 0 && (
         <>
           {stepFile()}
-          {analysis && analysis.erreurs_mapping.length > 0 && stepMapping(analysis)}
+          {analysis &&
+            (analysis.erreurs_mapping.length > 0 || editingColumns) &&
+            stepMapping(analysis)}
           <FooterButtons>
             <Button variant="secondary" onClick={onCancel} disabled={busy}>
               Annuler

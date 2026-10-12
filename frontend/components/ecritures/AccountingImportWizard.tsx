@@ -19,6 +19,7 @@ import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import {
+  basculerGroupe,
   blocageImport,
   cochable,
   defaultChecked,
@@ -298,11 +299,6 @@ export function AccountingImportWizard({
                 {motif}
               </span>
             ))}
-            {line.doublon_de !== null && (
-              <span className="mt-1 block text-xs text-simtis-muted">
-                Identique à la ligne {line.doublon_de}
-              </span>
-            )}
           </span>
         ),
       },
@@ -431,6 +427,18 @@ export function AccountingImportWizard({
             total={defaultChecked(current.lignes).size}
             onCheckAll={() => setCoches(defaultChecked(current.lignes))}
             onUncheckAll={() => setCoches(new Set())}
+            selection={coches}
+            groupes={[
+              {
+                label: "Erreurs",
+                numeros: current.lignes
+                  .filter((line) => line.statut === "Erreur")
+                  .map((line) => line.numero),
+              },
+            ]}
+            onGroupe={(numeros, cocher) =>
+              setCoches((value) => basculerGroupe(value, numeros, cocher))
+            }
           />
         )}
         {vue === "ignorees" ? (

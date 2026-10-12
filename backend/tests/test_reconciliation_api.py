@@ -843,7 +843,7 @@ def test_a_batch_of_more_than_500_proposals_is_validated(client, comptable, db):
 
 
 def test_a_batch_above_the_limit_is_refused(client, comptable):
-    response = client.post(BATCH, json={"ids": list(range(1, 5002))}, headers=comptable)
+    response = client.post(BATCH, json={"ids": list(range(1, 10002))}, headers=comptable)
 
     assert response.status_code == 422
 

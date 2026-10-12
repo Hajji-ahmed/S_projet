@@ -87,9 +87,14 @@ export function validateAccountForm(
   if (compte && !/^[A-Z0-9]{1,20}$/.test(compte)) {
     errors.compte_comptable = "1 à 20 lettres ou chiffres (ex. 5141).";
   }
-  const journal = values.journal_sage.trim().toUpperCase();
-  if (journal && !/^[A-Z0-9]{1,10}$/.test(journal)) {
-    errors.journal_sage = "1 à 10 lettres ou chiffres (ex. BQ1).";
+  // Un ou plusieurs journaux séparés par des virgules (« 5243, 5543 », 12/10/2026)
+  const journaux = values.journal_sage
+    .trim()
+    .toUpperCase()
+    .split(/[,;\s]+/)
+    .filter(Boolean);
+  if (journaux.some((journal) => !/^[A-Z0-9]{1,10}$/.test(journal))) {
+    errors.journal_sage = "1 à 10 lettres ou chiffres par journal, séparés par des virgules.";
   }
   if (normalizeAmountInput(values.credit_autorise) === null) {
     errors.credit_autorise = "Un montant positif, 2 décimales au plus (ex. 500 000).";

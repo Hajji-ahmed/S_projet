@@ -52,6 +52,7 @@ from app.services.normalization_service import (
     file_hash,
     guess_pointage,
     is_blank,
+    is_solde_au,
     label_key,
     line_hash,
     normalize_header,
@@ -188,6 +189,8 @@ class StatementAnalysis:
     solde_ouverture_avertissement: str | None = None
     # Saisie du solde d'ouverture permise : premier import du compte seulement (09/10/2026)
     solde_ouverture_modifiable: bool = True
+    # La colonne Solde recopiait le montant de chaque ligne : ignorée (12/10/2026)
+    solde_colonne_ignoree: bool = False
     solde_ouverture_choisi: Decimal | None = None
 
 
@@ -432,7 +435,9 @@ def _line_key(line: AnalysedLine) -> tuple:
 
 
 def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
-    first_seen: dict[tuple, int] = {}
+    """Doublon = ligne déjà présente en base (12/10/2026). Deux lignes identiques du même fichier
+    sont deux vraies opérations (deux frais le même jour) : elles restent valides ; leur rang parmi
+    les lignes identiques entre dans l'empreinte, si bien qu'un réimport les reconnaît une à une."""
     occurrences: Counter[tuple] = Counter()
     for line in lines:
         if line.statut != "Valide":
@@ -440,12 +445,6 @@ def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine
         key = _line_key(line)
         occurrences[key] += 1
         line.hash_ligne = line_hash(account.id, key, occurrences[key])
-        if key in first_seen:
-            line.statut = "Doublon"
-            line.doublon_de = first_seen[key]
-            line.motifs.append(f"Ligne identique à la ligne {first_seen[key]} du fichier.")
-        else:
-            first_seen[key] = line.numero
     # Une ligne déjà importée l'emporte sur « identique dans le fichier » : elle ne peut pas être gardée
     hashes = [line.hash_ligne for line in lines if line.hash_ligne]
     known = import_repository.existing_line_hashes(db, account.id, hashes)
@@ -672,13 +671,22 @@ def _no_amount(value: object) -> bool:
         return False
 
 
-def _balance_line(cells: dict[str, object]) -> tuple[str, Decimal | None] | None:
+def _balance_line(
+    cells: dict[str, object], *, avant_operations: bool = True
+) -> tuple[str, Decimal | None] | None:
     """Ligne SOLDE INITIAL / SOLDE FINAL (datée ou non), sans débit ni crédit : (sorte, montant).
 
     Ce n'est pas une opération : son montant donne le solde d'ouverture ou de clôture du fichier.
     Débit et crédit peuvent être vides, à zéro ou un tiret ; un vrai montant en fait une opération.
+
+    Exception (12/10/2026) : « SOLDE AU JJ/MM/AAAA » est un solde même avec un montant ; avant la
+    première opération c'est l'ouverture, après c'est la clôture. Son montant = crédit − débit (un
+    solde débiteur est négatif), sinon la colonne Montant, sinon la colonne Solde.
     """
-    kind = balance_line_kind(clean_libelle(cells.get("libelle")))
+    libelle = clean_libelle(cells.get("libelle"))
+    if is_solde_au(libelle):
+        return ("ouverture" if avant_operations else "cloture"), _solde_au_value(cells)
+    kind = balance_line_kind(libelle)
     if kind is None or not all(
         _no_amount(cells.get(code)) for code in ("debit", "credit", "montant")
     ):
@@ -687,6 +695,39 @@ def _balance_line(cells: dict[str, object]) -> tuple[str, Decimal | None] | None
         return kind, parse_amount(cells.get("solde"))
     except ValueError:
         return kind, None
+
+
+def _solde_au_value(cells: dict[str, object]) -> Decimal | None:
+    """Montant d'une ligne « SOLDE AU » : crédit − débit, sinon Montant, sinon Solde."""
+    try:
+        debit, credit = parse_amount(cells.get("debit")), parse_amount(cells.get("credit"))
+        if debit or credit:
+            return (credit or Decimal(0)) - (debit or Decimal(0))
+        for code in ("montant", "solde"):
+            value = parse_amount(cells.get(code))
+            if value is not None:
+                return value
+    except ValueError:
+        pass
+    return None
+
+
+# Part des lignes dont le « solde » égale le montant au-delà de laquelle la colonne Solde n'est pas
+# un solde cumulé mais une copie du montant (12/10/2026)
+PART_SOLDE_COPIE = Decimal("0.9")
+
+
+def _solde_copie_du_montant(lines: list[AnalysedLine]) -> bool:
+    """La colonne Solde recopie-t-elle le montant de chaque ligne, au lieu d'un solde cumulé ?"""
+    lues = [
+        line
+        for line in lines
+        if line.statut != "Erreur" and line.solde is not None and line.montant is not None
+    ]
+    if len(lues) < 3:
+        return False
+    copies = sum(1 for line in lues if abs(line.solde) == abs(line.montant))
+    return Decimal(copies) >= PART_SOLDE_COPIE * len(lues)
 
 
 # --- Analyse -------------------------------------------------------------------------------------
@@ -762,7 +803,7 @@ def analyse_statement(
             for code, index in mapping.items()
             if index is not None
         }
-        balance = _balance_line(cells)
+        balance = _balance_line(cells, avant_operations=not lines)
         if balance is not None:
             ignored += 1
             kind, value = balance
@@ -784,6 +825,12 @@ def analyse_statement(
             continue
         lines.append(_read_line(numero, cells, mapping, account.bank, today, pointages))
 
+    # Colonne Solde qui recopie le montant de chaque ligne : ce n'est pas un solde, elle est
+    # ignorée et les soldes sont calculés (12/10/2026)
+    if _solde_copie_du_montant(lines):
+        analysis.solde_colonne_ignoree = True
+        for line in lines:
+            line.solde = None
     _direction_from_balances(lines, mapping, analysis.solde_initial_fichier, pointages)
     _mark_duplicates(db, account, lines)
     analysis.lignes = lines
@@ -970,15 +1017,9 @@ def _file_selection(
             f"{len(errors)} ligne{plural} en erreur : corrigez le fichier, "
             "ou confirmez en les écartant."
         )
-    by_number = {line.numero: line for line in analysis.lignes}
-    keep = set(garder_doublons or [])
-    for numero in sorted(keep):
-        line = by_number.get(numero)
-        if line is None or line.doublon_de is None:
-            raise ConflictError(
-                f"La ligne {numero} n'est pas identique à une autre ligne du fichier : "
-                "elle ne peut pas être gardée."
-            )
+    # `garder_doublons` n'a plus d'effet (12/10/2026) : un doublon est une ligne déjà importée,
+    # jamais gardée ; les lignes identiques d'un même fichier sont valides
+    keep: set[int] = set()
     lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
     if not lines:
         raise ConflictError("Aucune ligne à importer dans ce fichier.")
