@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  A_COMPTABILISER,
+  STATUTS_VOLET,
   trierCandidats,
   absolute,
   defaultPeriod,
@@ -184,5 +186,15 @@ describe("trierCandidats", () => {
 
     expect(utiles.map((c) => c.ecriture.id)).toEqual([1, 2]);
     expect(autres.map((c) => c.ecriture.id)).toEqual([3, 4]);
+  });
+});
+
+describe("filtre À comptabiliser", () => {
+  it("devient un paramètre a_comptabiliser, jamais un statut", () => {
+    const query = reconciliationQuery(3, { statut: A_COMPTABILISER, page: 1 });
+
+    expect(query).toContain("a_comptabiliser=true");
+    expect(query).not.toContain("statut=");
+    expect(STATUTS_VOLET).toContain(A_COMPTABILISER);
   });
 });

@@ -698,6 +698,9 @@ class TransactionsPage:
     operations: list[tuple[BankTransaction, str, ReconciliationMatch | None]]
     # Écart ouvert de chaque opération de la page qui en a un (P12)
     ecarts: dict[int, int]
+    # Frais bancaires non rapprochés du filtre : nombre et total (12/10/2026)
+    a_comptabiliser: int = 0
+    total_a_comptabiliser: Decimal = Decimal(0)
 
 
 @dataclass
@@ -721,6 +724,7 @@ def list_transactions(
     q: str | None = None,
     page: int = 1,
     sans_a_verifier: bool = False,
+    a_comptabiliser: bool = False,
 ) -> TransactionsPage:
     """Volet « Transactions bancaires » : 50 par page ; le décompte par statut porte sur tout le
     filtre, hors filtre de statut.
@@ -734,7 +738,15 @@ def list_transactions(
         company.id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to, q=q
     )
     par_statut = repo.count_by_status(db, query)
+    # Frais bancaires non rapprochés : « À comptabiliser », comptés à part (12/10/2026)
+    nb_frais, total_frais = repo.a_comptabiliser(db, query)
+    par_statut["Non rapprochée"] = par_statut.get("Non rapprochée", 0) - nb_frais
     listed = repo.without_status(query, "À vérifier") if sans_a_verifier else query
+    if a_comptabiliser:
+        listed = listed.where(BankTransaction.statut == "Non rapprochée", repo.frais_bancaire())
+        statut = None
+    elif statut == "Non rapprochée":
+        listed = listed.where(~repo.frais_bancaire())
     total, rows = repo.page_of_transactions(
         db, listed, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE
     )
@@ -744,6 +756,8 @@ def list_transactions(
         page=page,
         taille=PAGE_SIZE,
         par_statut=par_statut,
+        a_comptabiliser=nb_frais,
+        total_a_comptabiliser=total_frais,
         operations=[(tx, code, matches.get(tx.id)) for tx, code in rows],
         ecarts=discrepancy_repository.open_discrepancy_by_transaction(
             db, [tx.id for tx, _ in rows]

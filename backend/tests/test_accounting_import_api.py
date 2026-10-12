@@ -631,3 +631,15 @@ def test_lines_of_every_journal_of_the_account_are_imported(client, comptable, d
     assert {line["bank_account_id"] for line in body["lignes"]} == {bp.id}
     [ignoree] = body["lignes_ignorees"]
     assert "Journal « 9000 »" in ignoree["raison"]
+
+
+def test_an_ech_header_gives_the_due_date(client, comptable, db, journals):
+    """12/10/2026 : l'export Sage de Simtis titre l'échéance « ECH »."""
+    rows = [
+        ["DATE", "JOURNAL", "COMPTE", "N°PIECE", "LIBELLE", "DEBIT", "CREDIT", "ECH"],
+        [date(2025, 9, 2), "BQ1", "5141", "P1", "ESP TT23241QZKZC", 4000, None, date(2025, 8, 29)],
+    ]
+
+    [line] = analyse(client, comptable, db, xlsx(rows)).json()["lignes"]
+
+    assert line["echeance"] == "2025-08-29"

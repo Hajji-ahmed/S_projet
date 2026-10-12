@@ -166,6 +166,7 @@ ABREVIATIONS = {
     "oper": "operation",
     "deb": "debit",
     "cred": "credit",
+    "ech": "echeance",
 }
 
 

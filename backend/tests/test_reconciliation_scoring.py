@@ -10,6 +10,7 @@ from app.services.reconciliation_scoring import (
     Operation,
     _peut_atteindre,
     comparable,
+    ecart_jours,
     numeros,
     proposer,
     ratio_date,
@@ -364,3 +365,14 @@ def test_different_types_are_never_compared():
     assert not comparable(especes, ecriture_cheque, GRILLE_PAR_DEFAUT)
     assert comparable(virement, ecriture_cheque, GRILLE_PAR_DEFAUT)  # autre : comparable
     assert proposer([especes], [ecriture_cheque]).propositions == []
+
+
+def test_especes_are_compared_at_their_due_date():
+    """12/10/2026 : les espèces se rapprochent par l'échéance Sage, comme les effets."""
+    versement = op(montant="4000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
+    especes = ec(montant="-4000", jour=date(2026, 8, 1), echeance=JOUR, libelle="ESP TT23241QZKZC")
+    cheque = ec(montant="-4000", jour=date(2026, 8, 1), echeance=JOUR, libelle="EAR1° 1234567")
+
+    assert score(versement, especes).detail["date"] == Decimal("30.00")
+    assert proposer([versement], [especes]).propositions
+    assert ecart_jours(op(libelle="ENCAISSEMENT CHEQUE N 1234567"), cheque) == 54

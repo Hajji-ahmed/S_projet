@@ -26,6 +26,9 @@ export function defaultPeriod(today: string): { from: string; to: string } {
 }
 
 /** « ?company_id=…&… » : seuls les filtres renseignés ; `page` seulement si demandée. */
+/** Filtre du volet : frais bancaires non rapprochés, à passer dans Sage (12/10/2026). */
+export const A_COMPTABILISER = "À comptabiliser";
+
 export function reconciliationQuery(
   companyId: number,
   filter: Partial<TransactionsFilter>,
@@ -36,7 +39,9 @@ export function reconciliationQuery(
   }
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
-  if (filter.statut) params.set("statut", filter.statut);
+  // « À comptabiliser » n'est pas un statut : un filtre sur les frais bancaires non rapprochés
+  if (filter.statut === A_COMPTABILISER) params.set("a_comptabiliser", "true");
+  else if (filter.statut) params.set("statut", filter.statut);
   if (filter.sansAVerifier) params.set("sans_a_verifier", "true");
   if (filter.q?.trim()) params.set("q", filter.q.trim());
   if (filter.page !== undefined) params.set("page", String(filter.page));
@@ -165,7 +170,7 @@ export function statutsVolet(ecartsActifs: boolean): StatutRapprochement[] {
     : ["Non rapprochée", "Rapprochée"];
 }
 
-export const STATUTS_VOLET = statutsVolet(ECARTS_ACTIFS);
+export const STATUTS_VOLET: string[] = [...statutsVolet(ECARTS_ACTIFS), A_COMPTABILISER];
 
 /**
  * Écritures possibles d'une opération (09/10/2026) : « utiles » = même montant (rapprochables) ou

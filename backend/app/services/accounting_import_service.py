@@ -73,7 +73,8 @@ ACCOUNTING_FIELDS: tuple[ImportField, ...] = (
             "no de piece",
         ),  # fmt: skip
     ),
-    ImportField("echeance", "Échéance", False, ("echeance", "date echeance")),
+    # « ECH » : en-tête de l'export Sage de Simtis (12/10/2026)
+    ImportField("echeance", "Échéance", False, ("echeance", "date echeance", "ech")),
     ImportField("tiers", "Tiers", False, ("tiers", "compte tiers", "client fournisseur")),
 )
 FIELD_LABELS = {item.code: item.libelle for item in ACCOUNTING_FIELDS}

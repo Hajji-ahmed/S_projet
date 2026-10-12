@@ -1,6 +1,7 @@
 """Lectures et écritures du rapprochement 1→1 (P11)."""
 
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import Select, and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased, selectinload
@@ -11,6 +12,7 @@ from app.models import (
     BankAccount,
     BankTransaction,
     Company,
+    PointageType,
     ReconciliationMatch,
     ReconciliationMatchItem,
     ReconciliationRule,
@@ -533,3 +535,40 @@ def active_matches_by_entry(db: Session, entry_ids: list[int]) -> dict[int, Reco
         .options(selectinload(ReconciliationMatch.items))
     )
     return {row[0]: row[1] for row in rows}
+
+
+# --- Frais bancaires « À comptabiliser » (12/10/2026) ---------------------------------------------
+# Pointages des frais bancaires (code interne = `pointage_code` du libellé de la catégorie)
+POINTAGES_FRAIS = (
+    "COM", "DROIT", "TVA", "FRAIS", "AGIOS", "AGIOS_D_ECHELLE", "INTERET", "TCA",
+    "CERTIFICATION_CHEQUE", "FRAIS_RETENUE_A_LA_SOURCE",
+)  # fmt: skip
+# Sans pointage : mots du libellé (droit de timbre, TVA, commission, frais, agios, intérêts,
+# prélèvements)
+LIBELLE_FRAIS = (
+    r"(DROIT DE TIMBRE|DT D.ENREGISTREMENT|TAXE SUR VALEUR AJOUTEE|^TVA\M|COMMISSION|^COM\M"
+    r"|FRAIS|AGIOS|INTERET|PRELEV|PRLV)"
+)
+
+
+def frais_bancaire():
+    """Condition SQL : l'opération est un frais bancaire (par son pointage, sinon son libellé)."""
+    pointages = select(PointageType.id).where(PointageType.code.in_(POINTAGES_FRAIS))
+    # `pointage_type_id IS NOT NULL` : sans lui, NOT (NULL IN …) vaudrait NULL et une opération sans
+    # pointage disparaîtrait aussi de « Non rapprochée »
+    return or_(
+        and_(
+            BankTransaction.pointage_type_id.is_not(None),
+            BankTransaction.pointage_type_id.in_(pointages),
+        ),
+        BankTransaction.libelle.op("~*")(LIBELLE_FRAIS),
+    )
+
+
+def a_comptabiliser(db: Session, query: Select) -> tuple[int, Decimal]:
+    """Nombre et total (en valeur absolue) des frais bancaires non rapprochés du filtre."""
+    filtered = query.where(BankTransaction.statut == "Non rapprochée", frais_bancaire()).subquery()
+    row = db.execute(
+        select(func.count(), func.coalesce(func.sum(func.abs(filtered.c.montant)), 0))
+    ).one()
+    return row[0], Decimal(row[1])

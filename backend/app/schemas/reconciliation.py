@@ -133,6 +133,9 @@ class OperationsPageOut(BaseModel):
     page: int
     taille: int
     par_statut: dict[str, int]
+    # Frais bancaires non rapprochés (hors « Non rapprochée ») : à passer dans Sage (12/10/2026)
+    a_comptabiliser: int = 0
+    total_a_comptabiliser: Decimal = Decimal(0)
     operations: list[OperationOut]
 
     @classmethod
@@ -141,6 +144,8 @@ class OperationsPageOut(BaseModel):
             total=result.total,
             page=result.page,
             taille=result.taille,
+            a_comptabiliser=result.a_comptabiliser,
+            total_a_comptabiliser=result.total_a_comptabiliser,
             par_statut={
                 statut: result.par_statut.get(statut, 0) for statut in StatutRapprochement.__args__
             },

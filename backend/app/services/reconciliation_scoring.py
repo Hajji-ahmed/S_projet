@@ -256,22 +256,26 @@ def critere_reference(operation: Operation, ecriture: Ecriture) -> bool:
     return any(len(cle) >= 3 and _contient(texte, cle) for cle in cles_ecriture for texte in textes)
 
 
+# Types comparés à leur échéance Sage : effets (09/10/2026) et espèces (12/10/2026)
+TYPES_PAR_ECHEANCE = frozenset({"Effet", "Espèces"})
+
+
 def date_comparee(ecriture: Ecriture) -> date:
-    """Date Sage comparée (09/10/2026) : l'échéance pour un effet qui en a une (un effet est payé à
-    son échéance), sinon la date de l'écriture."""
-    if ecriture.echeance is not None and type_ecriture(ecriture.libelle) == "Effet":
+    """Date Sage comparée : l'échéance pour un effet ou des espèces qui en ont une, sinon la date de
+    l'écriture."""
+    if ecriture.echeance is not None and type_ecriture(ecriture.libelle) in TYPES_PAR_ECHEANCE:
         return ecriture.echeance
     return ecriture.date_ecriture
 
 
 def ecart_jours(operation: Operation, ecriture: Ecriture) -> int:
-    """Écart, en jours, entre la date Sage comparée et la date bancaire (09/10/2026) : pour un effet,
-    la plus proche de la date de valeur et de la date d'opération ; pour les autres types (chèque,
-    espèces, virement…), la date d'opération seulement, la date de valeur étant décalée par la
+    """Écart, en jours, entre la date Sage comparée et la date bancaire : pour un effet ou des
+    espèces, la plus proche de la date de valeur et de la date d'opération ; pour les autres types
+    (chèque, virement…), la date d'opération seulement, la date de valeur étant décalée par la
     banque."""
     jour_sage = date_comparee(ecriture)
     dates = [operation.date_operation]
-    if operation.date_valeur and type_ecriture(ecriture.libelle) == "Effet":
+    if operation.date_valeur and type_ecriture(ecriture.libelle) in TYPES_PAR_ECHEANCE:
         dates.append(operation.date_valeur)
     return min(abs((jour - jour_sage).days) for jour in dates)
 

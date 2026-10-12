@@ -459,7 +459,8 @@ def test_transactions_pane_counts_statuses_and_shows_the_match(client, comptable
     compte = account(db)
     tx = operation(db, compte)
     ecriture(db, compte)
-    operation(db, compte, montant="-80", libelle="FRAIS")
+    # Pas un frais bancaire : un frais compterait dans « À comptabiliser » (12/10/2026)
+    operation(db, compte, montant="-80", libelle="CHQ 1234 FOURNISSEUR")
     run(client, comptable, db)
 
     response = client.get(
@@ -859,3 +860,44 @@ def test_a_manual_match_between_two_types_is_refused(client, comptable, db):
     assert response.json() == {
         "detail": "Une opération Espèces ne se rapproche pas d'une écriture Chèque."
     }
+
+
+# --- Frais bancaires « À comptabiliser » (12/10/2026) ---------------------------------------------
+
+
+def test_bank_fees_are_counted_apart_as_to_be_booked(client, comptable, db):
+    compte = account(db)
+    operation(db, compte, montant="-1", libelle="DROIT DE TIMBRE SUR VERSEMENT")
+    operation(db, compte, montant="-2.50", libelle="TAXE SUR VALEUR AJOUTEE")
+    operation(db, compte, montant="-25", libelle="COMMISSION")
+    operation(db, compte, montant="-900", libelle="PRELEVEMENT ONEE")
+    autre = operation(db, compte, montant="50000", libelle="VIR CLIENT ATLAS")
+    url = "/api/reconciliation/transactions"
+    params = {"company_id": company(db).id}
+
+    tous = client.get(url, params=params, headers=comptable).json()
+    frais = client.get(url, params={**params, "a_comptabiliser": "true"}, headers=comptable).json()
+    non_rapprochees = client.get(
+        url, params={**params, "statut": "Non rapprochée"}, headers=comptable
+    ).json()
+
+    assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (4, "928.50")
+    assert tous["par_statut"]["Non rapprochée"] == 1
+    assert frais["total"] == 4
+    assert [op["id"] for op in non_rapprochees["operations"]] == [autre.id]
+
+
+def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):
+    compte = account(db)
+    frais = operation(db, compte, montant="-25", libelle="COMMISSION")
+    entry = ecriture(db, compte, montant="25", libelle="COM")
+
+    manual(client, comptable, frais, entry)
+    body = client.get(
+        "/api/reconciliation/transactions",
+        params={"company_id": company(db).id},
+        headers=comptable,
+    ).json()
+
+    assert body["a_comptabiliser"] == 0
+    assert body["par_statut"]["Rapprochée"] == 1

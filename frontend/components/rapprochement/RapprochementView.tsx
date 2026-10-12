@@ -26,6 +26,7 @@ import {
   defaultPeriod,
   operationOf,
   toggleStatut,
+  A_COMPTABILISER,
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
@@ -74,6 +75,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [operation, setOperation] = useState<Operation | null>(null);
   const [entry, setEntry] = useState<Ecriture | null>(null);
   const [parStatut, setParStatut] = useState<Record<StatutRapprochement, number> | null>(null);
+  // Frais bancaires non rapprochés : compteur « À comptabiliser » (12/10/2026)
+  const [aComptabiliser, setAComptabiliser] = useState<number | null>(null);
   const [pending, setPending] = useState<Correspondances | null>(null);
   const [ambigues, setAmbigues] = useState<Ambigues | null>(null);
   // Page des opérations ambiguës (50 par page) ; revient à 1 quand le filtre change
@@ -131,6 +134,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
   // Les volets rechargés : la sélection suit les nouvelles valeurs (statut, correspondance)
   const handleOperations = useCallback((page: OperationsPage) => {
     setParStatut(page.par_statut);
+    setAComptabiliser(page.a_comptabiliser ?? 0);
     setOperation((current) =>
       current ? (page.operations.find((row) => row.id === current.id) ?? current) : current,
     );
@@ -245,7 +249,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
           {!periodError && (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
               <div
-                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3"
+                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4"
                 role="group"
                 aria-label="Résumé du rapprochement : un clic filtre les transactions"
               >
@@ -262,6 +266,16 @@ function Rapprochement({ companyId }: { companyId: number }) {
                     }}
                   />
                 ))}
+                <StatButton
+                  label={A_COMPTABILISER}
+                  value={aComptabiliser ?? undefined}
+                  active={tab === "rapprochement" && statut === A_COMPTABILISER}
+                  description="Afficher les frais bancaires à passer dans Sage"
+                  onClick={() => {
+                    setTab("rapprochement");
+                    setStatut((current) => toggleStatut(current, A_COMPTABILISER));
+                  }}
+                />
                 <StatButton
                   label="Propositions en attente"
                   value={aVerifier ?? undefined}

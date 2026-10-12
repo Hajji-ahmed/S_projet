@@ -72,6 +72,9 @@ def list_transactions(
     sans_a_verifier: Annotated[
         bool, Query(description="Ne pas lister les opérations « À vérifier » (onglet Propositions)")
     ] = False,
+    a_comptabiliser: Annotated[
+        bool, Query(description="Seulement les frais bancaires non rapprochés (À comptabiliser)")
+    ] = False,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> OperationsPageOut:
@@ -86,6 +89,7 @@ def list_transactions(
         q=q,
         page=page,
         sans_a_verifier=sans_a_verifier,
+        a_comptabiliser=a_comptabiliser,
     )
     return OperationsPageOut.from_page(result)
 

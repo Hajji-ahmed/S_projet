@@ -164,3 +164,7 @@ Deux types connus et différents ne sont jamais comparés : ni proposition, ni c
 | Chèque, Espèces, Autres (virements…) | Date de l'écriture | Date d'opération seulement |
 
 La tolérance reste de 3 jours et la fenêtre de 10 jours ; un effet est aussi cherché par son échéance. Constat du 09/10/2026 : aucune écriture Sage importée n'a d'échéance, et les opérations bancaires de type Chèque et Effet n'ont pas de date de valeur ; la règle des effets s'appliquera quand l'export Sage la contiendra.
+
+## Espèces comparées par l'échéance (12/10/2026)
+
+Les espèces (`ESP` côté Sage, `VERSEMENT DEPLACE` côté banque) suivent la règle des effets : la date Sage comparée est l'échéance (sinon la date de l'écriture), face à la date de valeur ou d'opération bancaire, la plus proche ; l'écriture est aussi cherchée par son échéance. L'export Sage de Simtis titre l'échéance « ECH » : reconnu à l'import (synonyme et abréviation). Les écritures importées avant ce changement n'ont pas d'échéance : réimporter l'export.

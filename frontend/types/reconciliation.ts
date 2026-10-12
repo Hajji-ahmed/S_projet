@@ -41,6 +41,9 @@ export type OperationsPage = {
   page: number;
   taille: number;
   par_statut: Record<StatutRapprochement, number>;
+  /** Frais bancaires non rapprochés, à passer dans Sage (hors « Non rapprochée », 12/10/2026). */
+  a_comptabiliser?: number;
+  total_a_comptabiliser?: string;
   operations: Operation[];
 };
 
