@@ -6,6 +6,8 @@ export type EntriesFilter = {
   to?: string;
   statut?: string;
   q?: string;
+  /** Type d'opération (14/10/2026). */
+  typeOperation?: string;
   page: number;
 };
 
@@ -26,6 +28,7 @@ export function entriesQuery(companyId: number, filter: EntriesFilter): string {
   if (filter.to) params.set("to", filter.to);
   if (filter.statut) params.set("statut", filter.statut);
   if (filter.q?.trim()) params.set("q", filter.q.trim());
+  if (filter.typeOperation) params.set("type_operation", filter.typeOperation);
   params.set("page", String(filter.page));
   return `?${params}`;
 }

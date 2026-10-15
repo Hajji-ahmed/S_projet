@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, History } from "lucide-react";
+import { Ban, Download, History } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ScoreBadge } from "@/components/rapprochement/Score";
@@ -8,19 +8,29 @@ import { StatButton } from "@/components/rapprochement/StatButton";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
+import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Pagination } from "@/components/ui/Pagination";
 import { Modal } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/Toast";
 import { pageCount } from "@/lib/accounting";
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { absolute, toggleStatut, type ReconciliationFilter } from "@/lib/reconciliation";
-import { formatDateTime } from "@/lib/statements";
-import { cancelMatch, listHistory } from "@/services/reconciliation";
+import {
+  unite,
+  lettrageFilename,
+  absolute,
+  montantBanque,
+  operationsDe,
+  toggleStatut,
+  type ReconciliationFilter,
+} from "@/lib/reconciliation";
+import { formatDateTime, saveFile } from "@/lib/statements";
+import { cancelMatch, exportLettrage, listHistory } from "@/services/reconciliation";
 import type { Correspondance, Historique, StatutDecision } from "@/types/reconciliation";
 
 const STATUTS: { statut: StatutDecision; label: string }[] = [
@@ -66,6 +76,8 @@ export function HistoryTab({
   const [motif, setMotif] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +98,17 @@ export function HistoryTab({
       cancelled = true;
     };
   }, [companyId, filter, statut, page, reloadKey, retryKey]);
+
+  async function exporter() {
+    setExporting(true);
+    try {
+      saveFile(await exportLettrage(companyId, filter), lettrageFilename(filter));
+    } catch (failure) {
+      toast(failure instanceof ApiError ? failure.message : "L'export a échoué.", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function changeStatut(next: string) {
     setState("loading");
@@ -120,6 +143,7 @@ export function HistoryTab({
         </span>
       ),
     },
+    { key: "code", header: "Code", render: (row) => <CodeBadge code={row.code} /> },
     {
       key: "statut",
       header: "Statut",
@@ -142,6 +166,7 @@ export function HistoryTab({
           <span className="block">{row.operation.libelle}</span>
           <span className="block text-xs text-simtis-muted">
             {formatDate(row.operation.date_operation)} · {row.operation.bank_code}
+            {operationsDe(row).length > 1 && ` · groupe de ${operationsDe(row).length} opérations`}
           </span>
         </span>
       ),
@@ -163,7 +188,7 @@ export function HistoryTab({
       key: "montant",
       header: "Montant",
       align: "right",
-      render: (row) => formatAmount(absolute(row.operation.montant), "DH"),
+      render: (row) => formatAmount(absolute(montantBanque(row)), unite(row.operation.devise)),
     },
     {
       key: "score",
@@ -206,6 +231,19 @@ export function HistoryTab({
 
   return (
     <Card title="Historique des rapprochements" icon={History}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-simtis-muted">
+          Le lettrage exporte tous les rapprochements validés de la période et du compte choisis.
+        </p>
+        <Button
+          variant="secondary"
+          icon={Download}
+          disabled={exporting || !data?.par_statut["Validée"]}
+          onClick={exporter}
+        >
+          {exporting ? "Export en cours…" : "Exporter le lettrage"}
+        </Button>
+      </div>
       <div
         className="mb-4 grid grid-cols-3 gap-2 text-sm sm:max-w-xl"
         role="group"

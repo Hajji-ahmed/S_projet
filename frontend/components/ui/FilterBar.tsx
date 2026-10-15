@@ -16,7 +16,7 @@ export function FilterBar({ children, onReset, active = false }: FilterBarProps)
     <div
       role="search"
       aria-label="Filtres"
-      className="flex flex-wrap items-end gap-3 rounded-[14px] border border-simtis-border bg-simtis-card p-4 shadow-simtis"
+      className="flex flex-wrap items-end gap-3 rounded-card border border-simtis-border bg-simtis-card p-4 shadow-simtis"
     >
       {children}
       {onReset && active && (

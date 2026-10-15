@@ -145,7 +145,7 @@ export function BanksView() {
         <div className={GRID} role="status" aria-busy="true">
           <span className="sr-only">Chargement des banques...</span>
           {Array.from({ length: 3 }, (_, index) => (
-            <Skeleton key={index} className="h-[188px] rounded-[14px]" />
+            <Skeleton key={index} className="h-[188px] rounded-card" />
           ))}
         </div>
       )}

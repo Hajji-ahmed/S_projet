@@ -20,6 +20,14 @@ export type AccountFormValues = {
   compte_comptable: string;
   /** Journal de banque Sage (ex. BQ1), tel que saisi (vide = aucun). */
   journal_sage: string;
+  /** Journal Sage des frais (ex. 5543), tel que saisi (vide = le seul journal du compte). */
+  journal_frais: string;
+  /** Compte de charge des droits de timbre, tel que saisi. */
+  compte_timbre: string;
+  /** Comptes Sage des commissions (charge, charge effet, TVA récupérable), tels que saisis. */
+  compte_commission: string;
+  compte_commission_effet: string;
+  compte_tva: string;
   /** LIGNE (crédit autorisé), telle que saisie. */
   credit_autorise: string;
   /** Taux en %, tel que saisi (vide = aucun). */
@@ -95,6 +103,23 @@ export function validateAccountForm(
     .filter(Boolean);
   if (journaux.some((journal) => !/^[A-Z0-9]{1,10}$/.test(journal))) {
     errors.journal_sage = "1 à 10 lettres ou chiffres par journal, séparés par des virgules.";
+  }
+  const journalFrais = values.journal_frais.trim().toUpperCase();
+  if (journalFrais && !/^[A-Z0-9]{1,10}$/.test(journalFrais)) {
+    errors.journal_frais = "1 à 10 lettres ou chiffres (ex. 5543).";
+  } else if (journalFrais && !journaux.includes(journalFrais)) {
+    errors.journal_frais = "Doit être l'un des journaux Sage du compte.";
+  }
+  for (const field of [
+    "compte_timbre",
+    "compte_commission",
+    "compte_commission_effet",
+    "compte_tva",
+  ] as const) {
+    const compte = values[field].trim().toUpperCase();
+    if (compte && !/^[A-Z0-9]{1,20}$/.test(compte)) {
+      errors[field] = "1 à 20 lettres ou chiffres (ex. 61670000).";
+    }
   }
   if (normalizeAmountInput(values.credit_autorise) === null) {
     errors.credit_autorise = "Un montant positif, 2 décimales au plus (ex. 500 000).";

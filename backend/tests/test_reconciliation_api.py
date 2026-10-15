@@ -19,6 +19,7 @@ from app.models import (
     ReconciliationRule,
 )
 from app.schemas.reconciliation import criteres
+from app.services.position_service import business_today
 from app.services.reconciliation_service import grille
 from tests.helpers import bearer, build_account, login, make_auth_user, save
 
@@ -887,6 +888,41 @@ def test_bank_fees_are_counted_apart_as_to_be_booked(client, comptable, db):
     assert [op["id"] for op in non_rapprochees["operations"]] == [autre.id]
 
 
+def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, comptable, db):
+    """13/10/2026 : leur pointage (INTERET, FRAIS) ne suffit pas, ce ne sont pas des frais ; un
+    remboursement d'agios (au crédit) reste à comptabiliser."""
+    from app.models import PointageType
+
+    interet = db.scalar(select(PointageType).filter_by(code="INTERET"))
+    agios = db.scalar(select(PointageType).filter_by(code="AGIOS"))
+    compte = account(db)
+    virement = operation(
+        db,
+        compte,
+        montant="-7981.12",
+        libelle="VIREMENT COMMERCIAL EMIS",
+        pointage_type_id=interet.id,
+    )
+    remise = operation(
+        db,
+        compte,
+        montant="-8062.45",
+        libelle="REMISE DOCUMENTAIRE IMPORT",
+        pointage_type_id=interet.id,
+    )
+    operation(db, compte, montant="151110.79", libelle="AGIOS BANCAIRES", pointage_type_id=agios.id)
+    url = "/api/reconciliation/transactions"
+    params = {"company_id": company(db).id}
+
+    tous = client.get(url, params=params, headers=comptable).json()
+    non_rapprochees = client.get(
+        url, params={**params, "statut": "Non rapprochée"}, headers=comptable
+    ).json()
+
+    assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (1, "151110.79")
+    assert {op["id"] for op in non_rapprochees["operations"]} == {virement.id, remise.id}
+
+
 def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):
     compte = account(db)
     frais = operation(db, compte, montant="-25", libelle="COMMISSION")
@@ -901,3 +937,311 @@ def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):
 
     assert body["a_comptabiliser"] == 0
     assert body["par_statut"]["Rapprochée"] == 1
+
+
+# --- Groupes N -> 1 (12/10/2026) ----------------------------------------------------------------
+
+
+def _groupe(client, comptable, db):
+    compte = account(db)
+    cheque = operation(db, compte, montant="-10000", libelle="CHEQUE N 2100843 REMIS PAR ATW")
+    com = operation(db, compte, montant="-50", libelle="COMMISSION")
+    tva = operation(db, compte, montant="-10", libelle="TAXE SUR VALEUR AJOUTEE")
+    entry = ecriture(db, compte, montant="10060", libelle="CHQ 2100843 FOURNISSEUR", tiers=None)
+    body = run(client, comptable, db).json()
+    return body, (cheque, com, tva), entry
+
+
+def test_a_group_is_proposed_shown_validated_and_cancelled(client, comptable, db):
+    body, lignes, entry = _groupe(client, comptable, db)
+
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    assert (body["nb_groupes"], body["nb_propositions"]) == (1, 0)
+    assert proposal["type"] == "N-1"
+    assert [o["id"] for o in proposal["operations"]] == [lignes[0].id, lignes[1].id, lignes[2].id]
+    assert (proposal["total_operations"], proposal["ecart"]) == ("-10060.00", "0.00")
+    assert "= 10 060,00" in proposal["explication"]
+    assert statuses(db, *lignes, entry) == ["À vérifier"] * 4
+
+    url = f"/api/reconciliation/matches/{proposal['id']}"
+    valide = client.post(f"{url}/validate", headers=comptable)
+    assert valide.status_code == 200, valide.text
+    assert statuses(db, *lignes, entry) == ["Rapprochée"] * 4
+
+    annule = client.request("DELETE", url, json={"motif": "Groupe incorrect"}, headers=comptable)
+    assert annule.status_code == 200, annule.text
+    assert statuses(db, *lignes, entry) == ["Non rapprochée"] * 4
+    actions = audit_actions(db)
+    assert "validation_rapprochement" in actions
+    assert "annulation_rapprochement" in actions
+
+
+def test_a_rejected_group_is_not_proposed_again(client, comptable, db):
+    _groupe(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    client.post(f"/api/reconciliation/matches/{proposal['id']}/reject", headers=comptable)
+    again = run(client, comptable, db).json()
+
+    assert again["nb_groupes"] == 0
+
+
+def test_one_to_one_comes_before_groups(client, comptable, db):
+    compte = account(db)
+    operation(db, compte, montant="-500", libelle="CHEQUE N 3300001")
+    operation(db, compte, montant="-5", libelle="COMMISSION")
+    ecriture(db, compte, montant="500", libelle="CHQ 3300001", tiers=None)
+
+    body = run(client, comptable, db).json()
+
+    assert (body["nb_propositions"], body["nb_groupes"]) == (1, 0)
+
+
+# --- Code de rapprochement (13/10/2026) ---------------------------------------------------------
+
+
+def _valider(client, comptable, match_id):
+    response = client.post(f"/api/reconciliation/matches/{match_id}/validate", headers=comptable)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_validated_match_gets_a_code_per_account_and_year(client, comptable, db):
+    compte = account(db)
+    operation(db, compte, montant="1000", libelle="VIR A")
+    ecriture(db, compte, montant="-1000", libelle="VIR A", tiers=None)
+    operation(db, compte, montant="2000", libelle="VIR B", jour=date(2026, 9, 25))
+    ecriture(db, compte, montant="-2000", libelle="VIR B", jour=date(2026, 9, 25), tiers=None)
+    run(client, comptable, db)
+    pending = proposals(client, comptable, db).json()["correspondances"]
+    assert [p["code"] for p in pending] == [None, None]
+
+    codes = [_valider(client, comptable, p["id"])["code"] for p in pending]
+
+    annee = business_today().year % 100
+    assert codes == [f"AWB-{annee:02d}-000001", f"AWB-{annee:02d}-000002"]
+
+
+def test_the_code_is_on_every_line_and_searchable(client, comptable, db):
+    body, lignes, entry = _groupe(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+    code = _valider(client, comptable, proposal["id"])["code"]
+    params = {"company_id": company(db).id}
+
+    operations = client.get(
+        "/api/reconciliation/transactions", params={**params, "q": code}, headers=comptable
+    ).json()["operations"]
+    ecritures = client.get(
+        "/api/accounting/entries", params={**params, "q": code.lower()}, headers=comptable
+    ).json()["ecritures"]
+
+    assert sorted(o["id"] for o in operations) == sorted(t.id for t in lignes)
+    assert {o["correspondance"]["code"] for o in operations} == {code}
+    assert [(e["id"], e["code_rapprochement"]) for e in ecritures] == [(entry.id, code)]
+
+
+def test_a_cancelled_match_keeps_its_code_and_a_new_validation_gets_a_new_one(
+    client, comptable, db
+):
+    compte = account(db)
+    tx = operation(db, compte, montant="1000", libelle="VIR A")
+    entry = ecriture(db, compte, montant="-1000", libelle="VIR A", tiers=None)
+    run(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+    premier = _valider(client, comptable, proposal["id"])["code"]
+
+    url = f"/api/reconciliation/matches/{proposal['id']}"
+    annule = client.request("DELETE", url, json={"motif": "Erreur"}, headers=comptable).json()
+    nouveau = manual(client, comptable, tx, entry).json()["code"]
+
+    assert annule["code"] == premier
+    assert nouveau != premier and nouveau.endswith("000002")
+    [log] = [a for a in db.scalars(select(AuditLog).filter_by(action="validation_rapprochement"))]
+    assert log.nouvelle_valeur["code"] == premier
+
+
+# --- Export du lettrage (14/10/2026) ---------------------------------------------------------------
+
+
+def lettrage(client, headers, db, **params):
+    params = {"company_id": str(company(db).id), **PERIODE_EXPORT, **params}
+    return client.get("/api/reconciliation/export", params=params, headers=headers)
+
+
+PERIODE_EXPORT = {"from": "2026-09-01", "to": "2026-09-30"}
+
+
+def test_the_lettrage_exports_validated_matches_grouped_and_balanced(client, comptable, db):
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    _, (cheque, com, tva), entry = _groupe(client, comptable, db)
+    compte = account_of(db, cheque)
+    operation(db, compte, montant="1000", libelle="VIR A", jour=date(2026, 9, 10))
+    ecriture(db, compte, montant="-1000", libelle="VIR A", jour=date(2026, 9, 10), tiers=None)
+    operation(db, compte, montant="700", libelle="VIR REJ", jour=date(2026, 9, 12))
+    ecriture(db, compte, montant="-700", libelle="VIR REJ", jour=date(2026, 9, 12), tiers=None)
+    run(client, comptable, db)
+    pending = {
+        p["operation"]["libelle"]: p["id"]
+        for p in proposals(client, comptable, db).json()["correspondances"]
+    }
+    groupe = _valider(client, comptable, pending["CHEQUE N 2100843 REMIS PAR ATW"])
+    simple = _valider(client, comptable, pending["VIR A"])
+    client.post(f"/api/reconciliation/matches/{pending['VIR REJ']}/reject", headers=comptable)
+
+    response = lettrage(client, comptable, db)
+
+    assert response.status_code == 200, response.text
+    rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
+    assert rows[0][:9] == (
+        "Code", "Côté", "Banque", "Date", "Journal", "N° pièce", "Libellé", "Débit", "Crédit",
+    )  # fmt: skip
+    lignes = rows[1:-1]
+    # Le 1 → 1 (10/09) d'abord, puis le groupe (24/09) : ses 3 opérations puis l'écriture Sage
+    assert [(r[0], r[1], r[6], r[9]) for r in lignes] == [
+        (simple["code"], "Banque", "VIR A", "1-1"),
+        (simple["code"], "Sage", "VIR A", "1-1"),
+        (groupe["code"], "Banque", "CHEQUE N 2100843 REMIS PAR ATW", "N-1"),
+        (groupe["code"], "Banque", "COMMISSION", "N-1"),
+        (groupe["code"], "Banque", "TAXE SUR VALEUR AJOUTEE", "N-1"),
+        (groupe["code"], "Sage", "CHQ 2100843 FOURNISSEUR", "N-1"),
+    ]
+    for code in (simple["code"], groupe["code"]):
+        debit = sum(r[7] or 0 for r in lignes if r[0] == code)
+        credit = sum(r[8] or 0 for r in lignes if r[0] == code)
+        assert debit == credit
+    assert rows[-1][0] == "Total : 2 rapprochements"
+    assert rows[-1][7] == rows[-1][8] == 11060
+    assert "export_lettrage" in audit_actions(db)
+
+    # Hors période ou autre compte : rien
+    vide = lettrage(client, comptable, db, **{"from": "2026-10-01", "to": "2026-10-31"})
+    autre = lettrage(client, comptable, db, bank_account_id=str(account(db, bank_code="CIH").id))
+    for reponse in (vide, autre):
+        rows = list(load_workbook(BytesIO(reponse.content)).active.iter_rows(values_only=True))
+        assert rows[-1][0] == "Total : 0 rapprochement"
+
+
+def test_the_lettrage_needs_the_view_permission_and_a_valid_period(client, comptable, db):
+    assert lettrage(client, {}, db).status_code == 401
+    assert (
+        lettrage(client, comptable, db, **{"from": "2026-09-30", "to": "2026-09-01"}).status_code
+        == 409
+    )
+
+
+# --- Filtre « Type d'opération » (14/10/2026) -----------------------------------------------------
+
+LIBELLES_BANQUE = {
+    "ENCAISSEMENT CHEQUE N 0173813": "Chèque",
+    "ENCAISSEMENT EFFET N 2600114": "Effet",
+    "REMISE D'EFFETS N 12": "Effet",
+    "VERSEMENT DEPLACE PAR UN TIERS": "Espèces",
+    "VIREMENT RECU DE X": "Virement",
+    "VIR.RECU DE Y": "Virement",
+    "RTGS EMIS VERS BMCE": "Virement",
+    "COMMISSION": "Autre",
+    "VIRGULE SARL PAIEMENT": "Autre",  # « VIR » n'est pas un mot entier
+    "AGIOS BANCAIRES": "Autre",
+}
+LIBELLES_SAGE = {
+    "EAR1° AXK 173813": "Chèque",
+    "EAR° 2600114 CLIENT": "Effet",
+    "ESP N 45/OV": "Espèces",
+    "Virement fournisseur": "Virement",
+    "VIRT 12": "Virement",
+    "COM": "Autre",
+    "EARTH SARL": "Autre",
+}
+
+
+def test_the_type_filter_reads_labels_exactly_like_the_engine(client, comptable, db):
+    from app.services.reconciliation_scoring import type_ecriture, type_operation
+
+    compte = account(db)
+    for libelle in LIBELLES_BANQUE:
+        operation(db, compte, libelle=libelle)
+    for libelle in LIBELLES_SAGE:
+        ecriture(db, compte, libelle=libelle)
+    base = {"company_id": str(company(db).id)}
+
+    for nom in ("Chèque", "Effet", "Espèces", "Virement", "Autre"):
+        ops = client.get(
+            "/api/reconciliation/transactions",
+            params={**base, "type_operation": nom},
+            headers=comptable,
+        ).json()["operations"]
+        ecritures = client.get(
+            "/api/accounting/entries", params={**base, "type_operation": nom}, headers=comptable
+        ).json()["ecritures"]
+        attendu_banque = {lib for lib, t in LIBELLES_BANQUE.items() if t == nom}
+        attendu_sage = {lib for lib, t in LIBELLES_SAGE.items() if t == nom}
+        assert {op["libelle"] for op in ops} == attendu_banque, nom
+        assert {e["libelle"] for e in ecritures} == attendu_sage, nom
+        # Mêmes réponses que le moteur
+        assert {(type_operation(lib) or "Autre") for lib in attendu_banque} <= {nom}
+        assert {(type_ecriture(lib) or "Autre") for lib in attendu_sage} <= {nom}
+
+    inconnu = client.get(
+        "/api/reconciliation/transactions",
+        params={**base, "type_operation": "Carte"},
+        headers=comptable,
+    )
+    assert inconnu.status_code == 422
+
+
+def test_proposals_and_ambiguous_operations_are_filtered_by_type(client, comptable, db):
+    compte = account(db)
+    operation(db, compte, montant="1000", libelle="ENCAISSEMENT CHEQUE N 0173813")
+    ecriture(db, compte, montant="-1000", libelle="EAR1° AXK 173813", tiers=None)
+    operation(db, compte, montant="2000", libelle="VIREMENT RECU CLIENT A")
+    ecriture(db, compte, montant="-2000", libelle="VIREMENT CLIENT A", tiers=None)
+    run(client, comptable, db)
+
+    cheques = proposals(client, comptable, db, type_operation="Chèque").json()["correspondances"]
+    virements = proposals(client, comptable, db, type_operation="Virement").json()[
+        "correspondances"
+    ]
+    autres = proposals(client, comptable, db, type_operation="Autre").json()["correspondances"]
+    ambigues = client.get(
+        "/api/reconciliation/ambiguous",
+        params={"company_id": str(company(db).id), "type_operation": "Effet"},
+        headers=comptable,
+    )
+
+    assert [p["operation"]["libelle"] for p in cheques] == ["ENCAISSEMENT CHEQUE N 0173813"]
+    assert [p["operation"]["libelle"] for p in virements] == ["VIREMENT RECU CLIENT A"]
+    assert autres == []
+    assert ambigues.status_code == 200
+    assert ambigues.json()["total"] == 0
+
+
+# --- Comptes en devise : le relevé se rapproche du montant devise de Sage (14/10/2026) -------------
+
+
+def test_a_currency_account_is_matched_on_the_sage_currency_amount(client, comptable, db):
+    compte = account(db, bank_code="CIH")
+    compte.devise = "EUR"
+    db.flush()
+    # Relevé en EUR : 1 000 EUR reçus ; Sage : débit de 10 850 MAD, soit 1 000 EUR
+    tx = operation(db, compte, montant="1000", libelle="VIR RECU CLIENT EUR")
+    entry = ecriture(
+        db,
+        compte,
+        montant="-10850",
+        libelle="VIR CLIENT EUR",
+        tiers=None,
+        montant_devise=Decimal("-1000"),
+    )
+    mad = operation(db, compte, montant="10850", libelle="VIR RECU AUTRE", jour=date(2026, 9, 25))
+
+    run(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    assert (proposal["operation"]["id"], proposal["ecriture"]["id"]) == (tx.id, entry.id)
+    assert proposal["ecriture"]["montant_devise"] == "-1000.00"
+    _valider(client, comptable, proposal["id"])
+    assert statuses(db, tx, entry, mad) == ["Rapprochée", "Rapprochée", "Non rapprochée"]

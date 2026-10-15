@@ -10,18 +10,20 @@ import { StatButton } from "@/components/rapprochement/StatButton";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Field, TextInput } from "@/components/ui/Field";
+import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { ApiError } from "@/lib/api";
 import { formatAmount } from "@/lib/format";
 import {
+  TYPES_OPERATION,
   defaultSelection,
   filterProposals,
   LOT_MAX,
   formatScore,
   selectionSummary,
+  unite,
   validable,
   type ProposalsFilter,
 } from "@/lib/reconciliation";
@@ -50,6 +52,9 @@ type ProposalsTabProps = {
   onAmbiguPage: (page: number) => void;
   /** Ouvre une opération ambiguë dans l'onglet Rapprochement. */
   onOpenOperation: (operation: Operation) => void;
+  /** Filtre « Type d'opération » de l'opération bancaire (14/10/2026) ; "" = tous. */
+  typeOperation?: string;
+  onTypeOperation?: (value: string) => void;
 };
 
 type LignesEcart = {
@@ -91,6 +96,8 @@ export function ProposalsTab({
   ambigues,
   onAmbiguPage,
   onOpenOperation,
+  typeOperation = "",
+  onTypeOperation,
 }: ProposalsTabProps) {
   const items = pending?.correspondances ?? null;
   const [filtre, setFiltre] = useState<ProposalsFilter>("toutes");
@@ -119,6 +126,14 @@ export function ProposalsTab({
 
   const shown = filterProposals(items, filtre);
   const summary = selectionSummary(items, selected);
+  // Jamais de somme entre devises (14/10/2026) : une sélection mêlant EUR et DH n'a pas de total
+  const unites = new Set(
+    (items ?? [])
+      .filter((item) => selected.has(item.id))
+      .map((item) => unite(item.operation.devise)),
+  );
+  const totalTexte =
+    unites.size > 1 ? "plusieurs devises" : formatAmount(summary.total, [...unites][0] ?? "DH");
   const nbFortes = items.filter((item) => item.forte).length;
   const ambiguous = ambigues.ambigues;
   const seuil = formatScore(pending?.seuil_fort ?? ambigues.seuil_fort);
@@ -172,6 +187,19 @@ export function ProposalsTab({
               />
             ))}
           </div>
+          {onTypeOperation && (
+            <div className="w-full max-w-[170px]">
+              <Field label="Type d'opération" htmlFor="propositions-type">
+                <Select
+                  id="propositions-type"
+                  value={typeOperation}
+                  placeholder="Tous les types"
+                  options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
+                  onChange={(event) => onTypeOperation(event.target.value)}
+                />
+              </Field>
+            </div>
+          )}
           <p className="max-w-md text-sm text-simtis-muted">
             Les fortes correspondances sont cochées d&apos;office. Cochez une proposition à vérifier
             seulement après l&apos;avoir contrôlée. Une opération ambiguë se rapproche en
@@ -286,16 +314,13 @@ export function ProposalsTab({
       )}
 
       {canValidate && items.length > 0 && (
-        <div className="sticky bottom-0 z-10 -mx-1 rounded-[14px] border border-simtis-border bg-simtis-card p-4 shadow-simtis">
+        <div className="sticky bottom-0 z-10 -mx-1 rounded-card border border-simtis-border bg-simtis-card p-4 shadow-simtis">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm">
               <span className="font-semibold">
                 {summary.nb} sélectionnée{summary.nb > 1 ? "s" : ""}
               </span>{" "}
-              sur {items.length} ·{" "}
-              <span className="font-semibold tabular-nums">
-                {formatAmount(summary.total, "DH")}
-              </span>
+              sur {items.length} · <span className="font-semibold tabular-nums">{totalTexte}</span>
               {summary.faibles > 0 && (
                 <span className="text-simtis-warning-fg">
                   {" "}
@@ -365,8 +390,8 @@ export function ProposalsTab({
       >
         <p>
           {plural(summary.nb, "proposition")} pour un total de{" "}
-          <strong className="tabular-nums">{formatAmount(summary.total, "DH")}</strong> vont être
-          validées en votre nom. Chaque validation est tracée dans l&apos;historique.
+          <strong className="tabular-nums">{totalTexte}</strong> vont être validées en votre nom.
+          Chaque validation est tracée dans l&apos;historique.
         </p>
         {summary.faibles > 0 && (
           <p className="mt-2 text-simtis-warning-fg">

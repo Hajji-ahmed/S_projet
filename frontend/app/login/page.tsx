@@ -21,7 +21,7 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center bg-simtis-background px-4 py-10">
       <div className="w-full max-w-[400px]">
-        <section className="rounded-[14px] border border-simtis-border bg-simtis-card p-6 shadow-simtis sm:p-8">
+        <section className="rounded-card border border-simtis-border bg-simtis-card p-6 shadow-simtis sm:p-8">
           <Image
             src="/logo-simtis.png"
             alt="SIMTIS — Printing & Weaving"

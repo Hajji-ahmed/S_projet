@@ -277,7 +277,7 @@ function ImportResult({
   return (
     <section
       aria-label="Résultat de l'import"
-      className="rounded-[14px] border border-l-4 border-simtis-border border-l-simtis-success bg-simtis-card p-5 shadow-simtis"
+      className="rounded-card border border-l-4 border-simtis-border border-l-simtis-success bg-simtis-card p-5 shadow-simtis"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">

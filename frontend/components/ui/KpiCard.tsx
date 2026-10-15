@@ -27,14 +27,14 @@ export function KpiCard({
   const TrendIcon = trend === "up" ? ArrowUp : ArrowDown;
 
   return (
-    <section className="@container flex items-center gap-4 rounded-[14px] border border-simtis-border bg-simtis-card p-5 shadow-simtis">
-      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-simtis-light text-simtis-primary">
-        <Icon className="h-6 w-6" aria-hidden />
+    <section className="@container flex items-center gap-4 rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis transition-shadow duration-200 hover:shadow-simtis-hover">
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-card bg-simtis-light text-simtis-primary">
+        <Icon className="h-6 w-6" strokeWidth={1.75} aria-hidden />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-sm leading-snug text-simtis-text">{title}</p>
+        <p className="text-sm leading-snug text-simtis-muted">{title}</p>
         {/* Un montant n'est jamais tronqué : sa taille suit la largeur de la carte (18px à 28px). */}
-        <p className="mt-0.5 text-[length:clamp(18px,8.5cqw,28px)] leading-tight font-bold whitespace-nowrap text-simtis-primary tabular-nums">
+        <p className="mt-0.5 text-[length:clamp(18px,8.5cqw,28px)] leading-tight font-bold tracking-tight whitespace-nowrap text-simtis-text tabular-nums">
           {value}
         </p>
         {delta && (
@@ -42,7 +42,7 @@ export function KpiCard({
             <span
               className={cn(
                 "inline-flex items-center gap-0.5 font-semibold",
-                trend === "up" ? "text-simtis-success" : "text-simtis-danger",
+                trend === "up" ? "text-simtis-success-fg" : "text-simtis-danger-fg",
               )}
             >
               <TrendIcon className="h-3.5 w-3.5" aria-hidden />

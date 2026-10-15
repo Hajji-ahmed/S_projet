@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { SignalDiscrepancyModal } from "@/components/ecarts/SignalDiscrepancyModal";
+import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ScoreBadge, ScoreDetail } from "@/components/rapprochement/Score";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -30,6 +31,9 @@ import { cn } from "@/lib/cn";
 import { ECARTS_ACTIFS } from "@/lib/features";
 import { formatAmount } from "@/lib/format";
 import {
+  montantEcriture,
+  unite,
+  uniteEcriture,
   absolute,
   ecartManuel,
   rapprochable,
@@ -222,7 +226,11 @@ export function MatchPanel({
 
         {operation ? (
           <Side title="Transaction bancaire">
-            <Amount value={operation.montant} sens={sensBanque(operation.montant).toLowerCase()} />
+            <Amount
+              value={operation.montant}
+              sens={sensBanque(operation.montant).toLowerCase()}
+              unite={unite(operation.devise)}
+            />
             <p className="text-sm">{operation.libelle}</p>
             <p className="text-xs text-simtis-muted">
               {formatDate(operation.date_operation)} · {operation.bank_code}
@@ -261,13 +269,20 @@ export function MatchPanel({
               <ArrowDownUp className="h-4 w-4 text-simtis-muted" aria-hidden />
               <ScoreBadge score={match.score} forte={match.forte} />
               {validated ? (
-                <StatusBadge status="Rapprochée" />
+                <>
+                  <StatusBadge status="Rapprochée" />
+                  <CodeBadge code={match.code} />
+                </>
               ) : (
                 <span className="text-xs text-simtis-muted">Proposée</span>
               )}
             </div>
             <Side title="Écriture comptable">
-              <Amount value={match.ecriture.montant} sens={sensSageOf(match.ecriture)} />
+              <Amount
+                value={montantEcriture(match.ecriture)}
+                sens={sensSageOf(match.ecriture)}
+                unite={uniteEcriture(match.ecriture)}
+              />
               <p className="text-sm">{match.ecriture.libelle}</p>
               <p className="text-xs text-simtis-muted">
                 {formatDate(match.ecriture.date_ecriture)}
@@ -482,10 +497,10 @@ function Side({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Amount({ value, sens }: { value: string; sens: string }) {
+function Amount({ value, sens, unite = "DH" }: { value: string; sens: string; unite?: string }) {
   return (
     <p className="text-[20px] font-semibold text-simtis-primary-dark tabular-nums">
-      {formatAmount(absolute(value), "DH")}{" "}
+      {formatAmount(absolute(value), unite)}{" "}
       <span className="text-xs font-normal text-simtis-muted">{sens}</span>
     </p>
   );
@@ -518,7 +533,7 @@ function CandidatesList({
 
   function renderCandidat(candidat: Candidat) {
     if (!operation || !data) return null;
-    const ok = rapprochable(operation.montant, candidat.ecriture.montant);
+    const ok = rapprochable(operation.montant, montantEcriture(candidat.ecriture));
     const forte = Number(candidat.score) >= Number(data.seuil_fort);
     return (
       <li
@@ -528,7 +543,10 @@ function CandidatesList({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="text-sm font-medium tabular-nums">
-              {formatAmount(absolute(candidat.ecriture.montant), "DH")}
+              {formatAmount(
+                absolute(montantEcriture(candidat.ecriture)),
+                uniteEcriture(candidat.ecriture),
+              )}
             </p>
             <p className="truncate text-sm">{candidat.ecriture.libelle}</p>
             <p className="text-xs text-simtis-muted">
@@ -550,8 +568,8 @@ function CandidatesList({
           <p className="text-xs text-simtis-muted">
             Montant différent : écart de{" "}
             {formatAmount(
-              absolute(ecartManuel(operation.montant, candidat.ecriture.montant)),
-              "DH",
+              absolute(ecartManuel(operation.montant, montantEcriture(candidat.ecriture))),
+              unite(operation.devise),
             )}
             .
           </p>
@@ -584,8 +602,9 @@ function CandidatesList({
         <>
           {utiles.length === 0 ? (
             <p className="text-sm text-simtis-muted">
-              Aucune écriture Sage de {formatAmount(absolute(operation.montant), "DH")} à ± 10 jours
-              sur ce compte. L&apos;écriture n&apos;est peut-être pas encore importée.
+              Aucune écriture Sage de{" "}
+              {formatAmount(absolute(operation.montant), unite(operation.devise))} à ± 10 jours sur
+              ce compte. L&apos;écriture n&apos;est peut-être pas encore importée.
             </p>
           ) : (
             <ul className="space-y-2">{utiles.map(renderCandidat)}</ul>
@@ -621,8 +640,9 @@ function ManualMatch({
   onComment: (value: string) => void;
   onConfirm: () => void;
 }) {
-  const ecart = ecartManuel(operation.montant, entry.montant);
-  const ok = rapprochable(operation.montant, entry.montant);
+  const ecart = ecartManuel(operation.montant, montantEcriture(entry));
+  const ok = rapprochable(operation.montant, montantEcriture(entry));
+  const devise = unite(operation.devise);
   return (
     <div className="space-y-3 rounded-[12px] border border-simtis-secondary/40 bg-simtis-light/40 p-3">
       <p className="text-xs font-semibold tracking-wide text-simtis-primary-dark uppercase">
@@ -631,10 +651,12 @@ function ManualMatch({
       <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-[13px]">
         <dt className="text-simtis-muted">Transaction ({sensBanque(operation.montant)})</dt>
         <dd className="text-right tabular-nums">
-          {formatAmount(absolute(operation.montant), "DH")}
+          {formatAmount(absolute(operation.montant), devise)}
         </dd>
         <dt className="text-simtis-muted">Écriture ({sensSageOf(entry)})</dt>
-        <dd className="text-right tabular-nums">{formatAmount(absolute(entry.montant), "DH")}</dd>
+        <dd className="text-right tabular-nums">
+          {formatAmount(absolute(montantEcriture(entry)), uniteEcriture(entry))}
+        </dd>
         <dt className="font-medium">Écart restant</dt>
         <dd
           className={cn(
@@ -642,7 +664,7 @@ function ManualMatch({
             ok ? "text-simtis-success-fg" : "text-simtis-danger-fg",
           )}
         >
-          {ok ? formatAmount("0", "DH") : formatAmount(absolute(ecart), "DH")}
+          {ok ? formatAmount("0", devise) : formatAmount(absolute(ecart), devise)}
         </dd>
       </dl>
       {!ok && (

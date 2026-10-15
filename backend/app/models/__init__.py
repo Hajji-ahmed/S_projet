@@ -15,6 +15,7 @@ from app.models.previsions import CashForecast, ForecastCategory
 from app.models.rapprochement import (
     BalanceCheck,
     Discrepancy,
+    ReconciliationCodeCounter,
     ReconciliationMatch,
     ReconciliationMatchItem,
     ReconciliationRule,
@@ -59,6 +60,7 @@ __all__ = [
     "ImportBatch",
     "Permission",
     "PointageType",
+    "ReconciliationCodeCounter",
     "ReconciliationMatch",
     "ReconciliationMatchItem",
     "ReconciliationRule",

@@ -1,9 +1,9 @@
 """Rapprochement bancaire 1→1 (P11) : le moteur propose, un utilisateur autorisé décide."""
 
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, require_permission
@@ -36,6 +36,8 @@ from app.services.auth_service import CurrentUser
 router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
 
 can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
+# Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur
+TypeOperation = Literal["Chèque", "Effet", "Espèces", "Virement", "Autre"]
 # Lancer le moteur écrit des propositions : réservé à qui peut aussi les valider
 can_validate = require_permission(PermissionCode.RECONCILIATION_VALIDATE)
 
@@ -75,6 +77,9 @@ def list_transactions(
     a_comptabiliser: Annotated[
         bool, Query(description="Seulement les frais bancaires non rapprochés (À comptabiliser)")
     ] = False,
+    type_operation: Annotated[
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> OperationsPageOut:
@@ -90,6 +95,7 @@ def list_transactions(
         page=page,
         sans_a_verifier=sans_a_verifier,
         a_comptabiliser=a_comptabiliser,
+        type_operation=type_operation,
     )
     return OperationsPageOut.from_page(result)
 
@@ -101,6 +107,9 @@ def list_ambiguous(
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
+    type_operation: Annotated[
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> AmbiguesOut:
@@ -113,6 +122,7 @@ def list_ambiguous(
         date_from=date_from,
         date_to=date_to,
         page=page,
+        type_operation=type_operation,
     )
     return AmbiguesOut(
         seuil_fort=seuil,
@@ -147,6 +157,40 @@ def list_history(
     return HistoriqueOut.from_page(result)
 
 
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get(
+    "/export",
+    response_class=Response,
+    responses={200: {"content": {XLSX: {}}, "description": "Lettrage du filtre, en Excel"}},
+)
+def export_lettrage(
+    request: Request,
+    company_id: Annotated[int, Query(description="Société dont on veut le lettrage")],
+    bank_account_id: int | None = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_view),
+) -> Response:
+    """Rapprochements validés du filtre de l'historique, en classeur Excel (14/10/2026)."""
+    nom, contenu, _ = reconciliation_service.export_lettrage(
+        db,
+        company_id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return Response(
+        content=contenu,
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{nom}"'},
+    )
+
+
 @router.get("/proposals", response_model=CorrespondancesOut)
 def list_proposals(
     company_id: Annotated[int, Query(description="Société dont on veut les correspondances")],
@@ -154,6 +198,9 @@ def list_proposals(
     bank_account_id: int | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
+    type_operation: Annotated[
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> CorrespondancesOut:
@@ -165,6 +212,7 @@ def list_proposals(
         bank_account_id=bank_account_id,
         date_from=date_from,
         date_to=date_to,
+        type_operation=type_operation,
     )
     return CorrespondancesOut(
         seuil_fort=seuil, correspondances=[CorrespondanceOut.from_view(v) for v in views]

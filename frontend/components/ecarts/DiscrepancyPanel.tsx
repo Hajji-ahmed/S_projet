@@ -129,7 +129,7 @@ export function DiscrepancyPanel({
   return (
     <section
       aria-label={`Écart n° ${ecart.id}`}
-      className="rounded-[14px] border border-simtis-border bg-simtis-card p-5 shadow-simtis"
+      className="rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis"
     >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>

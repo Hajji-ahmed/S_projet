@@ -19,7 +19,7 @@ export function CompanySelector() {
       <select
         value={company.id}
         onChange={(event) => setCompanyId(Number(event.target.value))}
-        className="h-10 max-w-[130px] cursor-pointer appearance-none truncate rounded-lg border border-simtis-border bg-simtis-light/50 pr-8 pl-3 text-sm font-medium text-simtis-primary-dark transition-colors hover:bg-simtis-light focus:border-simtis-primary focus:ring-2 focus:ring-simtis-primary/15 focus:outline-none sm:max-w-none sm:pl-9"
+        className="h-10 max-w-[130px] cursor-pointer appearance-none truncate rounded-[12px] border border-simtis-border bg-simtis-card pr-8 pl-3 text-sm font-medium text-simtis-primary-dark shadow-simtis transition-colors duration-200 hover:bg-simtis-surface focus:border-simtis-primary focus:ring-4 focus:ring-simtis-primary/10 focus:outline-none sm:max-w-none sm:pl-9"
       >
         {companies.map((item) => (
           <option key={item.id} value={item.id}>

@@ -4,7 +4,8 @@ from sqlalchemy import Float, Numeric
 
 from app.models import Base
 
-# Montants (18,2), taux (18,6), score de rapprochement (5,2), poids d'un critère (6,2)
+# Montants (18,2), taux (18,6), score de rapprochement (5,2), poids d'un critère et taux de TVA
+# en % (6,2)
 ALLOWED_NUMERIC = {(18, 2), (18, 6), (5, 2), (6, 2)}
 
 

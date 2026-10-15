@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
+import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -14,7 +15,12 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { pageCount } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
-import { STATUTS_VOLET, type ReconciliationFilter } from "@/lib/reconciliation";
+import {
+  unite,
+  TYPES_OPERATION,
+  STATUTS_VOLET,
+  type ReconciliationFilter,
+} from "@/lib/reconciliation";
 import { listTransactions } from "@/services/reconciliation";
 import type { Operation, OperationsPage } from "@/types/reconciliation";
 
@@ -46,6 +52,7 @@ export function TransactionsPane({
   const [shownStatut, setShownStatut] = useState(statut);
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
+  const [typeOperation, setTypeOperation] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<OperationsPage | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
@@ -63,6 +70,7 @@ export function TransactionsPane({
       statut: statut || undefined,
       q,
       page,
+      typeOperation: typeOperation || undefined,
       sansAVerifier: true,
     }).then(
       (result) => {
@@ -79,7 +87,7 @@ export function TransactionsPane({
       cancelled = true;
     };
     // La vue remonte le volet (key) quand la période ou le compte change : on repart page 1
-  }, [companyId, filter, statut, q, page, reloadKey, retryKey, onLoaded]);
+  }, [companyId, filter, statut, q, typeOperation, page, reloadKey, retryKey, onLoaded]);
 
   const pages = data ? pageCount(data.total, data.taille) : 1;
   const columns: Column<Operation>[] = [
@@ -104,15 +112,24 @@ export function TransactionsPane({
       key: "debit",
       header: "Débit",
       align: "right",
-      render: (row) => formatAmount(row.debit, "DH", { dashForZero: true }),
+      render: (row) => formatAmount(row.debit, unite(row.devise), { dashForZero: true }),
     },
     {
       key: "credit",
       header: "Crédit",
       align: "right",
-      render: (row) => formatAmount(row.credit, "DH", { dashForZero: true }),
+      render: (row) => formatAmount(row.credit, unite(row.devise), { dashForZero: true }),
     },
     { key: "statut", header: "Statut", render: (row) => <StatusBadge status={row.statut} /> },
+    {
+      key: "code",
+      header: "Code",
+      render: (row) => (
+        <CodeBadge
+          code={row.correspondance?.statut === "Validée" ? row.correspondance.code : null}
+        />
+      ),
+    },
   ];
 
   return (
@@ -141,13 +158,28 @@ export function TransactionsPane({
             />
           </Field>
         </div>
+        <div className="w-full max-w-[150px]">
+          <Field label="Type" htmlFor="rapprochement-tx-type">
+            <Select
+              id="rapprochement-tx-type"
+              value={typeOperation}
+              placeholder="Tous les types"
+              options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
+              onChange={(event) => {
+                setState("loading");
+                setPage(1);
+                setTypeOperation(event.target.value);
+              }}
+            />
+          </Field>
+        </div>
         <div className="w-full max-w-[200px]">
           <Field label="Recherche" htmlFor="rapprochement-tx-recherche">
             <TextInput
               id="rapprochement-tx-recherche"
               value={search}
               maxLength={100}
-              placeholder="Libellé, référence"
+              placeholder="Libellé, référence, code"
               onChange={(event) => setSearch(event.target.value)}
             />
           </Field>

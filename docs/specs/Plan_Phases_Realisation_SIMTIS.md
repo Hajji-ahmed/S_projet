@@ -999,21 +999,23 @@ Résumé d'import + audit
 
 ### PHASE 16 — Administration, historique & rapports
 
+> **P16 — réalisée le 14/10/2026** : P16.1 administration (`/api/admin/*`), P16.2 historique (`/api/audit`), P16.3 paramètres (`/api/parametres/*`, permission `admin.settings`, migration 0029), P16.4 rapports Excel (`/api/rapports/*`). Détail dans `CLAUDE.md`.
+
 **Objectif** : donner à l'administrateur la gestion dynamique des accès et exposer la traçabilité.
 
 **Prérequis** : P5
 
 **Tâches**
 
-- [ ] `/administration` : utilisateurs (créer, modifier, activer, désactiver, réinitialiser le mot de passe), rôles, permissions (matrice éditable), profil « Personnalisé »
-- [ ] Paramètres : tolérances de rapprochement, poids du scoring, seuils d'alertes, modèles de mapping
-- [ ] `/historique` : journal d'audit filtrable (utilisateur, action, entité, période), affichage avant / après
+- [x] `/administration` : utilisateurs (créer, modifier, activer, désactiver, réinitialiser le mot de passe), rôles, permissions (matrice éditable), profil « Personnalisé »
+- [x] Paramètres : tolérances de rapprochement, poids du scoring, ~~seuils d'alertes~~ (fixés dans le code), modèles de mapping
+- [x] `/historique` : journal d'audit filtrable (utilisateur, action, entité, période), affichage avant / après
   ```text
   28/09/2026 14:30 — Mustapha — Validation rapprochement
   Banque : VIR-45821 — 50 000 DH — À vérifier → Rapprochée
   ```
-- [ ] `/rapports` : exports Excel/PDF (position du jour, état de rapprochement, écarts ouverts, prévisions)
-- [ ] Audit obligatoire (CDC §11) : import de relevé, validation de rapprochement, modification de prévision (avant/après), modification de rôle ou de permission, clôture d'écart
+- [x] `/rapports` : exports Excel (position du jour, état de rapprochement, lettrage) ; PDF écarté le 14/10/2026 ; écarts ouverts (fonction mise de côté) et prévisions (P14) en attente
+- [x] Audit obligatoire (CDC §11) : import de relevé, validation de rapprochement, modification de rôle ou de permission, clôture d'écart ; modification de prévision avec P14
 
 **Critères de fin**
 

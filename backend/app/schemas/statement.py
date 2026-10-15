@@ -380,12 +380,19 @@ class TransactionOut(BaseModel):
     origine: str = Field(description="« Fichier », ou « Corrigée » dans l'aperçu avant l'import")
     # Pour préremplir la fenêtre de modification (le libellé seul ne suffit pas)
     pointage_type_id: int | None
+    # Code du rapprochement validé de l'opération (« BP-26-000123 », 13/10/2026)
+    code_rapprochement: str | None = None
 
     @classmethod
     def from_row(
-        cls, account: BankAccount, transaction: BankTransaction, pointage: str | None
+        cls,
+        account: BankAccount,
+        transaction: BankTransaction,
+        pointage: str | None,
+        code: str | None = None,
     ) -> "TransactionOut":
         return cls(
+            code_rapprochement=code,
             pointage_type_id=transaction.pointage_type_id,
             id=transaction.id,
             societe=account.company.nom,
@@ -452,7 +459,9 @@ class AccountStatementOut(BaseModel):
             solde_ouverture=result.solde_ouverture,
             solde_cloture=result.solde_cloture,
             operations=[
-                TransactionOut.from_row(account, transaction, pointage)
+                TransactionOut.from_row(
+                    account, transaction, pointage, result.codes.get(transaction.id)
+                )
                 for transaction, pointage in result.rows
             ],
         )

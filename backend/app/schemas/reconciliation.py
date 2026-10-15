@@ -41,6 +41,7 @@ class RunOut(BaseModel):
     nb_fortes: int
     nb_operations_ambigues: int
     nb_ecritures_ambigues: int
+    nb_groupes: int = Field(0, description="Groupes N → 1 proposés (12/10/2026)")
 
     @classmethod
     def from_result(cls, result: RunResult) -> "RunOut":
@@ -70,15 +71,19 @@ class CorrespondanceResumeOut(BaseModel):
 
     id: int
     statut: StatutCorrespondance
-    origine: Literal["Automatique", "Manuelle"]
+    origine: Literal["Automatique", "Manuelle", "Frais"]
     score: Decimal | None
     ecriture_id: int | None
+    # Code du rapprochement validé (« BP-26-000123 », 13/10/2026)
+    code: str | None = None
 
 
 class OperationOut(BaseModel):
     id: int
     bank_account_id: int
     bank_code: str
+    # Devise du compte (EUR, USD…) : le montant est dans cette devise (14/10/2026)
+    devise: str = "MAD"
     date_operation: date
     date_valeur: date | None
     libelle: str
@@ -108,11 +113,13 @@ class OperationOut(BaseModel):
                 ecriture_id=next(
                     (i.accounting_entry_id for i in match.items if i.accounting_entry_id), None
                 ),
+                code=match.code,
             )
         return cls(
             id=tx.id,
             bank_account_id=tx.bank_account_id,
             bank_code=bank_code,
+            devise=tx.bank_account.devise,
             date_operation=tx.date_operation,
             date_valeur=tx.date_valeur,
             libelle=tx.libelle,
@@ -158,9 +165,11 @@ class OperationsPageOut(BaseModel):
 
 class CorrespondanceOut(BaseModel):
     id: int
+    # Code donné à la validation (« BP-26-000123 », 13/10/2026) ; None tant que proposée
+    code: str | None = None
     type: str
     statut: StatutCorrespondance
-    origine: Literal["Automatique", "Manuelle"]
+    origine: Literal["Automatique", "Manuelle", "Frais"]
     score: Decimal | None
     forte: bool = Field(description="Score au moins égal au seuil de forte correspondance")
     score_second: Decimal | None = Field(
@@ -177,13 +186,28 @@ class CorrespondanceOut(BaseModel):
     decide_par: str | None = Field(description="Auteur de la dernière décision (historique)")
     decide_le: datetime | None
     created_at: datetime
+    # Opération principale (la seule en 1 → 1, la plus grosse d'un groupe N → 1)
     operation: OperationOut
+    # Groupe N → 1 (12/10/2026) : toutes les opérations, leur total, l'écart et l'explication
+    operations: list[OperationOut] = Field(default_factory=list)
+    total_operations: Decimal = Decimal("0")
+    ecart: Decimal = Field(
+        Decimal("0"), description="Total des opérations + montant de l'écriture (0 = équilibré)"
+    )
+    explication: str | None = None
     ecriture: EcritureOut
 
     @classmethod
     def from_view(cls, view: MatchView) -> "CorrespondanceOut":
         match = view.match
+        lignes = view.transactions or [(view.transaction, view.bank_code)]
+        total = sum((tx.montant for tx, _ in lignes), Decimal("0"))
         return cls(
+            code=match.code,
+            operations=[OperationOut.of(tx, code) for tx, code in lignes],
+            total_operations=total,
+            ecart=total + view.entry.montant,
+            explication=(match.detail_score or {}).get("explication"),
             id=match.id,
             type=match.type,
             statut=match.statut,

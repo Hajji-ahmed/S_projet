@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  montantEcriture,
+  unite,
+  uniteEcriture,
+  lettrageFilename,
+  montantBanque,
+  operationsDe,
   A_COMPTABILISER,
   STATUTS_VOLET,
   trierCandidats,
@@ -196,5 +202,56 @@ describe("filtre À comptabiliser", () => {
     expect(query).toContain("a_comptabiliser=true");
     expect(query).not.toContain("statut=");
     expect(STATUTS_VOLET).toContain(A_COMPTABILISER);
+  });
+});
+
+describe("groupe N → 1", () => {
+  it("utilise le total des opérations pour valider et sommer la sélection", () => {
+    const groupe = {
+      id: 7,
+      statut: "Proposée",
+      forte: true,
+      operation: { montant: "-10000.00" },
+      operations: [{ montant: "-10000.00" }, { montant: "-50.00" }, { montant: "-10.00" }],
+      total_operations: "-10060.00",
+      ecriture: { montant: "10060.00" },
+    } as unknown as Correspondance;
+
+    expect(operationsDe(groupe)).toHaveLength(3);
+    expect(montantBanque(groupe)).toBe("-10060.00");
+    expect(validable(groupe)).toBe(true);
+    expect(selectionSummary([groupe], new Set([7])).total).toBe("10060.00");
+  });
+});
+
+describe("export du lettrage", () => {
+  it("nomme le fichier d'après la période", () => {
+    expect(lettrageFilename({ from: "2026-09-01", to: "2026-10-14" })).toBe(
+      "lettrage-2026-09-01-2026-10-14.xlsx",
+    );
+  });
+});
+
+describe("filtre Type d'opération", () => {
+  it("passe le type à l'API", () => {
+    expect(
+      reconciliationQuery(3, { from: "2026-09-01", to: "2026-09-30", typeOperation: "Chèque" }),
+    ).toContain("type_operation=Ch%C3%A8que");
+    expect(reconciliationQuery(3, { from: "2026-09-01", to: "2026-09-30" })).not.toContain(
+      "type_operation",
+    );
+  });
+});
+
+describe("comptes en devise", () => {
+  it("rapproche le relevé du montant devise de Sage et affiche la devise", () => {
+    const ecriture = { montant: "-10850.00", montant_devise: "-1000.00", devise: "EUR" };
+
+    expect(montantEcriture(ecriture)).toBe("-1000.00");
+    expect(uniteEcriture(ecriture)).toBe("EUR");
+    expect(montantEcriture({ montant: "50.00" })).toBe("50.00");
+    expect(uniteEcriture({ montant_devise: null, devise: "MAD" })).toBe("DH");
+    expect(unite("USD")).toBe("USD");
+    expect(unite("MAD")).toBe("DH");
   });
 });

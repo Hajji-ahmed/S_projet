@@ -3,7 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, and_, delete, func, or_, select, update
+from sqlalchemy import Select, and_, delete, func, or_, select, text, update
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.models import (
@@ -18,6 +18,7 @@ from app.models import (
     ReconciliationRule,
     User,
 )
+from app.services.reconciliation_scoring import AUTRE, TYPES_BANQUE, regex_type
 
 # Statuts d'une correspondance qui retiennent ses éléments
 STATUTS_ACTIFS = ("Proposée", "Validée")
@@ -257,6 +258,14 @@ def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def type_condition(column, regles: tuple[tuple[str, str], ...], type_operation: str):
+    """Condition SQL du filtre « Type » (14/10/2026) : Chèque, Effet, Espèces, Virement, ou
+    « Autre » (aucun type), avec les mêmes règles que le moteur."""
+    if type_operation == AUTRE:
+        return or_(column.is_(None), column.op("!~*")(regex_type(regles)))
+    return column.op("~*")(regex_type(regles, type_operation))
+
+
 def transactions_query(
     company_id: int,
     *,
@@ -264,6 +273,7 @@ def transactions_query(
     date_from: date | None = None,
     date_to: date | None = None,
     q: str | None = None,
+    type_operation: str | None = None,
 ) -> Select:
     """Opérations d'UNE société, filtrées, sans filtre de statut (ni ordre, ni pagination)."""
     query = (
@@ -277,12 +287,18 @@ def transactions_query(
         query = query.where(BankTransaction.date_operation >= date_from)
     if date_to is not None:
         query = query.where(BankTransaction.date_operation <= date_to)
+    if type_operation is not None:
+        query = query.where(type_condition(BankTransaction.libelle, TYPES_BANQUE, type_operation))
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
         query = query.where(
             or_(
                 BankTransaction.libelle.ilike(pattern, escape="\\"),
                 BankTransaction.reference.ilike(pattern, escape="\\"),
+                # Code de rapprochement (« BP-26-000123 », 13/10/2026)
+                BankTransaction.id.in_(
+                    ids_with_code(ReconciliationMatchItem.bank_transaction_id, q)
+                ),
             )
         )
     return query
@@ -302,12 +318,17 @@ def ambiguous_transactions(
     date_to: date | None,
     offset: int,
     limit: int,
+    type_operation: str | None = None,
 ) -> tuple[int, list[BankTransaction]]:
     """Opérations « À vérifier » sans correspondance active : le moteur a trouvé plusieurs
     candidats trop proches pour en proposer un. Leur nombre sur tout le filtre, et une page, des
     plus récentes aux plus anciennes."""
     query = transactions_query(
-        company_id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+        company_id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        type_operation=type_operation,
     ).where(
         BankTransaction.statut == "À vérifier",
         BankTransaction.id.not_in(_active_transaction_ids()),
@@ -380,7 +401,8 @@ def matches_of_period(
     date_from: date | None,
     date_to: date | None,
 ) -> list[ReconciliationMatch]:
-    """Correspondances 1→1 de la société dont l'opération est dans le filtre, par date d'opération."""
+    """Correspondances 1→1 et groupes N→1 (12/10/2026) de la société dont une opération est dans
+    le filtre, par date d'opération."""
     query = (
         select(ReconciliationMatch)
         .join(ReconciliationMatchItem, ReconciliationMatchItem.match_id == ReconciliationMatch.id)
@@ -388,7 +410,7 @@ def matches_of_period(
         .where(
             ReconciliationMatch.company_id == company_id,
             ReconciliationMatch.statut == statut,
-            ReconciliationMatch.type == "1-1",
+            ReconciliationMatch.type.in_(("1-1", "N-1")),
         )
         .options(selectinload(ReconciliationMatch.items))
         .order_by(BankTransaction.date_operation.desc(), ReconciliationMatch.id.desc())
@@ -549,6 +571,9 @@ LIBELLE_FRAIS = (
     r"(DROIT DE TIMBRE|DT D.ENREGISTREMENT|TAXE SUR VALEUR AJOUTEE|^TVA\M|COMMISSION|^COM\M"
     r"|FRAIS|AGIOS|INTERET|PRELEV|PRLV)"
 )
+# Jamais un frais, quel que soit le pointage choisi (13/10/2026) : ces opérations repassent dans
+# « Non rapprochée ». Le libellé l'emporte sur le pointage (« INTERET », « FRAIS »…).
+LIBELLE_PAS_FRAIS = r"^\s*(VIREMENT\s+COMMERCIAL|REMISE\s+DOCUMENTAIRE)"
 
 
 def frais_bancaire():
@@ -556,12 +581,15 @@ def frais_bancaire():
     pointages = select(PointageType.id).where(PointageType.code.in_(POINTAGES_FRAIS))
     # `pointage_type_id IS NOT NULL` : sans lui, NOT (NULL IN …) vaudrait NULL et une opération sans
     # pointage disparaîtrait aussi de « Non rapprochée »
-    return or_(
-        and_(
-            BankTransaction.pointage_type_id.is_not(None),
-            BankTransaction.pointage_type_id.in_(pointages),
+    return and_(
+        or_(
+            and_(
+                BankTransaction.pointage_type_id.is_not(None),
+                BankTransaction.pointage_type_id.in_(pointages),
+            ),
+            BankTransaction.libelle.op("~*")(LIBELLE_FRAIS),
         ),
-        BankTransaction.libelle.op("~*")(LIBELLE_FRAIS),
+        BankTransaction.libelle.op("!~*")(LIBELLE_PAS_FRAIS),
     )
 
 
@@ -572,3 +600,77 @@ def a_comptabiliser(db: Session, query: Select) -> tuple[int, Decimal]:
         select(func.count(), func.coalesce(func.sum(func.abs(filtered.c.montant)), 0))
     ).one()
     return row[0], Decimal(row[1])
+
+
+# --- Codes de rapprochement (13/10/2026) ------------------------------------------------------------
+
+
+def next_code_number(db: Session, bank_account_id: int, annee: int) -> int:
+    """Numéro suivant du compteur (compte, année), atomique : deux validations simultanées ne
+    reçoivent jamais le même numéro."""
+    statement = text(
+        "INSERT INTO reconciliation_code_counters (bank_account_id, annee, dernier) "
+        "VALUES (:compte, :annee, 1) ON CONFLICT (bank_account_id, annee) "
+        "DO UPDATE SET dernier = reconciliation_code_counters.dernier + 1 RETURNING dernier"
+    )
+    return db.execute(statement, {"compte": bank_account_id, "annee": annee}).scalar_one()
+
+
+def bank_code_of_account(db: Session, bank_account_id: int) -> str:
+    return db.execute(
+        select(Bank.code)
+        .join(BankAccount, BankAccount.bank_id == Bank.id)
+        .where(BankAccount.id == bank_account_id)
+    ).scalar_one()
+
+
+def _codes(db: Session, column, ids: set[int] | list[int]) -> dict[int, str]:
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(column, ReconciliationMatch.code)
+        .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
+        .where(
+            column.in_(list(ids)),
+            ReconciliationMatchItem.actif.is_(True),
+            ReconciliationMatch.statut == "Validée",
+            ReconciliationMatch.code.is_not(None),
+        )
+    )
+    return {row[0]: row[1] for row in rows}
+
+
+def codes_of_transactions(db: Session, ids: set[int] | list[int]) -> dict[int, str]:
+    """Code du rapprochement validé de chaque opération qui en a un."""
+    return _codes(db, ReconciliationMatchItem.bank_transaction_id, ids)
+
+
+def codes_of_entries(db: Session, ids: set[int] | list[int]) -> dict[int, str]:
+    """Code du rapprochement validé de chaque écriture qui en a un."""
+    return _codes(db, ReconciliationMatchItem.accounting_entry_id, ids)
+
+
+def ids_with_code(column, code: str):
+    """Sous-requête : lignes (opérations ou écritures) du rapprochement validé portant ce code."""
+    return (
+        select(column)
+        .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
+        .where(
+            ReconciliationMatchItem.actif.is_(True),
+            ReconciliationMatch.statut == "Validée",
+            func.upper(ReconciliationMatch.code) == code.strip().upper(),
+        )
+    )
+
+
+def validated_matches(db: Session, ids_query: Select) -> list[ReconciliationMatch]:
+    """Toutes les correspondances validées du filtre (export du lettrage, 14/10/2026), par code."""
+    ids = ids_query.where(ReconciliationMatch.statut == "Validée").subquery()
+    return list(
+        db.scalars(
+            select(ReconciliationMatch)
+            .join(ids, ids.c.id == ReconciliationMatch.id)
+            .options(selectinload(ReconciliationMatch.items))
+            .order_by(ReconciliationMatch.code, ReconciliationMatch.id)
+        )
+    )

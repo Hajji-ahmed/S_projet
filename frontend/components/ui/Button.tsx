@@ -6,10 +6,11 @@ import { cn } from "@/lib/cn";
 export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-simtis-primary text-white hover:bg-simtis-primary-dark",
-  secondary: "bg-simtis-light text-simtis-primary-dark hover:bg-simtis-light/70",
-  danger: "bg-simtis-danger text-white hover:opacity-90",
-  ghost: "text-simtis-primary hover:underline",
+  primary: "bg-simtis-primary text-white shadow-simtis hover:bg-simtis-primary-dark",
+  secondary:
+    "border border-simtis-border bg-simtis-card text-simtis-primary-dark hover:border-simtis-primary/40 hover:bg-simtis-surface",
+  danger: "bg-simtis-danger text-white shadow-simtis hover:bg-simtis-danger-fg",
+  ghost: "text-simtis-primary hover:bg-simtis-light",
 };
 
 /** Classes d'un bouton, réutilisables sur un `<Link>` pour un lien qui a l'aspect d'un bouton. */
@@ -17,7 +18,7 @@ export function buttonClasses(variant: ButtonVariant = "primary", className?: st
   return cn(
     "inline-flex h-10 items-center gap-2 rounded-[10px] px-4 text-sm font-medium whitespace-nowrap transition-colors duration-200",
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary",
-    "disabled:pointer-events-none disabled:opacity-50",
+    "active:translate-y-px disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none",
     VARIANTS[variant],
     className,
   );

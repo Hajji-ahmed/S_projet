@@ -97,6 +97,10 @@ export type StatutRapprochement = "Non rapprochée" | "À vérifier" | "Rapproch
 
 export type Ecriture = {
   id: number;
+  /** Compte en devise : colonne « Devise » de Sage, signée comme `montant` (14/10/2026). */
+  montant_devise?: string | null;
+  /** Devise du compte bancaire ; débit et crédit restent en MAD. */
+  devise?: string | null;
   date_ecriture: string;
   journal: string | null;
   compte: string | null;
@@ -111,6 +115,8 @@ export type Ecriture = {
   bank_account_id: number | null;
   bank_code: string | null;
   statut: StatutRapprochement;
+  /** Code du rapprochement validé de l'écriture (13/10/2026). */
+  code_rapprochement?: string | null;
 };
 
 /** Une page de 50 écritures ; total et totaux portent sur tout le filtre. */

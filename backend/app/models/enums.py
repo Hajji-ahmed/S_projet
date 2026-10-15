@@ -26,7 +26,10 @@ STATUTS_CONTROLE_SOLDE = ("Conforme", "Écart", "À vérifier")
 
 # Rapprochement : cardinalité et origine de la proposition
 TYPES_CORRESPONDANCE = ("1-1", "1-N", "N-1", "N-N")
-ORIGINES_CORRESPONDANCE = ("Automatique", "Manuelle")
+# « Frais » : écriture de frais bancaires comptabilisée par SIMTIS (13/10/2026)
+ORIGINES_CORRESPONDANCE = ("Automatique", "Manuelle", "Frais")
+# Origine d'une écriture comptable : importée de Sage, ou préparée par SIMTIS (13/10/2026)
+ORIGINES_ECRITURE = ("Sage", "SIMTIS")
 STATUTS_CORRESPONDANCE = ("Proposée", "Validée", "Rejetée", "Annulée")
 
 # Imports (relevés bancaires et écritures comptables partagent le même circuit)

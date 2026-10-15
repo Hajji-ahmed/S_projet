@@ -58,7 +58,7 @@ export function FormModal({
         {error && (
           <div
             role="alert"
-            className="flex items-start gap-2 rounded-lg bg-simtis-danger-bg px-3 py-2.5 text-sm text-simtis-danger-fg"
+            className="flex items-start gap-2 rounded-[10px] bg-simtis-danger-bg px-3 py-2.5 text-sm text-simtis-danger-fg"
           >
             <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <span>{error}</span>

@@ -44,6 +44,12 @@ class AccountOut(BaseModel):
     type_compte: TypeCompte
     compte_comptable: str | None
     journal_sage: str | None
+    # Comptabilisation des droits de timbre (13/10/2026)
+    journal_frais: str | None = None
+    compte_timbre: str | None = None
+    compte_commission: str | None = None
+    compte_commission_effet: str | None = None
+    compte_tva: str | None = None
     credit_autorise: Decimal
     taux_interet_pct: Decimal | None
     actif: bool
@@ -73,6 +79,11 @@ class AccountOut(BaseModel):
             type_compte=account.type_compte,
             compte_comptable=account.compte_comptable,
             journal_sage=account.journal_sage,
+            journal_frais=account.journal_frais,
+            compte_timbre=account.compte_timbre,
+            compte_commission=account.compte_commission,
+            compte_commission_effet=account.compte_commission_effet,
+            compte_tva=account.compte_tva,
             credit_autorise=account.credit_autorise,
             taux_interet_pct=fraction_to_pct(account.taux_interet),
             actif=account.actif,
@@ -126,6 +137,16 @@ def _clean_journal_sage(value: str | None) -> str | None:
     return texte or None
 
 
+def _clean_journal_frais(value: str | None) -> str | None:
+    """Journal Sage des frais bancaires : un seul journal (ex. 5543)."""
+    if value is None or not value.strip():
+        return None
+    value = value.strip().upper()
+    if not JOURNAL_SAGE_PATTERN.match(value):
+        raise ValueError("Le journal des frais contient 1 à 10 lettres ou chiffres (ex. 5543).")
+    return value
+
+
 class AccountCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -137,13 +158,25 @@ class AccountCreate(BaseModel):
     type_compte: TypeCompte = "Courant"
     compte_comptable: str | None = None
     journal_sage: str | None = None
+    journal_frais: str | None = None
+    compte_timbre: str | None = None
+    compte_commission: str | None = None
+    compte_commission_effet: str | None = None
+    compte_tva: str | None = None
     credit_autorise: Ligne
     taux_interet_pct: TauxPct | None = None
 
     _libelle = field_validator("libelle")(_clean_libelle)
     _numero = field_validator("numero")(_clean_numero)
-    _compte = field_validator("compte_comptable")(_clean_compte_comptable)
+    _compte = field_validator(
+        "compte_comptable",
+        "compte_timbre",
+        "compte_commission",
+        "compte_commission_effet",
+        "compte_tva",
+    )(_clean_compte_comptable)
     _journal = field_validator("journal_sage")(_clean_journal_sage)
+    _journal_frais = field_validator("journal_frais")(_clean_journal_frais)
 
     @field_validator("devise")
     @classmethod
@@ -167,13 +200,25 @@ class AccountUpdate(BaseModel):
     type_compte: TypeCompte
     compte_comptable: str | None
     journal_sage: str | None
+    journal_frais: str | None = None
+    compte_timbre: str | None = None
+    compte_commission: str | None = None
+    compte_commission_effet: str | None = None
+    compte_tva: str | None = None
     credit_autorise: Ligne
     taux_interet_pct: TauxPct | None = None
 
     _libelle = field_validator("libelle")(_clean_libelle)
     _numero = field_validator("numero")(_clean_numero)
-    _compte = field_validator("compte_comptable")(_clean_compte_comptable)
+    _compte = field_validator(
+        "compte_comptable",
+        "compte_timbre",
+        "compte_commission",
+        "compte_commission_effet",
+        "compte_tva",
+    )(_clean_compte_comptable)
     _journal = field_validator("journal_sage")(_clean_journal_sage)
+    _journal_frais = field_validator("journal_frais")(_clean_journal_frais)
 
 
 class AccountStatusUpdate(BaseModel):

@@ -40,6 +40,11 @@ function initialValues(account?: Account): AccountFormValues {
       numero: "",
       compte_comptable: "",
       journal_sage: "",
+      journal_frais: "",
+      compte_timbre: "",
+      compte_commission: "",
+      compte_commission_effet: "",
+      compte_tva: "",
       credit_autorise: "0",
       taux: "",
     };
@@ -52,6 +57,11 @@ function initialValues(account?: Account): AccountFormValues {
     numero: account.numero,
     compte_comptable: account.compte_comptable ?? "",
     journal_sage: account.journal_sage ?? "",
+    journal_frais: account.journal_frais ?? "",
+    compte_timbre: account.compte_timbre ?? "",
+    compte_commission: account.compte_commission ?? "",
+    compte_commission_effet: account.compte_commission_effet ?? "",
+    compte_tva: account.compte_tva ?? "",
     credit_autorise: amountForInput(account.credit_autorise),
     taux: account.taux_interet_pct?.replace(".", ",") ?? "",
   };
@@ -108,6 +118,11 @@ export function AccountFormModal({
       type_compte: values.type_compte,
       compte_comptable: values.compte_comptable.trim().toUpperCase() || null,
       journal_sage: values.journal_sage.trim().toUpperCase() || null,
+      journal_frais: values.journal_frais.trim().toUpperCase() || null,
+      compte_timbre: values.compte_timbre.trim().toUpperCase() || null,
+      compte_commission: values.compte_commission.trim().toUpperCase() || null,
+      compte_commission_effet: values.compte_commission_effet.trim().toUpperCase() || null,
+      compte_tva: values.compte_tva.trim().toUpperCase() || null,
       credit_autorise: normalizeAmountInput(values.credit_autorise) as string,
       taux_interet_pct: values.taux.trim() ? normalizePercentInput(values.taux) : null,
     };
@@ -266,6 +281,25 @@ export function AccountFormModal({
           invalid={!!errors.journal_sage}
         />
       </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field
+          label="Journal des frais"
+          htmlFor="account-journal-frais"
+          error={errors.journal_frais}
+          hint="Journal Sage où passent les frais bancaires (ex. 5543). Vide = le seul journal du compte."
+        >
+          <TextInput
+            id="account-journal-frais"
+            value={values.journal_frais}
+            onChange={(event) => set("journal_frais")(event.target.value)}
+            disabled={submitting}
+            maxLength={10}
+            autoComplete="off"
+            invalid={!!errors.journal_frais}
+          />
+        </Field>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field

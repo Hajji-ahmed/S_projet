@@ -8,7 +8,12 @@ export type ReconciliationFilter = {
   bankAccountId?: number;
   from: string;
   to: string;
+  /** Type d'opération (14/10/2026) : Chèque, Effet, Espèces, Virement ou Autre. */
+  typeOperation?: string;
 };
+
+/** Filtre « Type » des volets et des propositions : mêmes règles que le moteur (14/10/2026). */
+export const TYPES_OPERATION = ["Chèque", "Effet", "Espèces", "Virement", "Autre"] as const;
 
 export type TransactionsFilter = ReconciliationFilter & {
   statut?: string;
@@ -44,6 +49,7 @@ export function reconciliationQuery(
   else if (filter.statut) params.set("statut", filter.statut);
   if (filter.sansAVerifier) params.set("sans_a_verifier", "true");
   if (filter.q?.trim()) params.set("q", filter.q.trim());
+  if (filter.typeOperation) params.set("type_operation", filter.typeOperation);
   if (filter.page !== undefined) params.set("page", String(filter.page));
   return `?${params}`;
 }
@@ -90,7 +96,9 @@ export function toggleStatut(current: string, clicked: string): string {
 
 /** Une proposition validable : en attente et équilibrée (même montant, sens opposé). */
 export function validable(item: Correspondance): boolean {
-  return item.statut === "Proposée" && rapprochable(item.operation.montant, item.ecriture.montant);
+  return (
+    item.statut === "Proposée" && rapprochable(montantBanque(item), montantEcriture(item.ecriture))
+  );
 }
 
 /** Sélection proposée à l'ouverture : seules les fortes validables sans concurrente proche sont
@@ -128,7 +136,7 @@ export function selectionSummary(
 ): { nb: number; faibles: number; total: string } {
   const chosen = items.filter((item) => selected.has(item.id));
   const total = chosen.reduce(
-    (sum, item) => sum + toCents(absolute(item.operation.montant)),
+    (sum, item) => sum + toCents(absolute(montantBanque(item))),
     BigInt(0),
   );
   return {
@@ -186,7 +194,8 @@ export function trierCandidats(
   const autres: Candidat[] = [];
   for (const candidat of candidats) {
     const utile =
-      rapprochable(montantOperation, candidat.ecriture.montant) || toCents(candidat.score) >= seuil;
+      rapprochable(montantOperation, montantEcriture(candidat.ecriture)) ||
+      toCents(candidat.score) >= seuil;
     (utile ? utiles : autres).push(candidat);
   }
   return { utiles, autres };
@@ -194,3 +203,42 @@ export function trierCandidats(
 
 /** Propositions au plus par validation en lot, comme le serveur (`LOT_MAX`, 10 000 depuis le 12/10/2026). */
 export const LOT_MAX = 10000;
+
+/** Opérations d'une correspondance : plusieurs pour un groupe N → 1 (12/10/2026), sinon une. */
+export function operationsDe(item: Correspondance): Operation[] {
+  return item.operations?.length ? item.operations : [item.operation];
+}
+
+/** Montant côté banque : le total d'un groupe, sinon celui de l'opération. */
+export function montantBanque(item: Correspondance): string {
+  return operationsDe(item).length > 1 && item.total_operations
+    ? item.total_operations
+    : item.operation.montant;
+}
+
+/** « lettrage-2026-09-01-2026-10-14.xlsx » : le nom proposé au téléchargement. */
+export function lettrageFilename(filter: ReconciliationFilter): string {
+  return `lettrage-${filter.from}-${filter.to}.xlsx`;
+}
+
+/** Unité affichée d'un montant : « DH » pour le MAD, sinon le code de la devise (14/10/2026). */
+export function unite(devise?: string | null): string {
+  return !devise || devise === "MAD" ? "DH" : devise;
+}
+
+/** Montant d'une écriture face au relevé : en devise pour un compte EUR / USD (colonne « Devise »
+ * de Sage), sinon le montant MAD. Comme `montant_rapprochement` côté serveur. */
+export function montantEcriture(ecriture: {
+  montant: string;
+  montant_devise?: string | null;
+}): string {
+  return ecriture.montant_devise ?? ecriture.montant;
+}
+
+/** Unité du montant de rapprochement d'une écriture : sa devise si elle a un montant devise. */
+export function uniteEcriture(ecriture: {
+  montant_devise?: string | null;
+  devise?: string | null;
+}): string {
+  return ecriture.montant_devise != null ? unite(ecriture.devise) : "DH";
+}

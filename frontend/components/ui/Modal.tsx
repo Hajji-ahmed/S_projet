@@ -32,18 +32,18 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps) {
         if (event.target === dialogRef.current) onClose();
       }}
       aria-labelledby="modal-title"
-      className="m-auto w-[calc(100%-2rem)] max-w-lg rounded-[14px] border border-simtis-border bg-simtis-card p-0 text-simtis-text shadow-simtis backdrop:bg-simtis-text/30"
+      className="m-auto w-[calc(100%-2rem)] max-w-lg rounded-[18px] border border-simtis-border bg-simtis-card p-0 text-simtis-text shadow-simtis-hover backdrop:bg-simtis-sidebar/40 backdrop:backdrop-blur-[2px]"
     >
       <div className="p-6">
         <div className="mb-4 flex items-start justify-between gap-4">
-          <h2 id="modal-title" className="text-[17px] font-semibold">
+          <h2 id="modal-title" className="text-[17px] font-semibold tracking-tight">
             {title}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Fermer"
-            className="rounded-lg p-1 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+            className="rounded-[10px] p-1.5 text-simtis-muted transition-colors hover:bg-simtis-surface hover:text-simtis-primary"
           >
             <X className="h-5 w-5" aria-hidden />
           </button>

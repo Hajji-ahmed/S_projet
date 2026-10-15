@@ -2,7 +2,8 @@
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
 
 export type StatutCorrespondance = "Proposée" | "Validée" | "Rejetée" | "Annulée";
-export type OrigineCorrespondance = "Automatique" | "Manuelle";
+/** « Frais » : droits de timbre comptabilisés par SIMTIS (13/10/2026). */
+export type OrigineCorrespondance = "Automatique" | "Manuelle" | "Frais";
 
 export type Critere = {
   code: "reference" | "montant" | "date" | "libelle" | "tiers";
@@ -16,12 +17,16 @@ export type CorrespondanceResume = {
   origine: OrigineCorrespondance;
   score: string | null;
   ecriture_id: number | null;
+  /** Code du rapprochement validé (« BP-26-000123 », 13/10/2026). */
+  code?: string | null;
 };
 
 export type Operation = {
   id: number;
   bank_account_id: number;
   bank_code: string;
+  /** Devise du compte : le montant est dans cette devise (14/10/2026). */
+  devise?: string;
   date_operation: string;
   date_valeur: string | null;
   libelle: string;
@@ -49,6 +54,8 @@ export type OperationsPage = {
 
 export type Correspondance = {
   id: number;
+  /** Code donné à la validation (« BP-26-000123 ») ; null tant que proposée. */
+  code?: string | null;
   type: string;
   statut: StatutCorrespondance;
   origine: OrigineCorrespondance;
@@ -66,7 +73,13 @@ export type Correspondance = {
   decide_par: string | null;
   decide_le: string | null;
   created_at: string;
+  /** Opération principale (la seule en 1 → 1, la plus grosse d'un groupe). */
   operation: Operation;
+  /** Groupe N → 1 (12/10/2026) : toutes les opérations, leur total et l'écart avec l'écriture. */
+  operations?: Operation[];
+  total_operations?: string;
+  ecart?: string;
+  explication?: string | null;
   ecriture: Ecriture;
 };
 
@@ -96,6 +109,8 @@ export type RunResult = {
   nb_propositions: number;
   nb_fortes: number;
   nb_operations_ambigues: number;
+  /** Groupes N → 1 proposés (12/10/2026). */
+  nb_groupes?: number;
   nb_ecritures_ambigues: number;
 };
 

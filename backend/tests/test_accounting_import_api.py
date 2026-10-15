@@ -144,6 +144,7 @@ def test_bank_lines_are_kept_and_attached_by_their_journal(client, comptable, db
         "numero_piece": "P001",
         "echeance": None,
         "tiers": "ATLAS",
+        "montant_devise": None,
         "bank_account_id": awb.id,
         "bank_code": "AWB",
         "hash_ligne": None,
@@ -360,10 +361,11 @@ def test_confirmed_export_saves_the_bank_lines(client, comptable, db, journals):
 def test_two_accounts_of_the_same_bank_are_counted_apart(client, comptable, db, reference):
     account(db, "AWB", "BQ1")
     account(db, "AWB", "BQ3", devise="EUR")
+    # Le compte EUR a besoin de sa colonne « Devise » (14/10/2026)
     rows = [
-        HEADER,
-        [date(2025, 9, 2), "BQ1", "5141", "P1", "VIR MAD", 10, None, None, None],
-        [date(2025, 9, 2), "BQ3", "5141", "P2", "VIR EUR", 20, None, None, None],
+        [*HEADER, "Devise"],
+        [date(2025, 9, 2), "BQ1", "5141", "P1", "VIR MAD", 10, None, None, None, None],
+        [date(2025, 9, 2), "BQ3", "5141", "P2", "VIR EUR", 20, None, None, None, 2],
     ]
 
     body = confirm(client, comptable, db, xlsx(rows)).json()
@@ -643,3 +645,32 @@ def test_an_ech_header_gives_the_due_date(client, comptable, db, journals):
     [line] = analyse(client, comptable, db, xlsx(rows)).json()["lignes"]
 
     assert line["echeance"] == "2025-08-29"
+
+
+# --- Comptes en devise : colonne « Devise » (14/10/2026) ------------------------------------------
+
+
+def test_a_currency_account_keeps_the_signed_currency_amount_and_needs_it(
+    client, comptable, db, reference
+):
+    account(db, "AWB", "BQ1")
+    account(db, "AWB", "BQ3", devise="EUR")
+    rows = [
+        [*HEADER, "Devise"],
+        # Débit Sage de 10 850 MAD = 1 000 EUR, écrit sans signe : il devient négatif
+        [date(2025, 9, 2), "BQ3", "5141", "P1", "VIR EUR SORTANT", 10850, None, None, None, 1000],
+        [date(2025, 9, 3), "BQ3", "5141", "P2", "VIR EUR ENTRANT", None, 5425, None, None, -500],
+        [date(2025, 9, 4), "BQ3", "5141", "P3", "VIR SANS DEVISE", 100, None, None, None, None],
+        # Compte MAD : la colonne est ignorée
+        [date(2025, 9, 2), "BQ1", "5141", "P4", "VIR MAD", 10, None, None, None, 99],
+    ]
+
+    lignes = analyse(client, comptable, db, xlsx(rows)).json()["lignes"]
+
+    assert [(ligne["statut"], ligne["montant_devise"]) for ligne in lignes] == [
+        ("Valide", "-1000.00"),
+        ("Valide", "500.00"),
+        ("Erreur", None),
+        ("Valide", None),
+    ]
+    assert lignes[2]["motifs"] == ["Montant devise manquant (compte en EUR)."]

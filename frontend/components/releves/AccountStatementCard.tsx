@@ -4,6 +4,7 @@ import { ChevronUp, Download, ListOrdered, PenLine, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { TransactionEditModal } from "@/components/releves/TransactionEditModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -281,6 +282,11 @@ export function AccountStatementCard({
       key: "statut",
       header: "Statut",
       render: (row) => <StatusBadge status={row.statut as Status} />,
+    },
+    {
+      key: "code_rapprochement",
+      header: "Code rapprochement",
+      render: (row) => <CodeBadge code={row.code_rapprochement} />,
     },
   ];
   if (canEdit) {

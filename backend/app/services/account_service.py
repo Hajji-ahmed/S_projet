@@ -33,6 +33,11 @@ EDITABLE_FIELDS = (
     "credit_autorise",
     "taux_interet",
     "journal_sage",
+    "journal_frais",
+    "compte_timbre",
+    "compte_commission",
+    "compte_commission_effet",
+    "compte_tva",
 )
 TYPE_LABELS = {"Courant": "courant", "DH convertible": "DH convertible"}
 
@@ -144,6 +149,22 @@ def _check_journal_free(
             )
 
 
+def _check_journal_frais(journal_frais: str | None, journal_sage: str | None) -> None:
+    """Le journal des frais est l'un des journaux Sage du compte (13/10/2026)."""
+    if journal_frais and journal_frais not in journaux_sage(journal_sage):
+        raise ConflictError(
+            f"Le journal des frais {journal_frais} doit faire partie des journaux Sage du compte."
+        )
+
+
+def journal_des_frais(account: BankAccount) -> str | None:
+    """Journal où passent les frais du compte : le journal des frais, sinon le seul journal Sage."""
+    if account.journal_frais:
+        return account.journal_frais
+    journaux = journaux_sage(account.journal_sage)
+    return journaux[0] if len(journaux) == 1 else None
+
+
 def journaux_sage(valeur: str | None) -> list[str]:
     """Journaux d'un compte : « 5243,5543 » → [« 5243 », « 5543 »]."""
     return [item for item in (valeur or "").split(",") if item]
@@ -169,6 +190,11 @@ def create_account(
     acteur_id: int,
     ip: str | None = None,
     journal_sage: str | None = None,
+    journal_frais: str | None = None,
+    compte_timbre: str | None = None,
+    compte_commission: str | None = None,
+    compte_commission_effet: str | None = None,
+    compte_tva: str | None = None,
 ) -> BankAccount:
     company = account_repository.get_company(db, company_id)
     if company is None or not company.actif:
@@ -193,6 +219,7 @@ def create_account(
         type_compte=type_compte,
     )
     _check_journal_free(db, company_id=company.id, journal=journal_sage)
+    _check_journal_frais(journal_frais, journal_sage)
 
     account = BankAccount(
         company_id=company.id,
@@ -203,6 +230,11 @@ def create_account(
         type_compte=type_compte,
         compte_comptable=compte_comptable,
         journal_sage=journal_sage,
+        journal_frais=journal_frais,
+        compte_timbre=compte_timbre,
+        compte_commission=compte_commission,
+        compte_commission_effet=compte_commission_effet,
+        compte_tva=compte_tva,
         credit_autorise=to_amount(credit_autorise),
         taux_interet=pct_to_fraction(taux_interet_pct),
         actif=True,
@@ -239,6 +271,11 @@ def update_account(
     acteur_id: int,
     ip: str | None = None,
     journal_sage: str | None = None,
+    journal_frais: str | None = None,
+    compte_timbre: str | None = None,
+    compte_commission: str | None = None,
+    compte_commission_effet: str | None = None,
+    compte_tva: str | None = None,
 ) -> BankAccount:
     """Société, banque et devise ne sont pas modifiables. Seuls les champs changés sont tracés."""
     account = get_account(db, account_id)
@@ -250,6 +287,11 @@ def update_account(
         "credit_autorise": to_amount(credit_autorise),
         "taux_interet": pct_to_fraction(taux_interet_pct),
         "journal_sage": journal_sage,
+        "journal_frais": journal_frais,
+        "compte_timbre": compte_timbre,
+        "compte_commission": compte_commission,
+        "compte_commission_effet": compte_commission_effet,
+        "compte_tva": compte_tva,
     }
     changed = tuple(
         field for field, value in new_values.items() if getattr(account, field) != value
@@ -276,6 +318,9 @@ def update_account(
         _check_journal_free(
             db, company_id=account.company_id, journal=journal_sage, account_id=account.id
         )
+
+    if {"journal_frais", "journal_sage"} & set(changed):
+        _check_journal_frais(journal_frais, journal_sage)
 
     avant = _snapshot(account, changed)
     for field in changed:
@@ -343,6 +388,11 @@ ATTRIBUTS_AUDIT_SUPPRESSION = (
     "type_compte",
     "compte_comptable",
     "journal_sage",
+    "journal_frais",
+    "compte_timbre",
+    "compte_commission",
+    "compte_commission_effet",
+    "compte_tva",
     "credit_autorise",
     "taux_interet",
     "actif",

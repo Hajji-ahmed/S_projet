@@ -1107,6 +1107,7 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
         "statut": "Non rapprochée",
         "origine": "Fichier",
         "pointage_type_id": pointage_id(db, "CHEQUE_DE_BANQUE"),
+        "code_rapprochement": None,
     }
     # Les 11 champs du format standard d'abord, dans leur ordre
     assert list(second)[1:12] == [
@@ -1185,6 +1186,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
         "Solde",
         "Lettrage / Escompte",
         "Commentaire",
+        "Code rapprochement",  # hors format standard, en dernier (13/10/2026)
     ]
     assert values[1] == [
         "Simtis",
@@ -1198,6 +1200,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
         1050000,
         "L-12",
         None,
+        None,  # pas encore rapprochée
     ]
     # Pointage inconnu du fichier : déduit du libellé (FRAIS) ; montants en vrais nombres
     assert values[2][:3] == ["Simtis", "FRAIS", "CIH"]
@@ -1336,7 +1339,7 @@ def test_account_statement_export(client, tresorerie, account):
         'attachment; filename="releve_CIH_MAD_2026-09-24_2026-10-01.xlsx"'
     )
     values = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
-    assert values[0][3] == "Date d'opération" and len(values[0]) == 11
+    assert values[0][3] == "Date d'opération" and len(values[0]) == 12
     assert [row[3].date() for row in values[1:]] == [
         date(2026, 9, 24),
         date(2026, 9, 25),

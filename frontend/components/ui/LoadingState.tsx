@@ -1,7 +1,7 @@
 import { cn } from "@/lib/cn";
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("animate-pulse rounded bg-simtis-light/60", className)} />;
+  return <div className={cn("animate-pulse rounded-md bg-simtis-border/60", className)} />;
 }
 
 /** Squelette de tableau ou de liste, à afficher pendant le chargement des données. */

@@ -55,7 +55,7 @@ export function DataTable<T extends Record<string, unknown>>({
   return (
     <div
       className={cn(
-        "overflow-x-auto rounded-[12px] border border-simtis-border bg-simtis-card",
+        "overflow-x-auto rounded-card border border-simtis-border bg-simtis-card",
         className,
       )}
     >
@@ -110,7 +110,7 @@ export function DataTable<T extends Record<string, unknown>>({
                       : undefined
                   }
                   className={cn(
-                    "border-b border-simtis-border/70 transition-colors last:border-b-0",
+                    "border-b border-simtis-border/70 transition-colors duration-150 last:border-b-0",
                     selected ? "bg-simtis-light" : "bg-simtis-card hover:bg-simtis-light/40",
                     isRowMuted?.(row) && "text-simtis-muted",
                     onRowClick &&

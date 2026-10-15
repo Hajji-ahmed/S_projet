@@ -3,15 +3,15 @@ import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react
 import { cn } from "@/lib/cn";
 
 const CONTROL =
-  "h-[42px] w-full rounded-lg border bg-simtis-card px-3 text-sm text-simtis-text placeholder:text-simtis-muted " +
-  "transition-colors focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:bg-simtis-background disabled:text-simtis-muted";
+  "h-[42px] w-full rounded-[10px] border bg-simtis-card px-3 text-sm text-simtis-text placeholder:text-simtis-muted " +
+  "transition-colors duration-200 hover:border-simtis-chart-4 focus:ring-4 focus:outline-none disabled:cursor-not-allowed disabled:bg-simtis-background disabled:text-simtis-muted";
 
 function controlClasses(invalid: boolean | undefined, className?: string) {
   return cn(
     CONTROL,
     invalid
-      ? "border-simtis-danger focus:border-simtis-danger focus:ring-simtis-danger/15"
-      : "border-simtis-border focus:border-simtis-primary focus:ring-simtis-primary/15",
+      ? "border-simtis-danger focus:border-simtis-danger focus:ring-simtis-danger/10"
+      : "border-simtis-border focus:border-simtis-primary focus:ring-simtis-primary/10",
     className,
   );
 }

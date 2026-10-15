@@ -18,7 +18,7 @@ export function Card({ title, icon: Icon, action, className, children }: CardPro
   return (
     <section
       className={cn(
-        "rounded-[14px] border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6",
+        "rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6",
         className,
       )}
     >
@@ -26,18 +26,22 @@ export function Card({ title, icon: Icon, action, className, children }: CardPro
         <header className="mb-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             {Icon && (
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-simtis-light text-simtis-primary">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-simtis-light text-simtis-primary">
                 <Icon className="h-5 w-5" aria-hidden />
               </span>
             )}
-            <h2 className="text-base font-semibold text-simtis-text">{title}</h2>
+            <h2 className="text-base font-semibold tracking-tight text-simtis-text">{title}</h2>
           </div>
           {action && (
             <Link
               href={action.href}
-              className="flex items-center gap-1 text-sm font-medium whitespace-nowrap text-simtis-primary hover:underline"
+              className="group flex items-center gap-1 rounded-md text-sm font-medium whitespace-nowrap text-simtis-primary transition-colors hover:text-simtis-primary-dark"
             >
-              {action.label} <ArrowRight className="h-4 w-4" aria-hidden />
+              {action.label}{" "}
+              <ArrowRight
+                className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5"
+                aria-hidden
+              />
             </Link>
           )}
         </header>

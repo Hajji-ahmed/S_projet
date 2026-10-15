@@ -40,7 +40,12 @@ from app.models import (
     ImportBatch,
     PointageType,
 )
-from app.repositories import account_repository, balance_repository, import_repository
+from app.repositories import (
+    account_repository,
+    balance_repository,
+    import_repository,
+    reconciliation_repository,
+)
 from app.services import account_service, audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
@@ -1464,6 +1469,8 @@ STANDARD_HEADERS = (
     "Lettrage / Escompte",
     "Commentaire",
 )
+# Hors format standard, en dernière colonne : le code du rapprochement validé (13/10/2026)
+CODE_HEADER = "Code rapprochement"
 _DATE_FORMAT = "DD/MM/YYYY"
 _AMOUNT_FORMAT = "#,##0.00"
 _WIDTHS = (16, 18, 10, 16, 16, 48, 16, 16, 18, 22, 32)
@@ -1481,11 +1488,14 @@ def export_filename(statement: BankStatement) -> str:
 def export_statement(db: Session, statement_id: int) -> tuple[str, bytes]:
     """Un fichier importé, au format standard, en classeur Excel."""
     statement, rows = statement_transactions(db, statement_id)
-    return export_filename(statement), _standard_workbook(statement.bank_account, rows)
+    codes = reconciliation_repository.codes_of_transactions(db, [t.id for t, _ in rows])
+    return export_filename(statement), _standard_workbook(statement.bank_account, rows, codes)
 
 
 def _standard_workbook(
-    account: BankAccount, rows: list[tuple[BankTransaction, str | None]]
+    account: BankAccount,
+    rows: list[tuple[BankTransaction, str | None]],
+    codes: dict[int, str] | None = None,
 ) -> bytes:
     """Relevé au format standard, en classeur Excel : une feuille, les 11 colonnes.
 
@@ -1495,7 +1505,8 @@ def _standard_workbook(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Relevé standard"
-    sheet.append(STANDARD_HEADERS)
+    sheet.append((*STANDARD_HEADERS, CODE_HEADER))
+    codes = codes or {}
     for cell in sheet[1]:
         cell.font = Font(bold=True)
     for transaction, pointage in rows:
@@ -1512,6 +1523,7 @@ def _standard_workbook(
                 transaction.solde,
                 transaction.lettrage_escompte,
                 transaction.commentaire,
+                codes.get(transaction.id),
             ]
         )
     for row in sheet.iter_rows(min_row=2):
@@ -1544,6 +1556,8 @@ class AccountStatement:
     total_credit: Decimal
     solde_ouverture: Decimal | None
     solde_cloture: Decimal | None
+    # Code du rapprochement validé de chaque opération (13/10/2026)
+    codes: dict[int, str] = field(default_factory=dict)
 
 
 def account_statement(
@@ -1569,6 +1583,7 @@ def account_statement(
         if first and first.solde is not None
         else None,
         solde_cloture=last.solde if last else None,
+        codes=reconciliation_repository.codes_of_transactions(db, [t.id for t in transactions]),
     )
 
 
@@ -1584,7 +1599,7 @@ def export_account_statement(
         f"releve_{account.bank.code}_{account.devise}_"
         f"{result.periode_debut}_{result.periode_fin}.xlsx"
     )
-    return filename, _standard_workbook(account, result.rows)
+    return filename, _standard_workbook(account, result.rows, result.codes)
 
 
 # --- Relevé déjà importé sans soldes : recalcul (08/10/2026) ---------------------------------------

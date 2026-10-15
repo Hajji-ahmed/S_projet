@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api";
+import { apiDownload, apiFetch } from "@/lib/api";
 import {
   reconciliationQuery,
   type ReconciliationFilter,
@@ -113,4 +113,9 @@ export function listAmbiguous(companyId: number, filter: ReconciliationFilter, p
   return apiFetch<Ambigues>(
     `/reconciliation/ambiguous${reconciliationQuery(companyId, { ...filter, page })}`,
   );
+}
+
+/** Lettrage (rapprochements validés) du filtre de l'historique, en classeur Excel (14/10/2026). */
+export function exportLettrage(companyId: number, filter: ReconciliationFilter) {
+  return apiDownload(`/reconciliation/export${reconciliationQuery(companyId, filter)}`);
 }

@@ -168,3 +168,40 @@ La tolérance reste de 3 jours et la fenêtre de 10 jours ; un effet est aussi c
 ## Espèces comparées par l'échéance (12/10/2026)
 
 Les espèces (`ESP` côté Sage, `VERSEMENT DEPLACE` côté banque) suivent la règle des effets : la date Sage comparée est l'échéance (sinon la date de l'écriture), face à la date de valeur ou d'opération bancaire, la plus proche ; l'écriture est aussi cherchée par son échéance. L'export Sage de Simtis titre l'échéance « ECH » : reconnu à l'import (synonyme et abréviation). Les écritures importées avant ce changement n'ont pas d'échéance : réimporter l'export.
+
+## Dates par type, décision du 12/10/2026 (remplace les deux sections précédentes)
+
+| Type | Libellé Sage | Libellé banque | Date Sage | Date banque |
+|---|---|---|---|---|
+| Chèque | `EAR1°` | `ENCAISSEMENT CHEQUE` | Date de l'écriture | Date d'opération |
+| Effet | `EAR°` | `ENCAISSEMENT EFFET`, `REMISE D'EFFETS` | Date de l'écriture | Date d'opération |
+| Espèces | `ESP` | `VERSEMENT DEPLACE` | Échéance, sinon date de l'écriture | Date de valeur ou d'opération, la plus proche |
+| Virement | `VIREMENT`, `VIRT`, `VIR` | `VIREMENT`, `VIRT`, `VIR`, `RTGS` | Échéance, sinon date de l'écriture | Date de valeur ou d'opération, la plus proche |
+| Autres | — | — | Date de l'écriture | Date d'opération |
+
+La tolérance reste dégressive sur 3 jours (30 · 22,5 · 15 · 7,5 · 0) et la fenêtre de comparaison de 10 jours (option A retenue : pas de limite stricte à 3 jours, pour que le n° de chèque et le montant puissent encore proposer une paire plus éloignée). Deux types connus et différents ne sont jamais comparés : un virement ne se rapproche pas d'un chèque.
+
+## Rapprochement groupé N → 1 (12/10/2026)
+
+Plusieurs opérations bancaires pour une écriture Sage, quand la somme signée des opérations vaut exactement l'opposé du montant de l'écriture (`reconciliation_groupes.py`, règles pures). Le moteur fait d'abord le 1 → 1, puis cherche des groupes parmi ce qui reste libre (même compte, dates selon les règles du type) :
+
+1. **par référence** : opérations qui partagent un n° (5 chiffres ou plus) avec l'écriture, avec au besoin des frais du même jour ;
+2. **opération + frais** : une opération (chèque, effet, virement, espèces, autre) et 1 à 3 frais du même jour (ex. 10 000 + commission 50 + TVA 10 = 10 060) ;
+3. **frais du jour** : tous les timbres du jour = « DT D'ENREGISTREMENT », intérêt d'escompte + TVA = « FRAIS D'ESCOMPTE/n° », commission + TVA = « COM ».
+
+Score : montant 50 + n° commun 40 + date (écart le plus grand du groupe) + libellé de l'opération principale, plafonné à 100 ; explication enregistrée dans `detail_score.explication` (« … 10 000,00 + COMMISSION 50,00 = 10 050,00 · n° … commun · même jour »). Prudence : un autre groupe distinct à moins de 10 points rend l'écriture ambiguë (pas de proposition) ; des lignes indiscernables (mêmes libellés et montants) ne créent pas d'ambiguïté ; une opération n'entre que dans un groupe ; un groupe équilibré passe avant une paire 1 → 1 aux montants différents ; une paire déjà rejetée exclut le groupe. Type `N-1`, aucune migration ; validation (une à une ou en lot), rejet, annulation avec motif et audit sont ceux du 1 → 1. Données d'origine jamais modifiées.
+
+À venir : création manuelle d'un groupe, et le sens 1 → N (une remise bancaire pour plusieurs effets Sage).
+
+
+## Code de rapprochement (13/10/2026)
+
+Chaque rapprochement validé reçoit un code « BANQUE-AA-NNNNNN » (« BP-26-000123 ») : un compteur par compte bancaire et par année de validation, sans trou, unique par société (migration 0023, table `reconciliation_code_counters`). Une proposition n'a pas de code. Un rapprochement annulé garde le sien ; une revalidation reçoit un nouveau code, jamais réutilisé. Le code est affiché dans les volets Transactions / Écritures, l'historique, le panneau de correspondance, le relevé par compte, la page Écritures et en dernière colonne des exports du relevé ; la recherche le retrouve.
+
+## Droits de timbre comptabilisés par SIMTIS (13/10/2026)
+
+Hors cahier des charges, décision du métier. Les droits de timbre du relevé d'un même jour et d'un même compte forment une écriture « DT D'ENREGISTREMENT ». SIMTIS la calcule, Mustapha la valide : l'écriture (ligne banque, origine SIMTIS) est enregistrée et rapprochée tout de suite de ses timbres, son code de rapprochement sert de N° de pièce. Elle s'exporte ensuite en Excel pour Sage (débit du compte de charge des timbres, crédit du compte bancaire). Un jour déjà passé dans Sage n'est jamais proposé ; une écriture SIMTIS qui revient dans un export Sage est un doublon. Avant l'export, une écriture se supprime (motif obligatoire) ; après, elle se corrige dans Sage. Paramètres par compte : journal des frais et compte de charge des timbres (écran Comptes). Prochaines familles : commissions + TVA, escompte + TVA.
+
+## Commissions comptabilisées par SIMTIS (13/10/2026)
+
+Même mécanisme que les droits de timbre : une écriture « COM » par jour et par compte, avec une ligne par type, seulement pour quatre libellés exacts du relevé : « COMMISSION », « TAXE SUR VALEUR AJOUTEE », « COMMISSION EFFET N … REMIS PAR … » et « TVA COM EFFET N … REMIS PAR … ». Les autres commissions (RTGS, prélèvement, CNSS…) restent manuelles. Un jour où Sage a déjà une écriture « COM » n'est pas proposé. Comptes de l'export, par compte bancaire : charge commissions, charge commissions effet, TVA récupérable.

@@ -1,15 +1,13 @@
 "use client";
 
-import { Bell, ChevronDown, LogOut, Menu } from "lucide-react";
+import { ChevronDown, LogOut, Menu } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { CompanySelector } from "@/components/company/CompanySelector";
+import { AlertBell } from "@/components/layout/AlertBell";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { cn } from "@/lib/cn";
-
-// Nombre d'alertes non lues : 0 tant qu'il n'y a pas de centre de notifications.
-const UNREAD_NOTIFICATIONS = 0;
 
 function UserMenu() {
   const { user, logout } = useAuth();
@@ -49,11 +47,11 @@ function UserMenu() {
         onClick={() => setOpen((isOpen) => !isOpen)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex items-center gap-3 rounded-lg p-1 transition-colors hover:bg-simtis-light"
+        className="flex items-center gap-3 rounded-full p-1 pr-2 transition-colors duration-200 hover:bg-simtis-surface"
       >
         <span
           aria-hidden
-          className="grid h-10 w-10 place-items-center rounded-full bg-simtis-primary text-base font-semibold text-white"
+          className="grid h-10 w-10 place-items-center rounded-full bg-simtis-sidebar text-base font-semibold text-white ring-2 ring-simtis-light"
         >
           {user.nom.charAt(0).toUpperCase()}
         </span>
@@ -75,7 +73,7 @@ function UserMenu() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 mt-2 w-64 rounded-[12px] border border-simtis-border bg-simtis-card p-2 shadow-simtis"
+          className="absolute right-0 mt-2 w-64 rounded-card border border-simtis-border bg-simtis-card p-2 shadow-simtis-hover"
         >
           <div className="px-3 py-2">
             <p className="truncate text-sm font-semibold text-simtis-text">{user.nom}</p>
@@ -88,7 +86,7 @@ function UserMenu() {
             role="menuitem"
             onClick={handleLogout}
             disabled={leaving}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-simtis-text transition-colors hover:bg-simtis-light disabled:opacity-60"
+            className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-sm text-simtis-text transition-colors hover:bg-simtis-surface disabled:opacity-60"
           >
             <LogOut className="h-4 w-4 text-simtis-muted" aria-hidden />
             {leaving ? "Déconnexion..." : "Se déconnecter"}
@@ -101,33 +99,22 @@ function UserMenu() {
 
 export function AppHeader({ onMenuClick }: { onMenuClick: () => void }) {
   return (
-    <header className="sticky top-0 z-20 flex h-[var(--simtis-header-height)] items-center justify-between gap-4 border-b border-simtis-border bg-simtis-card px-4 sm:px-6">
+    <header className="sticky top-0 z-20 flex h-[var(--simtis-header-height)] items-center justify-between gap-4 border-b border-simtis-border/80 bg-simtis-card/85 px-4 backdrop-blur-md sm:px-6 lg:px-8">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <button
           type="button"
           onClick={onMenuClick}
           aria-label="Ouvrir le menu"
-          className="rounded-lg p-2 text-simtis-text transition-colors hover:bg-simtis-light md:hidden"
+          className="rounded-[10px] p-2 text-simtis-text transition-colors hover:bg-simtis-surface md:hidden"
         >
           <Menu className="h-6 w-6" aria-hidden />
         </button>
         <SearchBar />
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-3">
         <CompanySelector />
-        <button
-          type="button"
-          aria-label="Notifications"
-          className="relative rounded-lg p-2 text-simtis-text transition-colors hover:bg-simtis-light"
-        >
-          <Bell className="h-[22px] w-[22px]" aria-hidden />
-          {UNREAD_NOTIFICATIONS > 0 && (
-            <span className="absolute top-0.5 right-0.5 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-simtis-danger px-1 text-[11px] font-semibold text-white">
-              {UNREAD_NOTIFICATIONS}
-            </span>
-          )}
-        </button>
+        <AlertBell />
         <UserMenu />
       </div>
     </header>

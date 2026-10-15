@@ -107,6 +107,14 @@ class BankAccount(TimestampMixin, Base):
     # les écritures importées (P10). Un journal ne sert qu'à un compte actif par société : déclencheur
     # `bank_accounts_journaux_uniques` (migration 0022)
     journal_sage: Mapped[str | None] = mapped_column(String(120))
+    # Comptabilisation des droits de timbre (13/10/2026, migration 0024) : journal Sage des frais
+    # (5543 pour BP ; à défaut, le seul journal du compte) et compte de charge des timbres
+    journal_frais: Mapped[str | None] = mapped_column(String(10))
+    compte_timbre: Mapped[str | None] = mapped_column(String(20))
+    # Comptabilisation des commissions (13/10/2026, migration 0025) : comptes Sage de l'export
+    compte_commission: Mapped[str | None] = mapped_column(String(20))
+    compte_commission_effet: Mapped[str | None] = mapped_column(String(20))
+    compte_tva: Mapped[str | None] = mapped_column(String(20))
     credit_autorise: Mapped[Montant] = mapped_column(default=Decimal("0"), server_default="0")
     taux_interet: Mapped[Taux | None]
     actif: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

@@ -37,7 +37,7 @@ export function AppSidebar({
   return (
     <aside
       className={cn(
-        "fixed inset-y-0 left-0 z-40 flex w-[var(--simtis-sidebar-width)] flex-col bg-simtis-primary-dark text-white/80 transition-[translate,width] duration-200",
+        "fixed inset-y-0 left-0 z-40 flex w-[var(--simtis-sidebar-width)] flex-col bg-simtis-sidebar text-white/80 transition-[translate,width] duration-200",
         mobileOpen ? "translate-x-0" : "-translate-x-full",
         "md:w-[var(--simtis-sidebar-collapsed-width)] md:translate-x-0",
         collapsed
@@ -47,23 +47,31 @@ export function AppSidebar({
     >
       <div
         className={cn(
-          "flex h-[88px] shrink-0 items-center border-r-2 border-simtis-primary bg-simtis-card px-5 md:justify-center md:px-2",
-          collapsed ? "lg:justify-center lg:px-2" : "lg:justify-start lg:px-5",
+          "flex h-[88px] shrink-0 items-center px-4 md:justify-center md:px-2",
+          collapsed ? "lg:justify-center lg:px-2" : "lg:justify-start lg:px-4",
         )}
       >
-        <Image
-          src="/logo-simtis.png"
-          alt="SIMTIS — Printing & Weaving"
-          width={373}
-          height={135}
-          priority
-          className={cn("h-auto w-[176px] md:w-14", collapsed ? "lg:w-14" : "lg:w-[176px]")}
-        />
+        {/* Le logo garde son fond blanc d'origine : jamais recoloré */}
+        <span
+          className={cn(
+            "rounded-xl bg-white px-3 py-2 shadow-simtis md:px-1.5 md:py-1.5",
+            collapsed ? "lg:px-1.5 lg:py-1.5" : "lg:px-3 lg:py-2",
+          )}
+        >
+          <Image
+            src="/logo-simtis.png"
+            alt="SIMTIS — Printing & Weaving"
+            width={373}
+            height={135}
+            priority
+            className={cn("h-auto w-[160px] md:w-11", collapsed ? "lg:w-11" : "lg:w-[160px]")}
+          />
+        </span>
       </div>
 
       <nav
         aria-label="Navigation principale"
-        className="flex-1 space-y-1 overflow-y-auto px-3 py-4"
+        className="flex-1 space-y-1 overflow-y-auto px-3 py-3"
       >
         {items.map(({ label, href, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -75,12 +83,12 @@ export function AppSidebar({
               title={label}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "relative flex items-center gap-3 rounded-[10px] px-4 py-2.5 text-[15px] transition-colors duration-200",
+                "relative flex items-center gap-3 rounded-[12px] px-4 py-2.5 text-[15px] transition-colors duration-200",
                 "md:justify-center md:px-0",
                 collapsed ? "lg:justify-center lg:px-0" : "lg:justify-start lg:px-4",
                 active
-                  ? "bg-white/10 text-white before:absolute before:top-2 before:bottom-2 before:left-0 before:w-[3px] before:rounded-full before:bg-simtis-secondary"
-                  : "text-white/75 hover:bg-white/5 hover:text-white",
+                  ? "bg-simtis-primary font-medium text-white shadow-simtis before:absolute before:top-2.5 before:bottom-2.5 before:-left-3 before:w-1 before:rounded-r-full before:bg-simtis-secondary"
+                  : "text-white/70 hover:bg-white/[0.06] hover:text-white",
               )}
             >
               <Icon className="h-5 w-5 shrink-0" strokeWidth={1.75} aria-hidden />
@@ -99,7 +107,7 @@ export function AppSidebar({
           aria-label={collapsed ? "Agrandir le menu" : "Réduire le menu"}
           title={collapsed ? "Agrandir le menu" : "Réduire le menu"}
           className={cn(
-            "flex items-center gap-3 rounded-[10px] py-2.5 text-[15px] text-white/75 transition-colors duration-200 hover:bg-white/5 hover:text-white focus-visible:outline-2 focus-visible:outline-simtis-secondary",
+            "flex items-center gap-3 rounded-[12px] py-2.5 text-[15px] text-white/70 transition-colors duration-200 hover:bg-white/[0.06] hover:text-white",
             collapsed ? "justify-center px-3" : "w-full px-4",
           )}
         >
@@ -114,12 +122,20 @@ export function AppSidebar({
 
       <div
         className={cn(
-          "shrink-0 px-6 py-5 text-xs text-white/60 md:hidden",
-          collapsed ? "lg:hidden" : "lg:block",
+          "mx-3 mb-4 flex shrink-0 items-center gap-3 rounded-card border border-white/10 bg-white/[0.04] px-3 py-3 text-xs text-white/60 md:hidden",
+          collapsed ? "lg:hidden" : "lg:flex",
         )}
       >
-        <p className="text-sm font-medium text-white/80">SIMTIS Finance</p>
-        <p>v1.0.0</p>
+        <span
+          aria-hidden
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-semibold text-white"
+        >
+          S
+        </span>
+        <span>
+          <span className="block text-sm font-medium text-white/85">SIMTIS Finance</span>
+          <span className="block">v1.0.0</span>
+        </span>
       </div>
     </aside>
   );

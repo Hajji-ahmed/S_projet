@@ -1,0 +1,367 @@
+"""Rapprochement groupé N → 1 (décision du 12/10/2026) : règles pures, sans base de données.
+
+Plusieurs opérations bancaires pour une seule écriture Sage, quand leur somme vaut exactement
+l'opposé du montant de l'écriture (un crédit banque est un débit Sage). Trois familles de groupes :
+
+- **par référence** : des opérations qui partagent un n° (5 chiffres ou plus) avec l'écriture, avec
+  au besoin des frais du même jour (« REMISE D'EFFETS N 7082678 » + « DROITS DE TIMBRE … 7082678 ») ;
+- **opération + frais** : une opération (chèque, effet, virement, espèces, autre) et des frais du
+  même jour (10 000 + commission 50 + TVA 10 = 10 060) ;
+- **frais du jour** : des frais d'un même jour (tous les timbres du jour = « DT D'ENREGISTREMENT »,
+  intérêt d'escompte + sa TVA = « FRAIS D'ESCOMPTE/n° », commission + TVA = « COM »).
+
+Le moteur ne fait que proposer : un humain valide chaque groupe. Prudence : aucun groupe pour une
+écriture qui a deux groupes différents possibles (sauf lignes indiscernables, mêmes libellés et
+montants), et une opération n'entre que dans un groupe.
+"""
+
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from decimal import Decimal
+from functools import lru_cache
+from itertools import combinations
+
+from app.services.reconciliation_scoring import (
+    CENT,
+    ZERO,
+    Ecriture,
+    Grille,
+    Operation,
+    Score,
+    _plain,
+    _points,
+    ecart_jours,
+    numeros,
+    ratio_date,
+    ratio_libelle,
+    type_ecriture,
+    types_compatibles,
+)
+
+# Au plus 6 opérations dans un groupe cherché par combinaisons ; les totaux d'une famille de frais
+# du jour (tous les timbres du jour) ne sont pas limités
+MAX_LIGNES = 6
+# Taille des combinaisons de frais d'un jour : paires sur tous les frais, triplets sur les 20 premiers
+MAX_FRAIS_TRIPLETS = 20
+
+# Début du libellé (normalisé) d'un frais bancaire, et sa famille pour les totaux du jour
+FAMILLES_FRAIS: tuple[tuple[str, str], ...] = (
+    ("DROITS DE TIMBRE", "timbre"),
+    ("DROIT DE TIMBRE", "timbre"),
+    ("COMMISSION", "commission"),
+    ("COM ", "commission"),
+    ("TAXE SUR VALEUR AJOUTEE", "tva"),
+    ("TVA", "tva"),
+    ("INTERET", "interet"),
+    ("AGIOS", "interet"),
+    ("FRAIS", "frais"),
+)
+
+
+@lru_cache(maxsize=20_000)
+def famille_frais(libelle: str | None) -> str | None:
+    """Famille d'un frais bancaire (timbre, commission, tva, interet, frais), sinon None."""
+    texte = _plain(libelle) + " "
+    for prefixe, famille in FAMILLES_FRAIS:
+        if texte.startswith(prefixe):
+            return famille
+    return None
+
+
+@dataclass(frozen=True)
+class Groupe:
+    ecriture_id: int
+    operation_ids: tuple[int, ...]
+    principale_id: int
+    score: Score
+    explication: str
+
+
+@dataclass
+class ResultatGroupes:
+    groupes: list[Groupe] = field(default_factory=list)
+    # Écritures qui ont plusieurs groupes possibles : jamais proposées, à trancher à la main
+    ecritures_ambigues: set[int] = field(default_factory=set)
+
+
+def _montant_texte(value: Decimal) -> str:
+    entier, decimales = f"{abs(value):.2f}".split(".")
+    return f"{'-' if value < 0 else ''}{int(entier):,}".replace(",", " ") + f",{decimales}"
+
+
+def _signature(ops: Sequence[Operation]) -> tuple:
+    """Lignes indiscernables : mêmes libellés et mêmes montants, quel que soit leur identifiant."""
+    return tuple(sorted((_plain(op.libelle), op.montant) for op in ops))
+
+
+def score_groupe(ops: Sequence[Operation], ecriture: Ecriture, grille: Grille) -> Score:
+    """Montant exact (toujours, sinon pas de groupe) + n° commun + date (écart le plus grand) +
+    libellé de l'opération principale (la plus grosse), plafonné à 100."""
+    principale = max(ops, key=lambda op: abs(op.montant))
+    commun = any(numeros(op.libelle, op.reference) for op in ops) and bool(
+        set().union(*(numeros(op.libelle, op.reference) for op in ops))
+        & numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
+    )
+    ecart = max(ecart_jours(op, ecriture) for op in ops)
+    detail = {
+        "reference": grille.reference if commun else ZERO,
+        "montant": grille.montant,
+        "date": _points(grille.date, ratio_date(ecart, grille.tolerance_jours)),
+        "libelle": _points(grille.libelle, ratio_libelle(principale, ecriture)),
+        "tiers": ZERO,
+    }
+    detail = {code: value.quantize(CENT) for code, value in detail.items()}
+    total = min(sum(detail.values(), ZERO), Decimal("100.00")).quantize(CENT)
+    return Score(total=total, detail=detail)
+
+
+def explication(ops: Sequence[Operation], ecriture: Ecriture) -> str:
+    """« ENCAISSEMENT CHEQUE N 1550018 10 000,00 + COMMISSION 50,00 = 10 050,00 · n° 1550018 »."""
+    lignes = sorted(ops, key=lambda op: -abs(op.montant))
+    parties = " + ".join(f"{op.libelle[:40]} {_montant_texte(abs(op.montant))}" for op in lignes)
+    total = sum((op.montant for op in ops), ZERO)
+    texte = f"{parties} = {_montant_texte(abs(total))}"
+    communs = set().union(*(numeros(op.libelle, op.reference) for op in ops)) & numeros(
+        ecriture.libelle, ecriture.reference, ecriture.numero_piece
+    )
+    if communs:
+        texte += f" · n° {', '.join(sorted(communs))} commun"
+    ecart = max(ecart_jours(op, ecriture) for op in ops)
+    texte += " · même jour" if ecart == 0 else f" · jusqu'à {ecart} j d'écart"
+    return texte
+
+
+def _candidats_ecriture(
+    ecriture: Ecriture,
+    par_compte_jour: dict[tuple[int | None, date], list[Operation]],
+    grille: Grille,
+) -> list[Operation]:
+    """Opérations libres du même compte, de date comparable à l'écriture (règles du type)."""
+    jour = ecriture.echeance or ecriture.date_ecriture
+    jours = {ecriture.date_ecriture, jour}
+    vues: dict[int, Operation] = {}
+    for base in jours:
+        for decalage in range(-grille.fenetre_jours, grille.fenetre_jours + 1):
+            for op in par_compte_jour.get(
+                (ecriture.bank_account_id, base + timedelta(decalage)), ()
+            ):
+                if ecart_jours(op, ecriture) <= grille.fenetre_jours:
+                    vues[op.id] = op
+    return list(vues.values())
+
+
+class _SommesDuJour:
+    """Sommes des combinaisons de 1 à 3 frais d'un même compte et d'un même jour, calculées une
+    fois par jour : une écriture ou une opération principale y cherche son complément d'un coup."""
+
+    def __init__(self, par_compte_jour: dict[tuple[int | None, date], list[Operation]]):
+        self._jours = par_compte_jour
+        self._cache: dict[tuple[int | None, date], dict[Decimal, list[tuple[Operation, ...]]]] = {}
+        self._frais: dict[tuple[int | None, date], list[Operation]] = {}
+
+    def frais(self, cle: tuple[int | None, date]) -> list[Operation]:
+        if cle not in self._frais:
+            self._frais[cle] = [op for op in self._jours.get(cle, []) if famille_frais(op.libelle)]
+        return self._frais[cle]
+
+    def sommes(self, cle: tuple[int | None, date]) -> dict[Decimal, list[tuple[Operation, ...]]]:
+        if cle not in self._cache:
+            frais = self.frais(cle)
+            table: dict[Decimal, list[tuple[Operation, ...]]] = {}
+            for taille in (1, 2, 3):
+                pool = frais if taille < 3 else frais[:MAX_FRAIS_TRIPLETS]
+                for combo in combinations(pool, taille):
+                    table.setdefault(sum((op.montant for op in combo), ZERO), []).append(combo)
+            self._cache[cle] = table
+        return self._cache[cle]
+
+
+def _groupes_possibles(
+    ecriture: Ecriture, candidats: list[Operation], sommes: _SommesDuJour
+) -> list[tuple[Operation, ...]]:
+    """Ensembles d'au moins deux opérations dont la somme vaut l'opposé de l'écriture."""
+    cible = -ecriture.montant
+    compte = ecriture.bank_account_id
+    ids_candidats = {op.id for op in candidats}
+    trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
+
+    def garder(ops: Iterable[Operation]) -> None:
+        ops = tuple(ops)
+        if len({op.id for op in ops}) != len(ops) or len(ops) < 2:
+            return
+        if (
+            all(op.id in ids_candidats for op in ops)
+            and sum((op.montant for op in ops), ZERO) == cible
+        ):
+            trouves.setdefault(frozenset(op.id for op in ops), ops)
+
+    jours = sorted({op.date_operation for op in candidats})
+
+    # 1. Par référence : opérations au n° de l'écriture, avec au besoin des frais du même jour
+    nums = numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
+    if nums:
+        refs = [op for op in candidats if numeros(op.libelle, op.reference) & nums]
+        if refs:
+            pool = list(refs)
+            for jour in sorted({op.date_operation for op in refs}):
+                pool += [op for op in sommes.frais((compte, jour)) if op not in pool]
+            pool = pool[:12]
+            for taille in range(2, min(MAX_LIGNES, len(pool)) + 1):
+                for combo in combinations(pool, taille):
+                    if any(op in refs for op in combo):
+                        garder(combo)
+
+    # 2. Opération principale + 1 à 3 frais du même jour
+    for principale in candidats:
+        if famille_frais(principale.libelle) or not types_compatibles(principale, ecriture):
+            continue
+        table = sommes.sommes((compte, principale.date_operation))
+        for combo in table.get(cible - principale.montant, []):
+            garder((principale, *combo))
+
+    # 3. Frais du jour, pour une écriture qui n'est ni chèque, ni effet, ni espèces, ni virement
+    if not type_ecriture(ecriture.libelle):
+        for jour in jours:
+            liste = sommes.frais((compte, jour))
+            par_famille: dict[str, list[Operation]] = {}
+            for op in liste:
+                par_famille.setdefault(famille_frais(op.libelle) or "", []).append(op)
+            # Totaux : tous les frais du jour, une famille entière, commissions ou intérêts + TVA
+            garder(liste)
+            for ops in par_famille.values():
+                garder(ops)
+            garder(par_famille.get("commission", []) + par_famille.get("tva", []))
+            garder(par_famille.get("interet", []) + par_famille.get("tva", []))
+            for combo in sommes.sommes((compte, jour)).get(cible, []):
+                garder(combo)
+    return list(trouves.values())
+
+
+def grouper(
+    operations: Iterable[Operation],
+    ecritures: Iterable[Ecriture],
+    grille: Grille,
+    paires_rejetees: frozenset[tuple[int, int]] | set[tuple[int, int]] = frozenset(),
+) -> ResultatGroupes:
+    """Propositions N → 1 sur des opérations et écritures libres (le 1 → 1 a déjà été fait)."""
+    operations = list(operations)
+    par_compte_jour: dict[tuple[int | None, date], list[Operation]] = {}
+    for op in operations:
+        par_compte_jour.setdefault((op.bank_account_id, op.date_operation), []).append(op)
+
+    sommes = _SommesDuJour(par_compte_jour)
+    resultat = ResultatGroupes()
+    meilleurs: list[tuple[Decimal, Ecriture, tuple[Operation, ...]]] = []
+    for ecriture in ecritures:
+        if ecriture.montant == 0:
+            continue
+        candidats = _candidats_ecriture(ecriture, par_compte_jour, grille)
+        possibles = [
+            ops
+            for ops in _groupes_possibles(ecriture, candidats, sommes)
+            if not any((op.id, ecriture.id) in paires_rejetees for op in ops)
+        ]
+        if not possibles:
+            continue
+        notes = sorted(
+            ((score_groupe(ops, ecriture, grille).total, ops) for ops in possibles),
+            key=lambda item: (-item[0], sorted(op.id for op in item[1])),
+        )
+        meilleur, ops = notes[0]
+        if meilleur < grille.seuil_proposition:
+            continue
+        # Un autre groupe à moins de `ecart_ambiguite` points : ambiguïté (prudence, il s'agit de
+        # regrouper de l'argent), sauf lignes indiscernables (mêmes libellés et montants)
+        rivaux = [o for s, o in notes[1:] if meilleur - s < grille.ecart_ambiguite]
+        if any(_signature(o) != _signature(ops) for o in rivaux):
+            resultat.ecritures_ambigues.add(ecriture.id)
+            continue
+        meilleurs.append((meilleur, ecriture, ops))
+
+    # Une opération n'entre que dans un groupe : les meilleurs scores d'abord
+    utilisees: set[int] = set()
+    for _total, ecriture, ops in sorted(meilleurs, key=lambda item: (-item[0], item[1].id)):
+        if any(op.id in utilisees for op in ops):
+            continue
+        utilisees.update(op.id for op in ops)
+        principale = max(ops, key=lambda op: abs(op.montant))
+        resultat.groupes.append(
+            Groupe(
+                ecriture_id=ecriture.id,
+                operation_ids=tuple(sorted(op.id for op in ops)),
+                principale_id=principale.id,
+                score=score_groupe(ops, ecriture, grille),
+                explication=explication(ops, ecriture),
+            )
+        )
+    return resultat
+
+
+# Écriture Sage de frais du jour : familles de frais qu'elle peut contenir (13/10/2026). Un droit
+# de timbre n'est jamais dans une « COM » : sans cette règle, 1 + 20 + 1 = 22 le rattacherait à tort.
+FAMILLES_PAR_ECRITURE = (
+    ("DT D ENREGISTREMENT", {"timbre"}),
+    ("DT D'ENREGISTREMENT", {"timbre"}),
+    ("FRAIS D ESCOMPTE", {"interet", "tva"}),
+    ("FRAIS D'ESCOMPTE", {"interet", "tva"}),
+    ("COM", {"commission", "tva"}),
+    # Frais à TVA comprise (14/10/2026) : commissions RTGS, prélèvement, tenue, frais récupérés
+    ("FRAIS", {"frais", "tva", "timbre"}),
+)
+
+
+def _familles_admises(ecriture: Ecriture) -> set[str] | None:
+    texte = _plain(ecriture.libelle)
+    for prefixe, familles in FAMILLES_PAR_ECRITURE:
+        if texte == prefixe or texte.startswith(prefixe + " ") or texte.startswith(prefixe + "/"):
+            return familles
+    return None
+
+
+def operations_couvertes(
+    operations: Iterable[Operation],
+    ecritures: Iterable[Ecriture],
+    grille: Grille,
+    paires_rejetees: frozenset[tuple[int, int]] | set[tuple[int, int]] = frozenset(),
+    ecart_seul: int = 3,
+    cibles: set[int] | None = None,
+) -> dict[int, int]:
+    """Opérations libres qu'une écriture libre pourrait couvrir : {opération : écriture}.
+
+    Sert à ne jamais comptabiliser dans SIMTIS un frais déjà inclus dans une écriture Sage
+    (13/10/2026) : 1. dans un groupe possible, avec les règles du moteur (une opération principale
+    et ses frais du même jour, les frais d'un jour…), même ambigu ; 2. seul, au montant exactement
+    opposé, à `ecart_seul` jours près. Une paire rejetée par un utilisateur ne couvre rien.
+    """
+    operations = list(operations)
+    par_compte_jour: dict[tuple[int | None, date], list[Operation]] = {}
+    for op in operations:
+        par_compte_jour.setdefault((op.bank_account_id, op.date_operation), []).append(op)
+    sommes = _SommesDuJour(par_compte_jour)
+    couvertes: dict[int, int] = {}
+    for ecriture in ecritures:
+        if ecriture.montant == 0:
+            continue
+        candidats = _candidats_ecriture(ecriture, par_compte_jour, grille)
+        # Écriture sans aucune opération à contrôler parmi ses candidates : rien à chercher
+        if cibles is not None and not any(op.id in cibles for op in candidats):
+            continue
+        admises = _familles_admises(ecriture)
+        for ops in _groupes_possibles(ecriture, candidats, sommes):
+            if any((op.id, ecriture.id) in paires_rejetees for op in ops):
+                continue
+            familles = {famille_frais(op.libelle) for op in ops}
+            if admises is not None and None not in familles and not familles <= admises:
+                continue
+            for op in ops:
+                couvertes.setdefault(op.id, ecriture.id)
+        for op in candidats:
+            if (
+                op.montant == -ecriture.montant
+                and abs((op.date_operation - ecriture.date_ecriture).days) <= ecart_seul
+                and (op.id, ecriture.id) not in paires_rejetees
+                and types_compatibles(op, ecriture)
+            ):
+                couvertes.setdefault(op.id, ecriture.id)
+    return couvertes

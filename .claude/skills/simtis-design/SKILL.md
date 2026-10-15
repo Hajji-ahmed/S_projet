@@ -24,18 +24,19 @@ SIMTIS Finance est une plateforme SaaS de trésorerie et de rapprochement bancai
 
 | Élément | Valeur |
 |---|---|
-| Primary / Primary dark | `#006B70` / `#004F54` (sidebar, titres, boutons principaux, élément actif) |
-| Secondary | `#18B7C8` (accents, graphiques, indicateur actif) |
-| Light | `#E6F7F7` (fond des icônes, en-têtes de tableau, sélection) |
+| Sidebar | `#004F54` (`--simtis-sidebar`) |
+| Primary / Primary dark | `#006B70` / `#004F54` (boutons principaux, élément actif / titres, en-têtes) |
+| Secondary | `#18B7C8` (accents, graphiques, indicateur actif, focus clavier) |
+| Light / Surface | `#E6F7F7` (fond des icônes, en-têtes de tableau, sélection) / `#F5F8FA` (champ de recherche, zones claires) |
 | Background / Card | `#F5F8FA` / `#FFFFFF` |
 | Text / Muted / Border | `#17324D` / `#64748B` / `#D9E3E8` |
-| Success / Warning / Danger | `#16A66A` / `#F59E0B` / `#E5484D` |
+| Success / Warning / Danger / Info | `#16A66A` / `#F59E0B` / `#E5484D` / `#3B82F6` |
 | Police | Inter (ou celle déjà présente) |
 | Titre de page / KPI / Titre de carte / Tableau | 28-32px / 26-32px / 15-17px / 13-14px |
-| Radius | cartes 12-16px · boutons 8-10px · inputs 8px · badges 9999px |
-| Ombre | `0 2px 10px rgba(0,0,0,0.04)` uniquement |
+| Radius | cartes 16px (`rounded-card`) · boutons et inputs 10px · modales 18px · badges 9999px |
+| Ombre | `shadow-simtis` (repos) et `shadow-simtis-hover` (survol, menus, modales) uniquement |
 | Espacements | 4 · 8 · 12 · 16 · 20 · 24 · 32px ; padding de carte 20-24px ; gap 16-20px ; sections 24-32px |
-| Animations | 150-250ms, hover / dropdown / sidebar / transitions uniquement |
+| Animations | 150-220ms, hover / dropdown / sidebar / transitions uniquement ; coupées par `prefers-reduced-motion` |
 | Sidebar / Header | 240-260px teal foncé / 70px blanc |
 | Montants | alignés à droite, `tabular-nums`, format `2 450 000 DH` |
 

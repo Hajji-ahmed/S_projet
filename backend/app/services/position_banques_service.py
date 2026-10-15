@@ -53,6 +53,10 @@ def _soldes(
     }
 
 
+# Soldes retenus par compte et par jour : réutilisés par le dashboard (P15, 14/10/2026)
+soldes_par_compte = _soldes
+
+
 def banques_table(db: Session, company_id: int, jour: date | None) -> TableauBanques:
     """Tableau Banques de la société jusqu'à `jour` (aujourd'hui par défaut, jamais après)."""
     company = _company(db, company_id)

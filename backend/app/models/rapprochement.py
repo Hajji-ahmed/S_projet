@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -60,6 +61,14 @@ class ReconciliationMatch(TimestampMixin, Base):
             name="decision_tracee",
         ),
         Index("ix_reconciliation_matches_societe_decision", "company_id", "decide_le"),
+        # Un code de rapprochement n'existe qu'une fois par société (migration 0023)
+        Index(
+            "uq_reconciliation_matches_code",
+            "company_id",
+            "code",
+            unique=True,
+            postgresql_where=text("code IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -76,6 +85,8 @@ class ReconciliationMatch(TimestampMixin, Base):
     commentaire: Mapped[str | None] = mapped_column(Text)
     # Points obtenus par critère au moment de la proposition : {"montant": "30.00", ...}
     detail_score: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Code donné à la validation (« BP-26-000123 », 13/10/2026), gardé après une annulation
+    code: Mapped[str | None] = mapped_column(String(30))
 
     items: Mapped[list["ReconciliationMatchItem"]] = relationship(
         back_populates="match", cascade="all, delete-orphan"
@@ -190,3 +201,13 @@ class Discrepancy(TimestampMixin, Base):
     traite_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cloture_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cloture_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class ReconciliationCodeCounter(Base):
+    """Dernier numéro de code de rapprochement donné, par compte bancaire et par année (0023)."""
+
+    __tablename__ = "reconciliation_code_counters"
+
+    bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_accounts.id"), primary_key=True)
+    annee: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dernier: Mapped[int] = mapped_column(Integer)

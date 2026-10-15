@@ -6,8 +6,18 @@ from decimal import Decimal
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import AccountingEntry, Bank, BankAccount, ColumnMapping, ImportBatch, User
+from app.models import (
+    AccountingEntry,
+    Bank,
+    BankAccount,
+    ColumnMapping,
+    ImportBatch,
+    ReconciliationMatchItem,
+    User,
+)
+from app.repositories import reconciliation_repository
 from app.services.import_file import HASH_BATCH
+from app.services.reconciliation_scoring import TYPES_SAGE
 
 
 def bank_journals(db: Session, company_id: int) -> list[BankAccount]:
@@ -61,6 +71,7 @@ def entries_query(
     date_to: date | None = None,
     statut: str | None = None,
     q: str | None = None,
+    type_operation: str | None = None,
 ) -> Select:
     """Écritures d'UNE société, filtrées (sans ordre ni pagination)."""
     query = select(AccountingEntry).where(AccountingEntry.company_id == company_id)
@@ -72,6 +83,12 @@ def entries_query(
         query = query.where(AccountingEntry.date_ecriture <= date_to)
     if statut is not None:
         query = query.where(AccountingEntry.statut == statut)
+    if type_operation is not None:
+        query = query.where(
+            reconciliation_repository.type_condition(
+                AccountingEntry.libelle, TYPES_SAGE, type_operation
+            )
+        )
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
         columns = (
@@ -80,7 +97,17 @@ def entries_query(
             AccountingEntry.reference,
             AccountingEntry.tiers,
         )
-        query = query.where(or_(*(column.ilike(pattern, escape="\\") for column in columns)))
+        query = query.where(
+            or_(
+                *(column.ilike(pattern, escape="\\") for column in columns),
+                # Code de rapprochement (« BP-26-000123 », 13/10/2026)
+                AccountingEntry.id.in_(
+                    reconciliation_repository.ids_with_code(
+                        ReconciliationMatchItem.accounting_entry_id, q
+                    )
+                ),
+            )
+        )
     return query
 
 

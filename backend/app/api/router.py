@@ -3,11 +3,17 @@ from fastapi import APIRouter, Depends
 from app.api import (
     accounting,
     accounts,
+    admin,
     auth,
     banks,
+    dashboard,
     discrepancies,
+    frais,
     health,
+    historique,
+    parametres,
     position,
+    rapports,
     reconciliation,
     referentiel,
     statements,
@@ -33,6 +39,12 @@ protected_router.include_router(statements.router)
 protected_router.include_router(accounting.router)
 protected_router.include_router(reconciliation.router)
 protected_router.include_router(discrepancies.router)
+protected_router.include_router(frais.router)
+protected_router.include_router(dashboard.router)
+protected_router.include_router(admin.router)
+protected_router.include_router(historique.router)
+protected_router.include_router(parametres.router)
+protected_router.include_router(rapports.router)
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(public_router)

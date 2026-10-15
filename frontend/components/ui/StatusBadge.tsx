@@ -36,11 +36,12 @@ export function StatusBadge({ status, className }: { status: Status; className?:
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap",
         STATUS_STYLES[status],
         className,
       )}
     >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden />
       {status}
     </span>
   );

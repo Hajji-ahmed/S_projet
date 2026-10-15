@@ -146,6 +146,11 @@ def list_entries(
     statut: Literal["Non rapprochée", "À vérifier", "Rapprochée", "Écart"] | None = None,
     q: Annotated[str | None, Query(max_length=100, description="Libellé, pièce, tiers")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
+    # Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur
+    type_operation: Annotated[
+        Literal["Chèque", "Effet", "Espèces", "Virement", "Autre"] | None,
+        Query(description="Chèque, Effet, Espèces, Virement ou Autre"),
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_read),
 ) -> EcrituresPageOut:
@@ -159,6 +164,7 @@ def list_entries(
         statut=statut,
         q=q,
         page=page,
+        type_operation=type_operation,
     )
     return EcrituresPageOut.from_page(result)
 

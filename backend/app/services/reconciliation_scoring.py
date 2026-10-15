@@ -51,6 +51,8 @@ class Grille:
     tolerance_jours: int = 3
     # Seules les écritures à ± `fenetre_jours` de l'opération sont comparées
     fenetre_jours: int = 10
+    # Chèque ou effet au même n° et au même montant : comparé jusqu'à ± 180 jours (12/10/2026)
+    fenetre_numero_jours: int = 180
     # En dessous : aucune proposition
     seuil_proposition: Decimal = Decimal("50")
     # À partir de : « Forte correspondance », validable en lot (toujours par un humain) ; 80 depuis
@@ -185,12 +187,21 @@ TYPES_SAGE: tuple[tuple[str, str], ...] = (
     ("EAR1", "Chèque"),  # « EAR1° … »
     ("EAR", "Effet"),  # « EAR° … »
     ("ESP", "Espèces"),
+    # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
+    ("VIREMENT", "Virement"),
+    ("VIRT", "Virement"),
+    ("VIR", "Virement"),
 )
 TYPES_BANQUE: tuple[tuple[str, str], ...] = (
     ("ENCAISSEMENT CHEQUE", "Chèque"),
     ("ENCAISSEMENT EFFET", "Effet"),
     ("REMISE D EFFETS", "Effet"),
     ("VERSEMENT DEPLACE", "Espèces"),
+    # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
+    ("VIREMENT", "Virement"),
+    ("VIRT", "Virement"),
+    ("VIR", "Virement"),
+    ("RTGS", "Virement"),
 )
 
 
@@ -202,11 +213,13 @@ def _type(libelle: str | None, regles: tuple[tuple[str, str], ...]) -> str | Non
     return None
 
 
+@lru_cache(maxsize=_CACHE)
 def type_operation(libelle: str | None) -> str | None:
     """Type d'une opération bancaire (Chèque, Effet, Espèces) ; None = autre."""
     return _type(libelle, TYPES_BANQUE)
 
 
+@lru_cache(maxsize=_CACHE)
 def type_ecriture(libelle: str | None) -> str | None:
     """Type d'une écriture Sage (Chèque, Effet, Espèces) ; None = autre."""
     return _type(libelle, TYPES_SAGE)
@@ -256,22 +269,23 @@ def critere_reference(operation: Operation, ecriture: Ecriture) -> bool:
     return any(len(cle) >= 3 and _contient(texte, cle) for cle in cles_ecriture for texte in textes)
 
 
-# Types comparés à leur échéance Sage : effets (09/10/2026) et espèces (12/10/2026)
-TYPES_PAR_ECHEANCE = frozenset({"Effet", "Espèces"})
+# Types comparés à leur échéance Sage (décision du 12/10/2026) : espèces et virements. Chèques et
+# effets sont comparés à la date de l'écriture (points dégressifs sur 3 jours).
+TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement"})
 
 
 def date_comparee(ecriture: Ecriture) -> date:
-    """Date Sage comparée : l'échéance pour un effet ou des espèces qui en ont une, sinon la date de
-    l'écriture."""
+    """Date Sage comparée : l'échéance pour des espèces ou un virement qui en ont une, sinon la date
+    de l'écriture."""
     if ecriture.echeance is not None and type_ecriture(ecriture.libelle) in TYPES_PAR_ECHEANCE:
         return ecriture.echeance
     return ecriture.date_ecriture
 
 
 def ecart_jours(operation: Operation, ecriture: Ecriture) -> int:
-    """Écart, en jours, entre la date Sage comparée et la date bancaire : pour un effet ou des
-    espèces, la plus proche de la date de valeur et de la date d'opération ; pour les autres types
-    (chèque, virement…), la date d'opération seulement, la date de valeur étant décalée par la
+    """Écart, en jours, entre la date Sage comparée et la date bancaire : pour des espèces ou un
+    virement, la plus proche de la date de valeur et de la date d'opération ; pour les autres types
+    (chèque, effet, frais…), la date d'opération seulement, la date de valeur étant décalée par la
     banque."""
     jour_sage = date_comparee(ecriture)
     dates = [operation.date_operation]
@@ -321,7 +335,30 @@ def comparable(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool
         return False
     if not types_compatibles(operation, ecriture):
         return False
-    return ecart_jours(operation, ecriture) <= grille.fenetre_jours
+    ecart = ecart_jours(operation, ecriture)
+    if ecart <= grille.fenetre_jours:
+        return True
+    # Au-delà : seulement un chèque ou un effet au même n° et au même montant (12/10/2026)
+    return ecart <= grille.fenetre_numero_jours and meme_numero_et_montant(operation, ecriture)
+
+
+# Types rapprochés par leur n° même loin en date : chèques et effets (12/10/2026)
+TYPES_PAR_NUMERO = frozenset({"Chèque", "Effet"})
+
+
+def _numeros_ecriture(ecriture: Ecriture) -> set[str]:
+    return numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
+
+
+def meme_numero_et_montant(operation: Operation, ecriture: Ecriture) -> bool:
+    """Chèque ou effet des deux côtés, même montant (sens opposé) et un n° commun."""
+    if type_operation(operation.libelle) not in TYPES_PAR_NUMERO:
+        return False
+    if type_ecriture(ecriture.libelle) != type_operation(operation.libelle):
+        return False
+    if operation.montant != -ecriture.montant:
+        return False
+    return bool(numeros(operation.libelle, operation.reference) & _numeros_ecriture(ecriture))
 
 
 def score(operation: Operation, ecriture: Ecriture, grille: Grille = GRILLE_PAR_DEFAUT) -> Score:
@@ -447,10 +484,22 @@ def _paires_comparables(
     """Paires qui passent le pré-filtre. Les écritures sont rangées par jour : chaque opération ne
     parcourt que les jours de sa fenêtre, jamais toutes les écritures."""
     par_jour: dict[date, list[Ecriture]] = {}
+    # Chèques et effets aussi rangés par n° : comparés au-delà de la fenêtre (12/10/2026)
+    par_numero: dict[str, list[Ecriture]] = {}
     for ecriture in ecritures:
         par_jour.setdefault(date_comparee(ecriture), []).append(ecriture)
+        if type_ecriture(ecriture.libelle) in TYPES_PAR_NUMERO:
+            for numero in _numeros_ecriture(ecriture):
+                par_numero.setdefault(numero, []).append(ecriture)
     for operation in operations:
         vues: set[int] = set()
+        if type_operation(operation.libelle) in TYPES_PAR_NUMERO:
+            for numero in numeros(operation.libelle, operation.reference):
+                for ecriture in par_numero.get(numero, ()):
+                    if ecriture.id not in vues:
+                        vues.add(ecriture.id)
+                        if comparable(operation, ecriture, grille):
+                            yield operation, ecriture
         jours = {operation.date_operation}
         if operation.date_valeur:
             jours.add(operation.date_valeur)
@@ -470,3 +519,22 @@ def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int |
     if len(classes) >= 2 and classes[0][0] == classes[1][0]:
         return None
     return classes[0][1]
+
+
+# --- Filtre « Type d'opération » des écrans (14/10/2026) ------------------------------------------
+
+TYPES_OPERATION = ("Chèque", "Effet", "Espèces", "Virement")
+AUTRE = "Autre"
+_SEPARATEUR = "[^A-Za-z0-9]"
+
+
+def regex_type(regles: tuple[tuple[str, str], ...], nom: str | None = None) -> str:
+    """Expression régulière PostgreSQL (insensible à la casse, `~*`) qui reconnaît en base les
+    libellés d'un type, comme `type_operation` / `type_ecriture` : le libellé commence par l'un
+    des préfixes, mot entier (la ponctuation compte comme un espace). Sans `nom`, tous les types."""
+    prefixes = [
+        f"{_SEPARATEUR}+".join(prefixe.split())
+        for prefixe, type_ in regles
+        if nom is None or type_ == nom
+    ]
+    return f"^{_SEPARATEUR}*({'|'.join(prefixes)})({_SEPARATEUR}|$)"

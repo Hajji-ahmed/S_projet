@@ -18,6 +18,11 @@ const valid: AccountFormValues = {
   numero: "230 780 0001234567890123 45",
   compte_comptable: "5141",
   journal_sage: "",
+  journal_frais: "",
+  compte_timbre: "",
+  compte_commission: "",
+  compte_commission_effet: "",
+  compte_tva: "",
   credit_autorise: "500 000",
   taux: "4,5",
 };
@@ -124,5 +129,18 @@ describe("validateAccountForm", () => {
 
   it("accepte un taux vide et un compte comptable vide", () => {
     expect(validateAccountForm({ ...valid, taux: "", compte_comptable: "" }, "create")).toEqual({});
+  });
+});
+
+describe("comptabilisation des droits de timbre", () => {
+  it("le journal des frais est l'un des journaux Sage du compte", () => {
+    const bp = { ...valid, journal_sage: "5243, 5543" };
+    expect(validateAccountForm({ ...bp, journal_frais: "5543" }, "create")).toEqual({});
+    expect(validateAccountForm({ ...bp, journal_frais: "9000" }, "create").journal_frais).toBe(
+      "Doit être l'un des journaux Sage du compte.",
+    );
+    expect(
+      validateAccountForm({ ...bp, compte_timbre: "6167-00" }, "create").compte_timbre,
+    ).toBeDefined();
   });
 });

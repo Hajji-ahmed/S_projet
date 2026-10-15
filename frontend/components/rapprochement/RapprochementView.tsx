@@ -1,6 +1,6 @@
 "use client";
 
-import { GitCompareArrows, History, ListChecks, Play } from "lucide-react";
+import { Download, GitCompareArrows, History, ListChecks, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -8,6 +8,7 @@ import { BankLabel } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountButton } from "@/components/ecritures/EntriesCard";
 import { EntriesPane } from "@/components/rapprochement/EntriesPane";
+import { FraisCard } from "@/components/rapprochement/FraisCard";
 import { HistoryTab } from "@/components/rapprochement/HistoryTab";
 import { MatchPanel } from "@/components/rapprochement/MatchPanel";
 import { ProposalsTab } from "@/components/rapprochement/ProposalsTab";
@@ -30,7 +31,9 @@ import {
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
+import { saveFile } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
+import { exporterFrais } from "@/services/frais";
 import { listAmbiguous, listProposals, runReconciliation } from "@/services/reconciliation";
 import type { Account } from "@/types/account";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
@@ -63,6 +66,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const { toast } = useToast();
   const canValidate =
     !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
+  // Comptabilisation des droits de timbre (13/10/2026)
+  const canPrepare = !!user && hasAnyPermission(user.permissions, [PERMISSIONS.ACCOUNTING_PREPARE]);
   // Tous les boutons « Signaler un écart » de la page en dépendent
   const canManageDiscrepancies =
     ECARTS_ACTIFS &&
@@ -84,6 +89,26 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [ambiguPage, setAmbiguPage] = useState({ cle: cleAmbigues, page: 1 });
   const pageAmbigues = ambiguPage.cle === cleAmbigues ? ambiguPage.page : 1;
   const [running, setRunning] = useState(false);
+  // Filtre « Type » de l'onglet Propositions (14/10/2026)
+  const [typePropositions, setTypePropositions] = useState("");
+  // Écritures de frais pas encore exportées : un seul export pour Sage (13/10/2026)
+  const [totalAExporter, setTotalAExporter] = useState(0);
+  const [exporting, setExporting] = useState(false);
+
+  async function exporterPourSage() {
+    setExporting(true);
+    try {
+      const blob = await exporterFrais(companyId, filter);
+      saveFile(blob, `ecritures-frais-${filter.from}-${filter.to}.xlsx`);
+      reload(
+        `${plural(totalAExporter, "écriture")} exportée${totalAExporter > 1 ? "s" : ""} pour Sage.`,
+      );
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "L'export a échoué.", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
   const [statut, setStatut] = useState("");
   const [tab, setTab] = useState<"rapprochement" | "propositions" | "historique">("rapprochement");
 
@@ -110,7 +135,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
   useEffect(() => {
     if (periodError) return;
     let cancelled = false;
-    listProposals(companyId, filter).then(
+    const filtreType = { ...filter, typeOperation: typePropositions || undefined };
+    listProposals(companyId, filtreType).then(
       (result) => {
         if (!cancelled) setPending(result);
       },
@@ -118,7 +144,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         if (!cancelled) setPending(null);
       },
     );
-    listAmbiguous(companyId, filter, pageAmbigues).then(
+    listAmbiguous(companyId, filtreType, pageAmbigues).then(
       (result) => {
         if (!cancelled) setAmbigues(result);
       },
@@ -129,7 +155,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [companyId, filter, reloadKey, periodError, pageAmbigues]);
+  }, [companyId, filter, reloadKey, periodError, pageAmbigues, typePropositions]);
 
   // Les volets rechargés : la sélection suit les nouvelles valeurs (statut, correspondance)
   const handleOperations = useCallback((page: OperationsPage) => {
@@ -163,6 +189,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
       const parts = [
         `${plural(result.nb_propositions, "proposition")}, dont ${plural(result.nb_fortes, "forte")}`,
       ];
+      if (result.nb_groupes) {
+        parts.push(`${plural(result.nb_groupes, "groupe")} de plusieurs opérations`);
+      }
       if (result.nb_operations_ambigues > 0) {
         parts.push(`${plural(result.nb_operations_ambigues, "opération")} ambiguë(s) à vérifier`);
       }
@@ -340,6 +369,11 @@ function Rapprochement({ companyId }: { companyId: number }) {
             setOperation(operationOf(item));
           }}
           ambigues={ambigues}
+          typeOperation={typePropositions}
+          onTypeOperation={(value) => {
+            setTypePropositions(value);
+            setAmbiguPage({ cle: cleAmbigues, page: 1 });
+          }}
           onAmbiguPage={(page) => setAmbiguPage({ cle: cleAmbigues, page })}
           onOpenOperation={(selected) => {
             setTab("rapprochement");
@@ -358,6 +392,34 @@ function Rapprochement({ companyId }: { companyId: number }) {
           reloadKey={reloadKey}
           onChanged={reload}
         />
+      )}
+
+      {!periodError && tab === "rapprochement" && statut === A_COMPTABILISER && (
+        <div className="space-y-5">
+          {canPrepare && (
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <span className="text-sm text-simtis-muted">
+                {plural(totalAExporter, "écriture")} de frais à exporter
+              </span>
+              <Button
+                icon={Download}
+                disabled={exporting || totalAExporter === 0}
+                onClick={exporterPourSage}
+              >
+                Exporter pour Sage ({totalAExporter})
+              </Button>
+            </div>
+          )}
+          <FraisCard
+            companyId={companyId}
+            filter={filter}
+            reloadKey={reloadKey}
+            canPrepare={canPrepare}
+            onChanged={reload}
+            onAExporter={setTotalAExporter}
+            onLancer={canValidate ? run : undefined}
+          />
+        </div>
       )}
 
       {!periodError && tab === "rapprochement" && (

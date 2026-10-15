@@ -134,24 +134,38 @@ def test_date_points_decrease_until_the_tolerance():
     assert ratio_date(0, 0) == 1 and ratio_date(1, 0) == 0
 
 
-def test_value_date_counts_only_for_an_effet():
-    """09/10/2026 : la date de valeur sert aux effets ; les autres types prennent la date
-    d'opération (la banque décale la date de valeur)."""
+def test_value_date_counts_only_for_especes_and_virements():
+    """12/10/2026 : la date de valeur sert aux espèces et aux virements ; chèques et effets prennent
+    la date d'opération (la banque décale la date de valeur)."""
     banque = op(jour=date(2026, 9, 28), valeur=JOUR)
 
-    assert score(banque, ec(libelle="EAR° 3308407 LAHNINE")).detail["date"] == Decimal("30.00")
+    assert score(banque, ec(libelle="Virement ATLAS")).detail["date"] == Decimal("30.00")
+    assert score(banque, ec(libelle="EAR° 3308407 LAHNINE")).detail["date"] == Decimal("0.00")
     assert score(banque, ec(libelle="EAR1° AXK 173813")).detail["date"] == Decimal("0.00")
 
 
-def test_an_effet_is_compared_at_its_due_date():
+def test_effets_and_cheques_use_the_entry_date_not_the_due_date():
+    """12/10/2026 : chèques et effets se comparent à la date de l'écriture, même avec une échéance."""
     effet = ec(libelle="EAR° 3308407 LAHNINE", jour=date(2026, 8, 1), echeance=JOUR)
-    sans_echeance = ec(libelle="EAR° 3308407 LAHNINE", jour=date(2026, 8, 1))
     cheque = ec(libelle="EAR1° AXK 173813", jour=date(2026, 8, 1), echeance=JOUR)
 
-    assert score(op(), effet).detail["date"] == Decimal("30.00")
-    assert proposer([op()], [effet]).propositions
-    assert not comparable(op(), sans_echeance, GRILLE_PAR_DEFAUT)  # hors fenêtre de 10 jours
-    assert not comparable(op(), cheque, GRILLE_PAR_DEFAUT)  # l'échéance ne sert qu'aux effets
+    assert not comparable(op(), effet, GRILLE_PAR_DEFAUT)  # date de l'écriture hors fenêtre
+    assert not comparable(op(), cheque, GRILLE_PAR_DEFAUT)
+    assert score(op(jour=date(2026, 9, 25)), ec(libelle="EAR° 3308407")).detail["date"] == (
+        Decimal("22.50")
+    )
+
+
+def test_virements_are_typed_and_compared_at_their_due_date():
+    assert type_ecriture("Virement ATLAS TEXTILE") == "Virement"
+    assert type_operation("VIR CLIENT ATLAS TEXTILE") == "Virement"
+    assert type_operation("VIREMENT SALAIRES") == "Virement"
+    assert type_operation("RTGS EMIS VERS CIH") == "Virement"
+    virement = ec(libelle="Virement ATLAS", jour=date(2026, 8, 1), echeance=JOUR)
+
+    assert score(op(libelle="VIR ATLAS"), virement).detail["date"] == Decimal("30.00")
+    # Un virement ne se rapproche jamais d'un chèque
+    assert not comparable(op(libelle="VIR ATLAS"), ec(libelle="EAR1° 1234567"), GRILLE_PAR_DEFAUT)
 
 
 def test_entries_outside_the_window_are_not_compared():
@@ -347,7 +361,7 @@ def test_types_are_read_from_the_labels_of_each_side():
     assert type_ecriture("EAR1° AXK 173813 JAID") == "Chèque"
     assert type_ecriture("EAR° 3308407 LAHNINE") == "Effet"
     assert type_ecriture("ESP N 1234") == "Espèces"
-    assert type_ecriture("VIR CLIENT ATLAS") is None
+    assert type_ecriture("REGLEMENT FOURNISSEUR ATLAS") is None
     assert type_operation("ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW") == "Chèque"
     assert type_operation("ENCAISSEMENT EFFET N 3100821") == "Effet"
     assert type_operation("REMISE D'EFFETS N 5812970") == "Effet"
@@ -358,12 +372,12 @@ def test_types_are_read_from_the_labels_of_each_side():
 def test_different_types_are_never_compared():
     cheque = op(libelle="ENCAISSEMENT CHEQUE N 0173813")
     especes = op(libelle="VERSEMENT DEPLACE PAR UN TIERS")
-    virement = op(libelle="VIR CLIENT ATLAS")
+    autre = op(libelle="FRAIS RECUPERES PAR LA BANQUE")
     ecriture_cheque = ec(libelle="EAR1° AXK 173813")
 
     assert comparable(cheque, ecriture_cheque, GRILLE_PAR_DEFAUT)
     assert not comparable(especes, ecriture_cheque, GRILLE_PAR_DEFAUT)
-    assert comparable(virement, ecriture_cheque, GRILLE_PAR_DEFAUT)  # autre : comparable
+    assert comparable(autre, ecriture_cheque, GRILLE_PAR_DEFAUT)  # autre : comparable
     assert proposer([especes], [ecriture_cheque]).propositions == []
 
 
@@ -376,3 +390,34 @@ def test_especes_are_compared_at_their_due_date():
     assert score(versement, especes).detail["date"] == Decimal("30.00")
     assert proposer([versement], [especes]).propositions
     assert ecart_jours(op(libelle="ENCAISSEMENT CHEQUE N 1234567"), cheque) == 54
+
+
+# --- Même n° et même montant : comparé jusqu'à 180 jours (12/10/2026) ------------------------------
+
+
+def test_an_effet_with_the_same_number_and_amount_is_proposed_far_in_date():
+    banque = op(montant="20000", jour=JOUR, libelle="ENCAISSEMENT EFFET N 0555848 TIRE SUR ATW")
+    loin = ec(montant="-20000", jour=date(2026, 7, 26), libelle="EAR° ABN 555848 MR EL BAKOURI")
+
+    [proposition] = proposer([banque], [loin]).propositions
+
+    assert proposition.score.total >= Grille().seuil_fort  # montant 50 + n° 40, sans la date
+    assert proposition.score.detail["date"] == Decimal("0.00")
+
+
+def test_far_in_date_needs_the_same_number_and_the_same_amount():
+    banque = op(montant="20000", libelle="ENCAISSEMENT CHEQUE N 1550018 EMIS PAR MR X")
+    autre_montant = ec(montant="-19000", jour=date(2026, 7, 26), libelle="EAR1° 1550018 X")
+    autre_numero = ec(montant="-20000", jour=date(2026, 7, 26), libelle="EAR1° 1550019 X")
+    trop_loin = ec(montant="-20000", jour=date(2026, 1, 2), libelle="EAR1° 1550018 X")
+
+    for ecriture in (autre_montant, autre_numero, trop_loin):
+        assert not comparable(banque, ecriture, GRILLE_PAR_DEFAUT)
+    assert proposer([banque], [autre_montant, autre_numero, trop_loin]).propositions == []
+
+
+def test_without_a_number_the_window_stays_10_days():
+    banque = op(montant="4000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
+    especes = ec(montant="-4000", jour=date(2026, 8, 1), libelle="ESP TT23241QZKZC")
+
+    assert not comparable(banque, especes, GRILLE_PAR_DEFAUT)

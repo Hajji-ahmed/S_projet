@@ -34,6 +34,7 @@ ALL_PERMISSIONS = {
     "statements.import",
     "position.view",
     "accounting.import",
+    "accounting.prepare",
     "reconciliation.view",
     "reconciliation.validate",
     "discrepancies.manage",
@@ -41,6 +42,8 @@ ALL_PERMISSIONS = {
     "dashboard.view",
     "admin.users",
     "admin.roles",
+    # Paramètres de l'administration (P16.3, 14/10/2026)
+    "admin.settings",
     "audit.view",
 }
 CONSULTATION = {"position.view", "reconciliation.view", "dashboard.view"}
@@ -50,7 +53,13 @@ EXPECTED_ROLES = {
     "ADMIN": ALL_PERMISSIONS,
     "TRESORERIE": CONSULTATION | {"banks.manage", "statements.import", "forecasts.manage"},
     "COMPTABLE": CONSULTATION
-    | {"accounting.import", "reconciliation.validate", "discrepancies.manage"},
+    | {
+        "accounting.import",
+        # Comptabilisation des droits de timbre (13/10/2026)
+        "accounting.prepare",
+        "reconciliation.validate",
+        "discrepancies.manage",
+    },
     "RESPONSABLE": CONSULTATION | {"reconciliation.validate", "discrepancies.manage", "audit.view"},
     "DIRECTION": CONSULTATION,
 }
@@ -72,6 +81,7 @@ def test_reference_seed_creates_the_expected_rows(db):
         currencies=3,
         # Les 74 catégories de pointage sont déjà créées par la migration 0017
         forecast_categories=7,
+        # accounting.prepare est créée par la migration 0024
         permissions=12,
         roles=5,
         reconciliation_rules=9,

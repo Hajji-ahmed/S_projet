@@ -4,6 +4,7 @@ import { BookText, ChevronLeft, ChevronRight, Eye, Search, X } from "lucide-reac
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { EntryDetailModal } from "@/components/ecritures/EntryDetailModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -16,6 +17,7 @@ import { STATUTS_RAPPROCHEMENT, pageCount, type EntriesFilter } from "@/lib/acco
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
+import { unite } from "@/lib/reconciliation";
 import { listEntries } from "@/services/accounting";
 import type { Account } from "@/types/account";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
@@ -116,6 +118,14 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
       render: (row) => formatAmount(row.credit, "DH", { dashForZero: true }),
     },
     {
+      key: "montant_devise",
+      header: "Devise",
+      align: "right",
+      // Compte en devise : colonne « Devise » de Sage, rapprochée du relevé (14/10/2026)
+      render: (row) =>
+        row.montant_devise != null ? formatAmount(row.montant_devise, unite(row.devise)) : "-",
+    },
+    {
       key: "echeance",
       header: "Échéance",
       render: (row) => <span className="whitespace-nowrap">{formatDate(row.echeance)}</span>,
@@ -125,6 +135,11 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
       key: "statut",
       header: "Statut",
       render: (row) => <StatusBadge status={row.statut as Status} />,
+    },
+    {
+      key: "code_rapprochement",
+      header: "Code rapprochement",
+      render: (row) => <CodeBadge code={row.code_rapprochement} />,
     },
     {
       key: "actions",
@@ -212,7 +227,7 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
               id="ecritures-recherche"
               value={search}
               maxLength={100}
-              placeholder="Libellé, pièce, référence, tiers"
+              placeholder="Libellé, pièce, référence, tiers, code"
               onChange={(event) => setSearch(event.target.value)}
             />
           </Field>

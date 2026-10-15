@@ -565,3 +565,58 @@ def test_a_journal_of_the_list_used_elsewhere_is_refused(client, tresorerie, db)
     assert response.json() == {
         "detail": "Le journal Sage 5543 est déjà celui du compte AWB MAD de cette société."
     }
+
+
+def test_fees_journal_and_stamp_account_are_saved(client, tresorerie, db):
+    """Comptabilisation des droits de timbre (13/10/2026) : le journal des frais est l'un des
+    journaux Sage du compte."""
+    account = add(db, "SIMTIS", "BP", journal_sage="5243,5543")
+
+    refused = client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(account, journal_frais="9000"),
+        headers=tresorerie,
+    )
+    response = client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(account, journal_frais=" 5543 ", compte_timbre="61670000"),
+        headers=tresorerie,
+    )
+
+    assert refused.status_code == 409
+    assert "journal des frais 9000" in refused.json()["detail"]
+    assert response.status_code == 200
+    assert (response.json()["journal_frais"], response.json()["compte_timbre"]) == (
+        "5543",
+        "61670000",
+    )
+
+
+def test_commission_accounts_are_saved(client, tresorerie, db):
+    """Comptes Sage de l'export des commissions (13/10/2026)."""
+    account = add(db, "SIMTIS", "BP")
+
+    response = client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(
+            account,
+            compte_commission="61470000",
+            compte_commission_effet=" 61471000 ",
+            compte_tva="34552000",
+        ),
+        headers=tresorerie,
+    )
+    invalid = client.put(
+        f"{ACCOUNTS}/{account.id}",
+        json=update_body(account, compte_tva="3455-2000"),
+        headers=tresorerie,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["compte_commission"], body["compte_commission_effet"], body["compte_tva"]) == (
+        "61470000",
+        "61471000",
+        "34552000",
+    )
+    assert invalid.status_code == 422

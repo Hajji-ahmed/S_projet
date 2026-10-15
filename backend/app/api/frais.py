@@ -1,0 +1,157 @@
+"""Comptabilisation des frais bancaires par SIMTIS (13/10/2026) : droits de timbre et commissions.
+
+Préparer (calculé), valider (écriture créée et rapprochée d'emblée), exporter pour Sage.
+"""
+
+from datetime import date
+from decimal import Decimal
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from sqlalchemy.orm import Session
+
+from app.api.deps import client_ip, require_permission
+from app.core.db import get_db
+from app.core.permissions import PermissionCode
+from app.schemas.frais import (
+    AutreFraisOut,
+    EcritureFraisOut,
+    FraisInclusOut,
+    ManuelleIn,
+    PropositionTimbresOut,
+    SuppressionIn,
+    TimbresOut,
+    ValidationTimbresIn,
+    ValidationTimbresOut,
+)
+from app.services import frais_service
+from app.services.auth_service import CurrentUser
+
+router = APIRouter(prefix="/frais", tags=["frais"])
+
+can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
+can_prepare = require_permission(PermissionCode.ACCOUNTING_PREPARE)
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+DateFrom = Annotated[date | None, Query(alias="from")]
+DateTo = Annotated[date | None, Query(alias="to")]
+
+
+@router.delete("/ecritures/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+def supprimer(
+    entry_id: int,
+    body: SuppressionIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_prepare),
+) -> None:
+    """Supprime une écriture SIMTIS pas encore exportée ; ses opérations redeviennent à
+    comptabiliser."""
+    frais_service.supprimer(
+        db, entry_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+
+
+@router.get(
+    "/export",
+    response_class=Response,
+    responses={200: {"content": {XLSX: {}}, "description": "Écritures à intégrer dans Sage"}},
+)
+def exporter(
+    request: Request,
+    company_id: int,
+    bank_account_id: int | None = None,
+    date_from: DateFrom = None,
+    date_to: DateTo = None,
+    inclure_exportees: bool = False,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_prepare),
+) -> Response:
+    """UN fichier Excel pour Sage, droits de timbre et commissions ; les écritures exportées ne se
+    suppriment plus dans SIMTIS."""
+    nom, content, _ = frais_service.exporter(
+        db,
+        company_id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        inclure_exportees=inclure_exportees,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return Response(
+        content=content,
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{nom}"'},
+    )
+
+
+@router.get("", response_model=TimbresOut)
+def lire(
+    company_id: int,
+    bank_account_id: int | None = None,
+    date_from: DateFrom = None,
+    date_to: DateTo = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> TimbresOut:
+    """Un seul tableau (13/10/2026) : écritures à passer, droits de timbre et commissions
+    (calculées, une par jour, par compte et par famille), et écritures déjà comptabilisées par
+    SIMTIS."""
+    vue = frais_service.tableau(
+        db, company_id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+    )
+    return TimbresOut(
+        propositions=[PropositionTimbresOut.of(item) for item in vue.propositions],
+        total_propositions=sum((item.jour.total for item in vue.propositions), Decimal("0.00")),
+        ecritures=[EcritureFraisOut.of(item) for item in vue.ecritures],
+        autres_frais=[AutreFraisOut.of(item) for item in vue.autres],
+        frais_inclus=[FraisInclusOut.of(item) for item in vue.inclus],
+    )
+
+
+@router.post("/valider", response_model=ValidationTimbresOut)
+def valider(
+    body: ValidationTimbresIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_prepare),
+) -> ValidationTimbresOut:
+    """Comptabilise les jours choisis, toutes familles (tous ou aucun) : écritures créées et
+    rapprochées d'emblée."""
+    entries = frais_service.valider(
+        db,
+        body.company_id,
+        [
+            (frais_service.famille(jour.famille), jour.bank_account_id, jour.date)
+            for jour in body.jours
+        ],
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return ValidationTimbresOut(
+        nb_ecritures=len(entries), codes=[entry.numero_piece for entry in entries]
+    )
+
+
+@router.post("/manuelle", response_model=ValidationTimbresOut)
+def comptabiliser_manuellement(
+    body: ManuelleIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_prepare),
+) -> ValidationTimbresOut:
+    """Écriture saisie à la main pour des frais d'un même compte, TVA séparée ou non : créée et
+    rapprochée d'emblée."""
+    entry = frais_service.comptabiliser_manuellement(
+        db,
+        body.company_id,
+        transaction_ids=body.transaction_ids,
+        libelle=body.libelle,
+        date_ecriture=body.date_ecriture,
+        taux_tva=body.taux_tva,
+        montant_tva=body.montant_tva,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return ValidationTimbresOut(nb_ecritures=1, codes=[entry.numero_piece])

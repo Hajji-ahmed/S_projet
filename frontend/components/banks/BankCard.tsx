@@ -45,7 +45,7 @@ export function BankCard({ bank, canManage, onEdit, onToggleStatus }: BankCardPr
     <article
       aria-label={`Banque ${bank.code}`}
       className={cn(
-        "flex flex-col rounded-[14px] border border-simtis-border bg-simtis-card p-5 shadow-simtis",
+        "flex flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis",
         !bank.actif && "bg-simtis-background",
       )}
     >

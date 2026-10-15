@@ -9,6 +9,7 @@ Règles (décisions du 05/10/2026) :
 - doublon : ligne déjà importée pour la société, ou identique à une autre ligne du fichier.
 """
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -18,7 +19,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import AccountingEntry, BankAccount, ColumnMapping, Company, ImportBatch
-from app.repositories import account_repository, accounting_repository, import_repository
+from app.repositories import (
+    account_repository,
+    accounting_repository,
+    frais_repository,
+    import_repository,
+    reconciliation_repository,
+)
 from app.services import account_service, audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
@@ -76,6 +83,13 @@ ACCOUNTING_FIELDS: tuple[ImportField, ...] = (
     # « ECH » : en-tête de l'export Sage de Simtis (12/10/2026)
     ImportField("echeance", "Échéance", False, ("echeance", "date echeance", "ech")),
     ImportField("tiers", "Tiers", False, ("tiers", "compte tiers", "client fournisseur")),
+    # Compte en devise (14/10/2026) : montant de la ligne dans la devise du compte
+    ImportField(
+        "montant_devise",
+        "Montant devise",
+        False,
+        ("devise", "montant devise", "mnt devise", "montant en devise"),
+    ),
 )
 FIELD_LABELS = {item.code: item.libelle for item in ACCOUNTING_FIELDS}
 
@@ -96,6 +110,8 @@ class EntryLine:
     numero_piece: str | None = None
     echeance: date | None = None
     tiers: str | None = None
+    # Compte en devise : montant dans la devise du compte, même sens que `montant`
+    montant_devise: Decimal | None = None
     bank_account_id: int | None = None
     bank_code: str | None = None
     hash_ligne: str | None = None
@@ -261,6 +277,8 @@ def _read_entry(
                 line.debit, line.credit = debit, credit
     if line.debit is not None and line.credit is not None:
         line.montant = line.credit - line.debit
+    if account.devise != "MAD":
+        _read_montant_devise(line, cells, account.devise)
 
     reference = clean_text(cells.get("reference"))
     line.reference = reference[:REFERENCE_MAX] if reference else None
@@ -274,6 +292,22 @@ def _read_entry(
     if line.motifs:
         line.statut = "Erreur"
     return line
+
+
+def _read_montant_devise(line: EntryLine, cells: dict[str, object], devise: str) -> None:
+    """Compte en devise (14/10/2026) : la colonne « Devise » donne le montant dans la devise du
+    compte ; il prend le sens de la ligne (un débit Sage est négatif), qu'il soit écrit signé ou
+    non. Sans lui, la ligne ne pourrait jamais se rapprocher du relevé : elle est en erreur."""
+    try:
+        valeur = parse_amount(cells.get("montant_devise"))
+    except ValueError as error:
+        line.motifs.append(f"Montant devise : {error}")
+        return
+    if not valeur:
+        line.motifs.append(f"Montant devise manquant (compte en {devise}).")
+        return
+    if line.montant:
+        line.montant_devise = abs(valeur) if line.montant > 0 else -abs(valeur)
 
 
 def _line_key(line: EntryLine) -> tuple:
@@ -309,6 +343,55 @@ def _mark_duplicates(db: Session, company_id: int, lines: list[EntryLine]) -> No
             line.statut = "Doublon"
             line.doublon_de = None
             line.motifs = ["Déjà importée pour cette société."]
+    _mark_simtis_entries(db, company_id, lines)
+
+
+# Libellé Sage de chaque écriture préparée par SIMTIS (13/10/2026)
+_ECRITURES_SIMTIS = {
+    "DT D'ENREGISTREMENT": re.compile(frais_repository.ECRITURE_TIMBRE_SQL, re.IGNORECASE),
+    "COM": re.compile(frais_repository.ECRITURE_COMMISSION_SQL, re.IGNORECASE),
+    "FRAIS": re.compile(frais_repository.ECRITURE_FRAIS_SQL, re.IGNORECASE),
+}
+
+
+def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -> None:
+    """Une écriture comptabilisée par SIMTIS (droits de timbre, commissions, 13/10/2026) revient
+    dans l'export Sage une fois intégrée : sa ligne banque est un doublon, jamais importée deux
+    fois. Reconnue par le même compte, le même jour et le même montant, avec son N° de pièce (le
+    code du rapprochement) ou son libellé (« DT D'ENREGISTREMENT », « COM »)."""
+    candidates = [
+        line
+        for line in lines
+        if line.statut == "Valide" and line.bank_account_id and line.date_ecriture
+    ]
+    keys = {(line.bank_account_id, line.date_ecriture) for line in candidates}
+    remaining = frais_repository.simtis_entries_like(db, company_id, keys)
+    for line in candidates:
+        for entry in remaining:
+            if (entry.bank_account_id, entry.date_ecriture, entry.montant) != (
+                line.bank_account_id,
+                line.date_ecriture,
+                line.montant,
+            ):
+                continue
+            same_piece = bool(
+                line.numero_piece
+                and entry.numero_piece
+                and line.numero_piece.strip().upper() == entry.numero_piece.upper()
+            )
+            regle = _ECRITURES_SIMTIS.get(entry.libelle)
+            meme_libelle = (
+                regle.match(line.libelle or "")
+                if regle is not None
+                # Écriture saisie à la main (13/10/2026) : même libellé
+                else " ".join((line.libelle or "").upper().split()) == entry.libelle
+            )
+            if same_piece or meme_libelle:
+                line.statut = "Doublon"
+                line.doublon_de = None
+                line.motifs = [f"Déjà comptabilisée par SIMTIS (pièce {entry.numero_piece})."]
+                remaining.remove(entry)
+                break
 
 
 def _summarise(lines: list[EntryLine], ignored: int) -> EntriesSummary:
@@ -542,6 +625,7 @@ def confirm_entries(
                 numero_piece=line.numero_piece,
                 echeance=line.echeance,
                 tiers=line.tiers,
+                montant_devise=line.montant_devise,
                 hash_ligne=line.hash_ligne,
             ),
         )
@@ -610,6 +694,8 @@ class EntriesPage:
     total_credit: Decimal
     # (écriture, code de sa banque), de la plus récente à la plus ancienne
     ecritures: list[tuple[AccountingEntry, str | None]]
+    # Code du rapprochement validé de chaque écriture de la page (13/10/2026)
+    codes: dict[int, str] = field(default_factory=dict)
 
 
 def list_entries(
@@ -622,6 +708,7 @@ def list_entries(
     statut: str | None = None,
     q: str | None = None,
     page: int = 1,
+    type_operation: str | None = None,
 ) -> EntriesPage:
     """Une page d'écritures de la société (50 par page) ; les totaux portent sur tout le filtre."""
     company = _company(db, company_id)
@@ -634,6 +721,7 @@ def list_entries(
         date_to=date_to,
         statut=statut,
         q=q,
+        type_operation=type_operation,
     )
     total, debit, credit = accounting_repository.totals_of_entries(db, query)
     rows = accounting_repository.page_of_entries(
@@ -646,6 +734,7 @@ def list_entries(
         total_debit=debit.quantize(CENT),
         total_credit=credit.quantize(CENT),
         ecritures=rows,
+        codes=reconciliation_repository.codes_of_entries(db, [entry.id for entry, _ in rows]),
     )
 
 

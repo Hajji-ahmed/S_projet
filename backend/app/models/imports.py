@@ -1,16 +1,19 @@
 """Imports de fichiers, relevés bancaires, transactions et écritures comptables."""
 
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     ForeignKey,
     Identity,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -132,16 +135,50 @@ class BankTransaction(TimestampMixin, Base):
     ordre: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     statement: Mapped[BankStatement] = relationship()
+    # Devise du compte, pour l'affichage (14/10/2026) : lecture seule
+    bank_account: Mapped[BankAccount] = relationship(viewonly=True)
     pointage_type: Mapped[PointageType | None] = relationship()
 
 
 class AccountingEntry(TimestampMixin, Base):
-    """Écriture comptable importée de Sage / SI. Elle n'est jamais créée ni modifiée dans SIMTIS."""
+    """Écriture comptable importée de Sage / SI, jamais modifiée dans SIMTIS.
+
+    Seule exception (13/10/2026) : l'écriture « DT D'ENREGISTREMENT » des droits de timbre d'un jour,
+    préparée par SIMTIS (`origine = 'SIMTIS'`), rapprochée dès sa validation puis exportée pour Sage.
+    """
 
     __tablename__ = "accounting_entries"
     __table_args__ = (
         UniqueConstraint("company_id", "hash_ligne", name="uq_accounting_entries_societe_hash"),
         check_in("statut", "statut", enums.STATUTS_RAPPROCHEMENT),
+        check_in("origine", "origine", enums.ORIGINES_ECRITURE),
+        CheckConstraint("exportee_le IS NULL OR origine = 'SIMTIS'", name="export_simtis"),
+        # Frais comptabilisés à la main (migration 0026) : famille de toute écriture SIMTIS, TVA
+        # séparée seulement pour une écriture manuelle
+        CheckConstraint(
+            "(origine = 'SIMTIS') = (famille_frais IS NOT NULL) AND (famille_frais IS NULL OR "
+            "famille_frais IN ('timbres', 'commissions', 'frais', 'manuelle'))",
+            name="famille_frais",
+        ),
+        CheckConstraint(
+            "montant_tva IS NULL OR (famille_frais = 'manuelle' AND montant_tva > 0 "
+            "AND montant_tva < abs(montant))",
+            name="tva_manuelle",
+        ),
+        CheckConstraint(
+            "taux_tva IS NULL OR (montant_tva IS NOT NULL AND taux_tva > 0 AND taux_tva <= 100)",
+            name="taux_tva",
+        ),
+        # Montant en devise d'un compte EUR / USD : même sens que la ligne (migration 0028)
+        CheckConstraint(
+            "montant_devise IS NULL OR montant_devise * montant > 0", name="devise_meme_sens"
+        ),
+        Index(
+            "ix_accounting_entries_simtis",
+            "company_id",
+            "date_ecriture",
+            postgresql_where=text("origine = 'SIMTIS'"),
+        ),
         CheckConstraint("debit >= 0", name="debit_positif"),
         CheckConstraint("credit >= 0", name="credit_positif"),
         CheckConstraint("montant = credit - debit", name="montant_coherent"),
@@ -168,5 +205,19 @@ class AccountingEntry(TimestampMixin, Base):
     statut: Mapped[str] = mapped_column(
         String(20), default="Non rapprochée", server_default="Non rapprochée", index=True
     )
+    # Sage (importée) ou SIMTIS (droits de timbre comptabilisés par SIMTIS, 13/10/2026)
+    origine: Mapped[str] = mapped_column(String(6), default="Sage", server_default="Sage")
+    # Date de l'export pour Sage d'une écriture SIMTIS ; une écriture exportée ne se supprime plus
+    exportee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Famille d'une écriture SIMTIS : timbres, commissions ou manuelle (migration 0026)
+    famille_frais: Mapped[str | None] = mapped_column(String(12))
+    # Écriture manuelle : TVA séparée du frais (positive) et son taux en % (historique)
+    montant_tva: Mapped[Montant | None]
+    taux_tva: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    # Compte en devise (14/10/2026) : colonne « Devise » de Sage, signée comme `montant`.
+    # C'est ce montant qui se rapproche du relevé, tenu dans la devise du compte
+    montant_devise: Mapped[Montant | None]
 
     company: Mapped[Company] = relationship()
+    # Devise du compte, pour l'affichage (14/10/2026) : lecture seule
+    bank_account: Mapped[BankAccount | None] = relationship(viewonly=True)

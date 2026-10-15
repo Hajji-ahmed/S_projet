@@ -12,7 +12,7 @@ export function SearchBar() {
       <input
         type="search"
         placeholder="Rechercher un compte, une transaction, un relevé..."
-        className="h-11 w-full rounded-[20px] border border-simtis-border bg-simtis-background pr-4 pl-11 text-sm text-simtis-text placeholder:text-simtis-muted focus:border-simtis-primary focus:ring-2 focus:ring-simtis-primary/15 focus:outline-none"
+        className="h-11 w-full rounded-full border border-transparent bg-simtis-surface pr-4 pl-11 text-sm text-simtis-text transition-colors duration-200 placeholder:text-simtis-muted hover:border-simtis-border focus:border-simtis-primary focus:bg-simtis-card focus:ring-4 focus:ring-simtis-primary/10 focus:outline-none"
       />
     </label>
   );

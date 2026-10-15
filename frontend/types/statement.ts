@@ -156,6 +156,8 @@ export type Statement = {
 /** Opération au format standard du relevé : ses 11 champs, puis référence, montant et statut. */
 export type Transaction = {
   id: number;
+  /** Code du rapprochement validé de l'opération (13/10/2026). */
+  code_rapprochement?: string | null;
   societe: string;
   /** Type d'opération ; null s'il est inconnu. */
   pointage: string | null;

@@ -35,7 +35,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={item.id}
             role="status"
             className={cn(
-              "pointer-events-auto min-w-64 rounded-lg border border-l-4 border-simtis-border bg-simtis-card px-4 py-3 text-sm text-simtis-text shadow-simtis",
+              "pointer-events-auto min-w-64 rounded-[12px] border border-l-4 border-simtis-border bg-simtis-card px-4 py-3 text-sm text-simtis-text shadow-simtis-hover",
               item.variant === "success" ? "border-l-simtis-success" : "border-l-simtis-danger",
             )}
           >

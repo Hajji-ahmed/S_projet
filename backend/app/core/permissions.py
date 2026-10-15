@@ -12,6 +12,7 @@ class PermissionCode(StrEnum):
     STATEMENTS_IMPORT = "statements.import"
     POSITION_VIEW = "position.view"
     ACCOUNTING_IMPORT = "accounting.import"
+    ACCOUNTING_PREPARE = "accounting.prepare"
     RECONCILIATION_VIEW = "reconciliation.view"
     RECONCILIATION_VALIDATE = "reconciliation.validate"
     DISCREPANCIES_MANAGE = "discrepancies.manage"
@@ -19,6 +20,7 @@ class PermissionCode(StrEnum):
     DASHBOARD_VIEW = "dashboard.view"
     ADMIN_USERS = "admin.users"
     ADMIN_ROLES = "admin.roles"
+    ADMIN_SETTINGS = "admin.settings"
     AUDIT_VIEW = "audit.view"
 
 
@@ -27,6 +29,9 @@ PERMISSION_DESCRIPTIONS: dict[PermissionCode, str] = {
     PermissionCode.STATEMENTS_IMPORT: "Importer des relevés bancaires",
     PermissionCode.POSITION_VIEW: "Consulter la position bancaire",
     PermissionCode.ACCOUNTING_IMPORT: "Importer les écritures comptables",
+    PermissionCode.ACCOUNTING_PREPARE: (
+        "Comptabiliser les frais bancaires (écritures préparées par SIMTIS)"
+    ),
     PermissionCode.RECONCILIATION_VIEW: "Consulter le rapprochement",
     PermissionCode.RECONCILIATION_VALIDATE: "Valider ou rejeter un rapprochement",
     PermissionCode.DISCREPANCIES_MANAGE: "Traiter et clôturer les écarts",
@@ -34,5 +39,8 @@ PERMISSION_DESCRIPTIONS: dict[PermissionCode, str] = {
     PermissionCode.DASHBOARD_VIEW: "Consulter le dashboard",
     PermissionCode.ADMIN_USERS: "Administrer les utilisateurs",
     PermissionCode.ADMIN_ROLES: "Administrer les rôles et les permissions",
+    PermissionCode.ADMIN_SETTINGS: (
+        "Modifier les paramètres (grille de rapprochement, modèles d'import)"
+    ),
     PermissionCode.AUDIT_VIEW: "Consulter l'historique des actions",
 }

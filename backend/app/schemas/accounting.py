@@ -27,6 +27,7 @@ AccountingFieldCode = Literal[
     "numero_piece",
     "echeance",
     "tiers",
+    "montant_devise",
 ]
 # Index d'une colonne Excel : 0 = A ... 16383 = XFD
 ColumnIndex = Annotated[int, Field(ge=0, le=16383)]
@@ -53,6 +54,7 @@ class LigneComptableOut(BaseModel):
     numero_piece: str | None
     echeance: date | None
     tiers: str | None
+    montant_devise: Decimal | None = None
     bank_account_id: int | None
     bank_code: str | None
     hash_ligne: str | None
@@ -178,9 +180,17 @@ class EcritureOut(BaseModel):
     numero_piece: str | None
     echeance: date | None
     tiers: str | None
+    # Compte en devise : montant dans la devise du compte (14/10/2026)
+    montant_devise: Decimal | None = None
+    # Devise du compte bancaire de l'écriture (14/10/2026) ; débit et crédit restent en MAD
+    devise: str | None = None
     bank_account_id: int | None
     bank_code: str | None
     statut: str
+    # Code du rapprochement validé de l'écriture (« BP-26-000123 », 13/10/2026)
+    code_rapprochement: str | None = None
+    # « SIMTIS » : droits de timbre comptabilisés par SIMTIS (13/10/2026)
+    origine: str = "Sage"
 
     @classmethod
     def fields_of(cls, entry: AccountingEntry, bank_code: str | None) -> dict:
@@ -197,9 +207,12 @@ class EcritureOut(BaseModel):
             "numero_piece": entry.numero_piece,
             "echeance": entry.echeance,
             "tiers": entry.tiers,
+            "montant_devise": entry.montant_devise,
+            "devise": entry.bank_account.devise if entry.bank_account_id else None,
             "bank_account_id": entry.bank_account_id,
             "bank_code": bank_code,
             "statut": entry.statut,
+            "origine": entry.origine,
         }
 
 
@@ -222,7 +235,10 @@ class EcrituresPageOut(BaseModel):
             total_debit=result.total_debit,
             total_credit=result.total_credit,
             ecritures=[
-                EcritureOut(**EcritureOut.fields_of(entry, code))
+                EcritureOut(
+                    **EcritureOut.fields_of(entry, code),
+                    code_rapprochement=result.codes.get(entry.id),
+                )
                 for entry, code in result.ecritures
             ],
         )

@@ -7,7 +7,15 @@ import { ScoreBadge } from "@/components/rapprochement/Score";
 import { Button } from "@/components/ui/Button";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
-import { absolute, rapprochable, sensBanque, sensSage } from "@/lib/reconciliation";
+import {
+  montantEcriture,
+  unite,
+  uniteEcriture,
+  absolute,
+  rapprochable,
+  sensBanque,
+  sensSage,
+} from "@/lib/reconciliation";
 import type { Ambigue, Candidat } from "@/types/reconciliation";
 
 type AmbiguousCardProps = {
@@ -42,7 +50,7 @@ export function AmbiguousCard({
   return (
     <article
       aria-label={`Opération ambiguë : ${operation.libelle}`}
-      className="rounded-[14px] border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis"
+      className="rounded-card border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
@@ -51,7 +59,7 @@ export function AmbiguousCard({
             Ambiguë : {candidats.length} écritures aussi proches
           </p>
           <p className="text-[22px] leading-tight font-bold text-simtis-primary-dark tabular-nums">
-            {formatAmount(absolute(operation.montant), "DH")}{" "}
+            {formatAmount(absolute(operation.montant), unite(operation.devise))}{" "}
             <span className="text-xs font-normal text-simtis-muted lowercase">
               {sensBanque(operation.montant)}
             </span>
@@ -85,7 +93,7 @@ export function AmbiguousCard({
       ) : (
         <ul className="space-y-2">
           {candidats.map((candidat) => {
-            const ok = rapprochable(operation.montant, candidat.ecriture.montant);
+            const ok = rapprochable(operation.montant, montantEcriture(candidat.ecriture));
             return (
               <li
                 key={candidat.ecriture.id}
@@ -93,7 +101,10 @@ export function AmbiguousCard({
               >
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-semibold tabular-nums">
-                    {formatAmount(absolute(candidat.ecriture.montant), "DH")}{" "}
+                    {formatAmount(
+                      absolute(montantEcriture(candidat.ecriture)),
+                      uniteEcriture(candidat.ecriture),
+                    )}{" "}
                     <span className="text-xs font-normal text-simtis-muted">
                       {sensSage(candidat.ecriture.montant)}
                     </span>

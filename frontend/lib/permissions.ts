@@ -10,6 +10,7 @@ export const PERMISSIONS = {
   STATEMENTS_IMPORT: "statements.import",
   POSITION_VIEW: "position.view",
   ACCOUNTING_IMPORT: "accounting.import",
+  ACCOUNTING_PREPARE: "accounting.prepare",
   RECONCILIATION_VIEW: "reconciliation.view",
   RECONCILIATION_VALIDATE: "reconciliation.validate",
   DISCREPANCIES_MANAGE: "discrepancies.manage",
@@ -17,6 +18,7 @@ export const PERMISSIONS = {
   DASHBOARD_VIEW: "dashboard.view",
   ADMIN_USERS: "admin.users",
   ADMIN_ROLES: "admin.roles",
+  ADMIN_SETTINGS: "admin.settings",
   AUDIT_VIEW: "audit.view",
 } as const;
 
@@ -30,7 +32,7 @@ const P = PERMISSIONS;
  */
 export const ROUTE_PERMISSIONS: Record<string, readonly PermissionCode[]> = {
   "/dashboard": [P.DASHBOARD_VIEW],
-  "/rapports": [P.DASHBOARD_VIEW],
+  "/rapports": [P.POSITION_VIEW, P.RECONCILIATION_VIEW],
   "/banques": [P.POSITION_VIEW],
   "/comptes": [P.POSITION_VIEW],
   "/position-bancaire": [P.POSITION_VIEW],
@@ -38,7 +40,7 @@ export const ROUTE_PERMISSIONS: Record<string, readonly PermissionCode[]> = {
   "/ecritures": [P.ACCOUNTING_IMPORT, P.RECONCILIATION_VIEW],
   "/rapprochement": [P.RECONCILIATION_VIEW],
   "/ecarts": [P.RECONCILIATION_VIEW],
-  "/administration": [P.ADMIN_USERS, P.ADMIN_ROLES],
+  "/administration": [P.ADMIN_USERS, P.ADMIN_ROLES, P.ADMIN_SETTINGS],
   "/historique": [P.AUDIT_VIEW],
 };
 

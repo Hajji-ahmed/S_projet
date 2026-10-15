@@ -1,14 +1,9 @@
 import type { Metadata } from "next";
 
-import { PlaceholderPage } from "@/components/layout/PlaceholderPage";
+import { RapportsView } from "@/components/rapports/RapportsView";
 
 export const metadata: Metadata = { title: "Rapports" };
 
 export default function Page() {
-  return (
-    <PlaceholderPage
-      title="Rapports"
-      description="Exports de la position, du rapprochement, des écarts et des prévisions"
-    />
-  );
+  return <RapportsView />;
 }

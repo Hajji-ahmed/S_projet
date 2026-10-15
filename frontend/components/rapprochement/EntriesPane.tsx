@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
+import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -15,6 +16,7 @@ import { STATUTS_RAPPROCHEMENT, pageCount } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
+import { TYPES_OPERATION, unite } from "@/lib/reconciliation";
 import { listEntries } from "@/services/accounting";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
 
@@ -43,6 +45,7 @@ export function EntriesPane({
   const [statut, setStatut] = useState("");
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
+  const [typeOperation, setTypeOperation] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<EcrituresPage | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
@@ -54,6 +57,7 @@ export function EntriesPane({
       ...filter,
       statut: statut || undefined,
       q: q || undefined,
+      typeOperation: typeOperation || undefined,
       page,
     }).then(
       (result) => {
@@ -69,7 +73,7 @@ export function EntriesPane({
     return () => {
       cancelled = true;
     };
-  }, [companyId, filter, statut, q, page, reloadKey, retryKey, onLoaded]);
+  }, [companyId, filter, statut, q, typeOperation, page, reloadKey, retryKey, onLoaded]);
 
   const pages = data ? pageCount(data.total, data.taille) : 1;
   const columns: Column<Ecriture>[] = [
@@ -101,6 +105,14 @@ export function EntriesPane({
       render: (row) => formatAmount(row.credit, "DH", { dashForZero: true }),
     },
     {
+      key: "montant_devise",
+      header: "Devise",
+      align: "right",
+      // Compte en devise : le montant qui se rapproche du relevé (14/10/2026)
+      render: (row) =>
+        row.montant_devise != null ? formatAmount(row.montant_devise, unite(row.devise)) : "-",
+    },
+    {
       key: "numero_piece",
       header: "N° pièce",
       render: (row) => <span className="whitespace-nowrap">{row.numero_piece ?? "-"}</span>,
@@ -111,6 +123,7 @@ export function EntriesPane({
       render: (row) => <span className="whitespace-nowrap">{formatDate(row.echeance)}</span>,
     },
     { key: "statut", header: "Statut", render: (row) => <StatusBadge status={row.statut} /> },
+    { key: "code", header: "Code", render: (row) => <CodeBadge code={row.code_rapprochement} /> },
   ];
 
   return (
@@ -143,13 +156,28 @@ export function EntriesPane({
             />
           </Field>
         </div>
+        <div className="w-full max-w-[150px]">
+          <Field label="Type" htmlFor="rapprochement-ec-type">
+            <Select
+              id="rapprochement-ec-type"
+              value={typeOperation}
+              placeholder="Tous les types"
+              options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
+              onChange={(event) => {
+                setState("loading");
+                setPage(1);
+                setTypeOperation(event.target.value);
+              }}
+            />
+          </Field>
+        </div>
         <div className="w-full max-w-[200px]">
           <Field label="Recherche" htmlFor="rapprochement-ec-recherche">
             <TextInput
               id="rapprochement-ec-recherche"
               value={search}
               maxLength={100}
-              placeholder="Libellé, pièce, tiers"
+              placeholder="Libellé, pièce, tiers, code"
               onChange={(event) => setSearch(event.target.value)}
             />
           </Field>

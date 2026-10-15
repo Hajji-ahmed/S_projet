@@ -962,3 +962,144 @@ def test_same_sage_journal_in_two_companies_is_accepted(db, world):
     other = save(db, build_company())
     save(db, build_account(world.company, save(db, build_bank()), journal_sage="BQ1"))
     save(db, build_account(other, save(db, build_bank()), journal_sage="BQ1"))
+
+
+# --- Code de rapprochement (migration 0023) ------------------------------------------------------
+
+
+def test_a_reconciliation_code_is_unique_per_company(db, world):
+    from app.models import ReconciliationMatch
+
+    save(db, ReconciliationMatch(company_id=world.company.id, type="1-1", code="BP-26-000001"))
+
+    assert_rejected(
+        db,
+        "uq_reconciliation_matches_code",
+        ReconciliationMatch(company_id=world.company.id, type="1-1", code="BP-26-000001"),
+    )
+    save(db, ReconciliationMatch(company_id=world.company.id, type="1-1", code=None))
+    save(db, ReconciliationMatch(company_id=world.company.id, type="1-1", code=None))
+
+
+# --- Écritures préparées par SIMTIS (migration 0024) ---------------------------------------------
+
+
+def _entry(world, **over):
+    from app.models import AccountingEntry
+
+    return AccountingEntry(
+        **{
+            "company_id": world.company.id,
+            "bank_account_id": world.account.id,
+            "date_ecriture": date(2026, 9, 24),
+            "libelle": "DT D'ENREGISTREMENT",
+            "credit": Decimal("5.00"),
+            "montant": Decimal("5.00"),
+            "hash_ligne": f"simtis-{over.get('origine', 'Sage')}-{id(over)}",
+            # Toute écriture SIMTIS a sa famille (migration 0026)
+            "famille_frais": "timbres" if over.get("origine") == "SIMTIS" else None,
+            **over,
+        }
+    )
+
+
+def test_an_entry_origin_is_sage_or_simtis(db, world):
+    save(db, _entry(world, origine="SIMTIS"))
+
+    assert_rejected(db, "ck_accounting_entries_origine", _entry(world, origine="Excel"))
+
+
+def test_only_a_simtis_entry_is_exported(db, world):
+    save(db, _entry(world, origine="SIMTIS", exportee_le=datetime.now(UTC)))
+
+    assert_rejected(
+        db,
+        "ck_accounting_entries_export_simtis",
+        _entry(world, origine="Sage", exportee_le=datetime.now(UTC)),
+    )
+
+
+def test_a_match_origin_includes_fees(db, world):
+    from app.models import ReconciliationMatch
+
+    save(db, ReconciliationMatch(company_id=world.company.id, type="N-1", origine="Frais"))
+
+    assert_rejected(
+        db,
+        "ck_reconciliation_matches_origine",
+        ReconciliationMatch(company_id=world.company.id, type="N-1", origine="Robot"),
+    )
+
+
+# --- Frais comptabilisés à la main (migration 0026) -----------------------------------------------
+
+
+def test_a_simtis_entry_has_a_known_fee_family_and_a_sage_entry_none(db, world):
+    save(db, _entry(world, origine="SIMTIS", famille_frais="manuelle"))
+    # Frais à TVA comprise (migration 0027)
+    save(db, _entry(world, origine="SIMTIS", famille_frais="frais"))
+
+    assert_rejected(
+        db,
+        "ck_accounting_entries_famille_frais",
+        _entry(world, origine="SIMTIS", famille_frais=None),
+    )
+    assert_rejected(
+        db,
+        "ck_accounting_entries_famille_frais",
+        _entry(world, origine="SIMTIS", famille_frais="agios"),
+    )
+    assert_rejected(
+        db,
+        "ck_accounting_entries_famille_frais",
+        _entry(world, origine="Sage", famille_frais="timbres"),
+    )
+
+
+def test_a_separate_vat_is_only_for_a_manual_entry_and_below_its_amount(db, world):
+    save(db, _entry(world, origine="SIMTIS", famille_frais="manuelle", montant_tva=Decimal("0.45")))
+
+    for over in (
+        {"famille_frais": "timbres", "montant_tva": Decimal("0.45")},
+        {"famille_frais": "manuelle", "montant_tva": Decimal("5.00")},
+        {"famille_frais": "manuelle", "montant_tva": Decimal("0")},
+    ):
+        assert_rejected(
+            db, "ck_accounting_entries_tva_manuelle", _entry(world, origine="SIMTIS", **over)
+        )
+
+
+def test_a_vat_rate_needs_a_vat_amount_and_stays_within_100(db, world):
+    save(
+        db,
+        _entry(
+            world,
+            origine="SIMTIS",
+            famille_frais="manuelle",
+            montant_tva=Decimal("0.45"),
+            taux_tva=Decimal("10"),
+        ),
+    )
+
+    for over in (
+        {"taux_tva": Decimal("10")},
+        {"montant_tva": Decimal("0.45"), "taux_tva": Decimal("0")},
+        {"montant_tva": Decimal("0.45"), "taux_tva": Decimal("120")},
+    ):
+        assert_rejected(
+            db,
+            "ck_accounting_entries_taux_tva",
+            _entry(world, origine="SIMTIS", famille_frais="manuelle", **over),
+        )
+
+
+# --- Montant en devise (migration 0028) ------------------------------------------------------------
+
+
+def test_a_currency_amount_has_the_same_direction_as_the_line(db, world):
+    save(db, _entry(world, montant_devise=Decimal("0.50")))
+
+    for valeur in (Decimal("-0.50"), Decimal("0")):
+        assert_rejected(
+            db, "ck_accounting_entries_devise_meme_sens", _entry(world, montant_devise=valeur)
+        )

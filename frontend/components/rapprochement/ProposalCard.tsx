@@ -10,9 +10,14 @@ import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
+  montantEcriture,
+  unite,
+  uniteEcriture,
   absolute,
   ecartManuel,
   formatScore,
+  montantBanque,
+  operationsDe,
   sensBanque,
   sensSage,
   validable,
@@ -53,14 +58,17 @@ export function ProposalCard({
   onOpen,
 }: ProposalCardProps) {
   const ok = validable(item);
-  const ecart = ecartManuel(item.operation.montant, item.ecriture.montant);
+  const ecart = ecartManuel(montantBanque(item), montantEcriture(item.ecriture));
+  const devise = unite(item.operation.devise);
+  const lignes = operationsDe(item);
+  const groupe = lignes.length > 1;
   const checkboxId = `proposition-${item.id}`;
 
   return (
     <article
       aria-label={`Proposition : ${item.operation.libelle} et ${item.ecriture.libelle}`}
       className={cn(
-        "rounded-[14px] border bg-simtis-card p-4 shadow-simtis transition-colors duration-200",
+        "rounded-card border bg-simtis-card p-4 shadow-simtis transition-colors duration-200",
         checked ? "border-simtis-primary bg-simtis-light/40" : "border-simtis-border",
       )}
     >
@@ -79,15 +87,48 @@ export function ProposalCard({
           )}
         </div>
 
-        <Side title="Transaction bancaire">
-          <Amount value={item.operation.montant} sens={sensBanque(item.operation.montant)} />
-          <p className="font-medium">{item.operation.libelle}</p>
-          <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
-            <span>{formatDate(item.operation.date_operation)}</span>
-            <BankLabel code={item.operation.bank_code} logo={logo} />
-            {item.operation.reference && <span>Réf. {item.operation.reference}</span>}
-          </p>
-        </Side>
+        {groupe ? (
+          <Side title={`Groupe · ${lignes.length} opérations bancaires`}>
+            <Amount
+              value={montantBanque(item)}
+              sens={sensBanque(montantBanque(item))}
+              unite={devise}
+            />
+            <ul className="space-y-0.5 text-sm" aria-label="Opérations du groupe">
+              {lignes.map((ligne) => (
+                <li key={ligne.id} className="flex justify-between gap-3">
+                  <span className="min-w-0 truncate" title={ligne.libelle}>
+                    {formatDate(ligne.date_operation)} · {ligne.libelle}
+                  </span>
+                  <span className="shrink-0 tabular-nums">
+                    {formatAmount(ligne.montant, devise)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
+              <BankLabel code={item.operation.bank_code} logo={logo} />
+              <span>
+                Total {formatAmount(montantBanque(item), devise)} · écart{" "}
+                {formatAmount(absolute(ecart), devise)}
+              </span>
+            </p>
+          </Side>
+        ) : (
+          <Side title="Transaction bancaire">
+            <Amount
+              value={item.operation.montant}
+              sens={sensBanque(item.operation.montant)}
+              unite={devise}
+            />
+            <p className="font-medium">{item.operation.libelle}</p>
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
+              <span>{formatDate(item.operation.date_operation)}</span>
+              <BankLabel code={item.operation.bank_code} logo={logo} />
+              {item.operation.reference && <span>Réf. {item.operation.reference}</span>}
+            </p>
+          </Side>
+        )}
 
         <div className="flex flex-col items-center gap-2 text-center">
           <ArrowLeftRight className="hidden h-5 w-5 text-simtis-muted lg:block" aria-hidden />
@@ -131,7 +172,11 @@ export function ProposalCard({
         </div>
 
         <Side title="Écriture comptable">
-          <Amount value={item.ecriture.montant} sens={sensSage(item.ecriture.montant)} />
+          <Amount
+            value={montantEcriture(item.ecriture)}
+            sens={sensSage(item.ecriture.montant)}
+            unite={uniteEcriture(item.ecriture)}
+          />
           <p className="font-medium">{item.ecriture.libelle}</p>
           <p className="flex flex-wrap gap-x-2 text-xs text-simtis-muted">
             <span>{formatDate(item.ecriture.date_ecriture)}</span>
@@ -142,10 +187,16 @@ export function ProposalCard({
         </Side>
       </div>
 
+      {item.explication && (
+        <p className="mt-3 rounded-[10px] bg-simtis-light/60 px-3 py-2 text-sm text-simtis-text">
+          {item.explication}
+        </p>
+      )}
+
       {!ok && (
         <p className="mt-3 flex items-center gap-2 rounded-[10px] bg-simtis-orange-bg px-3 py-2 text-sm text-simtis-orange-fg">
           <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden />
-          Montant différent : écart de {formatAmount(absolute(ecart), "DH")}. Cette proposition ne
+          Montant différent : écart de {formatAmount(absolute(ecart), devise)}. Cette proposition ne
           peut pas être validée.
         </p>
       )}
@@ -184,10 +235,10 @@ function Side({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function Amount({ value, sens }: { value: string; sens: string }) {
+function Amount({ value, sens, unite = "DH" }: { value: string; sens: string; unite?: string }) {
   return (
     <p className="text-[22px] leading-tight font-bold text-simtis-primary-dark tabular-nums">
-      {formatAmount(absolute(value), "DH")}{" "}
+      {formatAmount(absolute(value), unite)}{" "}
       <span className="text-xs font-normal text-simtis-muted lowercase">{sens}</span>
     </p>
   );
