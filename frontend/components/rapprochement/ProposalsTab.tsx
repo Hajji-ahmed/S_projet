@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { SignalDiscrepancyModal } from "@/components/ecarts/SignalDiscrepancyModal";
 import { AmbiguousCard } from "@/components/rapprochement/AmbiguousCard";
+import { EcritureAmbigueCard } from "@/components/rapprochement/EcritureAmbigueCard";
 import { ProposalCard } from "@/components/rapprochement/ProposalCard";
 import { StatButton } from "@/components/rapprochement/StatButton";
 import { Button } from "@/components/ui/Button";
@@ -28,12 +29,26 @@ import {
   type ProposalsFilter,
 } from "@/lib/reconciliation";
 import {
+  aucuneEcriture,
+  aucuneEcritureLot,
+  aucuneOperation,
+  aucuneOperationLot,
+  rejectMatches,
+  matchGroupe,
   matchManually,
   rejectMatch,
   validateMatch,
   validateMatches,
 } from "@/services/reconciliation";
-import type { Ambigues, Correspondance, Correspondances, Operation } from "@/types/reconciliation";
+import type {
+  Ambigue,
+  Ambigues,
+  Correspondance,
+  Correspondances,
+  EcritureAmbigue,
+  EcrituresAmbigues,
+  Operation,
+} from "@/types/reconciliation";
 
 type ProposalsTabProps = {
   companyId: number;
@@ -50,6 +65,9 @@ type ProposalsTabProps = {
   ambigues: Ambigues | null;
   /** Page des opérations ambiguës (50 par page). */
   onAmbiguPage: (page: number) => void;
+  /** Écritures ambiguës (15/10/2026), chargées par la vue (null : en cours). */
+  ecrituresAmbigues: EcrituresAmbigues | null;
+  onEcrituresAmbiguesPage: (page: number) => void;
   /** Ouvre une opération ambiguë dans l'onglet Rapprochement. */
   onOpenOperation: (operation: Operation) => void;
   /** Filtre « Type d'opération » de l'opération bancaire (14/10/2026) ; "" = tous. */
@@ -68,8 +86,60 @@ function filtres(seuil: string): { value: ProposalsFilter; label: string }[] {
     { value: "toutes", label: "Toutes" },
     { value: "fortes", label: `Fortes (≥ ${seuil})` },
     { value: "a_verifier", label: `À vérifier (< ${seuil})` },
-    { value: "ambigues", label: "Ambiguës" },
+    { value: "ambigues", label: "Opérations ambiguës" },
+    { value: "ecritures_ambigues", label: "Écritures ambiguës" },
   ];
+}
+
+function bascule(ids: ReadonlySet<number>, id: number): Set<number> {
+  const suivants = new Set(ids);
+  if (suivants.has(id)) suivants.delete(id);
+  else suivants.add(id);
+  return suivants;
+}
+
+/** Barre des ambiguës (15/10/2026) : sélection de la page et « Aucune correspondance » en lot. */
+function BarreAucune({
+  nb,
+  total,
+  mot,
+  busy,
+  onTout,
+  onRien,
+  onAucune,
+}: {
+  nb: number;
+  total: number;
+  mot: string;
+  busy: boolean;
+  onTout: () => void;
+  onRien: () => void;
+  onAucune: () => void;
+}) {
+  return (
+    <div className="sticky bottom-0 z-10 -mx-1 rounded-card border border-simtis-border bg-simtis-card p-4 shadow-simtis">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm">
+          <span className="font-semibold">
+            {nb} sélectionnée{nb > 1 ? "s" : ""}
+          </span>{" "}
+          sur {total} {mot}
+          {total > 1 ? "s" : ""} de la page
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" disabled={busy} onClick={onTout}>
+            Tout sélectionner
+          </Button>
+          <Button variant="ghost" icon={X} disabled={busy || nb === 0} onClick={onRien}>
+            Tout désélectionner
+          </Button>
+          <Button variant="danger" icon={X} disabled={busy || nb === 0} onClick={onAucune}>
+            Aucune correspondance pour la sélection ({nb})
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function messageOf(error: unknown): string {
@@ -95,6 +165,8 @@ export function ProposalsTab({
   onOpen,
   ambigues,
   onAmbiguPage,
+  ecrituresAmbigues,
+  onEcrituresAmbiguesPage,
   onOpenOperation,
   typeOperation = "",
   onTypeOperation,
@@ -113,10 +185,27 @@ export function ProposalsTab({
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [rejecting, setRejecting] = useState<Correspondance | null>(null);
+  // Opération ambiguë dont aucune écriture ne correspond (15/10/2026)
+  const [aucune, setAucune] = useState<Ambigue | null>(null);
+  const [aucuneOp, setAucuneOp] = useState<EcritureAmbigue | null>(null);
+  // Sélections des ambiguës (15/10/2026), remises à zéro quand la liste change (page, filtre)
+  const [selOps, setSelOps] = useState<{ source: unknown; ids: Set<number> }>({
+    source: null,
+    ids: new Set(),
+  });
+  const [selEcr, setSelEcr] = useState<{ source: unknown; ids: Set<number> }>({
+    source: null,
+    ids: new Set(),
+  });
+  // Traitement en lot à confirmer : rejet de propositions, ou « aucune correspondance »
+  const [lot, setLot] = useState<{
+    type: "propositions" | "operations" | "ecritures";
+    ids: number[];
+  } | null>(null);
   const [comment, setComment] = useState("");
   const [signaling, setSignaling] = useState<LignesEcart | null>(null);
 
-  if (!items || !ambigues) {
+  if (!items || !ambigues || !ecrituresAmbigues) {
     return (
       <Card title="Propositions en attente" icon={ListChecks}>
         <LoadingState rows={4} />
@@ -138,7 +227,14 @@ export function ProposalsTab({
   const ambiguous = ambigues.ambigues;
   const seuil = formatScore(pending?.seuil_fort ?? ambigues.seuil_fort);
   const shownAmbiguous = filtre === "toutes" || filtre === "ambigues" ? ambiguous : [];
-  const nothing = shown.length === 0 && shownAmbiguous.length === 0;
+  const opsCochees = selOps.source === ambiguous ? selOps.ids : new Set<number>();
+  const ecrCochees = selEcr.source === ecrituresAmbigues.ecritures ? selEcr.ids : new Set<number>();
+  // Rejet en lot : seulement les propositions « À vérifier » cochées et affichées
+  const aRejeter =
+    filtre === "a_verifier" ? shown.filter((item) => selected.has(item.id)).map((i) => i.id) : [];
+  const shownEcritures =
+    filtre === "toutes" || filtre === "ecritures_ambigues" ? ecrituresAmbigues.ecritures : [];
+  const nothing = shown.length === 0 && shownAmbiguous.length === 0 && shownEcritures.length === 0;
 
   function setIds(update: (ids: Set<number>) => Set<number>) {
     setSelection((current) => ({ ...current, ids: update(new Set(current.ids)) }));
@@ -151,6 +247,11 @@ export function ProposalsTab({
       await action();
       setConfirming(false);
       setRejecting(null);
+      setAucune(null);
+      setAucuneOp(null);
+      setLot(null);
+      setSelOps({ source: null, ids: new Set() });
+      setSelEcr({ source: null, ids: new Set() });
       setComment("");
       onChanged(message);
     } catch (failure) {
@@ -165,7 +266,7 @@ export function ProposalsTab({
       <Card title="Propositions en attente" icon={ListChecks}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div
-            className="grid grid-cols-2 gap-2 text-sm sm:max-w-2xl sm:grid-cols-4"
+            className="grid grid-cols-2 gap-2 text-sm sm:max-w-3xl sm:grid-cols-5"
             role="group"
             aria-label="Filtrer les propositions"
           >
@@ -175,12 +276,14 @@ export function ProposalsTab({
                 label={label}
                 value={
                   value === "toutes"
-                    ? items.length + ambigues.total
+                    ? items.length + ambigues.total + ecrituresAmbigues.total
                     : value === "fortes"
                       ? nbFortes
                       : value === "a_verifier"
                         ? items.length - nbFortes
-                        : ambigues.total
+                        : value === "ambigues"
+                          ? ambigues.total
+                          : ecrituresAmbigues.total
                 }
                 active={filtre === value}
                 onClick={() => setFiltre(value)}
@@ -221,7 +324,7 @@ export function ProposalsTab({
           <EmptyState
             icon={ListChecks}
             message={
-              items.length + ambigues.total === 0
+              items.length + ambigues.total + ecrituresAmbigues.total === 0
                 ? "Rien à vérifier : lancez le rapprochement sur la période."
                 : "Rien dans ce filtre."
             }
@@ -297,11 +400,72 @@ export function ProposalsTab({
                   })
                 }
                 onOpen={() => onOpenOperation(item.operation)}
+                onAucune={() => setAucune(item)}
+                selection={
+                  canValidate && filtre === "ambigues"
+                    ? {
+                        checked: opsCochees.has(item.operation.id),
+                        onToggle: () =>
+                          setSelOps({
+                            source: ambiguous,
+                            ids: bascule(opsCochees, item.operation.id),
+                          }),
+                      }
+                    : undefined
+                }
               />
             </li>
           ))}
         </ul>
       )}
+      {shownEcritures.length > 0 && (
+        <ul className="space-y-3">
+          {shownEcritures.map((item) => (
+            <li key={`ecriture-ambigue-${item.ecriture.id}`}>
+              <EcritureAmbigueCard
+                item={item}
+                logo={logos.get(item.ecriture.bank_code ?? "")}
+                seuilFort={ambigues.seuil_fort}
+                canValidate={canValidate}
+                busy={busy}
+                onRapprocher={(operationIds) =>
+                  act(
+                    () => matchGroupe(operationIds, [item.ecriture.id]),
+                    "Rapprochement enregistré.",
+                  )
+                }
+                onAucune={() => {
+                  setComment("");
+                  setAucuneOp(item);
+                }}
+                selection={
+                  canValidate && filtre === "ecritures_ambigues"
+                    ? {
+                        checked: ecrCochees.has(item.ecriture.id),
+                        onToggle: () =>
+                          setSelEcr({
+                            source: ecrituresAmbigues.ecritures,
+                            ids: bascule(ecrCochees, item.ecriture.id),
+                          }),
+                      }
+                    : undefined
+                }
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      {shownEcritures.length > 0 && ecrituresAmbigues.total > ecrituresAmbigues.taille && (
+        <Pagination
+          label="Pages des écritures ambiguës"
+          page={ecrituresAmbigues.page}
+          pages={Math.ceil(ecrituresAmbigues.total / ecrituresAmbigues.taille)}
+          total={ecrituresAmbigues.total}
+          noun="écriture"
+          onPage={onEcrituresAmbiguesPage}
+        />
+      )}
+
       {shownAmbiguous.length > 0 && ambigues.total > ambigues.taille && (
         <Pagination
           label="Pages des opérations ambiguës"
@@ -313,56 +477,108 @@ export function ProposalsTab({
         />
       )}
 
-      {canValidate && items.length > 0 && (
-        <div className="sticky bottom-0 z-10 -mx-1 rounded-card border border-simtis-border bg-simtis-card p-4 shadow-simtis">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm">
-              <span className="font-semibold">
-                {summary.nb} sélectionnée{summary.nb > 1 ? "s" : ""}
-              </span>{" "}
-              sur {items.length} · <span className="font-semibold tabular-nums">{totalTexte}</span>
-              {summary.faibles > 0 && (
-                <span className="text-simtis-warning-fg">
-                  {" "}
-                  · dont {plural(summary.faibles, "proposition")} à vérifier
-                </span>
-              )}
-              {summary.nb > LOT_MAX && (
-                <span role="alert" className="block text-simtis-danger-fg">
-                  Sélection trop grande ({summary.nb}) : {LOT_MAX} au plus par validation. Filtrez
-                  par compte ou par période.
-                </span>
-              )}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() =>
-                  setIds(() => new Set(shown.filter(validable).map((item) => item.id)))
-                }
-              >
-                Tout sélectionner
-              </Button>
-              <Button
-                variant="ghost"
-                icon={X}
-                disabled={busy || summary.nb === 0}
-                onClick={() => setIds(() => new Set())}
-              >
-                Tout désélectionner
-              </Button>
-              <Button
-                icon={CheckCheck}
-                disabled={busy || summary.nb === 0 || summary.nb > LOT_MAX}
-                onClick={() => setConfirming(true)}
-              >
-                Valider la sélection ({summary.nb})
-              </Button>
+      {canValidate &&
+        ((filtre === "ambigues" && ambiguous.length > 0) ||
+          (filtre === "ecritures_ambigues" && ecrituresAmbigues.ecritures.length > 0)) && (
+          <BarreAucune
+            nb={filtre === "ambigues" ? opsCochees.size : ecrCochees.size}
+            total={filtre === "ambigues" ? ambiguous.length : ecrituresAmbigues.ecritures.length}
+            mot={filtre === "ambigues" ? "opération" : "écriture"}
+            busy={busy}
+            onTout={() =>
+              filtre === "ambigues"
+                ? setSelOps({
+                    source: ambiguous,
+                    ids: new Set(ambiguous.map((item) => item.operation.id)),
+                  })
+                : setSelEcr({
+                    source: ecrituresAmbigues.ecritures,
+                    ids: new Set(ecrituresAmbigues.ecritures.map((item) => item.ecriture.id)),
+                  })
+            }
+            onRien={() =>
+              filtre === "ambigues"
+                ? setSelOps({ source: ambiguous, ids: new Set() })
+                : setSelEcr({ source: ecrituresAmbigues.ecritures, ids: new Set() })
+            }
+            onAucune={() => {
+              setComment("");
+              setLot(
+                filtre === "ambigues"
+                  ? { type: "operations", ids: [...opsCochees] }
+                  : { type: "ecritures", ids: [...ecrCochees] },
+              );
+            }}
+          />
+        )}
+
+      {canValidate &&
+        items.length > 0 &&
+        filtre !== "ambigues" &&
+        filtre !== "ecritures_ambigues" && (
+          <div className="sticky bottom-0 z-10 -mx-1 rounded-card border border-simtis-border bg-simtis-card p-4 shadow-simtis">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm">
+                <span className="font-semibold">
+                  {summary.nb} sélectionnée{summary.nb > 1 ? "s" : ""}
+                </span>{" "}
+                sur {items.length} ·{" "}
+                <span className="font-semibold tabular-nums">{totalTexte}</span>
+                {summary.faibles > 0 && (
+                  <span className="text-simtis-warning-fg">
+                    {" "}
+                    · dont {plural(summary.faibles, "proposition")} à vérifier
+                  </span>
+                )}
+                {summary.nb > LOT_MAX && (
+                  <span role="alert" className="block text-simtis-danger-fg">
+                    Sélection trop grande ({summary.nb}) : {LOT_MAX} au plus par validation. Filtrez
+                    par compte ou par période.
+                  </span>
+                )}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    setIds(() => new Set(shown.filter(validable).map((item) => item.id)))
+                  }
+                >
+                  Tout sélectionner
+                </Button>
+                <Button
+                  variant="ghost"
+                  icon={X}
+                  disabled={busy || summary.nb === 0}
+                  onClick={() => setIds(() => new Set())}
+                >
+                  Tout désélectionner
+                </Button>
+                {filtre === "a_verifier" && (
+                  <Button
+                    variant="danger"
+                    icon={X}
+                    disabled={busy || aRejeter.length === 0 || aRejeter.length > LOT_MAX}
+                    onClick={() => {
+                      setComment("");
+                      setLot({ type: "propositions", ids: aRejeter });
+                    }}
+                  >
+                    Rejeter la sélection ({aRejeter.length})
+                  </Button>
+                )}
+                <Button
+                  icon={CheckCheck}
+                  disabled={busy || summary.nb === 0 || summary.nb > LOT_MAX}
+                  onClick={() => setConfirming(true)}
+                >
+                  Valider la sélection ({summary.nb})
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       <Modal
         open={confirming}
@@ -434,6 +650,147 @@ export function ProposalsTab({
         <Field label="Commentaire (facultatif)" htmlFor="proposition-rejet">
           <TextInput
             id="proposition-rejet"
+            value={comment}
+            maxLength={500}
+            onChange={(event) => setComment(event.target.value)}
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={aucune !== null}
+        onClose={() => setAucune(null)}
+        title="Aucune écriture ne correspond"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setAucune(null)}>
+              Retour
+            </Button>
+            <Button
+              variant="danger"
+              icon={X}
+              disabled={busy}
+              onClick={() =>
+                aucune &&
+                act(
+                  () => aucuneEcriture(aucune.operation.id, comment),
+                  `${aucune.candidats.length} écriture${aucune.candidats.length > 1 ? "s" : ""} écartée${aucune.candidats.length > 1 ? "s" : ""} pour cette opération.`,
+                )
+              }
+            >
+              Écarter les écritures
+            </Button>
+          </>
+        }
+      >
+        {aucune && (
+          <p className="mb-4 text-simtis-muted">
+            Les {aucune.candidats.length} écritures proposées seront écartées pour l&apos;opération
+            « {aucune.operation.libelle} » : elles ne lui seront plus jamais proposées, et
+            l&apos;opération repasse « Non rapprochée ». Une écriture importée plus tard sera
+            comparée normalement.
+          </p>
+        )}
+        <Field label="Commentaire (facultatif)" htmlFor="aucune-ecriture">
+          <TextInput
+            id="aucune-ecriture"
+            value={comment}
+            maxLength={500}
+            onChange={(event) => setComment(event.target.value)}
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={aucuneOp !== null}
+        onClose={() => setAucuneOp(null)}
+        title="Aucune opération ne correspond"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setAucuneOp(null)}>
+              Retour
+            </Button>
+            <Button
+              variant="danger"
+              icon={X}
+              disabled={busy}
+              onClick={() =>
+                aucuneOp &&
+                act(
+                  () => aucuneOperation(aucuneOp.ecriture.id, comment),
+                  `${plural(aucuneOp.candidats.length, "opération")} écartée${aucuneOp.candidats.length > 1 ? "s" : ""} pour cette écriture.`,
+                )
+              }
+            >
+              Écarter les opérations
+            </Button>
+          </>
+        }
+      >
+        {aucuneOp && (
+          <p className="mb-4 text-simtis-muted">
+            Les {aucuneOp.candidats.length} opérations proposées seront écartées pour
+            l&apos;écriture « {aucuneOp.ecriture.libelle} » : elles ne lui seront plus jamais
+            proposées, et l&apos;écriture repasse « Non rapprochée ».
+          </p>
+        )}
+        <Field label="Commentaire (facultatif)" htmlFor="aucune-operation">
+          <TextInput
+            id="aucune-operation"
+            value={comment}
+            maxLength={500}
+            onChange={(event) => setComment(event.target.value)}
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={lot !== null}
+        onClose={() => setLot(null)}
+        title={
+          lot?.type === "propositions"
+            ? "Rejeter les propositions sélectionnées"
+            : "Aucune correspondance pour la sélection"
+        }
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setLot(null)}>
+              Retour
+            </Button>
+            <Button
+              variant="danger"
+              icon={X}
+              disabled={busy}
+              onClick={() =>
+                lot &&
+                act(
+                  () =>
+                    lot.type === "propositions"
+                      ? rejectMatches(lot.ids, comment)
+                      : lot.type === "operations"
+                        ? aucuneEcritureLot(lot.ids, comment)
+                        : aucuneOperationLot(lot.ids, comment),
+                  lot.type === "propositions"
+                    ? `${plural(lot.ids.length, "proposition")} rejetée${lot.ids.length > 1 ? "s" : ""}.`
+                    : `${plural(lot.ids.length, lot.type === "operations" ? "opération" : "écriture")} sans correspondance.`,
+                )
+              }
+            >
+              {lot?.type === "propositions" ? "Rejeter" : "Écarter les candidates"}
+            </Button>
+          </>
+        }
+      >
+        {lot && (
+          <p className="mb-4 text-simtis-muted">
+            {lot.type === "propositions"
+              ? `${plural(lot.ids.length, "proposition")} seront rejetées : ces paires ne seront plus jamais proposées et leurs lignes repassent « Non rapprochée ».`
+              : `Pour ${plural(lot.ids.length, lot.type === "operations" ? "opération" : "écriture")}, toutes les candidates seront écartées (plus jamais proposées) et la ligne repasse « Non rapprochée ».`}
+          </p>
+        )}
+        <Field label="Commentaire (facultatif)" htmlFor="lot-commentaire">
+          <TextInput
+            id="lot-commentaire"
             value={comment}
             maxLength={500}
             onChange={(event) => setComment(event.target.value)}

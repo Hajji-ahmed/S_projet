@@ -46,7 +46,7 @@ def test_upgrade_creates_every_model_table(empty_database):
 
     assert user_tables(engine) == set(Base.metadata.tables)
     # 30 : compteurs des codes de rapprochement (migration 0023)
-    assert len(user_tables(engine)) == 30
+    assert len(user_tables(engine)) == 31
     assert audit_function_exists(engine)
 
 
@@ -68,7 +68,7 @@ def test_upgrade_works_again_after_downgrade(empty_database):
     command.upgrade(config, "head")
 
     # 30 : compteurs des codes de rapprochement (migration 0023)
-    assert len(user_tables(engine)) == 30
+    assert len(user_tables(engine)) == 31
 
 
 def test_migration_0005_fills_only_empty_pointages(empty_database):

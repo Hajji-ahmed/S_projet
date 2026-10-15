@@ -13,20 +13,27 @@ from app.schemas.reconciliation import (
     AmbigueOut,
     AmbiguesOut,
     AnnulationIn,
+    AucuneEcritureOut,
+    AucuneLotIn,
+    AucuneOperationOut,
     CandidatOut,
     CandidatsOut,
     CorrespondanceOut,
     CorrespondancesOut,
+    EcritureAmbigueOut,
+    EcrituresAmbiguesOut,
     HistoriqueOut,
     ManuelIn,
     OperationOut,
     OperationsPageOut,
     RejetIn,
+    RejetLotIn,
     RunIn,
     RunOut,
     StatutCorrespondance,
     StatutDecision,
     StatutRapprochement,
+    TraitementLotOut,
     ValidationLotIn,
     ValidationLotOut,
 )
@@ -131,6 +138,54 @@ def list_ambiguous(
         taille=reconciliation_service.PAGE_AMBIGUES,
         ambigues=[AmbigueOut.from_view(v) for v in views],
     )
+
+
+@router.get("/ambiguous-entries", response_model=EcrituresAmbiguesOut)
+def list_ambiguous_entries(
+    company_id: Annotated[int, Query(description="Société dont on veut les écritures ambiguës")],
+    bank_account_id: int | None = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    type_operation: Annotated[
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+    ] = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> EcrituresAmbiguesOut:
+    """Écritures « À vérifier » sans proposition, avec leurs opérations candidates (50 par page,
+    le total porte sur tout le filtre)."""
+    total, views = reconciliation_service.list_ambiguous_entries(
+        db,
+        company_id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        type_operation=type_operation,
+    )
+    return EcrituresAmbiguesOut(
+        total=total,
+        page=page,
+        taille=reconciliation_service.PAGE_AMBIGUES,
+        ecritures=[EcritureAmbigueOut.from_view(v) for v in views],
+    )
+
+
+@router.post("/entries/{entry_id}/aucune-operation", response_model=AucuneOperationOut)
+def aucune_operation(
+    entry_id: int,
+    body: RejetIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> AucuneOperationOut:
+    """Écriture ambiguë : aucune opération candidate ne correspond ; elles sont toutes écartées
+    (paires rejetées, jamais reproposées) et l'écriture repasse « Non rapprochée »."""
+    ids = reconciliation_service.rejeter_ambiguite_ecriture(
+        db, entry_id, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
+    )
+    return AucuneOperationOut(operations_ecartees=ids)
 
 
 @router.get("/history", response_model=HistoriqueOut)
@@ -263,6 +318,48 @@ def validate_batch(
     return ValidationLotOut(nb_validees=len(matches))
 
 
+@router.post("/matches/reject-batch", response_model=TraitementLotOut)
+def reject_batch(
+    body: RejetLotIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> TraitementLotOut:
+    """Rejette en lot les propositions choisies (toutes ou aucune)."""
+    nb = reconciliation_service.reject_batch(
+        db, body.ids, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
+    )
+    return TraitementLotOut(nb_traitees=nb)
+
+
+@router.post("/transactions/aucune-ecriture", response_model=TraitementLotOut)
+def aucune_ecriture_lot(
+    body: AucuneLotIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> TraitementLotOut:
+    """Opérations ambiguës choisies : leurs écritures candidates sont toutes écartées."""
+    nb = reconciliation_service.rejeter_ambiguites(
+        db, body.ids, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
+    )
+    return TraitementLotOut(nb_traitees=nb)
+
+
+@router.post("/entries/aucune-operation", response_model=TraitementLotOut)
+def aucune_operation_lot(
+    body: AucuneLotIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> TraitementLotOut:
+    """Écritures ambiguës choisies : leurs opérations candidates sont toutes écartées."""
+    nb = reconciliation_service.rejeter_ambiguites_ecritures(
+        db, body.ids, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
+    )
+    return TraitementLotOut(nb_traitees=nb)
+
+
 @router.post("/matches/{match_id}/validate", response_model=CorrespondanceOut)
 def validate(
     match_id: int,
@@ -301,16 +398,37 @@ def match_manually(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_validate),
 ) -> CorrespondanceOut:
-    """Rapprochement manuel 1→1, validé d'emblée (montants égaux, sens opposé)."""
+    """Rapprochement manuel 1→1, 1→N, N→1 ou N→N, validé d'emblée (totaux égaux, sens
+    opposé, un seul compte)."""
     match = reconciliation_service.match_manually(
         db,
-        transaction_id=body.transaction_id,
-        entry_id=body.ecriture_id,
+        transaction_ids=body.operations(),
+        entry_ids=body.ecritures(),
         commentaire=body.commentaire,
         acteur_id=user.id,
         ip=client_ip(request),
     )
     return _out(db, match.id)
+
+
+@router.post("/transactions/{transaction_id}/aucune-ecriture", response_model=AucuneEcritureOut)
+def aucune_ecriture(
+    transaction_id: int,
+    body: RejetIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> AucuneEcritureOut:
+    """Opération ambiguë : aucune écriture candidate ne correspond ; elles sont toutes écartées
+    (paires rejetées, jamais reproposées) et l'opération repasse « Non rapprochée »."""
+    ids = reconciliation_service.rejeter_ambiguite(
+        db,
+        transaction_id,
+        commentaire=body.commentaire,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return AucuneEcritureOut(ecritures_ecartees=ids)
 
 
 @router.delete("/matches/{match_id}", response_model=CorrespondanceOut)

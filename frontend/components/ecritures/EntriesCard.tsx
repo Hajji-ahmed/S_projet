@@ -3,6 +3,7 @@
 import { BookText, ChevronLeft, ChevronRight, Eye, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { EntryDetailModal } from "@/components/ecritures/EntryDetailModal";
@@ -178,9 +179,7 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
             active={filter.bankAccountId === account.id}
             onClick={() => change({ bankAccountId: account.id })}
           >
-            <BankLabel code={account.bank_code} logo={account.bank_logo}>
-              {account.bank_code} · {account.journal_sage}
-            </BankLabel>
+            <AccountChipLabel account={account} />
           </AccountButton>
         ))}
       </div>

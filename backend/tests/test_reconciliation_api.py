@@ -1245,3 +1245,191 @@ def test_a_currency_account_is_matched_on_the_sage_currency_amount(client, compt
     assert proposal["ecriture"]["montant_devise"] == "-1000.00"
     _valider(client, comptable, proposal["id"])
     assert statuses(db, tx, entry, mad) == ["Rapprochée", "Rapprochée", "Non rapprochée"]
+
+
+def test_a_second_run_does_not_wait_behind_a_running_one(client, comptable, db, monkeypatch):
+    """15/10/2026 : un lancement alors qu'un autre tient la société répond 409 aussitôt."""
+    from sqlalchemy.exc import OperationalError
+
+    from app.repositories import reconciliation_repository
+
+    class Verrouillee(Exception):
+        sqlstate = "55P03"
+
+    def deja_verrouillee(*args, **kwargs):
+        raise OperationalError("SELECT … FOR UPDATE NOWAIT", {}, Verrouillee())
+
+    monkeypatch.setattr(reconciliation_repository, "lock_company", deja_verrouillee)
+
+    response = client.post(
+        "/api/reconciliation/run",
+        json={"company_id": company(db).id, **PERIODE},
+        headers=comptable,
+    )
+
+    assert response.status_code == 409
+    assert "déjà en cours" in response.json()["detail"]
+
+
+def test_no_entry_matches_an_ambiguous_operation(client, comptable, direction, db):
+    """15/10/2026 : « Aucune écriture ne correspond » écarte toutes les candidates d'un coup."""
+    compte = account(db)
+    tx = operation(db, compte)
+    first, second = ecriture(db, compte), ecriture(db, compte)
+    run(client, comptable, db)
+    url = f"/api/reconciliation/transactions/{tx.id}/aucune-ecriture"
+
+    refus = client.post(url, json={}, headers=direction)
+    response = client.post(url, json={"commentaire": "Chèque d'un autre client"}, headers=comptable)
+
+    assert refus.status_code == 403
+    assert response.status_code == 200, response.text
+    assert sorted(response.json()["ecritures_ecartees"]) == sorted([first.id, second.id])
+    assert statuses(db, tx) == ["Non rapprochée"]
+    ambigues = client.get(
+        "/api/reconciliation/ambiguous", params={"company_id": company(db).id}, headers=direction
+    ).json()
+    assert ambigues["ambigues"] == []
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "rejet_ambiguite"))
+    assert audit.nouvelle_valeur["commentaire"] == "Chèque d'un autre client"
+
+    # Le moteur ne repropose jamais ces écritures ; une nouvelle écriture reste comparée
+    run(client, comptable, db)
+    assert statuses(db, tx) == ["Non rapprochée"]
+    nouvelle = ecriture(db, compte, libelle="VIR ABC", numero_piece="NEW1")
+    run(client, comptable, db)
+    proposees = client.get(
+        "/api/reconciliation/proposals",
+        params={"company_id": company(db).id},
+        headers=direction,
+    ).json()["correspondances"]
+    assert [(p["operation"]["id"], p["ecriture"]["id"]) for p in proposees] == [
+        (tx.id, nouvelle.id)
+    ]
+
+    # Rien à écarter une seconde fois
+    assert client.post(url, json={}, headers=comptable).status_code == 409
+
+
+def test_ambiguous_entries_come_with_their_operations(client, comptable, direction, db):
+    """15/10/2026 : une écriture ambiguë (plusieurs opérations aussi proches) est listée avec ses
+    opérations candidates ; le rapprochement N → 1 qui suit passe par le rapprochement manuel de
+    plusieurs lignes (tests de `test_reconciliation_manuel_groupe.py`)."""
+    compte = account(db)
+    entry = ecriture(db, compte)
+    first, second = operation(db, compte), operation(db, compte)
+    run(client, comptable, db)
+    url = "/api/reconciliation/ambiguous-entries"
+
+    refus = client.get(url, params={"company_id": company(db).id}, headers={})
+    response = client.get(url, params={"company_id": company(db).id}, headers=direction)
+
+    assert refus.status_code == 401
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 1
+    [ambigue] = body["ecritures"]
+    assert ambigue["ecriture"]["id"] == entry.id
+    assert {c["operation"]["id"] for c in ambigue["candidats"]} == {first.id, second.id}
+
+
+def test_no_operation_matches_an_ambiguous_entry(client, comptable, direction, db):
+    compte = account(db)
+    entry = ecriture(db, compte)
+    first, second = operation(db, compte), operation(db, compte)
+    run(client, comptable, db)
+    url = f"/api/reconciliation/entries/{entry.id}/aucune-operation"
+
+    assert client.post(url, json={}, headers=direction).status_code == 403
+    response = client.post(url, json={"commentaire": "Pas encore en banque"}, headers=comptable)
+
+    assert response.status_code == 200, response.text
+    assert sorted(response.json()["operations_ecartees"]) == sorted([first.id, second.id])
+    assert statuses(db, entry) == ["Non rapprochée"]
+    restantes = client.get(
+        "/api/reconciliation/ambiguous-entries",
+        params={"company_id": company(db).id},
+        headers=direction,
+    ).json()
+    assert restantes["ecritures"] == []
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "rejet_ambiguite_ecriture"))
+    assert audit.nouvelle_valeur["commentaire"] == "Pas encore en banque"
+    assert client.post(url, json={}, headers=comptable).status_code == 409
+
+
+def test_proposals_are_rejected_in_a_batch_all_or_nothing(client, comptable, direction, db):
+    """15/10/2026 : « Rejeter la sélection » des propositions à vérifier."""
+    compte = account(db)
+    tx1 = operation(db, compte, montant="100", jour=date(2026, 9, 1), libelle="VIR UN")
+    ec1 = ecriture(db, compte, montant="-100", jour=date(2026, 9, 1), libelle="Client un")
+    tx2 = operation(db, compte, montant="200", jour=date(2026, 9, 5), libelle="VIR DEUX")
+    ec2 = ecriture(db, compte, montant="-200", jour=date(2026, 9, 5), libelle="Client deux")
+    run(client, comptable, db)
+    par_operation = {
+        p["operation"]["id"]: p["id"]
+        for p in client.get(
+            "/api/reconciliation/proposals",
+            params={"company_id": company(db).id},
+            headers=direction,
+        ).json()["correspondances"]
+    }
+    ids = [par_operation[tx1.id], par_operation[tx2.id]]
+    url = "/api/reconciliation/matches/reject-batch"
+
+    assert client.post(url, json={"ids": ids}, headers=direction).status_code == 403
+    client.post(f"/api/reconciliation/matches/{ids[0]}/validate", headers=comptable)
+    tout_ou_rien = client.post(url, json={"ids": ids}, headers=comptable)
+    assert tout_ou_rien.status_code == 409
+    assert statuses(db, tx2, ec2) == ["À vérifier", "À vérifier"]
+
+    response = client.post(url, json={"ids": ids[1:], "commentaire": "Faux"}, headers=comptable)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"nb_traitees": 1}
+    assert statuses(db, tx2, ec2) == ["Non rapprochée", "Non rapprochée"]
+    assert statuses(db, tx1, ec1) == ["Rapprochée", "Rapprochée"]
+    rejet = db.scalar(
+        select(AuditLog)
+        .where(AuditLog.action == "rejet_rapprochement")
+        .order_by(AuditLog.id.desc())
+    )
+    assert rejet.nouvelle_valeur["en_lot"] is True
+    run(client, comptable, db)
+    assert statuses(db, tx2, ec2) == ["Non rapprochée", "Non rapprochée"]
+
+
+def test_ambiguous_operations_and_entries_are_discarded_in_a_batch(client, comptable, db):
+    compte = account(db)
+    # Deux opérations ambiguës (deux écritures chacune), un autre jour
+    ambigues = []
+    for jour in (date(2026, 9, 2), date(2026, 9, 20)):
+        ambigues.append(operation(db, compte, jour=jour))
+        ecriture(db, compte, jour=jour)
+        ecriture(db, compte, jour=jour)
+    # Une écriture ambiguë (deux opérations)
+    entry = ecriture(db, compte, montant="-700", jour=date(2026, 9, 12), libelle="Fournisseur")
+    operation(db, compte, montant="700", jour=date(2026, 9, 12), libelle="VIR A")
+    operation(db, compte, montant="700", jour=date(2026, 9, 12), libelle="VIR A")
+    run(client, comptable, db)
+
+    ops = client.post(
+        "/api/reconciliation/transactions/aucune-ecriture",
+        json={"ids": [tx.id for tx in ambigues]},
+        headers=comptable,
+    )
+    ecrs = client.post(
+        "/api/reconciliation/entries/aucune-operation", json={"ids": [entry.id]}, headers=comptable
+    )
+    encore = client.post(
+        "/api/reconciliation/transactions/aucune-ecriture",
+        json={"ids": [ambigues[0].id]},
+        headers=comptable,
+    )
+
+    assert ops.status_code == 200, ops.text
+    assert ops.json() == {"nb_traitees": 2}
+    assert statuses(db, *ambigues) == ["Non rapprochée", "Non rapprochée"]
+    assert ecrs.status_code == 200, ecrs.text
+    assert statuses(db, entry) == ["Non rapprochée"]
+    # Tout ou rien : la première n'a plus rien à écarter
+    assert encore.status_code == 409

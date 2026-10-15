@@ -14,6 +14,7 @@ import type {
   RunResult,
   StatutCorrespondance,
   StatutDecision,
+  EcrituresAmbigues,
 } from "@/types/reconciliation";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -69,6 +70,33 @@ export function validateMatches(ids: number[]) {
   });
 }
 
+/** Rejet en lot des propositions choisies, toutes ou aucune (15/10/2026). */
+export function rejectMatches(ids: number[], commentaire?: string) {
+  return apiFetch<{ nb_traitees: number }>("/reconciliation/matches/reject-batch", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids, commentaire: commentaire?.trim() || null }),
+  });
+}
+
+/** Opérations ambiguës choisies : aucune écriture ne correspond (15/10/2026). */
+export function aucuneEcritureLot(ids: number[], commentaire?: string) {
+  return apiFetch<{ nb_traitees: number }>("/reconciliation/transactions/aucune-ecriture", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids, commentaire: commentaire?.trim() || null }),
+  });
+}
+
+/** Écritures ambiguës choisies : aucune opération ne correspond (15/10/2026). */
+export function aucuneOperationLot(ids: number[], commentaire?: string) {
+  return apiFetch<{ nb_traitees: number }>("/reconciliation/entries/aucune-operation", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ids, commentaire: commentaire?.trim() || null }),
+  });
+}
+
 export function rejectMatch(id: number, commentaire?: string) {
   return apiFetch<Correspondance>(`/reconciliation/matches/${id}/reject`, {
     method: "POST",
@@ -97,6 +125,31 @@ export function matchManually(transactionId: number, ecritureId: number, comment
   });
 }
 
+/** Opération ambiguë : aucune écriture candidate ne correspond (15/10/2026). */
+export function aucuneEcriture(transactionId: number, commentaire?: string) {
+  return apiFetch<{ ecritures_ecartees: number[] }>(
+    `/reconciliation/transactions/${transactionId}/aucune-ecriture`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ commentaire: commentaire?.trim() || null }),
+    },
+  );
+}
+
+/** Rapprochement manuel de plusieurs lignes (1-N, N-1, N-N ; P13 du 15/10/2026). */
+export function matchGroupe(transactionIds: number[], ecritureIds: number[], commentaire?: string) {
+  return apiFetch<Correspondance>("/reconciliation/matches", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      transaction_ids: transactionIds,
+      ecriture_ids: ecritureIds,
+      commentaire: commentaire?.trim() || null,
+    }),
+  });
+}
+
 /** Historique des décisions (validées, rejetées, annulées), les plus récentes d'abord. */
 export function listHistory(
   companyId: number,
@@ -112,6 +165,25 @@ export function listHistory(
 export function listAmbiguous(companyId: number, filter: ReconciliationFilter, page = 1) {
   return apiFetch<Ambigues>(
     `/reconciliation/ambiguous${reconciliationQuery(companyId, { ...filter, page })}`,
+  );
+}
+
+/** Écritures ambiguës (plusieurs opérations aussi proches), 50 par page (15/10/2026). */
+export function listAmbiguousEntries(companyId: number, filter: ReconciliationFilter, page = 1) {
+  return apiFetch<EcrituresAmbigues>(
+    `/reconciliation/ambiguous-entries${reconciliationQuery(companyId, { ...filter, page })}`,
+  );
+}
+
+/** Écriture ambiguë : aucune opération candidate ne correspond (15/10/2026). */
+export function aucuneOperation(entryId: number, commentaire?: string) {
+  return apiFetch<{ operations_ecartees: number[] }>(
+    `/reconciliation/entries/${entryId}/aucune-operation`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ commentaire: commentaire?.trim() || null }),
+    },
   );
 }
 

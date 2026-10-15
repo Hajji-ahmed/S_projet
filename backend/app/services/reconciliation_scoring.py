@@ -14,10 +14,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from difflib import SequenceMatcher
 from functools import lru_cache
 
 from app.services.normalization_service import extract_reference
+
+try:
+    # difflib compilé (15/10/2026) : mêmes ratios que difflib, environ 4 fois plus vite
+    from cydifflib import SequenceMatcher
+except ImportError:  # pragma: no cover - repli si la dépendance manque
+    from difflib import SequenceMatcher
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -171,13 +176,18 @@ def _cle(value: str | None) -> str:
     return _plain(value).replace(" ", "")
 
 
+@lru_cache(maxsize=_CACHE)
+def _motif_cle(cle: str) -> re.Pattern[str]:
+    motif = r"\s?".join(re.escape(char) for char in cle)
+    return re.compile(rf"(?<![A-Z0-9]){motif}(?![A-Z0-9])")
+
+
 def _contient(texte_plain: str, cle: str) -> bool:
     """La clé (lettres et chiffres) apparaît dans le texte comme un mot entier ; la ponctuation et
     les espaces entre ses caractères sont ignorés (« REG-458 » et « REG 458 » contiennent REG458)."""
     if not cle:
         return False
-    motif = r"\s?".join(re.escape(char) for char in cle)
-    return re.search(rf"(?<![A-Z0-9]){motif}(?![A-Z0-9])", texte_plain) is not None
+    return _motif_cle(cle).search(texte_plain) is not None
 
 
 # --- Type d'opération lu dans le libellé (décision du 09/10/2026) ------------------------------------
@@ -257,16 +267,61 @@ def critere_reference(operation: Operation, ecriture: Ecriture) -> bool:
     trouvée dans son libellé. Une clé de l'écriture (3 caractères au moins) écrite dans le libellé
     ou la référence bancaire compte aussi (« CHQ 1234567 » contient la pièce 1234567).
     """
-    if numeros(operation.libelle, operation.reference) & numeros(
-        ecriture.libelle, ecriture.reference, ecriture.numero_piece
-    ):
+    return _reference_preparee(_cote_operation(operation), _cote_ecriture(ecriture))
+
+
+@dataclass(frozen=True)
+class _Cote:
+    """Ce que le score lit d'une ligne, calculé une seule fois par ligne (15/10/2026)."""
+
+    plain: str
+    mots: frozenset[str]
+    numeros: frozenset[str]
+    cles: frozenset[str]
+    # Opération : son libellé et sa référence, où chercher une clé de l'écriture
+    textes: tuple[str, ...] = ()
+
+
+def _cote_operation(operation: Operation) -> _Cote:
+    return _Cote(
+        plain=_plain(operation.libelle),
+        mots=_mots(operation.libelle),
+        numeros=frozenset(numeros(operation.libelle, operation.reference)),
+        cles=frozenset(
+            {_cle(operation.reference), _cle(extract_reference(operation.libelle))} - {""}
+        ),
+        textes=(_plain(operation.libelle), _plain(operation.reference)),
+    )
+
+
+def _cote_ecriture(ecriture: Ecriture) -> _Cote:
+    return _Cote(
+        plain=_plain(ecriture.libelle),
+        mots=_mots(ecriture.libelle),
+        numeros=frozenset(numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)),
+        cles=frozenset({_cle(ecriture.reference), _cle(ecriture.numero_piece)} - {""}),
+    )
+
+
+def _reference_preparee(operation: _Cote, ecriture: _Cote) -> bool:
+    """`critere_reference` sur des lignes préparées : mêmes règles."""
+    if operation.numeros & ecriture.numeros:
         return True
-    cles_ecriture = {_cle(ecriture.reference), _cle(ecriture.numero_piece)} - {""}
-    cles_operation = {_cle(operation.reference), _cle(extract_reference(operation.libelle))} - {""}
-    if cles_ecriture & cles_operation:
+    if ecriture.cles & operation.cles:
         return True
-    textes = [_plain(operation.libelle), _plain(operation.reference)]
-    return any(len(cle) >= 3 and _contient(texte, cle) for cle in cles_ecriture for texte in textes)
+    return any(
+        len(cle) >= 3 and _contient(texte, cle)
+        for cle in ecriture.cles
+        for texte in operation.textes
+    )
+
+
+def _mots_prepares(operation: _Cote, ecriture: _Cote) -> Decimal:
+    """`_ratio_mots` sur des lignes préparées."""
+    if not operation.mots or not ecriture.mots:
+        return Decimal(0)
+    plus_court = min(len(operation.mots), len(ecriture.mots))
+    return Decimal(len(operation.mots & ecriture.mots)) / Decimal(plus_court)
 
 
 # Types comparés à leur échéance Sage (décision du 12/10/2026) : espèces et virements. Chèques et
@@ -301,16 +356,20 @@ def ratio_date(ecart: int, tolerance: int) -> Decimal:
     return Decimal(tolerance + 1 - ecart) / Decimal(tolerance + 1)
 
 
+def _ratio_mots(operation: Operation, ecriture: Ecriture) -> Decimal:
+    """Mots significatifs communs, sur le plus court des deux libellés (0 à 1)."""
+    mots_operation, mots_ecriture = _mots(operation.libelle), _mots(ecriture.libelle)
+    if not mots_operation or not mots_ecriture:
+        return Decimal(0)
+    plus_court = min(len(mots_operation), len(mots_ecriture))
+    return Decimal(len(mots_operation & mots_ecriture)) / Decimal(plus_court)
+
+
 def ratio_libelle(operation: Operation, ecriture: Ecriture) -> Decimal:
     """Similarité des libellés, de 0 à 1 : le meilleur entre les mots significatifs communs (sur le
     plus court des deux libellés) et la similarité des caractères."""
-    mots_operation, mots_ecriture = _mots(operation.libelle), _mots(ecriture.libelle)
-    communs = Decimal(0)
-    if mots_operation and mots_ecriture:
-        plus_court = min(len(mots_operation), len(mots_ecriture))
-        communs = Decimal(len(mots_operation & mots_ecriture)) / Decimal(plus_court)
     caracteres = SequenceMatcher(None, _plain(operation.libelle), _plain(ecriture.libelle)).ratio()
-    return max(communs, Decimal(str(round(caracteres, 4))))
+    return max(_ratio_mots(operation, ecriture), Decimal(str(round(caracteres, 4))))
 
 
 def critere_tiers(operation: Operation, ecriture: Ecriture) -> bool:
@@ -327,19 +386,27 @@ def critere_tiers(operation: Operation, ecriture: Ecriture) -> bool:
 def comparable(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool:
     """Pré-filtre : même compte bancaire, sens opposés (crédit banque ↔ débit Sage), même type
     d'opération quand les deux sont connus (09/10/2026) et dates dans la fenêtre."""
+    return _ecart_si_comparable(operation, ecriture, grille) is not None
+
+
+def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grille) -> int | None:
+    """L'écart de dates de la paire si elle passe le pré-filtre (`comparable`), sinon None : il
+    est calculé une seule fois et resservi au score (15/10/2026)."""
     if operation.bank_account_id != ecriture.bank_account_id:
-        return False
+        return None
     if operation.montant == 0 or ecriture.montant == 0:
-        return False
+        return None
     if (operation.montant > 0) == (ecriture.montant > 0):
-        return False
+        return None
     if not types_compatibles(operation, ecriture):
-        return False
+        return None
     ecart = ecart_jours(operation, ecriture)
     if ecart <= grille.fenetre_jours:
-        return True
+        return ecart
     # Au-delà : seulement un chèque ou un effet au même n° et au même montant (12/10/2026)
-    return ecart <= grille.fenetre_numero_jours and meme_numero_et_montant(operation, ecriture)
+    if ecart <= grille.fenetre_numero_jours and meme_numero_et_montant(operation, ecriture):
+        return ecart
+    return None
 
 
 # Types rapprochés par leur n° même loin en date : chèques et effets (12/10/2026)
@@ -363,12 +430,24 @@ def meme_numero_et_montant(operation: Operation, ecriture: Ecriture) -> bool:
 
 def score(operation: Operation, ecriture: Ecriture, grille: Grille = GRILLE_PAR_DEFAUT) -> Score:
     """Points obtenus par critère et total sur 100."""
+    return _score(operation, ecriture, grille, ecart_jours(operation, ecriture), None)
+
+
+def _score(
+    operation: Operation,
+    ecriture: Ecriture,
+    grille: Grille,
+    ecart: int,
+    reference: bool | None,
+) -> Score:
+    """`score`, avec l'écart de dates (et la référence, si elle est déjà connue) calculés par
+    l'appelant : mêmes formules, sans les refaire."""
+    if reference is None:
+        reference = critere_reference(operation, ecriture)
     detail = {
-        "reference": grille.reference if critere_reference(operation, ecriture) else ZERO,
+        "reference": grille.reference if reference else ZERO,
         "montant": grille.montant if operation.montant == -ecriture.montant else ZERO,
-        "date": _points(
-            grille.date, ratio_date(ecart_jours(operation, ecriture), grille.tolerance_jours)
-        ),
+        "date": _points(grille.date, ratio_date(ecart, grille.tolerance_jours)),
         "libelle": _points(grille.libelle, ratio_libelle(operation, ecriture)),
         "tiers": grille.tiers if critere_tiers(operation, ecriture) else ZERO,
     }
@@ -401,14 +480,17 @@ def proposer(
     - Les paires retenues sont retirées, puis le choix recommence sur ce qui reste.
     - À la fin, une opération ou une écriture qui garde un candidat est « ambiguë » (« À vérifier »).
     """
+    operations, ecritures = list(operations), list(ecritures)
+    cotes_op = {operation.id: _cote_operation(operation) for operation in operations}
+    cotes_ec = {ecriture.id: _cote_ecriture(ecriture) for ecriture in ecritures}
     candidats: dict[tuple[int, int], Score] = {}
-    for operation, ecriture in _paires_comparables(operations, ecritures, grille):
+    for operation, ecriture, ecart in _paires_comparables(operations, ecritures, grille):
         if (operation.id, ecriture.id) in paires_rejetees:
             continue
-        if not _peut_atteindre(operation, ecriture, grille):
-            continue
-        resultat = score(operation, ecriture, grille)
-        if resultat.total >= grille.seuil_proposition:
+        resultat = _candidat(
+            operation, ecriture, grille, ecart, cotes_op[operation.id], cotes_ec[ecriture.id]
+        )
+        if resultat is not None:
             candidats[(operation.id, ecriture.id)] = resultat
 
     resultat = Resultat()
@@ -478,9 +560,58 @@ def _peut_atteindre(operation: Operation, ecriture: Ecriture, grille: Grille) ->
     return plafond >= grille.seuil_proposition
 
 
+def _majorant(ratio: float) -> Decimal:
+    return Decimal(str(round(ratio, 4)))
+
+
+def _candidat(
+    operation: Operation,
+    ecriture: Ecriture,
+    grille: Grille,
+    ecart: int,
+    cote_op: _Cote | None = None,
+    cote_ec: _Cote | None = None,
+) -> Score | None:
+    """Score de la paire si elle atteint le seuil de proposition, sinon None (15/10/2026 : 15
+    millions de paires sur une année BP). Une paire qui ne peut pas atteindre le seuil, même avec
+    le meilleur libellé possible, est écartée sans calculer le libellé exact ; les autres reçoivent
+    le score exact de `score`. Le résultat ne change pas.
+
+    Sans le libellé, la paire a ses points de montant, de date, de tiers, puis de référence ; il
+    lui manque `manque` points. Trois majorants du libellé décident d'abord, du moins coûteux au
+    plus coûteux (mots communs ; longueurs, comme `real_quick_ratio` ; `quick_ratio`) ; le vrai
+    ratio n'est calculé que s'il le faut."""
+    cote_op = cote_op or _cote_operation(operation)
+    cote_ec = cote_ec or _cote_ecriture(ecriture)
+    acquis = (
+        (grille.montant if operation.montant == -ecriture.montant else ZERO)
+        + _points(grille.date, ratio_date(ecart, grille.tolerance_jours))
+        + (grille.tiers if grille.tiers and critere_tiers(operation, ecriture) else ZERO)
+    )
+    manque = grille.seuil_proposition - acquis
+    if manque > grille.libelle + grille.reference:
+        return None
+    reference = bool(grille.reference) and _reference_preparee(cote_op, cote_ec)
+    if reference:
+        manque -= grille.reference
+    if manque > grille.libelle:
+        return None
+    if manque > 0 and _points(grille.libelle, _mots_prepares(cote_op, cote_ec)) < manque:
+        # `ratio` ≤ `quick_ratio` ≤ `real_quick_ratio` = 2·min(longueurs) / somme des longueurs
+        a, b = cote_op.plain, cote_ec.plain
+        longueurs = len(a) + len(b)
+        borne = 2 * min(len(a), len(b)) / longueurs if longueurs else 1.0
+        if _points(grille.libelle, _majorant(borne)) < manque:
+            return None
+        if _points(grille.libelle, _majorant(SequenceMatcher(None, a, b).quick_ratio())) < manque:
+            return None
+    resultat = _score(operation, ecriture, grille, ecart, reference)
+    return resultat if resultat.total >= grille.seuil_proposition else None
+
+
 def _paires_comparables(
     operations: Iterable[Operation], ecritures: Iterable[Ecriture], grille: Grille
-) -> Iterable[tuple[Operation, Ecriture]]:
+) -> Iterable[tuple[Operation, Ecriture, int]]:
     """Paires qui passent le pré-filtre. Les écritures sont rangées par jour : chaque opération ne
     parcourt que les jours de sa fenêtre, jamais toutes les écritures."""
     par_jour: dict[date, list[Ecriture]] = {}
@@ -498,8 +629,9 @@ def _paires_comparables(
                 for ecriture in par_numero.get(numero, ()):
                     if ecriture.id not in vues:
                         vues.add(ecriture.id)
-                        if comparable(operation, ecriture, grille):
-                            yield operation, ecriture
+                        ecart = _ecart_si_comparable(operation, ecriture, grille)
+                        if ecart is not None:
+                            yield operation, ecriture, ecart
         jours = {operation.date_operation}
         if operation.date_valeur:
             jours.add(operation.date_valeur)
@@ -509,8 +641,9 @@ def _paires_comparables(
                     if ecriture.id in vues:
                         continue
                     vues.add(ecriture.id)
-                    if comparable(operation, ecriture, grille):
-                        yield operation, ecriture
+                    ecart = _ecart_si_comparable(operation, ecriture, grille)
+                    if ecart is not None:
+                        yield operation, ecriture, ecart
 
 
 def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int | None:

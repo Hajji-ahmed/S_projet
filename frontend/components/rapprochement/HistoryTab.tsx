@@ -25,6 +25,7 @@ import {
   lettrageFilename,
   absolute,
   montantBanque,
+  ecrituresDe,
   operationsDe,
   toggleStatut,
   type ReconciliationFilter,
@@ -180,6 +181,7 @@ export function HistoryTab({
           <span className="block text-xs text-simtis-muted">
             {formatDate(row.ecriture.date_ecriture)}
             {row.ecriture.numero_piece && ` · Pièce ${row.ecriture.numero_piece}`}
+            {ecrituresDe(row).length > 1 && ` · ${ecrituresDe(row).length} écritures`}
           </span>
         </span>
       ),

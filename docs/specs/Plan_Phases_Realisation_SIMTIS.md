@@ -916,6 +916,8 @@ Résumé d'import + audit
 
 ---
 
+> **P13 — 15/10/2026** : rapprochement manuel de plusieurs lignes fait (1-N, N-1, N-N, panier à l'écran, somme exacte, 50 lignes par côté au plus) ; groupes automatiques N→1 faits le 12/10/2026 ; propositions automatiques 1→N à faire (P13.3) ; N→N automatique écarté.
+
 ### PHASE 14 — Prévisions & position prévisionnelle
 
 **Objectif** : passer de la situation actuelle à une vision future de la trésorerie.

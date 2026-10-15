@@ -4,18 +4,21 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import BankTransaction, ReconciliationMatch
 from app.schemas.accounting import EcritureOut
 from app.services.reconciliation_scoring import CRITERES, LIBELLES_CRITERES
 from app.services.reconciliation_service import (
+    AmbiguousEntryView,
     AmbiguousView,
     Candidate,
+    CandidateOperation,
     HistoryPage,
     MatchView,
     RunResult,
     TransactionsPage,
+    montant_rapprochement,
 )
 
 StatutRapprochement = Literal["Non rapprochée", "À vérifier", "Rapprochée", "Écart"]
@@ -196,17 +199,24 @@ class CorrespondanceOut(BaseModel):
     )
     explication: str | None = None
     ecriture: EcritureOut
+    # Plusieurs écritures (1 → N, N → N, P13 du 15/10/2026) : toutes, la plus grosse en tête
+    ecritures: list[EcritureOut] = Field(default_factory=list)
+    total_ecritures: Decimal = Decimal("0")
 
     @classmethod
     def from_view(cls, view: MatchView) -> "CorrespondanceOut":
         match = view.match
         lignes = view.transactions or [(view.transaction, view.bank_code)]
         total = sum((tx.montant for tx, _ in lignes), Decimal("0"))
+        ecritures = view.entries or [(view.entry, view.entry_bank_code)]
+        total_sage = sum((montant_rapprochement(e) for e, _ in ecritures), Decimal("0"))
         return cls(
             code=match.code,
             operations=[OperationOut.of(tx, code) for tx, code in lignes],
             total_operations=total,
-            ecart=total + view.entry.montant,
+            ecritures=[EcritureOut(**EcritureOut.fields_of(e, code)) for e, code in ecritures],
+            total_ecritures=total_sage,
+            ecart=total + total_sage,
             explication=(match.detail_score or {}).get("explication"),
             id=match.id,
             type=match.type,
@@ -308,6 +318,55 @@ class AmbiguesOut(BaseModel):
     ambigues: list[AmbigueOut]
 
 
+class CandidatOperationOut(BaseModel):
+    operation: OperationOut
+    score: Decimal
+    criteres: list[CritereOut]
+    rejetee: bool
+    proposee_ailleurs: bool
+
+    @classmethod
+    def from_candidate(cls, item: CandidateOperation) -> "CandidatOperationOut":
+        return cls(
+            operation=OperationOut.of(item.transaction, item.bank_code),
+            score=item.score.total,
+            criteres=criteres({k: str(v) for k, v in item.score.detail.items()}, item.actifs),
+            rejetee=item.rejetee,
+            proposee_ailleurs=item.proposee_ailleurs,
+        )
+
+
+class EcritureAmbigueOut(BaseModel):
+    """Écriture ambiguë (15/10/2026) : plusieurs opérations aussi proches, aucune proposée."""
+
+    ecriture: EcritureOut
+    candidats: list[CandidatOperationOut]
+
+    @classmethod
+    def from_view(cls, view: AmbiguousEntryView) -> "EcritureAmbigueOut":
+        return cls(
+            ecriture=EcritureOut(**EcritureOut.fields_of(view.entry, view.bank_code)),
+            candidats=[CandidatOperationOut.from_candidate(item) for item in view.candidats],
+        )
+
+
+class EcrituresAmbiguesOut(BaseModel):
+    total: int
+    page: int
+    taille: int
+    ecritures: list[EcritureAmbigueOut]
+
+
+class AucuneOperationOut(BaseModel):
+    operations_ecartees: list[int]
+
+
+class AucuneEcritureOut(BaseModel):
+    """Écritures écartées par « Aucune écriture ne correspond » (15/10/2026)."""
+
+    ecritures_ecartees: list[int]
+
+
 class RejetIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -321,11 +380,34 @@ class AnnulationIn(BaseModel):
 
 
 class ManuelIn(BaseModel):
+    """Rapprochement manuel : une opération et une écriture (`transaction_id`, `ecriture_id`), ou
+    des listes (`transaction_ids`, `ecriture_ids`, P13 du 15/10/2026) ; pas les deux formes."""
+
     model_config = ConfigDict(extra="forbid")
 
-    transaction_id: int
-    ecriture_id: int
+    transaction_id: int | None = None
+    ecriture_id: int | None = None
+    transaction_ids: list[int] | None = None
+    ecriture_ids: list[int] | None = None
     commentaire: Commentaire | None = None
+
+    @model_validator(mode="after")
+    def _une_seule_forme(self) -> "ManuelIn":
+        simple = self.transaction_id is not None or self.ecriture_id is not None
+        listes = self.transaction_ids is not None or self.ecriture_ids is not None
+        if simple == listes:
+            raise ValueError("Envoyez transaction_id et ecriture_id, ou les deux listes.")
+        if simple and (self.transaction_id is None or self.ecriture_id is None):
+            raise ValueError("transaction_id et ecriture_id vont ensemble.")
+        return self
+
+    def operations(self) -> list[int]:
+        return (
+            [self.transaction_id] if self.transaction_id is not None else self.transaction_ids or []
+        )
+
+    def ecritures(self) -> list[int]:
+        return [self.ecriture_id] if self.ecriture_id is not None else self.ecriture_ids or []
 
 
 # Propositions au plus par validation en lot (10 000 depuis le 12/10/2026 ; 5 000 puis 500 avant)
@@ -336,6 +418,28 @@ class ValidationLotIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ids: Annotated[list[int], Field(min_length=1, max_length=LOT_MAX)]
+
+
+class RejetLotIn(BaseModel):
+    """Rejet en lot des propositions choisies (15/10/2026)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: Annotated[list[int], Field(min_length=1, max_length=LOT_MAX)]
+    commentaire: Commentaire | None = None
+
+
+class AucuneLotIn(BaseModel):
+    """« Aucune correspondance » pour plusieurs opérations ou écritures ambiguës (15/10/2026)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: Annotated[list[int], Field(min_length=1, max_length=500)]
+    commentaire: Commentaire | None = None
+
+
+class TraitementLotOut(BaseModel):
+    nb_traitees: int
 
 
 class ValidationLotOut(BaseModel):

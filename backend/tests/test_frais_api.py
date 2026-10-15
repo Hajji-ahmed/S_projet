@@ -1,6 +1,6 @@
 """Comptabilisation des droits de timbre par SIMTIS (13/10/2026)."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -11,8 +11,10 @@ from sqlalchemy import select
 from app.models import AccountingEntry, AuditLog, BankTransaction, ReconciliationMatch
 from app.services import frais_service
 from app.services.accounting_import_service import EntryLine, _mark_simtis_entries
+from app.services.errors import ConflictError
 from app.services.frais_service import (
     est_timbre,
+    numero_piece,
     regrouper_timbres,
     type_commission,
     type_frais_tva,
@@ -201,7 +203,8 @@ def test_validating_creates_the_entry_and_matches_it_at_once(client, comptable, 
 
     assert response.status_code == 200, response.text
     code = response.json()["codes"][0]
-    assert code.startswith("BP-")
+    # N° pièce AAMMNNN (15/10/2026) : premier frais du mois
+    assert code == f"{JOUR:%y%m}001"
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     assert (entry.journal, entry.compte, entry.libelle, entry.numero_piece) == (
         "5543",
@@ -214,16 +217,17 @@ def test_validating_creates_the_entry_and_matches_it_at_once(client, comptable, 
         Decimal("202.00"),
         Decimal("202.00"),
     )
-    match = db.scalar(select(ReconciliationMatch).filter_by(code=code))
+    match = db.scalar(select(ReconciliationMatch).filter_by(origine="Frais"))
     assert (match.statut, match.origine, match.type) == ("Validée", "Frais", "N-1")
     assert statuses(db, *timbres, entry) == ["Rapprochée"] * 4
     assert "comptabilisation_timbres" in actions(db)
 
     body = lire(client, comptable, db).json()
     assert body["propositions"] == []
-    assert [(e["code"], e["nb_operations"], e["exportee_le"]) for e in body["ecritures"]] == [
-        (code, 3, None)
-    ]
+    assert [
+        (e["code"], e["numero_piece"], e["nb_operations"], e["exportee_le"])
+        for e in body["ecritures"]
+    ] == [(match.code, code, 3, None)]
 
 
 def test_validation_is_all_or_nothing_and_recomputed_by_the_server(client, comptable, db):
@@ -272,10 +276,31 @@ def test_export_writes_one_credit_line_per_day_and_marks_the_entry(client, compt
 
     assert response.status_code == 200, response.text
     rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
-    assert rows[0] == ("Journal", "Date", "Compte", "N° pièce", "Libellé", "Débit", "Crédit")
-    assert [(r[0], r[2], r[3], r[4], r[5], r[6]) for r in rows[1:]] == [
-        ("5543", "55410003", code, "DT D'ENREGISTREMENT", None, 202),
-    ]
+    # Format d'import paramétrable de Sage (15/10/2026)
+    assert rows[0] == (
+        "* Date de pièce",
+        "N° pièce",
+        "* Code journal",
+        "* N° compte général",
+        "N° compte tiers",
+        "Libellé écriture",
+        "Montant",
+        "Sens",
+        "Mode de règlement",
+        "Date d'échéance",
+        "Référence",
+        "Numéro facture",
+        "Montant devise",
+        "Cours de la devise",
+        "Code ISO devise",
+    )
+    [ligne] = rows[1:]
+    assert ligne[0].date() == JOUR
+    assert ligne[1:8] == (code, "5543", "55410003", None, "DT D'ENREGISTREMENT", 202, "Crédit")
+    # Référence = code de rapprochement (15/10/2026), les autres colonnes facultatives vides
+    assert ligne[8:10] == (None, None)
+    assert ligne[10].startswith("BP-")
+    assert ligne[11:] == (None,) * 4
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     db.refresh(entry)
     assert entry.exportee_le is not None
@@ -313,8 +338,8 @@ def test_an_entry_not_yet_exported_can_be_deleted(client, comptable, db):
 def test_an_exported_entry_cannot_be_deleted_nor_cancelled(client, comptable, db):
     compte = bp(db)
     timbres_du_jour(db, compte)
-    code = valider(client, comptable, db, (compte, JOUR)).json()["codes"][0]
-    match = db.scalar(select(ReconciliationMatch).filter_by(code=code))
+    valider(client, comptable, db, (compte, JOUR))
+    match = db.scalar(select(ReconciliationMatch).filter_by(origine="Frais"))
     entry_id = db.scalar(select(AccountingEntry.id).filter_by(origine="SIMTIS"))
 
     annulation = client.request(
@@ -474,11 +499,11 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     assert export.status_code == 200, export.text
     rows = list(load_workbook(BytesIO(export.content)).active.iter_rows(values_only=True))
     # Une ligne par type, toutes au crédit du compte bancaire
-    assert [(r[2], r[3], r[4], r[5], r[6]) for r in rows[1:]] == [
-        ("55410003", code, "COM", None, 50),
-        ("55410003", code, "TVA COM", None, 5),
-        ("55410003", code, "COM", None, 10),
-        ("55410003", code, "TVA COM", None, 1),
+    assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows[1:]] == [
+        ("55410003", code, "COM", "Crédit", 50),
+        ("55410003", code, "TVA COM", "Crédit", 5),
+        ("55410003", code, "COM", "Crédit", 10),
+        ("55410003", code, "TVA COM", "Crédit", 1),
     ]
 
 
@@ -562,8 +587,8 @@ def test_one_export_file_holds_stamps_and_commissions(client, comptable, db):
 
     assert response.status_code == 200, response.text
     rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
-    assert [r[4] for r in rows[1:]] == ["DT D'ENREGISTREMENT", "COM", "TVA COM", "COM", "TVA COM"]
-    assert all(r[5] is None for r in rows[1:])
+    assert [r[5] for r in rows[1:]] == ["DT D'ENREGISTREMENT", "COM", "TVA COM", "COM", "TVA COM"]
+    assert all(r[7] == "Crédit" for r in rows[1:])
     assert sum(r[6] for r in rows[1:]) == 268
     assert exporter(client, comptable, db).status_code == 409
 
@@ -669,9 +694,9 @@ def test_a_manual_entry_with_vat_is_matched_and_exported_on_two_lines(client, co
             values_only=True
         )
     )
-    assert [(r[3], r[4], r[5], r[6]) for r in rows[1:]] == [
-        (code, "COM RTGS", None, 150),
-        (code, "TVA COM RTGS", None, 15),
+    assert [(r[1], r[5], r[7], r[6]) for r in rows[1:]] == [
+        (code, "COM RTGS", "Crédit", 150),
+        (code, "TVA COM RTGS", "Crédit", 15),
     ]
 
 
@@ -695,6 +720,27 @@ def test_a_manual_entry_without_vat_has_one_line_and_a_refund_goes_to_the_debit(
     assert [(ligne["debit"], ligne["credit"]) for ligne in ecrite["lignes"]] == [
         ("151110.79", None)
     ]
+    # Sage : montant positif et sens « Débit » pour un remboursement (15/10/2026)
+    rows = list(
+        load_workbook(BytesIO(exporter(client, comptable, db).content)).active.iter_rows(
+            values_only=True
+        )
+    )
+    assert [(r[5], r[6], r[7]) for r in rows[1:]] == [("AGIOS REMBOURSES", 151110.79, "Débit")]
+
+
+def test_fees_of_a_currency_account_are_not_exported_yet(client, comptable, db):
+    compte = bp(db)
+    timbres_du_jour(db, compte)
+    valider(client, comptable, db, (compte, JOUR))
+    compte.devise = "EUR"
+    db.flush()
+
+    response = exporter(client, comptable, db)
+
+    assert response.status_code == 409
+    assert "BP EUR" in response.json()["detail"]
+    assert db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS")).exportee_le is None
 
 
 def test_a_manual_vat_amount_is_kept_and_must_stay_below_the_total(client, comptable, db):
@@ -952,7 +998,7 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
             values_only=True
         )
     )
-    assert [(r[3], r[4], r[6]) for r in rows[1:]] == [
+    assert [(r[1], r[5], r[6]) for r in rows[1:]] == [
         (code_com, "COM", 150),
         (code_com, "TVA COM", 15),
         (code_com, "COM", 10),
@@ -975,3 +1021,32 @@ def test_a_day_with_a_sage_frais_entry_is_not_proposed(client, comptable, db):
     ecriture(db, compte, "999", JOUR, "FRAIS")
 
     assert lire(client, comptable, db, "frais").json()["propositions"] == []
+
+
+# --- N° de pièce AAMMNNN (15/10/2026) --------------------------------------------------------------
+
+
+def test_a_piece_number_is_year_month_and_three_digits():
+    assert numero_piece(date(2026, 10, 3), 18) == "2610018"
+    assert numero_piece(date(2027, 1, 31), 1) == "2701001"
+    with pytest.raises(ConflictError, match="épuisé"):
+        numero_piece(date(2026, 10, 3), 1000)
+
+
+def test_piece_numbers_follow_each_other_within_a_month_and_restart_the_next(client, comptable, db):
+    compte = bp(db)
+    autre_jour = JOUR + timedelta(days=1)
+    mois_suivant = date(JOUR.year, JOUR.month % 12 + 1, 1)
+    for jour in (JOUR, autre_jour, mois_suivant):
+        timbres_du_jour(db, compte, jour)
+
+    pieces = [
+        valider(client, comptable, db, (compte, jour)).json()["codes"][0]
+        for jour in (JOUR, autre_jour, mois_suivant)
+    ]
+
+    assert pieces == [
+        f"{JOUR:%y%m}001",
+        f"{JOUR:%y%m}002",
+        f"{mois_suivant:%y%m}001",
+    ]

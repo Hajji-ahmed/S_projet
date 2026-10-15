@@ -29,6 +29,8 @@ type TransactionsPaneProps = {
   filter: ReconciliationFilter;
   reloadKey: number;
   selectedId: number | null;
+  /** Sélection multiple (P13, 15/10/2026) : une case par ligne, le clic coche ou décoche. */
+  multi?: { ids: readonly number[]; onToggle: (row: Operation) => void };
   onSelect: (operation: Operation) => void;
   /** Filtre Statut, piloté aussi par les compteurs de la vue ("" = tous les statuts). */
   statut: string;
@@ -43,6 +45,7 @@ export function TransactionsPane({
   filter,
   reloadKey,
   selectedId,
+  multi,
   onSelect,
   onLoaded,
   statut,
@@ -90,7 +93,27 @@ export function TransactionsPane({
   }, [companyId, filter, statut, q, typeOperation, page, reloadKey, retryKey, onLoaded]);
 
   const pages = data ? pageCount(data.total, data.taille) : 1;
+  const caseColumn: Column<Operation>[] = multi
+    ? [
+        {
+          key: "choisie",
+          header: "",
+          render: (row) => (
+            <input
+              type="checkbox"
+              readOnly
+              tabIndex={-1}
+              checked={multi.ids.includes(row.id)}
+              disabled={row.statut === "Rapprochée"}
+              aria-label={`Choisir ${row.libelle}`}
+              className="pointer-events-none h-4 w-4 accent-simtis-primary"
+            />
+          ),
+        },
+      ]
+    : [];
   const columns: Column<Operation>[] = [
+    ...caseColumn,
     {
       key: "date_operation",
       header: "Date",
@@ -215,8 +238,8 @@ export function TransactionsPane({
             rows={data.operations}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune opération sur ces critères."
-            onRowClick={onSelect}
-            isRowSelected={(row) => row.id === selectedId}
+            onRowClick={multi ? multi.onToggle : onSelect}
+            isRowSelected={(row) => (multi ? multi.ids.includes(row.id) : row.id === selectedId)}
             rowLabel={(row) =>
               `Opération du ${formatDate(row.date_operation)}, ${row.libelle}, ${row.statut}`
             }

@@ -406,7 +406,12 @@ export function FraisCard({
                     famille={item.famille}
                     journal={item.journal}
                     date={item.date}
-                    piece={<CodeBadge code={item.code} />}
+                    piece={
+                      <span className="inline-flex flex-col items-start gap-0.5">
+                        <span className="font-medium tabular-nums">{item.numero_piece ?? "-"}</span>
+                        <CodeBadge code={item.code} />
+                      </span>
+                    }
                     lignes={item.lignes}
                     nbOperations={item.nb_operations}
                     fin={[

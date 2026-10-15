@@ -36,6 +36,8 @@ import {
   uniteEcriture,
   absolute,
   ecartManuel,
+  ecrituresDe,
+  montantSage,
   rapprochable,
   sensBanque,
   sensSage,
@@ -279,16 +281,21 @@ export function MatchPanel({
             </div>
             <Side title="Écriture comptable">
               <Amount
-                value={montantEcriture(match.ecriture)}
-                sens={sensSageOf(match.ecriture)}
+                value={montantSage(match)}
+                sens={sensSage(montantSage(match))}
                 unite={uniteEcriture(match.ecriture)}
               />
-              <p className="text-sm">{match.ecriture.libelle}</p>
-              <p className="text-xs text-simtis-muted">
-                {formatDate(match.ecriture.date_ecriture)}
-                {match.ecriture.numero_piece && ` · Pièce ${match.ecriture.numero_piece}`}
-                {match.ecriture.tiers && ` · ${match.ecriture.tiers}`}
-              </p>
+              {ecrituresDe(match).map((ecriture) => (
+                <div key={ecriture.id}>
+                  <p className="text-sm">{ecriture.libelle}</p>
+                  <p className="text-xs text-simtis-muted">
+                    {formatDate(ecriture.date_ecriture)}
+                    {ecrituresDe(match).length > 1 && ` · ${montantEcriture(ecriture)}`}
+                    {ecriture.numero_piece && ` · Pièce ${ecriture.numero_piece}`}
+                    {ecriture.tiers && ` · ${ecriture.tiers}`}
+                  </p>
+                </div>
+              ))}
             </Side>
             <div>
               <p className="mb-2 text-xs font-semibold tracking-wide text-simtis-muted uppercase">

@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Link2, Shuffle, TriangleAlert } from "lucide-react";
+import { Ban, ExternalLink, Link2, Shuffle, TriangleAlert } from "lucide-react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { ScoreBadge } from "@/components/rapprochement/Score";
@@ -29,6 +29,10 @@ type AmbiguousCardProps = {
   onChoose: (candidat: Candidat) => void;
   onSignal: () => void;
   onOpen: () => void;
+  /** Aucune écriture ne correspond : toutes les candidates sont écartées (15/10/2026). */
+  onAucune?: () => void;
+  /** Sélection pour « Aucune correspondance » en lot (15/10/2026). */
+  selection?: { checked: boolean; onToggle: () => void };
 };
 
 /**
@@ -45,6 +49,8 @@ export function AmbiguousCard({
   onChoose,
   onSignal,
   onOpen,
+  onAucune,
+  selection,
 }: AmbiguousCardProps) {
   const { operation, candidats } = item;
   return (
@@ -52,6 +58,18 @@ export function AmbiguousCard({
       aria-label={`Opération ambiguë : ${operation.libelle}`}
       className="rounded-card border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis"
     >
+      {selection && (
+        <label className="mb-3 flex w-fit cursor-pointer items-center gap-2 text-xs font-medium text-simtis-muted">
+          <input
+            type="checkbox"
+            checked={selection.checked}
+            disabled={busy}
+            onChange={selection.onToggle}
+            className="h-4 w-4 accent-simtis-primary"
+          />
+          Sélectionner pour « Aucune correspondance »
+        </label>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-simtis-warning-fg uppercase">
@@ -75,6 +93,11 @@ export function AmbiguousCard({
           <Button variant="ghost" icon={ExternalLink} disabled={busy} onClick={onOpen}>
             Ouvrir dans le rapprochement
           </Button>
+          {canValidate && onAucune && (
+            <Button variant="secondary" icon={Ban} disabled={busy} onClick={onAucune}>
+              Aucune écriture ne correspond
+            </Button>
+          )}
           {canSignal && (
             <Button variant="secondary" icon={TriangleAlert} disabled={busy} onClick={onSignal}>
               Signaler un écart

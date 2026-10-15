@@ -18,7 +18,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -33,7 +33,13 @@ from app.repositories import reconciliation_repository as repo
 from app.services import audit_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.position_service import BUSINESS_TZ, business_today
-from app.services.reconciliation_groupes import ResultatGroupes, grouper
+from app.services.reconciliation_groupes import (
+    ResultatGroupes,
+    explication_ensemble,
+    grouper,
+    score_ensemble,
+    type_ensemble,
+)
 from app.services.reconciliation_scoring import (
     AUTRE,
     GRILLE_PAR_DEFAUT,
@@ -143,8 +149,26 @@ def score_second(match: ReconciliationMatch) -> Decimal | None:
     return None if value is None else Decimal(str(value))
 
 
-def _company(db: Session, company_id: int, *, lock: bool = False) -> Company:
-    company = repo.lock_company(db, company_id) if lock else db.get(Company, company_id)
+EN_COURS = (
+    "Un rapprochement ou une validation est déjà en cours pour cette société : réessayez dans "
+    "un instant."
+)
+
+
+def _company(
+    db: Session, company_id: int, *, lock: bool = False, sans_attendre: bool = False
+) -> Company:
+    if lock and sans_attendre:
+        # Un lancement ne s'empile pas derrière un autre (15/10/2026) : 409 aussitôt
+        try:
+            with db.begin_nested():
+                company = repo.lock_company(db, company_id, nowait=True)
+        except OperationalError as error:
+            if getattr(error.orig, "sqlstate", None) == "55P03":
+                raise ConflictError(EN_COURS) from error
+            raise
+    else:
+        company = repo.lock_company(db, company_id) if lock else db.get(Company, company_id)
     if company is None or not company.actif:
         raise NotFoundError("Société introuvable.")
     return company
@@ -196,7 +220,7 @@ def run(
     _check_period(date_from, date_to)
     if (date_to - date_from).days >= PERIODE_MAX_JOURS:
         raise ConflictError("La période ne peut pas dépasser 5 ans.")
-    company = _company(db, company_id, lock=True)
+    company = _company(db, company_id, lock=True, sans_attendre=True)
     accounts = repo.company_accounts(db, company.id, bank_account_id)
     if bank_account_id is not None and not accounts:
         raise NotFoundError("Compte bancaire introuvable pour cette société.")
@@ -625,6 +649,51 @@ def reject(
     return match
 
 
+def reject_batch(
+    db: Session,
+    match_ids: list[int],
+    *,
+    commentaire: str | None,
+    acteur_id: int,
+    ip: str | None,
+) -> int:
+    """Rejette en une fois les propositions choisies (15/10/2026), toutes ou aucune : chacune doit
+    être encore « Proposée ». Comme un rejet un par un, la paire n'est plus jamais proposée et ses
+    lignes repassent « Non rapprochée »."""
+    texte = _clean_comment(commentaire)
+    ids = sorted(set(match_ids))
+    found = repo.get_matches(db, ids)
+    if len(found) != len(ids):
+        raise NotFoundError("Correspondance introuvable.")
+    companies = {match.company_id for match in found}
+    if len(companies) != 1:
+        raise ConflictError("Un rejet en lot ne porte que sur une seule société.")
+    _company(db, companies.pop(), lock=True)
+    matches = repo.get_matches(db, ids, lock=True)
+    for match in matches:
+        db.refresh(match)
+        if match.statut != "Proposée":
+            raise ConflictError(
+                f"La correspondance n° {match.id} n'est plus proposée (statut : {match.statut}) : "
+                "rien n'a été rejeté, rechargez la liste."
+            )
+    for match in matches:
+        avant = _snapshot(match)
+        _release(db, match, "Rejetée", texte, acteur_id)
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="rejet_rapprochement",
+            entite=ENTITE,
+            entite_id=match.id,
+            avant=avant,
+            apres={**_snapshot(match), "en_lot": True},
+            ip=ip,
+        )
+    _commit(db)
+    return len(matches)
+
+
 def cancel(
     db: Session, match_id: int, *, motif: str, acteur_id: int, ip: str | None
 ) -> ReconciliationMatch:
@@ -695,79 +764,144 @@ def release_pending_matches(
     return remplacees
 
 
+# Au plus 50 lignes de chaque côté dans un rapprochement manuel (P13, 15/10/2026)
+MANUEL_MAX = 50
+
+
 def match_manually(
     db: Session,
     *,
-    transaction_id: int,
-    entry_id: int,
+    transaction_ids: list[int],
+    entry_ids: list[int],
     commentaire: str | None,
     acteur_id: int,
     ip: str | None,
 ) -> ReconciliationMatch:
-    """Rapprochement 1→1 choisi par l'utilisateur : validé d'emblée, origine « Manuelle ».
+    """Rapprochement choisi par l'utilisateur, validé d'emblée (origine « Manuelle ») : une ou
+    plusieurs opérations avec une ou plusieurs écritures (1-1, 1-N, N-1, N-N ; P13, 15/10/2026).
 
-    Exige le même montant, en sens opposé. Une proposition en attente qui contient l'opération ou
-    l'écriture est rejetée par ce choix (et tracée) ; un rapprochement validé ne l'est jamais.
+    Exige un seul compte bancaire et des totaux égaux en sens opposé (montant devise pour un
+    compte EUR / USD), des lignes libres (une proposition en attente qui contient l'une d'elles est
+    rejetée et tracée ; un rapprochement validé ne l'est jamais) et des types compatibles. Tout est
+    vérifié avant la première écriture.
     """
     texte = _clean_comment(commentaire)
-    found = repo.get_transaction(db, transaction_id)
-    if found is None:
-        raise NotFoundError("Opération bancaire introuvable.")
-    tx, account = found
-    entry = repo.get_entry(db, entry_id)
-    if entry is None:
-        raise NotFoundError("Écriture comptable introuvable.")
+    tx_ids, ecr_ids = sorted(set(transaction_ids)), sorted(set(entry_ids))
+    if not tx_ids or not ecr_ids:
+        raise ConflictError("Choisissez au moins une opération bancaire et une écriture comptable.")
+    if len(tx_ids) > MANUEL_MAX or len(ecr_ids) > MANUEL_MAX:
+        raise ConflictError(
+            f"Un rapprochement manuel compte au plus {MANUEL_MAX} lignes de chaque côté."
+        )
+
+    lignes = []
+    for tx_id in tx_ids:
+        found = repo.get_transaction(db, tx_id)
+        if found is None:
+            raise NotFoundError("Opération bancaire introuvable.")
+        lignes.append(found)
+    comptes = {account.id for _, account in lignes}
+    if len(comptes) > 1:
+        raise ConflictError("Les opérations choisies sont sur plusieurs comptes bancaires.")
+    account = lignes[0][1]
     company = _company(db, account.company_id, lock=True)
-    db.refresh(tx)
-    db.refresh(entry)
-    if entry.company_id != company.id:
+    operations = []
+    for tx, _ in lignes:
+        db.refresh(tx)
+        operations.append(tx)
+    entries = []
+    for entry_id in ecr_ids:
+        entry = repo.get_entry(db, entry_id)
+        if entry is None:
+            raise NotFoundError("Écriture comptable introuvable.")
+        db.refresh(entry)
+        entries.append(entry)
+
+    if any(entry.company_id != company.id for entry in entries):
         raise ConflictError(
             "L'opération et l'écriture appartiennent à deux sociétés différentes : "
             "elles ne se rapprochent jamais."
         )
-    if entry.bank_account_id != tx.bank_account_id:
+    if any(entry.bank_account_id != account.id for entry in entries):
         raise ConflictError(
             "L'écriture n'est pas passée dans le journal Sage de ce compte bancaire."
         )
-    if tx.montant == 0 or tx.montant != -montant_rapprochement(entry):
+    if any(tx.montant == 0 for tx in operations):
+        raise ConflictError("Une opération à zéro ne se rapproche pas.")
+    total_banque = sum((tx.montant for tx in operations), Decimal("0"))
+    total_sage = sum((montant_rapprochement(entry) for entry in entries), Decimal("0"))
+    if total_banque != -total_sage:
         raise ConflictError(
             "Les montants doivent être égaux, en sens opposé (un crédit en banque correspond à "
-            "un débit dans Sage)."
+            f"un débit dans Sage) : écart de {abs(total_banque + total_sage):.2f}."
         )
-    if "Écart" in (tx.statut, entry.statut):
+    if any("Écart" == ligne.statut for ligne in [*operations, *entries]):
         raise ConflictError("Une ligne en écart se traite dans l'écran Écarts.")
-    type_tx, type_ec = type_operation(tx.libelle), type_ecriture(entry.libelle)
-    if type_tx and type_ec and type_tx != type_ec:
+    types = {type_operation(tx.libelle) for tx in operations} | {
+        type_ecriture(entry.libelle) for entry in entries
+    }
+    types.discard(None)
+    if len(types) > 1:
+        if len(operations) == 1 and len(entries) == 1:
+            raise ConflictError(
+                f"Une opération {type_operation(operations[0].libelle)} ne se rapproche pas "
+                f"d'une écriture {type_ecriture(entries[0].libelle)}."
+            )
         raise ConflictError(
-            f"Une opération {type_tx} ne se rapproche pas d'une écriture {type_ec}."
+            f"Les lignes choisies mélangent des types différents ({', '.join(sorted(types))})."
         )
 
-    remplacees = release_pending_matches(
-        db,
-        transaction_id=tx.id,
-        entry_id=entry.id,
-        motif="Remplacée par un rapprochement manuel.",
-        acteur_id=acteur_id,
-        ip=ip,
-    )
+    remplacees: list[int] = []
+    for tx in operations:
+        remplacees += release_pending_matches(
+            db,
+            transaction_id=tx.id,
+            entry_id=None,
+            motif="Remplacée par un rapprochement manuel.",
+            acteur_id=acteur_id,
+            ip=ip,
+        )
+    for entry in entries:
+        remplacees += release_pending_matches(
+            db,
+            transaction_id=None,
+            entry_id=entry.id,
+            motif="Remplacée par un rapprochement manuel.",
+            acteur_id=acteur_id,
+            ip=ip,
+        )
 
-    resultat = score(_operation(tx), _ecriture(entry), grille(db))
+    regles = grille(db)
+    ops = [_operation(tx) for tx in operations]
+    ecritures = [_ecriture(entry) for entry in entries]
+    if len(ops) == 1 and len(ecritures) == 1:
+        resultat = score(ops[0], ecritures[0], regles)
+        detail = _detail_json(resultat)
+    else:
+        resultat = score_ensemble(ops, ecritures, regles)
+        detail = {**_detail_json(resultat), "explication": explication_ensemble(ops, ecritures)}
     match = ReconciliationMatch(
         company_id=company.id,
-        type="1-1",
+        type=type_ensemble(len(ops), len(ecritures)),
         score=resultat.total,
         statut="Proposée",
         origine="Manuelle",
-        detail_score=_detail_json(resultat),
+        detail_score=detail,
         commentaire=texte,
         items=[
-            ReconciliationMatchItem(
-                bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
+            *(
+                ReconciliationMatchItem(
+                    bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
+                )
+                for tx in operations
             ),
-            ReconciliationMatchItem(
-                accounting_entry_id=entry.id,
-                montant_affecte=abs(montant_rapprochement(entry)),
-                actif=True,
+            *(
+                ReconciliationMatchItem(
+                    accounting_entry_id=entry.id,
+                    montant_affecte=abs(montant_rapprochement(entry)),
+                    actif=True,
+                )
+                for entry in entries
             ),
         ],
     )
@@ -775,18 +909,11 @@ def match_manually(
     db.flush()
     _validate(db, match, acteur_id)
     snapshot = _snapshot(match)
-    # Les opérations qui convoitaient la même écriture sont départagées à nouveau (08/10/2026) :
-    # relance du moteur sur ce compte, autour des deux lignes rapprochées
-    regles = grille(db)
+    # Les lignes qui convoitaient les mêmes opérations ou écritures sont départagées à nouveau
+    # (08/10/2026) : relance du moteur sur ce compte, autour des lignes rapprochées
     marge = timedelta(days=regles.fenetre_jours)
-    moteur = _engine(
-        db,
-        company,
-        [tx.bank_account_id],
-        min(tx.date_operation, entry.date_ecriture) - marge,
-        max(tx.date_operation, entry.date_ecriture) + marge,
-        regles,
-    )
+    dates = [tx.date_operation for tx in operations] + [e.date_ecriture for e in entries]
+    moteur = _engine(db, company, [account.id], min(dates) - marge, max(dates) + marge, regles)
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -795,7 +922,7 @@ def match_manually(
         entite_id=match.id,
         apres={
             **snapshot,
-            "propositions_remplacees": remplacees,
+            "propositions_remplacees": sorted(set(remplacees)),
             "relance": {
                 "propositions": len(moteur.resultat.propositions),
                 "operations_ambigues": len(moteur.resultat.operations_ambigues),
@@ -827,6 +954,8 @@ class MatchView:
     concurrente_proche: bool = False
     # Toutes les opérations (une seule en 1 → 1, plusieurs pour un groupe N → 1), avec leur banque
     transactions: list[tuple[BankTransaction, str]] = field(default_factory=list)
+    # Toutes les écritures (plusieurs en 1 → N et N → N, P13), la plus grosse en tête
+    entries: list[tuple[AccountingEntry, str | None]] = field(default_factory=list)
 
 
 @dataclass
@@ -928,13 +1057,15 @@ def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> l
         lignes = [transactions[i.bank_transaction_id] for i in match.items if i.bank_transaction_id]
         lignes.sort(key=lambda ligne: (-abs(ligne[0].montant), ligne[0].id))
         tx, code = lignes[0]
-        entry_id = next(i.accounting_entry_id for i in match.items if i.accounting_entry_id)
-        entry, entry_code = entries[entry_id]
+        ecritures = [entries[i.accounting_entry_id] for i in match.items if i.accounting_entry_id]
+        ecritures.sort(key=lambda ligne: (-abs(ligne[0].montant), ligne[0].id))
+        entry, entry_code = ecritures[0]
         views.append(
             MatchView(
                 match=match,
                 transaction=tx,
                 transactions=lignes,
+                entries=ecritures,
                 bank_code=code,
                 entry=entry,
                 entry_bank_code=entry_code,
@@ -1129,6 +1260,396 @@ def list_ambiguous(
             )
         )
     return regles.seuil_fort, total, views
+
+
+# Au plus 500 opérations ou écritures par « aucune correspondance » en lot (15/10/2026)
+AMBIGUES_LOT_MAX = 500
+
+
+def _paire_rejetee(
+    company_id: int,
+    tx: BankTransaction,
+    entry: AccountingEntry,
+    resultat: Score,
+    commentaire: str,
+    acteur_id: int,
+) -> ReconciliationMatch:
+    """Paire écartée par l'utilisateur : une correspondance « Rejetée » (éléments inactifs), le
+    mécanisme des rejets ; la paire n'est jamais reproposée."""
+    match = ReconciliationMatch(
+        company_id=company_id,
+        type="1-1",
+        score=resultat.total,
+        statut="Proposée",
+        origine="Manuelle",
+        detail_score=_detail_json(resultat),
+        commentaire=commentaire,
+        items=[
+            ReconciliationMatchItem(
+                bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=False
+            ),
+            ReconciliationMatchItem(
+                accounting_entry_id=entry.id,
+                montant_affecte=abs(montant_rapprochement(entry)),
+                actif=False,
+            ),
+        ],
+    )
+    _decide(match, "Rejetée", acteur_id)
+    return match
+
+
+def _ecarts_operation(db: Session, tx: BankTransaction) -> list[Candidate]:
+    """Écritures candidates à écarter pour l'opération ; vérifie qu'elle s'y prête (sans écrire)."""
+    db.refresh(tx)
+    if tx.statut in ("Rapprochée", "Écart") or repo.active_matches_of(db, transaction_id=tx.id):
+        raise ConflictError(
+            f"L'opération « {tx.libelle} » a déjà un rapprochement ou une proposition : "
+            "traitez-les d'abord."
+        )
+    _, _, items, seuil_proposition, _ = candidates(db, tx.id)
+    ecartees = [
+        item for item in items if item.score.total >= seuil_proposition and not item.rejetee
+    ]
+    if not ecartees:
+        raise ConflictError(
+            f"Aucune écriture candidate à écarter pour l'opération « {tx.libelle} »."
+        )
+    return ecartees
+
+
+def _ecarter_pour_operation(
+    db: Session,
+    company: Company,
+    tx: BankTransaction,
+    ecartees: list[Candidate],
+    texte: str | None,
+    acteur_id: int,
+    ip: str | None,
+    *,
+    en_lot: bool,
+) -> list[int]:
+    for item in ecartees:
+        repo.add(
+            db,
+            _paire_rejetee(
+                company.id,
+                tx,
+                item.entry,
+                item.score,
+                texte or "Aucune écriture ne correspond à l'opération.",
+                acteur_id,
+            ),
+        )
+    db.flush()
+    repo.set_transaction_status(db, {tx.id}, "Non rapprochée")
+    ids = sorted(item.entry.id for item in ecartees)
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="rejet_ambiguite",
+        entite="bank_transaction",
+        entite_id=tx.id,
+        avant={"statut": "À vérifier"},
+        apres={
+            "statut": "Non rapprochée",
+            "ecritures_ecartees": ids,
+            "commentaire": texte,
+            "en_lot": en_lot,
+        },
+        ip=ip,
+    )
+    return ids
+
+
+def _operations_d_une_societe(
+    db: Session, transaction_ids: list[int]
+) -> tuple[Company, list[BankTransaction]]:
+    lignes = []
+    for tx_id in sorted(set(transaction_ids)):
+        found = repo.get_transaction(db, tx_id)
+        if found is None:
+            raise NotFoundError("Opération bancaire introuvable.")
+        lignes.append(found)
+    societes = {account.company_id for _, account in lignes}
+    if len(societes) != 1:
+        raise ConflictError("Un traitement en lot ne porte que sur une seule société.")
+    company = _company(db, societes.pop(), lock=True)
+    return company, [tx for tx, _ in lignes]
+
+
+def rejeter_ambiguite(
+    db: Session,
+    transaction_id: int,
+    *,
+    commentaire: str | None,
+    acteur_id: int,
+    ip: str | None,
+) -> list[int]:
+    """« Aucune écriture ne correspond » (15/10/2026) : toutes les écritures candidates d'une
+    opération ambiguë sont écartées d'un coup. Chaque paire est enregistrée comme rejetée (le
+    mécanisme des rejets : jamais reproposée), l'opération repasse « Non rapprochée ». Une
+    écriture importée plus tard reste comparée normalement. Retourne les écritures écartées."""
+    texte = _clean_comment(commentaire)
+    company, [tx] = _operations_d_une_societe(db, [transaction_id])
+    ecartees = _ecarts_operation(db, tx)
+    ids = _ecarter_pour_operation(db, company, tx, ecartees, texte, acteur_id, ip, en_lot=False)
+    _commit(db)
+    return ids
+
+
+def rejeter_ambiguites(
+    db: Session,
+    transaction_ids: list[int],
+    *,
+    commentaire: str | None,
+    acteur_id: int,
+    ip: str | None,
+) -> int:
+    """« Aucune correspondance » pour plusieurs opérations ambiguës, toutes ou aucune : tout est
+    vérifié avant la première écriture. Retourne le nombre d'opérations traitées."""
+    if not transaction_ids or len(set(transaction_ids)) > AMBIGUES_LOT_MAX:
+        raise ConflictError(f"Choisissez de 1 à {AMBIGUES_LOT_MAX} opérations.")
+    texte = _clean_comment(commentaire)
+    company, operations = _operations_d_une_societe(db, transaction_ids)
+    a_ecarter = [(tx, _ecarts_operation(db, tx)) for tx in operations]
+    for tx, ecartees in a_ecarter:
+        _ecarter_pour_operation(db, company, tx, ecartees, texte, acteur_id, ip, en_lot=True)
+    _commit(db)
+    return len(a_ecarter)
+
+
+# --- Écritures ambiguës (15/10/2026) --------------------------------------------------------------
+
+
+@dataclass
+class CandidateOperation:
+    transaction: BankTransaction
+    bank_code: str
+    score: Score
+    rejetee: bool
+    proposee_ailleurs: bool
+    actifs: tuple[str, ...] = ()
+
+
+@dataclass
+class AmbiguousEntryView:
+    entry: AccountingEntry
+    bank_code: str | None
+    candidats: list[CandidateOperation]
+
+
+def candidates_of_entry(
+    db: Session,
+    entry_id: int,
+    *,
+    regles: Grille | None = None,
+    rejetees: set[tuple[int, int]] | None = None,
+) -> tuple[AccountingEntry, list[CandidateOperation], Decimal]:
+    """Opérations qui pourraient correspondre à l'écriture, de la meilleure à la moins bonne : le
+    symétrique de `candidates` (même compte, sens opposé, fenêtre de dates des types). Retourne
+    aussi le seuil de proposition."""
+    entry = repo.get_entry(db, entry_id)
+    if entry is None:
+        raise NotFoundError("Écriture comptable introuvable.")
+    regles = regles or grille(db)
+    jours = [entry.date_ecriture] + ([entry.echeance] if entry.echeance else [])
+    courte = timedelta(days=regles.fenetre_jours)
+    large = timedelta(days=max(regles.fenetre_jours, regles.fenetre_numero_jours))
+    transactions = repo.candidate_transactions(
+        db,
+        entry,
+        min(jours) - courte,
+        max(jours) + courte,
+        large_from=min(jours) - large,
+        large_to=max(jours) + large,
+        montant=-montant_rapprochement(entry),
+    )
+    ecriture = _ecriture(entry)
+    comparables = [
+        (tx, operation)
+        for tx in transactions
+        if comparable(operation := _operation(tx), ecriture, regles)
+    ]
+    if rejetees is None:
+        rejetees = repo.rejected_pairs(db, entry.company_id)
+    actives = repo.active_matches_by_transaction(db, [tx.id for tx, _ in comparables])
+    codes = repo.transactions_with_bank(db, {tx.id for tx, _ in comparables})
+    scored = []
+    for tx, operation in comparables:
+        active = actives.get(tx.id)
+        scored.append(
+            CandidateOperation(
+                transaction=tx,
+                bank_code=codes[tx.id][1],
+                score=score(operation, ecriture, regles),
+                rejetee=(tx.id, entry.id) in rejetees,
+                proposee_ailleurs=active is not None and entry.id not in _members(active)[1],
+                actifs=regles.criteres_actifs,
+            )
+        )
+    scored.sort(
+        key=lambda item: (-item.score.total, item.transaction.date_operation, item.transaction.id)
+    )
+    return entry, scored[:NB_CANDIDATS], regles.seuil_proposition
+
+
+def list_ambiguous_entries(
+    db: Session,
+    company_id: int,
+    *,
+    bank_account_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    page: int = 1,
+    type_operation: str | None = None,
+) -> tuple[int, list[AmbiguousEntryView]]:
+    """Écritures ambiguës de la période, chacune avec ses opérations candidates au-dessus du
+    seuil de proposition (hors paires rejetées). L'utilisateur en coche une (1 → 1) ou plusieurs
+    dont la somme vaut l'écriture (N → 1)."""
+    company = _company(db, company_id)
+    _check_period(date_from, date_to)
+    total, entries = repo.ambiguous_entries(
+        db,
+        company.id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        offset=(page - 1) * PAGE_AMBIGUES,
+        limit=PAGE_AMBIGUES,
+        type_operation=type_operation,
+    )
+    codes = repo.entries_with_bank(db, {entry.id for entry in entries})
+    regles = grille(db)
+    rejetees = repo.rejected_pairs(db, company.id)
+    views = []
+    for entry in entries:
+        _, items, seuil = candidates_of_entry(db, entry.id, regles=regles, rejetees=rejetees)
+        views.append(
+            AmbiguousEntryView(
+                entry=entry,
+                bank_code=codes[entry.id][1],
+                candidats=[
+                    item for item in items if item.score.total >= seuil and not item.rejetee
+                ],
+            )
+        )
+    return total, views
+
+
+def _ecarts_ecriture(db: Session, entry: AccountingEntry) -> list[CandidateOperation]:
+    """Opérations candidates à écarter pour l'écriture ; vérifie qu'elle s'y prête (sans écrire)."""
+    db.refresh(entry)
+    if entry.statut in ("Rapprochée", "Écart") or repo.active_matches_of(db, entry_id=entry.id):
+        raise ConflictError(
+            f"L'écriture « {entry.libelle} » a déjà un rapprochement ou une proposition : "
+            "traitez-les d'abord."
+        )
+    _, items, seuil = candidates_of_entry(db, entry.id)
+    ecartees = [item for item in items if item.score.total >= seuil and not item.rejetee]
+    if not ecartees:
+        raise ConflictError(
+            f"Aucune opération candidate à écarter pour l'écriture « {entry.libelle} »."
+        )
+    return ecartees
+
+
+def _ecarter_pour_ecriture(
+    db: Session,
+    company: Company,
+    entry: AccountingEntry,
+    ecartees: list[CandidateOperation],
+    texte: str | None,
+    acteur_id: int,
+    ip: str | None,
+    *,
+    en_lot: bool,
+) -> list[int]:
+    for item in ecartees:
+        repo.add(
+            db,
+            _paire_rejetee(
+                company.id,
+                item.transaction,
+                entry,
+                item.score,
+                texte or "Aucune opération ne correspond à l'écriture.",
+                acteur_id,
+            ),
+        )
+    db.flush()
+    repo.set_entry_status(db, {entry.id}, "Non rapprochée")
+    ids = sorted(item.transaction.id for item in ecartees)
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="rejet_ambiguite_ecriture",
+        entite="accounting_entry",
+        entite_id=entry.id,
+        avant={"statut": "À vérifier"},
+        apres={
+            "statut": "Non rapprochée",
+            "operations_ecartees": ids,
+            "commentaire": texte,
+            "en_lot": en_lot,
+        },
+        ip=ip,
+    )
+    return ids
+
+
+def _ecritures_d_une_societe(
+    db: Session, entry_ids: list[int]
+) -> tuple[Company, list[AccountingEntry]]:
+    entries = []
+    for entry_id in sorted(set(entry_ids)):
+        entry = repo.get_entry(db, entry_id)
+        if entry is None:
+            raise NotFoundError("Écriture comptable introuvable.")
+        entries.append(entry)
+    societes = {entry.company_id for entry in entries}
+    if len(societes) != 1:
+        raise ConflictError("Un traitement en lot ne porte que sur une seule société.")
+    return _company(db, societes.pop(), lock=True), entries
+
+
+def rejeter_ambiguite_ecriture(
+    db: Session,
+    entry_id: int,
+    *,
+    commentaire: str | None,
+    acteur_id: int,
+    ip: str | None,
+) -> list[int]:
+    """« Aucune opération ne correspond » : le symétrique de `rejeter_ambiguite`. Les opérations
+    candidates sont écartées (paires rejetées, jamais reproposées), l'écriture repasse « Non
+    rapprochée ». Retourne les opérations écartées."""
+    texte = _clean_comment(commentaire)
+    company, [entry] = _ecritures_d_une_societe(db, [entry_id])
+    ecartees = _ecarts_ecriture(db, entry)
+    ids = _ecarter_pour_ecriture(db, company, entry, ecartees, texte, acteur_id, ip, en_lot=False)
+    _commit(db)
+    return ids
+
+
+def rejeter_ambiguites_ecritures(
+    db: Session,
+    entry_ids: list[int],
+    *,
+    commentaire: str | None,
+    acteur_id: int,
+    ip: str | None,
+) -> int:
+    """« Aucune correspondance » pour plusieurs écritures ambiguës, toutes ou aucune."""
+    if not entry_ids or len(set(entry_ids)) > AMBIGUES_LOT_MAX:
+        raise ConflictError(f"Choisissez de 1 à {AMBIGUES_LOT_MAX} écritures.")
+    texte = _clean_comment(commentaire)
+    company, entries = _ecritures_d_une_societe(db, entry_ids)
+    a_ecarter = [(entry, _ecarts_ecriture(db, entry)) for entry in entries]
+    for entry, ecartees in a_ecarter:
+        _ecarter_pour_ecriture(db, company, entry, ecartees, texte, acteur_id, ip, en_lot=True)
+    _commit(db)
+    return len(a_ecarter)
 
 
 # --- Export du lettrage (14/10/2026) ----------------------------------------------------------------

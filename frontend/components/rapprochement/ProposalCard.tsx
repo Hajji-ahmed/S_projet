@@ -15,6 +15,8 @@ import {
   uniteEcriture,
   absolute,
   ecartManuel,
+  ecrituresDe,
+  montantSage,
   formatScore,
   montantBanque,
   operationsDe,
@@ -58,7 +60,8 @@ export function ProposalCard({
   onOpen,
 }: ProposalCardProps) {
   const ok = validable(item);
-  const ecart = ecartManuel(montantBanque(item), montantEcriture(item.ecriture));
+  const ecart = ecartManuel(montantBanque(item), montantSage(item));
+  const ecritures = ecrituresDe(item);
   const devise = unite(item.operation.devise);
   const lignes = operationsDe(item);
   const groupe = lignes.length > 1;
@@ -173,17 +176,33 @@ export function ProposalCard({
 
         <Side title="Écriture comptable">
           <Amount
-            value={montantEcriture(item.ecriture)}
-            sens={sensSage(item.ecriture.montant)}
+            value={montantSage(item)}
+            sens={sensSage(montantSage(item))}
             unite={uniteEcriture(item.ecriture)}
           />
-          <p className="font-medium">{item.ecriture.libelle}</p>
-          <p className="flex flex-wrap gap-x-2 text-xs text-simtis-muted">
-            <span>{formatDate(item.ecriture.date_ecriture)}</span>
-            {item.ecriture.journal && <span>Journal {item.ecriture.journal}</span>}
-            {item.ecriture.numero_piece && <span>Pièce {item.ecriture.numero_piece}</span>}
-            {item.ecriture.tiers && <span>{item.ecriture.tiers}</span>}
-          </p>
+          {ecritures.length > 1 && (
+            <p className="text-xs font-semibold text-simtis-primary-dark">
+              {ecritures.length} écritures
+            </p>
+          )}
+          {ecritures.map((ecriture) => (
+            <div key={ecriture.id}>
+              <p className="font-medium">
+                {ecriture.libelle}
+                {ecritures.length > 1 && (
+                  <span className="ml-2 text-xs font-normal text-simtis-muted tabular-nums">
+                    {montantEcriture(ecriture)}
+                  </span>
+                )}
+              </p>
+              <p className="flex flex-wrap gap-x-2 text-xs text-simtis-muted">
+                <span>{formatDate(ecriture.date_ecriture)}</span>
+                {ecriture.journal && <span>Journal {ecriture.journal}</span>}
+                {ecriture.numero_piece && <span>Pièce {ecriture.numero_piece}</span>}
+                {ecriture.tiers && <span>{ecriture.tiers}</span>}
+              </p>
+            </div>
+          ))}
         </Side>
       </div>
 

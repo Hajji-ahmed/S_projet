@@ -24,6 +24,7 @@ from itertools import combinations
 
 from app.services.reconciliation_scoring import (
     CENT,
+    TYPES_PAR_ECHEANCE,
     ZERO,
     Ecriture,
     Grille,
@@ -31,11 +32,13 @@ from app.services.reconciliation_scoring import (
     Score,
     _plain,
     _points,
+    date_comparee,
     ecart_jours,
     numeros,
     ratio_date,
     ratio_libelle,
     type_ecriture,
+    type_operation,
     types_compatibles,
 )
 
@@ -137,16 +140,26 @@ def _candidats_ecriture(
     par_compte_jour: dict[tuple[int | None, date], list[Operation]],
     grille: Grille,
 ) -> list[Operation]:
-    """Opérations libres du même compte, de date comparable à l'écriture (règles du type)."""
+    """Opérations libres du même compte, de date comparable à l'écriture (règles du type).
+
+    L'écart est celui de `ecart_jours`, calculé ici sans appel par opération (15/10/2026)."""
     jour = ecriture.echeance or ecriture.date_ecriture
     jours = {ecriture.date_ecriture, jour}
+    jour_sage = date_comparee(ecriture)
+    avec_valeur = type_ecriture(ecriture.libelle) in TYPES_PAR_ECHEANCE
+    fenetre = grille.fenetre_jours
     vues: dict[int, Operation] = {}
     for base in jours:
-        for decalage in range(-grille.fenetre_jours, grille.fenetre_jours + 1):
+        for decalage in range(-fenetre, fenetre + 1):
             for op in par_compte_jour.get(
                 (ecriture.bank_account_id, base + timedelta(decalage)), ()
             ):
-                if ecart_jours(op, ecriture) <= grille.fenetre_jours:
+                if op.id in vues:
+                    continue
+                ecart = abs((op.date_operation - jour_sage).days)
+                if avec_valeur and op.date_valeur:
+                    ecart = min(ecart, abs((op.date_valeur - jour_sage).days))
+                if ecart <= fenetre:
                     vues[op.id] = op
     return list(vues.values())
 
@@ -177,6 +190,17 @@ class _SommesDuJour:
         return self._cache[cle]
 
 
+@lru_cache(maxsize=200_000)
+def _numeros_operation(libelle: str | None, reference: str | None) -> frozenset[str]:
+    return frozenset(numeros(libelle, reference))
+
+
+@lru_cache(maxsize=200_000)
+def _principale_possible(libelle: str | None) -> tuple[bool, str | None]:
+    """(frais ?, type) d'une opération, calculés une fois par libellé (15/10/2026)."""
+    return bool(famille_frais(libelle)), type_operation(libelle)
+
+
 def _groupes_possibles(
     ecriture: Ecriture, candidats: list[Operation], sommes: _SommesDuJour
 ) -> list[tuple[Operation, ...]]:
@@ -201,7 +225,7 @@ def _groupes_possibles(
     # 1. Par référence : opérations au n° de l'écriture, avec au besoin des frais du même jour
     nums = numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
     if nums:
-        refs = [op for op in candidats if numeros(op.libelle, op.reference) & nums]
+        refs = [op for op in candidats if _numeros_operation(op.libelle, op.reference) & nums]
         if refs:
             pool = list(refs)
             for jour in sorted({op.date_operation for op in refs}):
@@ -213,15 +237,18 @@ def _groupes_possibles(
                         garder(combo)
 
     # 2. Opération principale + 1 à 3 frais du même jour
+    type_sage = type_ecriture(ecriture.libelle)
     for principale in candidats:
-        if famille_frais(principale.libelle) or not types_compatibles(principale, ecriture):
+        frais, type_op = _principale_possible(principale.libelle)
+        # `types_compatibles` sans appel par opération : deux types connus doivent être égaux
+        if frais or (type_op is not None and type_sage is not None and type_op != type_sage):
             continue
         table = sommes.sommes((compte, principale.date_operation))
         for combo in table.get(cible - principale.montant, []):
             garder((principale, *combo))
 
     # 3. Frais du jour, pour une écriture qui n'est ni chèque, ni effet, ni espèces, ni virement
-    if not type_ecriture(ecriture.libelle):
+    if not type_sage:
         for jour in jours:
             liste = sommes.frais((compte, jour))
             par_famille: dict[str, list[Operation]] = {}
@@ -365,3 +392,53 @@ def operations_couvertes(
             ):
                 couvertes.setdefault(op.id, ecriture.id)
     return couvertes
+
+
+# --- Ensemble choisi à la main (P13, 15/10/2026) --------------------------------------------------
+
+
+def type_ensemble(nb_operations: int, nb_ecritures: int) -> str:
+    """« 1-1 », « 1-N » (une opération, plusieurs écritures), « N-1 » ou « N-N »."""
+    return f"{'N' if nb_operations > 1 else '1'}-{'N' if nb_ecritures > 1 else '1'}"
+
+
+def score_ensemble(
+    ops: Sequence[Operation], ecritures: Sequence[Ecriture], grille: Grille
+) -> Score:
+    """Score indicatif d'un rapprochement manuel de plusieurs lignes (toujours équilibré) :
+    montant + n° commun entre les deux côtés + date (pour chaque opération, l'écriture la plus
+    proche ; le plus grand de ces écarts) + libellé des deux plus grosses lignes, plafonné à 100."""
+    principale = max(ops, key=lambda op: abs(op.montant))
+    plus_grosse = max(ecritures, key=lambda e: abs(e.montant))
+    cote_banque = set().union(*(numeros(op.libelle, op.reference) for op in ops))
+    cote_sage = set().union(*(numeros(e.libelle, e.reference, e.numero_piece) for e in ecritures))
+    ecart = max(min(ecart_jours(op, e) for e in ecritures) for op in ops)
+    detail = {
+        "reference": grille.reference if cote_banque & cote_sage else ZERO,
+        "montant": grille.montant,
+        "date": _points(grille.date, ratio_date(ecart, grille.tolerance_jours)),
+        "libelle": _points(grille.libelle, ratio_libelle(principale, plus_grosse)),
+        "tiers": ZERO,
+    }
+    detail = {code: value.quantize(CENT) for code, value in detail.items()}
+    total = min(sum(detail.values(), ZERO), Decimal("100.00")).quantize(CENT)
+    return Score(total=total, detail=detail)
+
+
+def explication_ensemble(ops: Sequence[Operation], ecritures: Sequence[Ecriture]) -> str:
+    """« 2 opérations = 12 000,00 ↔ 3 écritures = 12 000,00 · n° 173813 commun »."""
+    total_ops = sum((op.montant for op in ops), ZERO)
+    total_ecr = sum((e.montant for e in ecritures), ZERO)
+
+    def cote(n: int, mot: str, total: Decimal) -> str:
+        return f"{n} {mot}{'s' if n > 1 else ''} = {_montant_texte(abs(total))}"
+
+    texte = (
+        f"{cote(len(ops), 'opération', total_ops)} ↔ {cote(len(ecritures), 'écriture', total_ecr)}"
+    )
+    communs = set().union(*(numeros(op.libelle, op.reference) for op in ops)) & set().union(
+        *(numeros(e.libelle, e.reference, e.numero_piece) for e in ecritures)
+    )
+    if communs:
+        texte += f" · n° {', '.join(sorted(communs))} commun"
+    return texte + " · choisi à la main"

@@ -81,6 +81,9 @@ export type Correspondance = {
   ecart?: string;
   explication?: string | null;
   ecriture: Ecriture;
+  /** Toutes les écritures (1 → N, N → N, P13 du 15/10/2026), la plus grosse en tête. */
+  ecritures?: Ecriture[];
+  total_ecritures?: string;
 };
 
 export type Correspondances = {
@@ -129,6 +132,28 @@ export type Historique = {
 export type Ambigue = {
   operation: Operation;
   candidats: Candidat[];
+};
+
+/** Écriture ambiguë (15/10/2026) : ses opérations candidates, la meilleure d'abord. */
+export type CandidatOperation = {
+  operation: Operation;
+  score: string;
+  criteres: Critere[];
+  rejetee: boolean;
+  proposee_ailleurs: boolean;
+};
+
+export type EcritureAmbigue = {
+  ecriture: Ecriture;
+  candidats: CandidatOperation[];
+};
+
+export type EcrituresAmbigues = {
+  /** Nombre d'écritures ambiguës sur tout le filtre ; `ecritures` n'en donne qu'une page. */
+  total: number;
+  page: number;
+  taille: number;
+  ecritures: EcritureAmbigue[];
 };
 
 export type Ambigues = {

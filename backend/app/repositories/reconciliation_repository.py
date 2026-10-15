@@ -18,7 +18,7 @@ from app.models import (
     ReconciliationRule,
     User,
 )
-from app.services.reconciliation_scoring import AUTRE, TYPES_BANQUE, regex_type
+from app.services.reconciliation_scoring import AUTRE, TYPES_BANQUE, TYPES_SAGE, regex_type
 
 # Statuts d'une correspondance qui retiennent ses éléments
 STATUTS_ACTIFS = ("Proposée", "Validée")
@@ -26,10 +26,11 @@ STATUTS_ACTIFS = ("Proposée", "Validée")
 STATUTS_FIGES = ("Rapprochée", "Écart")
 
 
-def lock_company(db: Session, company_id: int) -> Company | None:
+def lock_company(db: Session, company_id: int, *, nowait: bool = False) -> Company | None:
     """Verrouille la société : deux rapprochements de la même société ne s'exécutent jamais en même
-    temps (lancement, validation, rapprochement manuel)."""
-    return db.scalar(select(Company).where(Company.id == company_id).with_for_update())
+    temps (lancement, validation, rapprochement manuel). Avec `nowait`, une société déjà
+    verrouillée lève aussitôt `OperationalError` au lieu d'attendre (15/10/2026)."""
+    return db.scalar(select(Company).where(Company.id == company_id).with_for_update(nowait=nowait))
 
 
 def all_rules(db: Session) -> list[ReconciliationRule]:
@@ -341,6 +342,105 @@ def ambiguous_transactions(
         BankTransaction.id.desc(),
     )
     return total, list(db.scalars(page.offset(offset).limit(limit)))
+
+
+def _active_entry_ids() -> Select:
+    return select(ReconciliationMatchItem.accounting_entry_id).where(
+        ReconciliationMatchItem.actif.is_(True),
+        ReconciliationMatchItem.accounting_entry_id.is_not(None),
+    )
+
+
+def ambiguous_entries(
+    db: Session,
+    company_id: int,
+    *,
+    bank_account_id: int | None,
+    date_from: date | None,
+    date_to: date | None,
+    offset: int,
+    limit: int,
+    type_operation: str | None = None,
+) -> tuple[int, list[AccountingEntry]]:
+    """Écritures « À vérifier » sans correspondance active (15/10/2026) : le moteur a trouvé
+    plusieurs opérations trop proches pour en proposer une. Leur nombre sur tout le filtre, et une
+    page, des plus récentes aux plus anciennes."""
+    query = select(AccountingEntry).where(
+        AccountingEntry.company_id == company_id,
+        AccountingEntry.statut == "À vérifier",
+        AccountingEntry.id.not_in(_active_entry_ids()),
+    )
+    if bank_account_id is not None:
+        query = query.where(AccountingEntry.bank_account_id == bank_account_id)
+    if date_from is not None:
+        query = query.where(AccountingEntry.date_ecriture >= date_from)
+    if date_to is not None:
+        query = query.where(AccountingEntry.date_ecriture <= date_to)
+    if type_operation:
+        query = query.where(type_condition(AccountingEntry.libelle, TYPES_SAGE, type_operation))
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    page = query.order_by(AccountingEntry.date_ecriture.desc(), AccountingEntry.id.desc())
+    return total, list(db.scalars(page.offset(offset).limit(limit)))
+
+
+def candidate_transactions(
+    db: Session,
+    entry: AccountingEntry,
+    date_from: date,
+    date_to: date,
+    *,
+    large_from: date,
+    large_to: date,
+    montant: Decimal,
+) -> list[BankTransaction]:
+    """Opérations du même compte, hors correspondance validée et hors écart : le symétrique de
+    `candidate_entries`. Dans la fenêtre courte (date d'opération ou de valeur), ou dans la
+    fenêtre large (même n°, 180 jours) au seul montant `montant` : au-delà de la fenêtre courte,
+    `comparable` n'admet qu'un chèque ou un effet au même montant (15/10/2026)."""
+    validated_tx_ids = (
+        select(ReconciliationMatchItem.bank_transaction_id)
+        .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
+        .where(
+            ReconciliationMatchItem.actif.is_(True),
+            ReconciliationMatch.statut == "Validée",
+            ReconciliationMatchItem.bank_transaction_id.is_not(None),
+        )
+    )
+    query = select(BankTransaction).where(
+        BankTransaction.bank_account_id == entry.bank_account_id,
+        or_(
+            BankTransaction.date_operation.between(date_from, date_to),
+            BankTransaction.date_valeur.between(date_from, date_to),
+            and_(
+                BankTransaction.montant == montant,
+                or_(
+                    BankTransaction.date_operation.between(large_from, large_to),
+                    BankTransaction.date_valeur.between(large_from, large_to),
+                ),
+            ),
+        ),
+        BankTransaction.statut != "Écart",
+        BankTransaction.id.not_in(validated_tx_ids),
+    )
+    return list(db.scalars(query))
+
+
+def active_matches_by_transaction(
+    db: Session, transaction_ids: list[int]
+) -> dict[int, ReconciliationMatch]:
+    """Correspondance active de chaque opération demandée."""
+    if not transaction_ids:
+        return {}
+    rows = db.execute(
+        select(ReconciliationMatchItem.bank_transaction_id, ReconciliationMatch)
+        .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
+        .where(
+            ReconciliationMatchItem.actif.is_(True),
+            ReconciliationMatchItem.bank_transaction_id.in_(transaction_ids),
+        )
+        .options(selectinload(ReconciliationMatch.items))
+    )
+    return {row[0]: row[1] for row in rows}
 
 
 def count_by_status(db: Session, query: Select) -> dict[str, int]:

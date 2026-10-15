@@ -1,7 +1,7 @@
 /** Rapprochement 1→1 (P11) : règles pures de l'écran. Montants en texte exact, jamais en float. */
 import { ECARTS_ACTIFS } from "@/lib/features";
 import { fromCents, toCents } from "@/lib/statementLines";
-import type { StatutRapprochement } from "@/types/accounting";
+import type { Ecriture, StatutRapprochement } from "@/types/accounting";
 import type { Candidat, Correspondance, Operation } from "@/types/reconciliation";
 
 export type ReconciliationFilter = {
@@ -111,7 +111,8 @@ export function defaultSelection(items: readonly Correspondance[]): Set<number> 
   );
 }
 
-export type ProposalsFilter = "toutes" | "fortes" | "a_verifier" | "ambigues";
+export type ProposalsFilter =
+  "toutes" | "fortes" | "a_verifier" | "ambigues" | "ecritures_ambigues";
 
 /** Filtre Toutes · Fortes (≥ seuil) · À vérifier (< seuil), la plus forte d'abord. */
 export function filterProposals(
@@ -121,7 +122,10 @@ export function filterProposals(
   return items
     .filter(
       (item) =>
-        filtre === "toutes" || (filtre !== "ambigues" && (filtre === "fortes") === item.forte),
+        filtre === "toutes" ||
+        (filtre !== "ambigues" &&
+          filtre !== "ecritures_ambigues" &&
+          (filtre === "fortes") === item.forte),
     )
     .sort((a, b) => {
       const diff = toCents(b.score ?? "0") - toCents(a.score ?? "0");
@@ -216,6 +220,19 @@ export function montantBanque(item: Correspondance): string {
     : item.operation.montant;
 }
 
+/** Écritures d'une correspondance : plusieurs en 1 → N et N → N (P13, 15/10/2026), sinon une. */
+export function ecrituresDe(item: Correspondance): Ecriture[] {
+  return item.ecritures?.length ? item.ecritures : [item.ecriture];
+}
+
+/** Montant côté Sage : le total des écritures quand il y en a plusieurs, sinon celui de l'écriture
+ * (en devise pour un compte EUR / USD). */
+export function montantSage(item: Correspondance): string {
+  return ecrituresDe(item).length > 1 && item.total_ecritures
+    ? item.total_ecritures
+    : montantEcriture(item.ecriture);
+}
+
 /** « lettrage-2026-09-01-2026-10-14.xlsx » : le nom proposé au téléchargement. */
 export function lettrageFilename(filter: ReconciliationFilter): string {
   return `lettrage-${filter.from}-${filter.to}.xlsx`;
@@ -241,4 +258,63 @@ export function uniteEcriture(ecriture: {
   devise?: string | null;
 }): string {
   return ecriture.montant_devise != null ? unite(ecriture.devise) : "DH";
+}
+
+// --- Rapprochement manuel de plusieurs lignes (P13, 15/10/2026) -----------------------------------
+
+/** Au plus 50 lignes de chaque côté (même règle que l'API). */
+export const MANUEL_MAX = 50;
+
+export type BlocagePanier = "vide" | "limite" | "comptes" | "rapprochee" | "ecart" | null;
+
+export type EtatPanier = {
+  /** Totaux signés, en texte exact, dans la devise du compte. */
+  totalBanque: string;
+  totalSage: string;
+  /** Total banque + total Sage : « 0.00 » quand ils se compensent. */
+  ecart: string;
+  type: "1-1" | "1-N" | "N-1" | "N-N";
+  devise: string | undefined;
+  /** Pourquoi le rapprochement n'est pas encore possible ; null = prêt. */
+  blocage: BlocagePanier;
+};
+
+type LignePanier = { bank_account_id: number | null; statut: string; devise?: string | null };
+
+/** Totaux, écart et type d'un panier de lignes choisies à la main ; mêmes règles que l'API. */
+export function etatPanier(
+  operations: readonly (LignePanier & { montant: string })[],
+  ecritures: readonly (LignePanier & { montant: string; montant_devise?: string | null })[],
+): EtatPanier {
+  const totalBanque = operations.reduce((total, op) => total + toCents(op.montant), BigInt(0));
+  const totalSage = ecritures.reduce(
+    (total, ecriture) => total + toCents(montantEcriture(ecriture)),
+    BigInt(0),
+  );
+  const ecart = totalBanque + totalSage;
+  const comptes = new Set([...operations, ...ecritures].map((ligne) => ligne.bank_account_id));
+  const type =
+    `${operations.length > 1 ? "N" : "1"}-${ecritures.length > 1 ? "N" : "1"}` as EtatPanier["type"];
+  let blocage: BlocagePanier = null;
+  if (operations.length === 0 || ecritures.length === 0) blocage = "vide";
+  else if (operations.length > MANUEL_MAX || ecritures.length > MANUEL_MAX) blocage = "limite";
+  else if (comptes.size > 1) blocage = "comptes";
+  else if ([...operations, ...ecritures].some((ligne) => ligne.statut === "Rapprochée"))
+    blocage = "rapprochee";
+  else if (ecart !== BigInt(0)) blocage = "ecart";
+  return {
+    totalBanque: fromCents(totalBanque),
+    totalSage: fromCents(totalSage),
+    ecart: fromCents(ecart),
+    type,
+    devise: operations[0]?.devise ?? ecritures[0]?.devise ?? undefined,
+    blocage,
+  };
+}
+
+/** Ajoute la ligne au panier, ou l'en retire si elle y est déjà. */
+export function basculerLigne<T extends { id: number }>(lignes: readonly T[], ligne: T): T[] {
+  return lignes.some((l) => l.id === ligne.id)
+    ? lignes.filter((l) => l.id !== ligne.id)
+    : [...lignes, ligne];
 }

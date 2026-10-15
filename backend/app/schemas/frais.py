@@ -134,6 +134,8 @@ class EcritureFraisOut(BaseModel):
     libelle: str
     montant: Decimal
     code: str | None
+    # N° pièce Sage AAMMNNN (15/10/2026) ; l'ancien n° pour une écriture exportée avant
+    numero_piece: str | None
     nb_operations: int
     exportee_le: datetime | None
     lignes: list[LigneGLOut]
@@ -152,6 +154,7 @@ class EcritureFraisOut(BaseModel):
             libelle=entry.libelle,
             montant=entry.montant,
             code=item.code,
+            numero_piece=entry.numero_piece,
             nb_operations=item.nb_operations,
             exportee_le=entry.exportee_le,
             lignes=[LigneGLOut.of(ligne, entry.libelle) for ligne in item.lignes],

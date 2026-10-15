@@ -18,6 +18,8 @@ dependencies = [
     # Ancien format Excel .xls (relevés de certaines banques, exports Sage), décision du 08/10/2026
     "xlrd>=2.0",
     "python-multipart>=0.0.9",
+    # Rapprochement (15/10/2026) : difflib compilé, mêmes résultats, environ 4 fois plus rapide
+    "cydifflib>=1.2",
 ]
 
 [project.optional-dependencies]

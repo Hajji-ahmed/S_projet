@@ -53,7 +53,29 @@ LIBELLE_FRAIS = "FRAIS"
 ENTITE = "accounting_entry"
 # Garde-fou contre une année mal saisie, comme le moteur de rapprochement
 PERIODE_MAX_JOURS = 1827
-EXPORT_HEADERS = ("Journal", "Date", "Compte", "N° pièce", "Libellé", "Débit", "Crédit")
+# Format d'import paramétrable de Sage (15/10/2026), dans l'ordre de l'écran Sage ; les colonnes
+# marquées d'une étoile sont obligatoires pour Sage
+EXPORT_HEADERS = (
+    "* Date de pièce",
+    "N° pièce",
+    "* Code journal",
+    "* N° compte général",
+    "N° compte tiers",
+    "Libellé écriture",
+    "Montant",
+    "Sens",
+    "Mode de règlement",
+    "Date d'échéance",
+    "Référence",
+    "Numéro facture",
+    "Montant devise",
+    "Cours de la devise",
+    "Code ISO devise",
+)
+SENS_DEBIT = "Débit"
+# N° pièce d'une écriture de frais (15/10/2026) : AA MM NNN, un compteur par société et par mois
+PIECE_MAX = 999
+SENS_CREDIT = "Crédit"
 ZERO = Decimal("0.00")
 
 # Libellés reconnus, sur le libellé en majuscules aux espaces réduits
@@ -468,6 +490,7 @@ def _snapshot(entry: AccountingEntry, code: str | None, operations: list[int]) -
         "libelle": entry.libelle,
         "montant": entry.montant,
         "code": code,
+        "numero_piece": entry.numero_piece,
         "operations": sorted(operations),
         "exportee_le": entry.exportee_le,
     }
@@ -579,7 +602,7 @@ def valider(
             detail={"explication": _explication(famille, jour)},
             acteur_id=acteur_id,
         )
-        entry.numero_piece = match.code
+        entry.numero_piece = _nouvelle_piece(db, company_id, entry.date_ecriture)
         audit_service.log(
             db,
             user_id=acteur_id,
@@ -722,6 +745,23 @@ def libelle_ligne(libelle_ecriture: str, type_ligne: str | None) -> str:
     return f"TVA {libelle_ecriture}" if est_ligne_tva(type_ligne) else libelle_ecriture
 
 
+def numero_piece(jour: date, numero: int) -> str:
+    """« 2610018 » : année et mois de la date d'écriture, puis le n° d'ordre du mois sur 3
+    chiffres."""
+    if not 1 <= numero <= PIECE_MAX:
+        raise ConflictError(
+            f"Plus de {PIECE_MAX} écritures de frais en {jour:%m/%Y} : le n° de pièce sur 3 "
+            "chiffres est épuisé."
+        )
+    return f"{jour:%y%m}{numero:03d}"
+
+
+def _nouvelle_piece(db: Session, company_id: int, jour: date) -> str:
+    return numero_piece(
+        jour, frais_repository.next_piece_number(db, company_id, jour.year, jour.month)
+    )
+
+
 def lignes_gl(account: BankAccount, details: list[Detail], total: Decimal) -> list[LigneGL]:
     """Une ligne par type, AU CRÉDIT du compte bancaire (13/10/2026, option 2 : la contrepartie
     est passée dans Sage) ; les deux TVA restent deux lignes. Le total des lignes vaut `total`."""
@@ -831,6 +871,21 @@ def exporter(
             manquants.setdefault(f"{account.bank.code} {account.devise}", set()).update(
                 nom or "compte comptable" for nom in absents
             )
+    en_devise = sorted(
+        {
+            f"{accounts[entry.bank_account_id].bank.code} {accounts[entry.bank_account_id].devise}"
+            for entry, _, _ in rows
+            if accounts[entry.bank_account_id].devise != "MAD"
+        }
+    )
+    if en_devise:
+        # Sage attend le montant en DH, le montant devise, le cours et le code ISO : le cours n'est
+        # pas encore connu de SIMTIS (règle à définir avec le métier)
+        raise ConflictError(
+            "Les écritures de frais d'un compte en devise ne s'exportent pas encore vers Sage "
+            f"({', '.join(en_devise)}) : le cours de la devise n'est pas connu. Filtrez sur un "
+            "compte en MAD."
+        )
     if manquants:
         raise ConflictError(
             "Renseignez dans l'écran Comptes : "
@@ -851,10 +906,16 @@ def exporter(
     for entry, code, _ in rows:
         piece = entry.numero_piece or code
         for ligne in lignes[entry.id]:
+            # Sage : un montant toujours positif et son sens (frais au crédit de la banque,
+            # remboursement au débit) ; le code de rapprochement en Référence ; les autres
+            # colonnes facultatives restent vides
+            debit = bool(ligne.debit)
             sheet.append(
-                [entry.journal, entry.date_ecriture, ligne.compte, piece,
+                [entry.date_ecriture, piece, entry.journal, ligne.compte, None,
                  libelle_ligne(entry.libelle, ligne.type),
-                 ligne.debit, ligne.credit]
+                 ligne.debit if debit else ligne.credit,
+                 SENS_DEBIT if debit else SENS_CREDIT,
+                 None, None, code, None, None, None, None]
             )  # fmt: skip
         avant = entry.exportee_le
         if avant is None:
@@ -870,10 +931,10 @@ def exporter(
             ip=ip,
         )
     for row in sheet.iter_rows(min_row=2):
-        row[1].number_format = "DD/MM/YYYY"
-        for cell in row[5:7]:
-            cell.number_format = "#,##0.00"
-    for index, width in enumerate((10, 12, 14, 16, 26, 14, 14), start=1):
+        row[0].number_format = "DD/MM/YYYY"
+        row[6].number_format = "#,##0.00"
+    largeurs = (14, 16, 14, 18, 15, 26, 14, 8, 17, 15, 12, 15, 15, 17, 15)
+    for index, width in enumerate(largeurs, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = width
     sheet.freeze_panes = "A2"
     buffer = BytesIO()
@@ -1115,7 +1176,7 @@ def comptabiliser_manuellement(
         },
         acteur_id=acteur_id,
     )
-    entry.numero_piece = match.code
+    entry.numero_piece = _nouvelle_piece(db, company_id, entry.date_ecriture)
     audit_service.log(
         db,
         user_id=acteur_id,

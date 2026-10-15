@@ -1,16 +1,17 @@
 "use client";
 
-import { Download, GitCompareArrows, History, ListChecks, Play } from "lucide-react";
+import { Download, GitCompareArrows, History, Layers, ListChecks, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
-import { BankLabel } from "@/components/banks/BankLabel";
+import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountButton } from "@/components/ecritures/EntriesCard";
 import { EntriesPane } from "@/components/rapprochement/EntriesPane";
 import { FraisCard } from "@/components/rapprochement/FraisCard";
 import { HistoryTab } from "@/components/rapprochement/HistoryTab";
 import { MatchPanel } from "@/components/rapprochement/MatchPanel";
+import { PanierPanel } from "@/components/rapprochement/PanierPanel";
 import { ProposalsTab } from "@/components/rapprochement/ProposalsTab";
 import { StatButton } from "@/components/rapprochement/StatButton";
 import { TransactionsPane } from "@/components/rapprochement/TransactionsPane";
@@ -24,6 +25,7 @@ import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { ECARTS_ACTIFS } from "@/lib/features";
 import {
+  basculerLigne,
   defaultPeriod,
   operationOf,
   toggleStatut,
@@ -34,10 +36,21 @@ import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { saveFile } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
 import { exporterFrais } from "@/services/frais";
-import { listAmbiguous, listProposals, runReconciliation } from "@/services/reconciliation";
+import {
+  listAmbiguous,
+  listAmbiguousEntries,
+  listProposals,
+  runReconciliation,
+} from "@/services/reconciliation";
 import type { Account } from "@/types/account";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
-import type { Ambigues, Correspondances, Operation, OperationsPage } from "@/types/reconciliation";
+import type {
+  Ambigues,
+  Correspondances,
+  EcrituresAmbigues,
+  Operation,
+  OperationsPage,
+} from "@/types/reconciliation";
 
 /**
  * Page Rapprochement (P11) : le moteur propose des correspondances 1→1 entre les opérations
@@ -79,15 +92,23 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [operation, setOperation] = useState<Operation | null>(null);
   const [entry, setEntry] = useState<Ecriture | null>(null);
+  // Rapprochement manuel de plusieurs lignes (P13, 15/10/2026) : lignes cochées dans les volets
+  const [plusieurs, setPlusieurs] = useState(false);
+  const [panierOps, setPanierOps] = useState<Operation[]>([]);
+  const [panierEcr, setPanierEcr] = useState<Ecriture[]>([]);
   const [parStatut, setParStatut] = useState<Record<StatutRapprochement, number> | null>(null);
   // Frais bancaires non rapprochés : compteur « À comptabiliser » (12/10/2026)
   const [aComptabiliser, setAComptabiliser] = useState<number | null>(null);
   const [pending, setPending] = useState<Correspondances | null>(null);
   const [ambigues, setAmbigues] = useState<Ambigues | null>(null);
+  // Écritures ambiguës (15/10/2026) : leur propre page, revenue à 1 quand le filtre change
+  const [ecrituresAmbigues, setEcrituresAmbigues] = useState<EcrituresAmbigues | null>(null);
   // Page des opérations ambiguës (50 par page) ; revient à 1 quand le filtre change
   const cleAmbigues = `${companyId}|${filter.bankAccountId ?? "tous"}|${filter.from}|${filter.to}`;
   const [ambiguPage, setAmbiguPage] = useState({ cle: cleAmbigues, page: 1 });
   const pageAmbigues = ambiguPage.cle === cleAmbigues ? ambiguPage.page : 1;
+  const [ecrAmbiguPage, setEcrAmbiguPage] = useState({ cle: cleAmbigues, page: 1 });
+  const pageEcrAmbigues = ecrAmbiguPage.cle === cleAmbigues ? ecrAmbiguPage.page : 1;
   const [running, setRunning] = useState(false);
   // Filtre « Type » de l'onglet Propositions (14/10/2026)
   const [typePropositions, setTypePropositions] = useState("");
@@ -152,10 +173,18 @@ function Rapprochement({ companyId }: { companyId: number }) {
         if (!cancelled) setAmbigues(null);
       },
     );
+    listAmbiguousEntries(companyId, filtreType, pageEcrAmbigues).then(
+      (result) => {
+        if (!cancelled) setEcrituresAmbigues(result);
+      },
+      () => {
+        if (!cancelled) setEcrituresAmbigues(null);
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [companyId, filter, reloadKey, periodError, pageAmbigues, typePropositions]);
+  }, [companyId, filter, reloadKey, periodError, pageAmbigues, pageEcrAmbigues, typePropositions]);
 
   // Les volets rechargés : la sélection suit les nouvelles valeurs (statut, correspondance)
   const handleOperations = useCallback((page: OperationsPage) => {
@@ -182,6 +211,11 @@ function Rapprochement({ companyId }: { companyId: number }) {
     setReloadKey((key) => key + 1);
   }
 
+  function viderPanier() {
+    setPanierOps([]);
+    setPanierEcr([]);
+  }
+
   async function run() {
     setRunning(true);
     try {
@@ -204,7 +238,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
   }
 
   // Tout ce qui est à vérifier : les propositions en attente et les opérations ambiguës
-  const aVerifier = pending && ambigues ? pending.correspondances.length + ambigues.total : null;
+  const aVerifier =
+    pending && ambigues && ecrituresAmbigues
+      ? pending.correspondances.length + ambigues.total + ecrituresAmbigues.total
+      : null;
   const logos = new Map(accounts.map((account) => [account.bank_code, account.bank_logo]));
 
   const filterKey = `${filter.bankAccountId ?? "tous"}|${filter.from}|${filter.to}`;
@@ -242,9 +279,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
                 active={filter.bankAccountId === account.id}
                 onClick={() => changeFilter({ bankAccountId: account.id })}
               >
-                <BankLabel code={account.bank_code} logo={account.bank_logo}>
-                  {account.bank_code} · {account.journal_sage}
-                </BankLabel>
+                <AccountChipLabel account={account} />
               </AccountButton>
             ))}
           </div>
@@ -375,6 +410,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
             setAmbiguPage({ cle: cleAmbigues, page: 1 });
           }}
           onAmbiguPage={(page) => setAmbiguPage({ cle: cleAmbigues, page })}
+          ecrituresAmbigues={ecrituresAmbigues}
+          onEcrituresAmbiguesPage={(page) => setEcrAmbiguPage({ cle: cleAmbigues, page })}
           onOpenOperation={(selected) => {
             setTab("rapprochement");
             setStatut("");
@@ -422,6 +459,27 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </div>
       )}
 
+      {!periodError && tab === "rapprochement" && canValidate && (
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {plusieurs && (
+            <span className="text-sm text-simtis-muted">
+              Cliquez sur les lignes pour les cocher ; les lignes déjà rapprochées sont ignorées.
+            </span>
+          )}
+          <Button
+            variant={plusieurs ? "primary" : "secondary"}
+            icon={Layers}
+            aria-pressed={plusieurs}
+            onClick={() => {
+              setPlusieurs((actif) => !actif);
+              viderPanier();
+            }}
+          >
+            {plusieurs ? "Quitter la sélection multiple" : "Rapprocher plusieurs lignes"}
+          </Button>
+        </div>
+      )}
+
       {!periodError && tab === "rapprochement" && (
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]">
           <TransactionsPane
@@ -430,22 +488,47 @@ function Rapprochement({ companyId }: { companyId: number }) {
             filter={filter}
             reloadKey={reloadKey}
             selectedId={operation?.id ?? null}
+            multi={
+              plusieurs
+                ? {
+                    ids: panierOps.map((op) => op.id),
+                    onToggle: (row) => {
+                      if (row.statut !== "Rapprochée") setPanierOps((l) => basculerLigne(l, row));
+                    },
+                  }
+                : undefined
+            }
             onSelect={setOperation}
             onLoaded={handleOperations}
             statut={statut}
             onStatutChange={setStatut}
           />
           <div className="xl:sticky xl:top-4">
-            <MatchPanel
-              key={operation?.id ?? "aucune"}
-              companyId={companyId}
-              operation={operation}
-              entry={entry}
-              canValidate={canValidate}
-              canManageDiscrepancies={canManageDiscrepancies}
-              reloadKey={reloadKey}
-              onChanged={reload}
-            />
+            {plusieurs ? (
+              <PanierPanel
+                operations={panierOps}
+                ecritures={panierEcr}
+                canValidate={canValidate}
+                onRetirerOperation={(op) => setPanierOps((l) => basculerLigne(l, op))}
+                onRetirerEcriture={(e) => setPanierEcr((l) => basculerLigne(l, e))}
+                onVider={viderPanier}
+                onDone={(message) => {
+                  viderPanier();
+                  reload(message);
+                }}
+              />
+            ) : (
+              <MatchPanel
+                key={operation?.id ?? "aucune"}
+                companyId={companyId}
+                operation={operation}
+                entry={entry}
+                canValidate={canValidate}
+                canManageDiscrepancies={canManageDiscrepancies}
+                reloadKey={reloadKey}
+                onChanged={reload}
+              />
+            )}
           </div>
           <EntriesPane
             key={`ec-${filterKey}`}
@@ -453,6 +536,16 @@ function Rapprochement({ companyId }: { companyId: number }) {
             filter={filter}
             reloadKey={reloadKey}
             selectedId={entry?.id ?? null}
+            multi={
+              plusieurs
+                ? {
+                    ids: panierEcr.map((e) => e.id),
+                    onToggle: (row) => {
+                      if (row.statut !== "Rapprochée") setPanierEcr((l) => basculerLigne(l, row));
+                    },
+                  }
+                : undefined
+            }
             onSelect={setEntry}
             onLoaded={handleEntries}
           />

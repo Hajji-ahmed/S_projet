@@ -25,6 +25,8 @@ type EntriesPaneProps = {
   filter: ReconciliationFilter;
   reloadKey: number;
   selectedId: number | null;
+  /** Sélection multiple (P13, 15/10/2026) : une case par ligne, le clic coche ou décoche. */
+  multi?: { ids: readonly number[]; onToggle: (row: Ecriture) => void };
   onSelect: (entry: Ecriture) => void;
   /** Chaque page chargée : la vue met à jour l'écriture sélectionnée. */
   onLoaded: (entries: Ecriture[]) => void;
@@ -39,6 +41,7 @@ export function EntriesPane({
   filter,
   reloadKey,
   selectedId,
+  multi,
   onSelect,
   onLoaded,
 }: EntriesPaneProps) {
@@ -76,7 +79,27 @@ export function EntriesPane({
   }, [companyId, filter, statut, q, typeOperation, page, reloadKey, retryKey, onLoaded]);
 
   const pages = data ? pageCount(data.total, data.taille) : 1;
+  const caseColumn: Column<Ecriture>[] = multi
+    ? [
+        {
+          key: "choisie",
+          header: "",
+          render: (row) => (
+            <input
+              type="checkbox"
+              readOnly
+              tabIndex={-1}
+              checked={multi.ids.includes(row.id)}
+              disabled={row.statut === "Rapprochée"}
+              aria-label={`Choisir ${row.libelle}`}
+              className="pointer-events-none h-4 w-4 accent-simtis-primary"
+            />
+          ),
+        },
+      ]
+    : [];
   const columns: Column<Ecriture>[] = [
+    ...caseColumn,
     {
       key: "date_ecriture",
       header: "Date",
@@ -213,8 +236,8 @@ export function EntriesPane({
             rows={data.ecritures}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune écriture sur ces critères."
-            onRowClick={onSelect}
-            isRowSelected={(row) => row.id === selectedId}
+            onRowClick={multi ? multi.onToggle : onSelect}
+            isRowSelected={(row) => (multi ? multi.ids.includes(row.id) : row.id === selectedId)}
             rowLabel={(row) =>
               `Écriture du ${formatDate(row.date_ecriture)}, ${row.libelle}, ${row.statut}`
             }

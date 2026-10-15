@@ -62,6 +62,8 @@ export type EcritureFrais = {
   montant: string;
   /** Code du rapprochement, aussi N° de pièce dans Sage. */
   code: string | null;
+  /** N° pièce Sage AAMMNNN (15/10/2026). */
+  numero_piece: string | null;
   nb_operations: number;
   exportee_le: string | null;
   lignes: LigneGL[];

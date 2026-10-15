@@ -15,6 +15,7 @@ from app.models.previsions import CashForecast, ForecastCategory
 from app.models.rapprochement import (
     BalanceCheck,
     Discrepancy,
+    FraisPieceCounter,
     ReconciliationCodeCounter,
     ReconciliationMatch,
     ReconciliationMatchItem,
@@ -41,6 +42,7 @@ from app.models.securite import (
 )
 
 __all__ = [
+    "FraisPieceCounter",
     "AccountingEntry",
     "AuditLog",
     "BalanceCheck",
