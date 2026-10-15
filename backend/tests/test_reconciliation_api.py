@@ -946,8 +946,8 @@ def _groupe(client, comptable, db):
     compte = account(db)
     cheque = operation(db, compte, montant="-10000", libelle="CHEQUE N 2100843 REMIS PAR ATW")
     com = operation(db, compte, montant="-50", libelle="COMMISSION")
-    tva = operation(db, compte, montant="-10", libelle="TAXE SUR VALEUR AJOUTEE")
-    entry = ecriture(db, compte, montant="10060", libelle="CHQ 2100843 FOURNISSEUR", tiers=None)
+    tva = operation(db, compte, montant="-5", libelle="TAXE SUR VALEUR AJOUTEE")
+    entry = ecriture(db, compte, montant="10055", libelle="CHQ 2100843 FOURNISSEUR", tiers=None)
     body = run(client, comptable, db).json()
     return body, (cheque, com, tva), entry
 
@@ -960,8 +960,8 @@ def test_a_group_is_proposed_shown_validated_and_cancelled(client, comptable, db
     assert (body["nb_groupes"], body["nb_propositions"]) == (1, 0)
     assert proposal["type"] == "N-1"
     assert [o["id"] for o in proposal["operations"]] == [lignes[0].id, lignes[1].id, lignes[2].id]
-    assert (proposal["total_operations"], proposal["ecart"]) == ("-10060.00", "0.00")
-    assert "= 10 060,00" in proposal["explication"]
+    assert (proposal["total_operations"], proposal["ecart"]) == ("-10055.00", "0.00")
+    assert "= 10 055,00" in proposal["explication"]
     assert statuses(db, *lignes, entry) == ["À vérifier"] * 4
 
     url = f"/api/reconciliation/matches/{proposal['id']}"
@@ -1114,7 +1114,7 @@ def test_the_lettrage_exports_validated_matches_grouped_and_balanced(client, com
         credit = sum(r[8] or 0 for r in lignes if r[0] == code)
         assert debit == credit
     assert rows[-1][0] == "Total : 2 rapprochements"
-    assert rows[-1][7] == rows[-1][8] == 11060
+    assert rows[-1][7] == rows[-1][8] == 11055
     assert "export_lettrage" in audit_actions(db)
 
     # Hors période ou autre compte : rien
@@ -1307,7 +1307,7 @@ def test_no_entry_matches_an_ambiguous_operation(client, comptable, direction, d
         (tx.id, nouvelle.id)
     ]
 
-    # Rien à écarter une seconde fois
+    # L'opération a maintenant une proposition (la nouvelle écriture) : à traiter d'abord
     assert client.post(url, json={}, headers=comptable).status_code == 409
 
 
@@ -1354,7 +1354,9 @@ def test_no_operation_matches_an_ambiguous_entry(client, comptable, direction, d
     assert restantes["ecritures"] == []
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "rejet_ambiguite_ecriture"))
     assert audit.nouvelle_valeur["commentaire"] == "Pas encore en banque"
-    assert client.post(url, json={}, headers=comptable).status_code == 409
+    encore = client.post(url, json={}, headers=comptable)
+    assert encore.status_code == 200
+    assert encore.json()["operations_ecartees"] == []
 
 
 def test_proposals_are_rejected_in_a_batch_all_or_nothing(client, comptable, direction, db):
@@ -1431,5 +1433,59 @@ def test_ambiguous_operations_and_entries_are_discarded_in_a_batch(client, compt
     assert statuses(db, *ambigues) == ["Non rapprochée", "Non rapprochée"]
     assert ecrs.status_code == 200, ecrs.text
     assert statuses(db, entry) == ["Non rapprochée"]
-    # Tout ou rien : la première n'a plus rien à écarter
-    assert encore.status_code == 409
+    # Plus rien à écarter pour la première : traitée sans erreur (15/10/2026)
+    assert encore.status_code == 200
+
+
+def test_discarding_operations_frees_the_entries_left_without_candidates(
+    client, comptable, direction, db
+):
+    """15/10/2026 : deux opérations et deux écritures identiques sont toutes ambiguës. Écarter les
+    candidates des deux opérations laisse les écritures sans candidate : elles sortent aussi de
+    « À vérifier » au lieu de rester dans « Écritures ambiguës » sans rien à choisir."""
+    compte = account(db)
+    ops = [operation(db, compte), operation(db, compte)]
+    ecrs = [ecriture(db, compte), ecriture(db, compte)]
+    run(client, comptable, db)
+    assert statuses(db, *ops, *ecrs) == ["À vérifier"] * 4
+
+    response = client.post(
+        "/api/reconciliation/transactions/aucune-ecriture",
+        json={"ids": [tx.id for tx in ops]},
+        headers=comptable,
+    )
+
+    assert response.status_code == 200, response.text
+    assert statuses(db, *ops, *ecrs) == ["Non rapprochée"] * 4
+    restantes = client.get(
+        "/api/reconciliation/ambiguous-entries",
+        params={"company_id": company(db).id},
+        headers=direction,
+    ).json()
+    assert restantes["total"] == 0
+    audit = db.scalar(
+        select(AuditLog).where(AuditLog.action == "rejet_ambiguite").order_by(AuditLog.id.desc())
+    )
+    assert sorted(audit.nouvelle_valeur["ecritures_liberees"]) == sorted(e.id for e in ecrs)
+
+
+def test_a_fee_is_never_proposed_alone_and_stays_to_be_booked(client, comptable, direction, db):
+    """15/10/2026 : les frais et leur TVA se comptabilisent dans SIMTIS. Une commission face à
+    une écriture « COM » du même montant n'est pas proposée ; elle reste « À comptabiliser »."""
+    compte = account(db)
+    commission = operation(db, compte, montant="-50", libelle="COMMISSION")
+    ecriture(db, compte, montant="50", libelle="COM", numero_piece="C1", tiers=None)
+
+    run(client, comptable, db)
+
+    assert statuses(db, commission) == ["Non rapprochée"]
+    proposees = client.get(
+        "/api/reconciliation/proposals", params={"company_id": company(db).id}, headers=direction
+    ).json()["correspondances"]
+    assert proposees == []
+    page = client.get(
+        "/api/reconciliation/transactions",
+        params={"company_id": company(db).id, **PERIODE},
+        headers=direction,
+    ).json()
+    assert page["a_comptabiliser"] == 1

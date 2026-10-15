@@ -693,6 +693,19 @@ def frais_bancaire():
     )
 
 
+def fee_transaction_ids(db: Session, transaction_ids: list[int]) -> set[int]:
+    """Parmi ces opérations, celles qui sont des frais bancaires (règle de « À comptabiliser »)."""
+    ids: set[int] = set()
+    for debut in range(0, len(transaction_ids), 5000):
+        lot = transaction_ids[debut : debut + 5000]
+        ids.update(
+            db.scalars(
+                select(BankTransaction.id).where(BankTransaction.id.in_(lot), frais_bancaire())
+            )
+        )
+    return ids
+
+
 def a_comptabiliser(db: Session, query: Select) -> tuple[int, Decimal]:
     """Nombre et total (en valeur absolue) des frais bancaires non rapprochés du filtre."""
     filtered = query.where(BankTransaction.statut == "Non rapprochée", frais_bancaire()).subquery()

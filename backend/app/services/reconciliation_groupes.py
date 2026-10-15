@@ -1,14 +1,10 @@
 """Rapprochement groupé N → 1 (décision du 12/10/2026) : règles pures, sans base de données.
 
 Plusieurs opérations bancaires pour une seule écriture Sage, quand leur somme vaut exactement
-l'opposé du montant de l'écriture (un crédit banque est un débit Sage). Trois familles de groupes :
-
-- **par référence** : des opérations qui partagent un n° (5 chiffres ou plus) avec l'écriture, avec
-  au besoin des frais du même jour (« REMISE D'EFFETS N 7082678 » + « DROITS DE TIMBRE … 7082678 ») ;
-- **opération + frais** : une opération (chèque, effet, virement, espèces, autre) et des frais du
-  même jour (10 000 + commission 50 + TVA 10 = 10 060) ;
-- **frais du jour** : des frais d'un même jour (tous les timbres du jour = « DT D'ENREGISTREMENT »,
-  intérêt d'escompte + sa TVA = « FRAIS D'ESCOMPTE/n° », commission + TVA = « COM »).
+l'opposé du montant de l'écriture (un crédit banque est un débit Sage). Depuis le 15/10/2026, un
+seul cas : une opération principale + une commission + sa TVA (10 %) du même jour
+(12 450 − 175 − 17,50 = 12 257,50). Les autres frais se comptabilisent dans SIMTIS ; tout autre
+regroupement se fait à la main.
 
 Le moteur ne fait que proposer : un humain valide chaque groupe. Prudence : aucun groupe pour une
 écriture qui a deux groupes différents possibles (sauf lignes indiscernables, mêmes libellés et
@@ -18,7 +14,7 @@ montants), et une opération n'entre que dans un groupe.
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from itertools import combinations
 
@@ -39,7 +35,6 @@ from app.services.reconciliation_scoring import (
     ratio_libelle,
     type_ecriture,
     type_operation,
-    types_compatibles,
 )
 
 # Au plus 6 opérations dans un groupe cherché par combinaisons ; les totaux d'une famille de frais
@@ -201,67 +196,60 @@ def _principale_possible(libelle: str | None) -> tuple[bool, str | None]:
     return bool(famille_frais(libelle)), type_operation(libelle)
 
 
+# Taux de TVA d'une commission bancaire, et tolérance d'arrondi (15/10/2026)
+TAUX_TVA_COMMISSION = Decimal("0.10")
+TOLERANCE_TVA = Decimal("0.01")
+
+
+def tva_de_la_commission(commission: Decimal, tva: Decimal) -> bool:
+    """La TVA vaut 10 % de la commission, au centime près (50,00 → 5,00)."""
+    attendue = (abs(commission) * TAUX_TVA_COMMISSION).quantize(CENT, rounding=ROUND_HALF_UP)
+    return abs(abs(tva) - attendue) <= TOLERANCE_TVA
+
+
 def _groupes_possibles(
-    ecriture: Ecriture, candidats: list[Operation], sommes: _SommesDuJour
+    ecriture: Ecriture,
+    candidats: list[Operation],
+    sommes: _SommesDuJour,
+    frais_ids: frozenset[int] | set[int] = frozenset(),
+    grille: Grille | None = None,
 ) -> list[tuple[Operation, ...]]:
-    """Ensembles d'au moins deux opérations dont la somme vaut l'opposé de l'écriture."""
+    """Groupes possibles pour l'écriture (décision du 15/10/2026) : **exactement** une opération
+    principale (qui n'est pas un frais), une commission et sa TVA (10 % de la commission, au
+    centime près), du même compte et du même jour que la principale, dont la somme vaut l'opposé
+    de l'écriture. Rien d'autre n'est regroupé automatiquement (frais seuls, deux commissions,
+    timbres, n° commun…) : un cas différent se rapproche à la main. `frais_ids` : opérations
+    reconnues comme frais par la règle de « À comptabiliser »."""
     cible = -ecriture.montant
     compte = ecriture.bank_account_id
-    ids_candidats = {op.id for op in candidats}
-    trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
-
-    def garder(ops: Iterable[Operation]) -> None:
-        ops = tuple(ops)
-        if len({op.id for op in ops}) != len(ops) or len(ops) < 2:
-            return
-        if (
-            all(op.id in ids_candidats for op in ops)
-            and sum((op.montant for op in ops), ZERO) == cible
-        ):
-            trouves.setdefault(frozenset(op.id for op in ops), ops)
-
-    jours = sorted({op.date_operation for op in candidats})
-
-    # 1. Par référence : opérations au n° de l'écriture, avec au besoin des frais du même jour
-    nums = numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
-    if nums:
-        refs = [op for op in candidats if _numeros_operation(op.libelle, op.reference) & nums]
-        if refs:
-            pool = list(refs)
-            for jour in sorted({op.date_operation for op in refs}):
-                pool += [op for op in sommes.frais((compte, jour)) if op not in pool]
-            pool = pool[:12]
-            for taille in range(2, min(MAX_LIGNES, len(pool)) + 1):
-                for combo in combinations(pool, taille):
-                    if any(op in refs for op in combo):
-                        garder(combo)
-
-    # 2. Opération principale + 1 à 3 frais du même jour
+    fenetre = grille.fenetre_jours if grille is not None else None
     type_sage = type_ecriture(ecriture.libelle)
+    trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
     for principale in candidats:
         frais, type_op = _principale_possible(principale.libelle)
         # `types_compatibles` sans appel par opération : deux types connus doivent être égaux
-        if frais or (type_op is not None and type_sage is not None and type_op != type_sage):
+        if (
+            frais
+            or principale.id in frais_ids
+            or (type_op is not None and type_sage is not None and type_op != type_sage)
+        ):
             continue
-        table = sommes.sommes((compte, principale.date_operation))
-        for combo in table.get(cible - principale.montant, []):
-            garder((principale, *combo))
-
-    # 3. Frais du jour, pour une écriture qui n'est ni chèque, ni effet, ni espèces, ni virement
-    if not type_sage:
-        for jour in jours:
-            liste = sommes.frais((compte, jour))
-            par_famille: dict[str, list[Operation]] = {}
-            for op in liste:
-                par_famille.setdefault(famille_frais(op.libelle) or "", []).append(op)
-            # Totaux : tous les frais du jour, une famille entière, commissions ou intérêts + TVA
-            garder(liste)
-            for ops in par_famille.values():
-                garder(ops)
-            garder(par_famille.get("commission", []) + par_famille.get("tva", []))
-            garder(par_famille.get("interet", []) + par_famille.get("tva", []))
-            for combo in sommes.sommes((compte, jour)).get(cible, []):
-                garder(combo)
+        reste = cible - principale.montant
+        if reste == 0:
+            continue
+        du_jour = sommes.frais((compte, principale.date_operation))
+        commissions = [op for op in du_jour if famille_frais(op.libelle) == "commission"]
+        tvas = [op for op in du_jour if famille_frais(op.libelle) == "tva"]
+        for commission in commissions:
+            for tva in tvas:
+                if commission.montant + tva.montant != reste:
+                    continue
+                if not tva_de_la_commission(commission.montant, tva.montant):
+                    continue
+                ops = (principale, commission, tva)
+                if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+                    continue
+                trouves.setdefault(frozenset(op.id for op in ops), ops)
     return list(trouves.values())
 
 
@@ -270,8 +258,10 @@ def grouper(
     ecritures: Iterable[Ecriture],
     grille: Grille,
     paires_rejetees: frozenset[tuple[int, int]] | set[tuple[int, int]] = frozenset(),
+    frais_ids: frozenset[int] | set[int] = frozenset(),
 ) -> ResultatGroupes:
-    """Propositions N → 1 sur des opérations et écritures libres (le 1 → 1 a déjà été fait)."""
+    """Propositions N → 1 sur des opérations et écritures libres (le 1 → 1 a déjà été fait) :
+    une opération principale et ses frais (15/10/2026 : jamais de frais seuls)."""
     operations = list(operations)
     par_compte_jour: dict[tuple[int | None, date], list[Operation]] = {}
     for op in operations:
@@ -286,7 +276,7 @@ def grouper(
         candidats = _candidats_ecriture(ecriture, par_compte_jour, grille)
         possibles = [
             ops
-            for ops in _groupes_possibles(ecriture, candidats, sommes)
+            for ops in _groupes_possibles(ecriture, candidats, sommes, frais_ids, grille)
             if not any((op.id, ecriture.id) in paires_rejetees for op in ops)
         ]
         if not possibles:
@@ -357,10 +347,11 @@ def operations_couvertes(
     """Opérations libres qu'une écriture libre pourrait couvrir : {opération : écriture}.
 
     Sert à ne jamais comptabiliser dans SIMTIS un frais déjà inclus dans une écriture Sage
-    (13/10/2026) : 1. dans un groupe possible, avec les règles du moteur (une opération principale
-    et ses frais du même jour, les frais d'un jour…), même ambigu ; 2. seul, au montant exactement
-    opposé, à `ecart_seul` jours près. Une paire rejetée par un utilisateur ne couvre rien.
-    """
+    (13/10/2026). Depuis le 15/10/2026, les frais se comptabilisent dans SIMTIS : seul le groupe
+    d'une opération principale avec ses frais (10 000 + commission 50 + TVA 10 = 10 060), même
+    ambigu, couvre un frais. Les frais à contrôler (`cibles`) ne sont jamais l'opération
+    principale. Une paire rejetée par un utilisateur ne couvre rien. `ecart_seul` n'est plus
+    utilisé (un frais seul face à une écriture n'est plus couvert)."""
     operations = list(operations)
     par_compte_jour: dict[tuple[int | None, date], list[Operation]] = {}
     for op in operations:
@@ -374,22 +365,10 @@ def operations_couvertes(
         # Écriture sans aucune opération à contrôler parmi ses candidates : rien à chercher
         if cibles is not None and not any(op.id in cibles for op in candidats):
             continue
-        admises = _familles_admises(ecriture)
-        for ops in _groupes_possibles(ecriture, candidats, sommes):
+        for ops in _groupes_possibles(ecriture, candidats, sommes, cibles or frozenset(), grille):
             if any((op.id, ecriture.id) in paires_rejetees for op in ops):
                 continue
-            familles = {famille_frais(op.libelle) for op in ops}
-            if admises is not None and None not in familles and not familles <= admises:
-                continue
             for op in ops:
-                couvertes.setdefault(op.id, ecriture.id)
-        for op in candidats:
-            if (
-                op.montant == -ecriture.montant
-                and abs((op.date_operation - ecriture.date_ecriture).days) <= ecart_seul
-                and (op.id, ecriture.id) not in paires_rejetees
-                and types_compatibles(op, ecriture)
-            ):
                 couvertes.setdefault(op.id, ecriture.id)
     return couvertes
 

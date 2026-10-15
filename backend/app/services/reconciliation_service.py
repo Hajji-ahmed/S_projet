@@ -303,8 +303,12 @@ def _engine(
     entries = repo.free_entries(db, company.id, account_ids, entry_from, entry_to)
     by_tx = {tx.id: tx for tx in transactions}
     by_entry = {entry.id: entry for entry in entries}
+    # Les frais bancaires et leur TVA se comptabilisent dans SIMTIS (15/10/2026) : jamais
+    # proposés seuls face à une écriture ; ils n'entrent que dans un groupe, en complément d'une
+    # opération principale
+    frais_ids = repo.fee_transaction_ids(db, [tx.id for tx in transactions])
     resultat = proposer(
-        [_operation(tx) for tx in transactions],
+        [_operation(tx) for tx in transactions if tx.id not in frais_ids],
         [_ecriture(entry) for entry in entries],
         regles,
         repo.rejected_pairs(db, company.id),
@@ -324,6 +328,7 @@ def _engine(
         [_ecriture(entry) for entry in entries if entry.id not in bloque_ec],
         regles,
         repo.rejected_pairs(db, company.id),
+        frais_ids,
     )
     groupe_tx = {i for g in groupes.groupes for i in g.operation_ids}
     groupe_ec = {g.ecriture_id for g in groupes.groupes}
@@ -1161,7 +1166,11 @@ def get_match_view(db: Session, match_id: int) -> MatchView:
 
 
 def candidates(
-    db: Session, transaction_id: int
+    db: Session,
+    transaction_id: int,
+    *,
+    regles: Grille | None = None,
+    rejetees: set[tuple[int, int]] | None = None,
 ) -> tuple[BankTransaction, str, list[Candidate], Decimal, Decimal]:
     """Écritures qui pourraient correspondre à l'opération, de la meilleure à la moins bonne.
 
@@ -1172,7 +1181,7 @@ def candidates(
     if found is None:
         raise NotFoundError("Opération bancaire introuvable.")
     tx, account = found
-    regles = grille(db)
+    regles = regles or grille(db)
     jours = [tx.date_operation] + ([tx.date_valeur] if tx.date_valeur else [])
     fenetre = timedelta(days=max(regles.fenetre_jours, regles.fenetre_numero_jours))
     entries = repo.candidate_entries(
@@ -1186,7 +1195,8 @@ def candidates(
         for entry in entries
         if comparable(operation, ecriture := _ecriture(entry), regles)
     ]
-    rejetees = repo.rejected_pairs(db, account.company_id)
+    if rejetees is None:
+        rejetees = repo.rejected_pairs(db, account.company_id)
     actives = repo.active_matches_by_entry(db, [entry.id for entry, _ in comparables])
     codes = repo.entries_with_bank(db, {entry.id for entry, _ in comparables})
     scored = []
@@ -1308,14 +1318,58 @@ def _ecarts_operation(db: Session, tx: BankTransaction) -> list[Candidate]:
             "traitez-les d'abord."
         )
     _, _, items, seuil_proposition, _ = candidates(db, tx.id)
-    ecartees = [
-        item for item in items if item.score.total >= seuil_proposition and not item.rejetee
-    ]
-    if not ecartees:
-        raise ConflictError(
-            f"Aucune écriture candidate à écarter pour l'opération « {tx.libelle} »."
-        )
-    return ecartees
+    # Plus aucune candidate (déjà écartées depuis l'autre côté) : la ligne repasse simplement
+    # « Non rapprochée » (15/10/2026)
+    return [item for item in items if item.score.total >= seuil_proposition and not item.rejetee]
+
+
+def _liberer_ecritures_sans_candidate(db: Session, entry_ids: set[int]) -> list[int]:
+    """Écritures « À vérifier » sans correspondance active qui n'ont plus aucune opération
+    candidate (toutes écartées) : elles repassent « Non rapprochée » (15/10/2026). Sans cela, elles
+    restaient dans « Écritures ambiguës » sans rien à choisir."""
+    if not entry_ids:
+        return []
+    db.flush()
+    regles = grille(db)
+    rejetees: set[tuple[int, int]] | None = None
+    liberees = []
+    for entry_id in sorted(entry_ids):
+        entry = repo.get_entry(db, entry_id)
+        if entry is None or entry.statut != "À vérifier":
+            continue
+        if repo.active_matches_of(db, entry_id=entry.id):
+            continue
+        if rejetees is None:
+            rejetees = repo.rejected_pairs(db, entry.company_id)
+        _, items, seuil = candidates_of_entry(db, entry.id, regles=regles, rejetees=rejetees)
+        if not any(item.score.total >= seuil and not item.rejetee for item in items):
+            liberees.append(entry.id)
+    repo.set_entry_status(db, set(liberees), "Non rapprochée")
+    return liberees
+
+
+def _liberer_operations_sans_candidate(db: Session, transaction_ids: set[int]) -> list[int]:
+    """Le symétrique pour les opérations « À vérifier » qui n'ont plus d'écriture candidate."""
+    if not transaction_ids:
+        return []
+    db.flush()
+    regles = grille(db)
+    rejetees: set[tuple[int, int]] | None = None
+    liberees = []
+    for tx_id in sorted(transaction_ids):
+        found = repo.get_transaction(db, tx_id)
+        if found is None or found[0].statut != "À vérifier":
+            continue
+        tx, account = found
+        if repo.active_matches_of(db, transaction_id=tx.id):
+            continue
+        if rejetees is None:
+            rejetees = repo.rejected_pairs(db, account.company_id)
+        _, _, items, seuil, _ = candidates(db, tx.id, regles=regles, rejetees=rejetees)
+        if not any(item.score.total >= seuil and not item.rejetee for item in items):
+            liberees.append(tx.id)
+    repo.set_transaction_status(db, set(liberees), "Non rapprochée")
+    return liberees
 
 
 def _ecarter_pour_operation(
@@ -1344,6 +1398,7 @@ def _ecarter_pour_operation(
     db.flush()
     repo.set_transaction_status(db, {tx.id}, "Non rapprochée")
     ids = sorted(item.entry.id for item in ecartees)
+    liberees = _liberer_ecritures_sans_candidate(db, set(ids))
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -1354,6 +1409,7 @@ def _ecarter_pour_operation(
         apres={
             "statut": "Non rapprochée",
             "ecritures_ecartees": ids,
+            "ecritures_liberees": liberees,
             "commentaire": texte,
             "en_lot": en_lot,
         },
@@ -1546,12 +1602,7 @@ def _ecarts_ecriture(db: Session, entry: AccountingEntry) -> list[CandidateOpera
             "traitez-les d'abord."
         )
     _, items, seuil = candidates_of_entry(db, entry.id)
-    ecartees = [item for item in items if item.score.total >= seuil and not item.rejetee]
-    if not ecartees:
-        raise ConflictError(
-            f"Aucune opération candidate à écarter pour l'écriture « {entry.libelle} »."
-        )
-    return ecartees
+    return [item for item in items if item.score.total >= seuil and not item.rejetee]
 
 
 def _ecarter_pour_ecriture(
@@ -1580,6 +1631,7 @@ def _ecarter_pour_ecriture(
     db.flush()
     repo.set_entry_status(db, {entry.id}, "Non rapprochée")
     ids = sorted(item.transaction.id for item in ecartees)
+    liberees = _liberer_operations_sans_candidate(db, set(ids))
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -1590,6 +1642,7 @@ def _ecarter_pour_ecriture(
         apres={
             "statut": "Non rapprochée",
             "operations_ecartees": ids,
+            "operations_liberees": liberees,
             "commentaire": texte,
             "en_lot": en_lot,
         },

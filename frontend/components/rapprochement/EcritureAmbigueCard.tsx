@@ -100,6 +100,12 @@ export function EcritureAmbigueCard({
       <p className="mt-4 mb-2 text-xs font-semibold tracking-wide text-simtis-muted uppercase">
         Cochez l&apos;opération qui correspond, ou plusieurs dont la somme fait l&apos;écriture
       </p>
+      {candidats.length === 0 && (
+        <p className="rounded-[10px] bg-simtis-background px-3 py-2 text-sm text-simtis-muted">
+          Plus aucune opération candidate : toutes ont été écartées. « Aucune opération ne
+          correspond » la passe en « Non rapprochée ».
+        </p>
+      )}
       <ul className="space-y-2">
         {candidats.map((candidat) => {
           const op = candidat.operation;

@@ -111,7 +111,8 @@ export function AmbiguousCard({
       </p>
       {candidats.length === 0 ? (
         <p className="text-sm text-simtis-muted">
-          Plus aucune écriture candidate : ouvrez l&apos;opération dans le rapprochement.
+          Plus aucune écriture candidate : toutes ont été écartées. « Aucune écriture ne correspond
+          » la passe en « Non rapprochée ».
         </p>
       ) : (
         <ul className="space-y-2">

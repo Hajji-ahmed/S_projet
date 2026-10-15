@@ -810,6 +810,8 @@ def virement_et_frais(db, compte, jour=JOUR):
 
 
 def test_fees_inside_a_sage_entry_are_neither_proposed_nor_booked(client, comptable, db):
+    """Seul le groupe « opération principale + frais » couvre un frais (15/10/2026) : un frais
+    seul face à une écriture du même montant se comptabilise dans SIMTIS."""
     compte = bp(db)
     _, commission, tva = virement_et_frais(db, compte)
     agios = operation(db, compte, "-30", JOUR, "AGIOS BANCAIRES")
@@ -818,19 +820,13 @@ def test_fees_inside_a_sage_entry_are_neither_proposed_nor_booked(client, compta
 
     body = lire(client, comptable, db, None).json()
     automatique = valider(client, comptable, db, (compte, JOUR), famille="commissions")
-    manuel = manuelle(client, comptable, db, [agios])
 
-    assert body["propositions"] == [] and body["autres_frais"] == []
+    assert body["propositions"] == []
     inclus = {item["id"]: item["ecriture"]["libelle"] for item in body["frais_inclus"]}
-    assert inclus == {
-        commission.id: "VIR FOURNISSEUR X",
-        tva.id: "VIR FOURNISSEUR X",
-        agios.id: "AGIOS AVRIL",  # seul, même montant, 2 jours d'écart
-    }
+    assert inclus == {commission.id: "VIR FOURNISSEUR X", tva.id: "VIR FOURNISSEUR X"}
+    assert [item["id"] for item in body["autres_frais"]] == [agios.id]
     assert automatique.status_code == 409
-    assert manuel.status_code == 409
-    assert "AGIOS AVRIL" in manuel.json()["detail"]
-    assert db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS")) is None
+    assert manuelle(client, comptable, db, [agios]).status_code == 200
 
 
 def test_a_rejected_pair_or_an_unrelated_entry_does_not_block_a_fee(client, comptable, db):
