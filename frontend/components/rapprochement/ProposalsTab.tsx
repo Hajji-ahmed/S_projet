@@ -204,6 +204,18 @@ export function ProposalsTab({
   } | null>(null);
   const [comment, setComment] = useState("");
   const [signaling, setSignaling] = useState<LignesEcart | null>(null);
+  // Cartes ambiguës déjà rapprochées (16/10/2026) : masquées aussitôt, sans attendre le
+  // rechargement des listes ; la liste rechargée ne les contient plus
+  const [masqueesOps, setMasqueesOps] = useState<{ source: unknown; ids: Set<number> }>({
+    source: null,
+    ids: new Set(),
+  });
+  const [masqueesEcr, setMasqueesEcr] = useState<{ source: unknown; ids: Set<number> }>({
+    source: null,
+    ids: new Set(),
+  });
+  // Carte en cours de rapprochement : son bouton affiche « Rapprochement… »
+  const [enCours, setEnCours] = useState<string | null>(null);
 
   if (!items || !ambigues || !ecrituresAmbigues) {
     return (
@@ -226,14 +238,20 @@ export function ProposalsTab({
   const nbFortes = items.filter((item) => item.forte).length;
   const ambiguous = ambigues.ambigues;
   const seuil = formatScore(pending?.seuil_fort ?? ambigues.seuil_fort);
-  const shownAmbiguous = filtre === "toutes" || filtre === "ambigues" ? ambiguous : [];
+  const opsMasquees = masqueesOps.source === ambiguous ? masqueesOps.ids : new Set<number>();
+  const ecrMasquees =
+    masqueesEcr.source === ecrituresAmbigues.ecritures ? masqueesEcr.ids : new Set<number>();
+  const shownAmbiguous = (filtre === "toutes" || filtre === "ambigues" ? ambiguous : []).filter(
+    (item) => !opsMasquees.has(item.operation.id),
+  );
   const opsCochees = selOps.source === ambiguous ? selOps.ids : new Set<number>();
   const ecrCochees = selEcr.source === ecrituresAmbigues.ecritures ? selEcr.ids : new Set<number>();
   // Rejet en lot : seulement les propositions « À vérifier » cochées et affichées
   const aRejeter =
     filtre === "a_verifier" ? shown.filter((item) => selected.has(item.id)).map((i) => i.id) : [];
-  const shownEcritures =
-    filtre === "toutes" || filtre === "ecritures_ambigues" ? ecrituresAmbigues.ecritures : [];
+  const shownEcritures = (
+    filtre === "toutes" || filtre === "ecritures_ambigues" ? ecrituresAmbigues.ecritures : []
+  ).filter((item) => !ecrMasquees.has(item.ecriture.id));
   const nothing = shown.length === 0 && shownAmbiguous.length === 0 && shownEcritures.length === 0;
 
   function setIds(update: (ids: Set<number>) => Set<number>) {
@@ -258,6 +276,30 @@ export function ProposalsTab({
       setError(messageOf(failure));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Rapprochement depuis une carte ambiguë : relance ciblée, carte masquée aussitôt. */
+  async function rapprocherAmbigue(cote: "op" | "ec", id: number, action: () => Promise<unknown>) {
+    setEnCours(`${cote}-${id}`);
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      if (cote === "op") {
+        setMasqueesOps({ source: ambiguous, ids: new Set([...opsMasquees, id]) });
+      } else {
+        setMasqueesEcr({
+          source: ecrituresAmbigues?.ecritures,
+          ids: new Set([...ecrMasquees, id]),
+        });
+      }
+      onChanged("Rapprochement enregistré.");
+    } catch (failure) {
+      setError(messageOf(failure));
+    } finally {
+      setBusy(false);
+      setEnCours(null);
     }
   }
 
@@ -382,10 +424,10 @@ export function ProposalsTab({
                 canValidate={canValidate}
                 canSignal={canManageDiscrepancies}
                 busy={busy}
+                enCours={enCours === `op-${item.operation.id}`}
                 onChoose={(candidat) =>
-                  act(
-                    () => matchManually(item.operation.id, candidat.ecriture.id),
-                    "Rapprochement enregistré.",
+                  rapprocherAmbigue("op", item.operation.id, () =>
+                    matchManually(item.operation.id, candidat.ecriture.id, undefined, true),
                   )
                 }
                 onSignal={() =>
@@ -428,10 +470,10 @@ export function ProposalsTab({
                 seuilFort={ambigues.seuil_fort}
                 canValidate={canValidate}
                 busy={busy}
+                enCours={enCours === `ec-${item.ecriture.id}`}
                 onRapprocher={(operationIds) =>
-                  act(
-                    () => matchGroupe(operationIds, [item.ecriture.id]),
-                    "Rapprochement enregistré.",
+                  rapprocherAmbigue("ec", item.ecriture.id, () =>
+                    matchGroupe(operationIds, [item.ecriture.id], undefined, true),
                   )
                 }
                 onAucune={() => {

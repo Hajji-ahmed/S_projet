@@ -214,12 +214,13 @@ class ReconciliationCodeCounter(Base):
 
 
 class FraisPieceCounter(Base):
-    """Dernier n° de pièce donné aux écritures de frais SIMTIS, par société et par mois de la date
-    d'écriture (0030) : la pièce s'écrit AAMMNNN, ex. 2610018."""
+    """Dernier n° de pièce donné aux écritures de frais SIMTIS, par société, banque et mois de la
+    date d'écriture (0030, banque 0031) : la pièce s'écrit BANQUE AAMMNNN, ex. BP2610123."""
 
     __tablename__ = "frais_piece_counters"
 
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), primary_key=True)
+    bank_id: Mapped[int] = mapped_column(ForeignKey("banks.id"), primary_key=True)
     annee: Mapped[int] = mapped_column(Integer, primary_key=True)
     mois: Mapped[int] = mapped_column(Integer, primary_key=True)
     dernier: Mapped[int] = mapped_column(Integer)

@@ -113,7 +113,12 @@ export function cancelMatch(id: number, motif: string) {
   });
 }
 
-export function matchManually(transactionId: number, ecritureId: number, commentaire?: string) {
+export function matchManually(
+  transactionId: number,
+  ecritureId: number,
+  commentaire?: string,
+  relanceCiblee = false,
+) {
   return apiFetch<Correspondance>("/reconciliation/matches", {
     method: "POST",
     headers: JSON_HEADERS,
@@ -121,6 +126,7 @@ export function matchManually(transactionId: number, ecritureId: number, comment
       transaction_id: transactionId,
       ecriture_id: ecritureId,
       commentaire: commentaire?.trim() || null,
+      relance_ciblee: relanceCiblee,
     }),
   });
 }
@@ -137,8 +143,16 @@ export function aucuneEcriture(transactionId: number, commentaire?: string) {
   );
 }
 
-/** Rapprochement manuel de plusieurs lignes (1-N, N-1, N-N ; P13 du 15/10/2026). */
-export function matchGroupe(transactionIds: number[], ecritureIds: number[], commentaire?: string) {
+/**
+ * Rapprochement manuel de plusieurs lignes (1-N, N-1, N-N ; P13 du 15/10/2026). `relanceCiblee`
+ * (depuis une carte ambiguë, 16/10/2026) : le moteur ne refait que les lignes en concurrence.
+ */
+export function matchGroupe(
+  transactionIds: number[],
+  ecritureIds: number[],
+  commentaire?: string,
+  relanceCiblee = false,
+) {
   return apiFetch<Correspondance>("/reconciliation/matches", {
     method: "POST",
     headers: JSON_HEADERS,
@@ -146,6 +160,7 @@ export function matchGroupe(transactionIds: number[], ecritureIds: number[], com
       transaction_ids: transactionIds,
       ecriture_ids: ecritureIds,
       commentaire: commentaire?.trim() || null,
+      relance_ciblee: relanceCiblee,
     }),
   });
 }

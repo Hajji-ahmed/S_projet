@@ -44,7 +44,7 @@ router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
 
 can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
 # Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur
-TypeOperation = Literal["Chèque", "Effet", "Espèces", "Virement", "Autre"]
+TypeOperation = Literal["Chèque", "Effet", "Espèces", "Virement", "Impayé", "Autre"]
 # Lancer le moteur écrit des propositions : réservé à qui peut aussi les valider
 can_validate = require_permission(PermissionCode.RECONCILIATION_VALIDATE)
 
@@ -85,7 +85,7 @@ def list_transactions(
         bool, Query(description="Seulement les frais bancaires non rapprochés (À comptabiliser)")
     ] = False,
     type_operation: Annotated[
-        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre")
     ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
@@ -115,7 +115,7 @@ def list_ambiguous(
     date_to: Annotated[date | None, Query(alias="to")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     type_operation: Annotated[
-        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre")
     ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
@@ -148,7 +148,7 @@ def list_ambiguous_entries(
     date_to: Annotated[date | None, Query(alias="to")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     type_operation: Annotated[
-        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre")
     ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
@@ -254,7 +254,7 @@ def list_proposals(
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
     type_operation: Annotated[
-        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement ou Autre")
+        TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre")
     ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
@@ -407,6 +407,7 @@ def match_manually(
         commentaire=body.commentaire,
         acteur_id=user.id,
         ip=client_ip(request),
+        relance_ciblee=body.relance_ciblee,
     )
     return _out(db, match.id)
 

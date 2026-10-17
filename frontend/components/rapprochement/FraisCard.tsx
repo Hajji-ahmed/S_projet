@@ -4,7 +4,6 @@ import { Check, ChevronDown, ChevronRight, Landmark, PenLine, Trash2 } from "luc
 import { useEffect, useState, type ReactNode } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
-import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ManualFeeModal } from "@/components/rapprochement/ManualFeeModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -50,7 +49,8 @@ function libelleLigne(famille: EcritureFrais["famille"], ligne: LigneGL, nb: num
 /**
  * Frais comptabilisés par SIMTIS (13/10/2026), en UN tableau : droits de timbre (une ligne par
  * jour, « DT D'ENREGISTREMENT ») et commissions (« COM », une ligne par type), au format du grand
- * livre Sage, tous les montants au CRÉDIT du compte bancaire. La validation enregistre l'écriture
+ * livre Sage : chaque type au crédit de son compte (17/10/2026, sans ligne banque). La
+ * validation enregistre l'écriture
  * et la rapproche d'emblée de ses opérations ; l'export pour Sage est commun.
  */
 export function FraisCard({
@@ -153,8 +153,8 @@ export function FraisCard({
     <Card title="Frais bancaires" icon={Landmark}>
       <p className="-mt-2 mb-4 text-sm text-simtis-muted">
         Droits de timbre (« DT D&apos;ENREGISTREMENT », une ligne par jour) et commissions (« COM »,
-        une ligne par type : COMMISSION, COMMISSION EFFET et leurs TVA), au crédit du compte
-        bancaire. Rapprochés dès la validation. Les autres frais restent à passer à la main.
+        une ligne par type : COMMISSION, COMMISSION EFFET et leurs TVA), chacun au crédit de son
+        compte. Rapprochés dès la validation. Les autres frais restent à passer à la main.
       </p>
 
       {state === "loading" && <LoadingState rows={3} />}
@@ -396,24 +396,14 @@ export function FraisCard({
             {ecritures.length === 0 ? (
               <Vide>Aucune écriture de frais comptabilisée par SIMTIS sur cette période.</Vide>
             ) : (
-              <GrandLivre
-                avecCase={false}
-                fin={canPrepare ? ["Export Sage", "Actions"] : ["Export Sage"]}
-              >
+              <TableauSage fin={canPrepare ? ["Export Sage", "Actions"] : ["Export Sage"]}>
                 {ecritures.map((item) => (
-                  <Ecriture
+                  <EcritureSage
                     key={item.id}
-                    famille={item.famille}
                     journal={item.journal}
                     date={item.date}
-                    piece={
-                      <span className="inline-flex flex-col items-start gap-0.5">
-                        <span className="font-medium tabular-nums">{item.numero_piece ?? "-"}</span>
-                        <CodeBadge code={item.code} />
-                      </span>
-                    }
+                    piece={item.numero_piece}
                     lignes={item.lignes}
-                    nbOperations={item.nb_operations}
                     fin={[
                       item.exportee_le ? (
                         <span key="export" className="text-simtis-success-fg">
@@ -446,7 +436,7 @@ export function FraisCard({
                     ]}
                   />
                 ))}
-              </GrandLivre>
+              </TableauSage>
             )}
           </section>
         </div>
@@ -625,6 +615,86 @@ function Ecriture({
           </td>
         </tr>
       )}
+    </tbody>
+  );
+}
+
+/**
+ * Écritures comptabilisées au format du fichier exporté pour Sage (17/10/2026) : mêmes colonnes,
+ * même ordre, même libellé, Montant toujours positif et son Sens ; les 7 colonnes facultatives,
+ * toujours vides, ne sont pas affichées.
+ */
+function TableauSage({ fin, children }: { fin: string[]; children: ReactNode }) {
+  return (
+    <div className="overflow-x-auto rounded-[12px] border border-simtis-border">
+      <table className="w-full text-sm">
+        <thead className="bg-simtis-light text-left text-xs text-simtis-primary-dark">
+          <tr>
+            <th className={TH}>Date de pièce</th>
+            <th className={TH}>N° pièce</th>
+            <th className={TH}>Code journal</th>
+            <th className={TH}>N° compte général</th>
+            <th className={TH}>N° compte tiers</th>
+            <th className={TH}>Libellé écriture</th>
+            <th className={cn(TH, "text-right")}>Montant</th>
+            <th className={TH}>Sens</th>
+            {fin.map((titre) => (
+              <th key={titre} className={TH}>
+                {titre === "Actions" ? <span className="sr-only">{titre}</span> : titre}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        {children}
+      </table>
+    </div>
+  );
+}
+
+function EcritureSage({
+  journal,
+  date,
+  piece,
+  lignes,
+  fin,
+}: {
+  journal: string | null;
+  date: string;
+  piece: string | null;
+  lignes: LigneGL[];
+  fin: ReactNode[];
+}) {
+  return (
+    <tbody className="border-t border-simtis-border first:border-t-0">
+      {lignes.map((ligne, index) => {
+        const debit = Boolean(ligne.debit && Number(ligne.debit) !== 0);
+        return (
+          <tr key={`${ligne.type ?? "ligne"}-${index}`}>
+            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{formatDate(date)}</td>
+            <td className="px-3 py-1.5 font-medium whitespace-nowrap tabular-nums">
+              {piece ?? "-"}
+            </td>
+            <td className="px-3 py-1.5 whitespace-nowrap">{journal ?? <ARenseigner />}</td>
+            <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">
+              {ligne.compte ?? <ARenseigner />}
+            </td>
+            <td className="px-3 py-1.5" />
+            <td className="px-3 py-1.5">{ligne.libelle}</td>
+            <Montant value={debit ? ligne.debit : ligne.credit} />
+            <td className="px-3 py-1.5 whitespace-nowrap">{debit ? "Débit" : "Crédit"}</td>
+            {index === 0 &&
+              fin.map((cellule, position) => (
+                <td
+                  key={position}
+                  rowSpan={lignes.length}
+                  className="px-3 py-1.5 align-top whitespace-nowrap"
+                >
+                  {cellule}
+                </td>
+              ))}
+          </tr>
+        );
+      })}
     </tbody>
   );
 }

@@ -359,7 +359,7 @@ def ambiguous_entries(
     date_from: date | None,
     date_to: date | None,
     offset: int,
-    limit: int,
+    limit: int | None,
     type_operation: str | None = None,
 ) -> tuple[int, list[AccountingEntry]]:
     """Écritures « À vérifier » sans correspondance active (15/10/2026) : le moteur a trouvé
@@ -381,6 +381,33 @@ def ambiguous_entries(
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     page = query.order_by(AccountingEntry.date_ecriture.desc(), AccountingEntry.id.desc())
     return total, list(db.scalars(page.offset(offset).limit(limit)))
+
+
+def transactions_comparables(
+    db: Session, bank_account_id: int, date_from: date, date_to: date
+) -> list[BankTransaction]:
+    """Opérations du compte (date d'opération ou de valeur dans la période), hors
+    correspondance validée et hors écart : les conditions de `candidate_transactions`, lues en
+    une fois pour plusieurs écritures (16/10/2026)."""
+    validated_tx_ids = (
+        select(ReconciliationMatchItem.bank_transaction_id)
+        .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
+        .where(
+            ReconciliationMatchItem.actif.is_(True),
+            ReconciliationMatch.statut == "Validée",
+            ReconciliationMatchItem.bank_transaction_id.is_not(None),
+        )
+    )
+    query = select(BankTransaction).where(
+        BankTransaction.bank_account_id == bank_account_id,
+        or_(
+            BankTransaction.date_operation.between(date_from, date_to),
+            BankTransaction.date_valeur.between(date_from, date_to),
+        ),
+        BankTransaction.statut != "Écart",
+        BankTransaction.id.not_in(validated_tx_ids),
+    )
+    return list(db.scalars(query))
 
 
 def candidate_transactions(
@@ -615,9 +642,18 @@ def user_names(db: Session, ids: set[int]) -> dict[int, str]:
 
 
 def candidate_entries(
-    db: Session, transaction: BankTransaction, company_id: int, date_from: date, date_to: date
+    db: Session,
+    transaction: BankTransaction,
+    company_id: int,
+    date_from: date,
+    date_to: date,
+    *,
+    large_from: date | None = None,
+    large_to: date | None = None,
 ) -> list[AccountingEntry]:
-    """Écritures du même compte, dans la fenêtre, hors correspondance validée."""
+    """Écritures du même compte, hors correspondance validée : dans la fenêtre courte, ou dans la
+    fenêtre large (même n°, 180 jours) au seul montant opposé, puisque `comparable` n'admet rien
+    d'autre au-delà de la fenêtre courte (15/10/2026). Sans fenêtre large : la fenêtre donnée."""
     validated_entry_ids = (
         select(ReconciliationMatchItem.accounting_entry_id)
         .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
@@ -635,6 +671,20 @@ def candidate_entries(
             or_(
                 AccountingEntry.date_ecriture.between(date_from, date_to),
                 AccountingEntry.echeance.between(date_from, date_to),
+                *(
+                    []
+                    if large_from is None or large_to is None
+                    else [
+                        and_(
+                            func.coalesce(AccountingEntry.montant_devise, AccountingEntry.montant)
+                            == -transaction.montant,
+                            or_(
+                                AccountingEntry.date_ecriture.between(large_from, large_to),
+                                AccountingEntry.echeance.between(large_from, large_to),
+                            ),
+                        )
+                    ]
+                ),
             ),
             AccountingEntry.statut != "Écart",
             AccountingEntry.id.not_in(validated_entry_ids),

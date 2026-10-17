@@ -194,6 +194,9 @@ def _contient(texte_plain: str, cle: str) -> bool:
 # Une ligne Chèque ne se rapproche jamais d'une ligne Effet ou Espèces ; « Autre » (virements, frais…)
 # reste comparable à tout. Préfixes cherchés au début du libellé normalisé (`_plain`).
 TYPES_SAGE: tuple[tuple[str, str], ...] = (
+    # Impayés (16/10/2026) : « IMP EAR1° … », « IMP EAR° … » annulent un encaissement
+    ("IMPAYE", "Impayé"),
+    ("IMP", "Impayé"),
     ("EAR1", "Chèque"),  # « EAR1° … »
     ("EAR", "Effet"),  # « EAR° … »
     ("ESP", "Espèces"),
@@ -203,6 +206,9 @@ TYPES_SAGE: tuple[tuple[str, str], ...] = (
     ("VIR", "Virement"),
 )
 TYPES_BANQUE: tuple[tuple[str, str], ...] = (
+    # Impayés (16/10/2026) : « IMPAYE SUR EFFET ESCOMPTE N … », « IMP LCN … »
+    ("IMPAYE", "Impayé"),
+    ("IMP", "Impayé"),
     ("ENCAISSEMENT CHEQUE", "Chèque"),
     ("ENCAISSEMENT EFFET", "Effet"),
     ("REMISE D EFFETS", "Effet"),
@@ -409,8 +415,9 @@ def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grill
     return None
 
 
-# Types rapprochés par leur n° même loin en date : chèques et effets (12/10/2026)
-TYPES_PAR_NUMERO = frozenset({"Chèque", "Effet"})
+# Types rapprochés par leur n° même loin en date : chèques et effets (12/10/2026), impayés
+# (16/10/2026)
+TYPES_PAR_NUMERO = frozenset({"Chèque", "Effet", "Impayé"})
 
 
 def _numeros_ecriture(ecriture: Ecriture) -> set[str]:
@@ -418,7 +425,7 @@ def _numeros_ecriture(ecriture: Ecriture) -> set[str]:
 
 
 def meme_numero_et_montant(operation: Operation, ecriture: Ecriture) -> bool:
-    """Chèque ou effet des deux côtés, même montant (sens opposé) et un n° commun."""
+    """Chèque, effet ou impayé des deux côtés, même montant (sens opposé) et un n° commun."""
     if type_operation(operation.libelle) not in TYPES_PAR_NUMERO:
         return False
     if type_ecriture(ecriture.libelle) != type_operation(operation.libelle):
@@ -493,51 +500,67 @@ def proposer(
         if resultat is not None:
             candidats[(operation.id, ecriture.id)] = resultat
 
+    # Attribution du meilleur score au plus bas (16/10/2026) : une ligne déjà prise passe sa
+    # place à la suivante ; seule une ÉGALITÉ au meilleur score d'une ligne la rend ambiguë (ses
+    # candidates à égalité aussi), jamais une concurrente de score inférieur
     resultat = Resultat()
-    restants = dict(candidats)
-    while True:
-        par_operation: dict[int, list[tuple[Decimal, int]]] = {}
-        par_ecriture: dict[int, list[tuple[Decimal, int]]] = {}
-        for (operation_id, ecriture_id), valeur in restants.items():
-            par_operation.setdefault(operation_id, []).append((valeur.total, ecriture_id))
-            par_ecriture.setdefault(ecriture_id, []).append((valeur.total, operation_id))
+    par_operation: dict[int, list[tuple[Decimal, int]]] = {}
+    par_ecriture: dict[int, list[tuple[Decimal, int]]] = {}
+    for (operation_id, ecriture_id), valeur in candidats.items():
+        par_operation.setdefault(operation_id, []).append((valeur.total, ecriture_id))
+        par_ecriture.setdefault(ecriture_id, []).append((valeur.total, operation_id))
+    for liste in (*par_operation.values(), *par_ecriture.values()):
+        liste.sort(key=lambda item: (-item[0], item[1]))
+    pris_op: set[int] = set()
+    pris_ec: set[int] = set()
 
-        meilleurs_operation = {
-            cle: _meilleur_net(liste, grille) for cle, liste in par_operation.items()
-        }
-        meilleurs_ecriture = {
-            cle: _meilleur_net(liste, grille) for cle, liste in par_ecriture.items()
-        }
-        retenues = [
-            (operation_id, ecriture_id)
-            for operation_id, ecriture_id in sorted(restants)
-            if meilleurs_operation[operation_id] == ecriture_id
-            and meilleurs_ecriture[ecriture_id] == operation_id
-        ]
-        if not retenues:
-            # Ce qui garde un candidat n'a pas pu être proposé à cause d'une ambiguïté
-            resultat.operations_ambigues = set(par_operation)
-            resultat.ecritures_ambigues = set(par_ecriture)
-            break
-        for operation_id, ecriture_id in retenues:
-            autres = [total for total, cle in par_operation[operation_id] if cle != ecriture_id] + [
-                total for total, cle in par_ecriture[ecriture_id] if cle != operation_id
-            ]
-            resultat.propositions.append(
-                Proposition(
-                    operation_id,
-                    ecriture_id,
-                    restants[(operation_id, ecriture_id)],
-                    max(autres) if autres else None,
-                )
-            )
-        utilisees_operation = {paire[0] for paire in retenues}
-        utilisees_ecriture = {paire[1] for paire in retenues}
-        restants = {
-            paire: valeur
-            for paire, valeur in restants.items()
-            if paire[0] not in utilisees_operation and paire[1] not in utilisees_ecriture
-        }
+    def libres(liste, pris, ambigus, nombre=2):
+        """Les `nombre` premiers partenaires encore libres de la ligne."""
+        trouves = []
+        for total, cle in liste:
+            if cle not in pris and cle not in ambigus:
+                trouves.append((total, cle))
+                if len(trouves) == nombre:
+                    break
+        return trouves
+
+    for (operation_id, ecriture_id), valeur in sorted(
+        candidats.items(), key=lambda item: (-item[1].total, item[0])
+    ):
+        if operation_id in pris_op or operation_id in resultat.operations_ambigues:
+            continue
+        if ecriture_id in pris_ec or ecriture_id in resultat.ecritures_ambigues:
+            continue
+        cote_op = libres(par_operation[operation_id], pris_ec, resultat.ecritures_ambigues)
+        cote_ec = libres(par_ecriture[ecriture_id], pris_op, resultat.operations_ambigues)
+        if (len(cote_op) == 2 and cote_op[1][0] == valeur.total) or (
+            len(cote_ec) == 2 and cote_ec[1][0] == valeur.total
+        ):
+            # Plusieurs lignes au même meilleur score : toutes celles liées entre elles à ce score
+            # sont ambiguës (deux opérations identiques face à deux écritures identiques)
+            ops, ecs = {operation_id}, {ecriture_id}
+            a_voir = [("op", operation_id), ("ec", ecriture_id)]
+            while a_voir:
+                cote, cle = a_voir.pop()
+                if cote == "op":
+                    for total, autre in par_operation[cle]:
+                        if total == valeur.total and autre not in pris_ec and autre not in ecs:
+                            ecs.add(autre)
+                            a_voir.append(("ec", autre))
+                else:
+                    for total, autre in par_ecriture[cle]:
+                        if total == valeur.total and autre not in pris_op and autre not in ops:
+                            ops.add(autre)
+                            a_voir.append(("op", autre))
+            resultat.operations_ambigues.update(ops)
+            resultat.ecritures_ambigues.update(ecs)
+            continue
+        autres = [total for total, _ in cote_op[1:]] + [total for total, _ in cote_ec[1:]]
+        resultat.propositions.append(
+            Proposition(operation_id, ecriture_id, valeur, max(autres) if autres else None)
+        )
+        pris_op.add(operation_id)
+        pris_ec.add(ecriture_id)
 
     resultat.propositions.sort(key=lambda item: (item.operation_id, item.ecriture_id))
     return resultat
@@ -656,7 +679,7 @@ def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int |
 
 # --- Filtre « Type d'opération » des écrans (14/10/2026) ------------------------------------------
 
-TYPES_OPERATION = ("Chèque", "Effet", "Espèces", "Virement")
+TYPES_OPERATION = ("Chèque", "Effet", "Espèces", "Virement", "Impayé")
 AUTRE = "Autre"
 _SEPARATEUR = "[^A-Za-z0-9]"
 

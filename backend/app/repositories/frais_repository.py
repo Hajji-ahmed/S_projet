@@ -231,12 +231,15 @@ def frais_libres_par_ids(
     )
 
 
-def next_piece_number(db: Session, company_id: int, annee: int, mois: int) -> int:
-    """Numéro suivant du compteur (société, mois), atomique : deux comptabilisations simultanées
-    ne reçoivent jamais le même numéro (15/10/2026)."""
+def next_piece_number(db: Session, company_id: int, bank_id: int, annee: int, mois: int) -> int:
+    """Numéro suivant du compteur (société, banque, mois), atomique : deux comptabilisations
+    simultanées ne reçoivent jamais le même numéro (15/10/2026 ; par banque depuis le 16/10)."""
     statement = text(
-        "INSERT INTO frais_piece_counters (company_id, annee, mois, dernier) "
-        "VALUES (:societe, :annee, :mois, 1) ON CONFLICT (company_id, annee, mois) "
+        "INSERT INTO frais_piece_counters (company_id, bank_id, annee, mois, dernier) "
+        "VALUES (:societe, :banque, :annee, :mois, 1) "
+        "ON CONFLICT (company_id, bank_id, annee, mois) "
         "DO UPDATE SET dernier = frais_piece_counters.dernier + 1 RETURNING dernier"
     )
-    return db.execute(statement, {"societe": company_id, "annee": annee, "mois": mois}).scalar_one()
+    return db.execute(
+        statement, {"societe": company_id, "banque": bank_id, "annee": annee, "mois": mois}
+    ).scalar_one()

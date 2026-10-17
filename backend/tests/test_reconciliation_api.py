@@ -16,6 +16,7 @@ from app.models import (
     BankTransaction,
     Company,
     ReconciliationMatch,
+    ReconciliationMatchItem,
     ReconciliationRule,
 )
 from app.schemas.reconciliation import criteres
@@ -1143,6 +1144,9 @@ LIBELLES_BANQUE = {
     "VIREMENT RECU DE X": "Virement",
     "VIR.RECU DE Y": "Virement",
     "RTGS EMIS VERS BMCE": "Virement",
+    "IMPAYE SUR EFFET ESCOMPTE N 2600009 TIRE SUR X": "Impayé",
+    "IMP LCN 1099850/18942568": "Impayé",
+    "IMPOTS ET TAXES": "Autre",  # « IMP » n'est pas un mot entier
     "COMMISSION": "Autre",
     "VIRGULE SARL PAIEMENT": "Autre",  # « VIR » n'est pas un mot entier
     "AGIOS BANCAIRES": "Autre",
@@ -1153,6 +1157,8 @@ LIBELLES_SAGE = {
     "ESP N 45/OV": "Espèces",
     "Virement fournisseur": "Virement",
     "VIRT 12": "Virement",
+    "IMP EAR1° AXL 917714 AJETTAR": "Impayé",
+    "IMP EAR° DA 9515404 EL MOUAFFAK": "Impayé",
     "COM": "Autre",
     "EARTH SARL": "Autre",
 }
@@ -1168,7 +1174,7 @@ def test_the_type_filter_reads_labels_exactly_like_the_engine(client, comptable,
         ecriture(db, compte, libelle=libelle)
     base = {"company_id": str(company(db).id)}
 
-    for nom in ("Chèque", "Effet", "Espèces", "Virement", "Autre"):
+    for nom in ("Chèque", "Effet", "Espèces", "Virement", "Impayé", "Autre"):
         ops = client.get(
             "/api/reconciliation/transactions",
             params={**base, "type_operation": nom},
@@ -1333,6 +1339,32 @@ def test_ambiguous_entries_come_with_their_operations(client, comptable, directi
     assert {c["operation"]["id"] for c in ambigue["candidats"]} == {first.id, second.id}
 
 
+def test_an_entry_is_ambiguous_only_with_two_operations_at_the_same_score(
+    client, comptable, direction, db
+):
+    """16/10/2026 : une opération qui hésite entre deux écritures rend ces écritures « À
+    vérifier », mais chacune n'a qu'une opération : elles ne sont pas des écritures ambiguës
+    (l'opération se traite dans « Opérations ambiguës »)."""
+    compte = account(db)
+    tx = operation(db, compte)
+    first, second = ecriture(db, compte), ecriture(db, compte)
+    run(client, comptable, db)
+    params = {"company_id": company(db).id}
+
+    ecritures = client.get(
+        "/api/reconciliation/ambiguous-entries", params=params, headers=direction
+    ).json()
+    operations = client.get(
+        "/api/reconciliation/ambiguous", params=params, headers=direction
+    ).json()
+
+    assert statuses(db, first) == statuses(db, second) == ["À vérifier"]
+    assert ecritures == {**ecritures, "total": 0, "ecritures": []}
+    [ambigue] = operations["ambigues"]
+    assert ambigue["operation"]["id"] == tx.id
+    assert {c["ecriture"]["id"] for c in ambigue["candidats"]} == {first.id, second.id}
+
+
 def test_no_operation_matches_an_ambiguous_entry(client, comptable, direction, db):
     compte = account(db)
     entry = ecriture(db, compte)
@@ -1489,3 +1521,60 @@ def test_a_fee_is_never_proposed_alone_and_stays_to_be_booked(client, comptable,
         headers=direction,
     ).json()
     assert page["a_comptabiliser"] == 1
+
+
+# --- Rapprochement depuis les ambiguës : relance ciblée (16/10/2026) ------------------------------
+
+
+def manuel_cible(client, headers, tx, entry):
+    return client.post(
+        "/api/reconciliation/matches",
+        json={"transaction_id": tx.id, "ecriture_id": entry.id, "relance_ciblee": True},
+        headers=headers,
+    )
+
+
+def test_a_targeted_match_settles_only_the_competing_lines(client, comptable, db):
+    """Deux opérations et deux écritures identiques : toutes à égalité. Rapprocher la première
+    paire depuis les ambiguës propose la seconde ; une proposition ailleurs ne bouge pas."""
+    compte = account(db)
+    tx1, tx2 = operation(db, compte), operation(db, compte)
+    ec1, ec2 = ecriture(db, compte), ecriture(db, compte)
+    autre_tx = operation(db, compte, "700", date(2026, 9, 20), "VIR XYZ")
+    autre_ec = ecriture(db, compte, "-700", date(2026, 9, 20), "Règlement XYZ", numero_piece="X1")
+    run(client, comptable, db)
+    assert statuses(db, tx1, tx2, ec1, ec2) == ["À vérifier"] * 4
+    ailleurs = db.scalar(
+        select(ReconciliationMatchItem.match_id).filter_by(bank_transaction_id=autre_tx.id)
+    )
+
+    response = manuel_cible(client, comptable, tx1, ec1)
+
+    assert response.status_code == 201, response.text
+    proposees = {
+        (p["operation"]["id"], p["ecriture"]["id"], p["id"])
+        for p in proposals(client, comptable, db).json()["correspondances"]
+    }
+    assert {(t, e) for t, e, _ in proposees} == {(tx2.id, ec2.id), (autre_tx.id, autre_ec.id)}
+    assert ailleurs in {i for _, _, i in proposees}
+    assert statuses(db, tx2, ec2) == ["À vérifier", "À vérifier"]
+    audit = db.scalar(
+        select(AuditLog)
+        .where(AuditLog.action == "rapprochement_manuel")
+        .order_by(AuditLog.id.desc())
+    )
+    assert audit.nouvelle_valeur["relance"]["ciblee"] is True
+
+
+def test_a_targeted_match_frees_the_other_tied_entry(client, comptable, db):
+    """Une opération à égalité entre deux écritures : l'écriture non choisie repasse « Non
+    rapprochée » (plus aucune candidate)."""
+    compte = account(db)
+    tx = operation(db, compte)
+    ec1, ec2 = ecriture(db, compte), ecriture(db, compte)
+    run(client, comptable, db)
+    assert statuses(db, tx, ec1, ec2) == ["À vérifier"] * 3
+
+    assert manuel_cible(client, comptable, tx, ec1).status_code == 201
+
+    assert statuses(db, tx, ec1, ec2) == ["Rapprochée", "Rapprochée", "Non rapprochée"]

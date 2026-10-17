@@ -31,6 +31,7 @@ export function EcritureAmbigueCard({
   seuilFort,
   canValidate,
   busy,
+  enCours = false,
   onRapprocher,
   onAucune,
   selection,
@@ -40,6 +41,8 @@ export function EcritureAmbigueCard({
   seuilFort: string;
   canValidate: boolean;
   busy: boolean;
+  /** Rapprochement de cette carte en cours (16/10/2026) : carte grisée, bouton « … ». */
+  enCours?: boolean;
   /** Rapprochement manuel des opérations cochées avec l'écriture (validé d'emblée). */
   onRapprocher: (operationIds: number[]) => void;
   onAucune: () => void;
@@ -57,7 +60,11 @@ export function EcritureAmbigueCard({
   return (
     <article
       aria-label={`Écriture ambiguë : ${ecriture.libelle}`}
-      className="rounded-card border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis"
+      aria-busy={enCours}
+      className={cn(
+        "rounded-card border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis transition-opacity",
+        enCours && "opacity-60",
+      )}
     >
       {selection && (
         <label className="mb-3 flex w-fit cursor-pointer items-center gap-2 text-xs font-medium text-simtis-muted">
@@ -75,7 +82,8 @@ export function EcritureAmbigueCard({
         <div className="space-y-1">
           <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-simtis-warning-fg uppercase">
             <Shuffle className="h-3.5 w-3.5" aria-hidden />
-            Écriture ambiguë : {candidats.length} opérations aussi proches
+            Écriture ambiguë : {candidats.length} opération{candidats.length > 1 ? "s" : ""} aussi
+            proche{candidats.length > 1 ? "s" : ""}
           </p>
           <p className="text-lg font-semibold text-simtis-primary-dark tabular-nums">
             {formatAmount(absolute(montantEcriture(ecriture)), devise)}{" "}
@@ -180,7 +188,7 @@ export function EcritureAmbigueCard({
             disabled={busy || etat.blocage !== null}
             onClick={() => onRapprocher(cochees.map((c) => c.operation.id))}
           >
-            Rapprocher ({cochees.length} → 1)
+            {enCours ? "Rapprochement…" : `Rapprocher (${cochees.length} → 1)`}
           </Button>
         </div>
       )}

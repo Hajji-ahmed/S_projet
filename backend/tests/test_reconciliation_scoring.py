@@ -1,6 +1,6 @@
 """Règles pures du rapprochement 1→1 (P11) : score d'une paire et choix des propositions."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.services.reconciliation_scoring import (
@@ -416,8 +416,51 @@ def test_far_in_date_needs_the_same_number_and_the_same_amount():
     assert proposer([banque], [autre_montant, autre_numero, trop_loin]).propositions == []
 
 
+def test_an_unpaid_is_matched_by_its_number_far_in_date():
+    """16/10/2026 : l'impayé de la banque et l'« IMP EAR° » de Sage se rapprochent par leur n°,
+    jusqu'à 180 jours, et jamais avec un encaissement."""
+    impaye = op(montant="-25000", jour=JOUR, libelle="IMPAYE SUR EFFET ESCOMPTE N 2600009 TIRE")
+    sage = ec(
+        id=10, montant="25000", jour=JOUR - timedelta(days=40), libelle="IMP EAR° ABC 2600009 X"
+    )
+    encaissement = ec(id=11, montant="25000", jour=JOUR, libelle="EAR° ABC 2600009 X")
+
+    assert type_operation(impaye.libelle) == type_ecriture(sage.libelle) == "Impayé"
+    assert type_ecriture("IMP EAR1° AXL 917714 AJETTAR") == "Impayé"
+    assert type_operation("IMPOTS ET TAXES") is None
+    assert not comparable(impaye, encaissement, GRILLE_PAR_DEFAUT)
+    [proposition] = proposer([impaye], [sage, encaissement]).propositions
+    assert proposition.ecriture_id == sage.id
+    assert proposition.score.total >= Grille().seuil_fort
+
+
 def test_without_a_number_the_window_stays_10_days():
     banque = op(montant="4000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
     especes = ec(montant="-4000", jour=date(2026, 8, 1), libelle="ESP TT23241QZKZC")
 
     assert not comparable(banque, especes, GRILLE_PAR_DEFAUT)
+
+
+# --- Ambiguïté seulement en cas d'égalité (16/10/2026) ---------------------------------------------
+
+
+def test_a_line_taken_by_a_better_pair_gives_way_to_the_next_candidate():
+    """B préfère l'écriture E1 (1 jour d'écart), mais E1 préfère A (même jour) : A prend E1, puis
+    B reçoit sa candidate suivante E2 (2 jours d'écart), sans ambiguïté."""
+    a = op(id=1, jour=JOUR)
+    b = op(id=2, jour=JOUR + timedelta(days=1))
+    meme_jour = ec(id=10, jour=JOUR, libelle="VIR ABC")
+    lendemain = ec(id=11, jour=JOUR + timedelta(days=3), libelle="VIR ABC")
+
+    resultat = proposer([a, b], [meme_jour, lendemain])
+
+    assert {(p.operation_id, p.ecriture_id) for p in resultat.propositions} == {(1, 10), (2, 11)}
+    assert resultat.operations_ambigues == set() and resultat.ecritures_ambigues == set()
+
+
+def test_two_identical_operations_facing_two_identical_entries_are_all_ambiguous():
+    resultat = proposer([op(id=1), op(id=2)], [ec(id=10), ec(id=11)])
+
+    assert resultat.propositions == []
+    assert resultat.operations_ambigues == {1, 2}
+    assert resultat.ecritures_ambigues == {10, 11}

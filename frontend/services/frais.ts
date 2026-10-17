@@ -32,7 +32,7 @@ export function validerFrais(
   });
 }
 
-/** UN fichier Excel pour Sage, droits de timbre et commissions ; les écritures exportées ne se
+/** UN fichier CSV pour Sage (16/10/2026), toutes familles de frais ; les écritures exportées ne se
  * suppriment plus. */
 export function exporterFrais(companyId: number, filter: ReconciliationFilter, deja = false) {
   return apiDownload(

@@ -120,7 +120,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
     setExporting(true);
     try {
       const blob = await exporterFrais(companyId, filter);
-      saveFile(blob, `ecritures-frais-${filter.from}-${filter.to}.xlsx`);
+      saveFile(blob, `ecritures-frais-${filter.from}-${filter.to}.csv`);
       reload(
         `${plural(totalAExporter, "écriture")} exportée${totalAExporter > 1 ? "s" : ""} pour Sage.`,
       );

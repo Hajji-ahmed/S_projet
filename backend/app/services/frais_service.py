@@ -24,16 +24,14 @@ comptabilisation) ; un export Sage qui ramène une écriture SIMTIS la reconnaî
 (`accounting_import_service`). Les autres frais restent manuels.
 """
 
+import csv
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from io import BytesIO
+from io import StringIO
 
-from openpyxl import Workbook
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -73,9 +71,13 @@ EXPORT_HEADERS = (
     "Code ISO devise",
 )
 SENS_DEBIT = "Débit"
-# N° pièce d'une écriture de frais (15/10/2026) : AA MM NNN, un compteur par société et par mois
+# N° pièce d'une écriture de frais (16/10/2026) : BANQUE AA MM NNN (« BP2610123 »), un compteur
+# par société, banque et mois
 PIECE_MAX = 999
 SENS_CREDIT = "Crédit"
+# Fichier pour Sage (16/10/2026) : CSV au point-virgule, en Windows-1252 (accents de « Débit »)
+CSV_SEPARATEUR = ";"
+CSV_ENCODAGE = "cp1252"
 ZERO = Decimal("0.00")
 
 # Libellés reconnus, sur le libellé en majuscules aux espaces réduits
@@ -100,7 +102,33 @@ TAUX_TVA_FRAIS = Decimal("10")
 # FRAIS RECUPERES PAR LA BANQUE de 77,50 : droit de timbre 50 + commission 25 + TVA 2,50
 FRAIS_RECUPERES_AVEC_TIMBRE = Decimal("77.50")
 TIMBRE_FRAIS_RECUPERES = Decimal("50.00")
-# Libellé de chaque type et champ du compte bancaire qui donne son compte Sage à l'export
+# Comptes généraux Sage des lignes de frais (16/10/2026, donnés par le métier) : chaque ligne
+# de frais va au débit de son compte, le total au crédit du compte bancaire
+COMPTE_TIMBRE = "61671"
+COMPTE_COMMISSION = "61714000"
+COMPTE_FRAIS_BANCAIRES = "61473000"  # FRAIS COMMISSIONS BANCAIRE
+COMPTE_TVA = "34552142"  # TVA BANQUE 10 %
+COMPTE_FRAIS_ESCOMPTE = "63117000"
+COMPTE_FRAIS_REFINANCEMENT = "63119500"
+COMPTES_AGIOS = {
+    "BMCE": "63111000",
+    "BP": "63112000",
+    "AWB": "63113000",
+    "BMCI": "63116000",
+    "CIH": "63116300",
+}
+COMPTE_PAR_TYPE = {
+    "timbre": COMPTE_TIMBRE,
+    "frais_recuperes_timbre": COMPTE_TIMBRE,
+    "commission": COMPTE_COMMISSION,
+    "commission_effet": COMPTE_COMMISSION,
+    "commission_rtgs": COMPTE_FRAIS_BANCAIRES,
+    "commission_prelevement": COMPTE_FRAIS_BANCAIRES,
+    "commission_bancaire": COMPTE_FRAIS_BANCAIRES,
+    "commission_tenue": COMPTE_FRAIS_BANCAIRES,
+    "frais_recuperes": COMPTE_FRAIS_BANCAIRES,
+}
+# Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
     "timbre": ("Droits de timbre", "compte_timbre", "compte de charge des timbres"),
     "commission": ("Commission", "compte_commission", "compte de charge des commissions"),
@@ -602,7 +630,7 @@ def valider(
             detail={"explication": _explication(famille, jour)},
             acteur_id=acteur_id,
         )
-        entry.numero_piece = _nouvelle_piece(db, company_id, entry.date_ecriture)
+        entry.numero_piece = _nouvelle_piece(db, company_id, account, entry.date_ecriture)
         audit_service.log(
             db,
             user_id=acteur_id,
@@ -745,28 +773,57 @@ def libelle_ligne(libelle_ecriture: str, type_ligne: str | None) -> str:
     return f"TVA {libelle_ecriture}" if est_ligne_tva(type_ligne) else libelle_ecriture
 
 
-def numero_piece(jour: date, numero: int) -> str:
-    """« 2610018 » : année et mois de la date d'écriture, puis le n° d'ordre du mois sur 3
-    chiffres."""
+def numero_piece(banque: str, jour: date, numero: int) -> str:
+    """« BP2610123 » (16/10/2026) : code de la banque, année et mois de la date d'écriture, puis
+    le n° d'ordre du mois pour cette banque sur 3 chiffres."""
     if not 1 <= numero <= PIECE_MAX:
         raise ConflictError(
-            f"Plus de {PIECE_MAX} écritures de frais en {jour:%m/%Y} : le n° de pièce sur 3 "
-            "chiffres est épuisé."
+            f"Plus de {PIECE_MAX} écritures de frais {banque} en {jour:%m/%Y} : le n° de pièce "
+            "sur 3 chiffres est épuisé."
         )
-    return f"{jour:%y%m}{numero:03d}"
+    return f"{banque}{jour:%y%m}{numero:03d}"
 
 
-def _nouvelle_piece(db: Session, company_id: int, jour: date) -> str:
+def _nouvelle_piece(db: Session, company_id: int, account: BankAccount, jour: date) -> str:
     return numero_piece(
-        jour, frais_repository.next_piece_number(db, company_id, jour.year, jour.month)
+        account.bank.code,
+        jour,
+        frais_repository.next_piece_number(db, company_id, account.bank_id, jour.year, jour.month),
     )
 
 
+def compte_charge(type_ligne: str | None, libelle_ecriture: str, banque: str) -> str | None:
+    """Compte général Sage d'une ligne de frais (16/10/2026) : la TVA sur 34552142, chaque type
+    automatique sur le sien ; une écriture manuelle par son libellé (AGIOS selon la banque, FRAIS
+    D'ESCOMPTE, FRAIS DE REFINANCEMENT, COM / COMMISSION), sinon les frais bancaires."""
+    if est_ligne_tva(type_ligne):
+        return COMPTE_TVA
+    if type_ligne in COMPTE_PAR_TYPE:
+        return COMPTE_PAR_TYPE[type_ligne]
+    texte = _sans_ponctuation(libelle_ecriture)
+    premier = texte.split()[0] if texte else ""
+    if premier == "AGIOS":
+        return COMPTES_AGIOS.get(banque)
+    if texte.startswith("FRAIS D ESCOMPTE"):
+        return COMPTE_FRAIS_ESCOMPTE
+    if texte.startswith("FRAIS DE REFINANCEMENT"):
+        return COMPTE_FRAIS_REFINANCEMENT
+    if premier in ("COM", "COMMISSION", "COMMISSIONS"):
+        return COMPTE_COMMISSION
+    return COMPTE_FRAIS_BANCAIRES
+
+
 def lignes_gl(account: BankAccount, details: list[Detail], total: Decimal) -> list[LigneGL]:
-    """Une ligne par type, AU CRÉDIT du compte bancaire (13/10/2026, option 2 : la contrepartie
-    est passée dans Sage) ; les deux TVA restent deux lignes. Le total des lignes vaut `total`."""
+    """Une ligne par type AU CRÉDIT de son compte de charge ou de TVA (17/10/2026 : sans ligne
+    banque ; les deux TVA restent deux lignes). Le total des lignes vaut `total`."""
     return [
-        LigneGL(detail.type, TYPES[detail.type][0], account.compte_comptable, None, detail.total)
+        LigneGL(
+            detail.type,
+            TYPES[detail.type][0],
+            compte_charge(detail.type, "", account.bank.code),
+            None,
+            detail.total,
+        )
         for detail in details
     ]
 
@@ -780,17 +837,19 @@ def _lignes_de(
     details = details_par_type(
         [(tx, code) for tx in operations if (code := famille.type_de(tx.libelle))]
     )
-    lignes = lignes_gl(account, details, entry.montant)
-    for ligne in lignes:
-        ligne.compte = entry.compte
-    return lignes
+    return lignes_gl(account, details, entry.montant)
 
 
 def lignes_manuelle(
-    compte: str | None, montant: Decimal, montant_tva: Decimal | None
+    compte: str | None,
+    montant: Decimal,
+    montant_tva: Decimal | None,
+    libelle: str = "",
+    banque: str = "",
 ) -> list[LigneGL]:
-    """Écriture manuelle : le frais (hors taxe si la TVA est séparée) puis sa TVA. Un frais
-    (montant positif côté Sage) va au crédit du compte bancaire, un remboursement au débit."""
+    """Écriture manuelle : le frais (hors taxe si la TVA est séparée) puis sa TVA, sur leurs
+    comptes (16/10/2026), sans ligne banque (17/10/2026). Un frais (montant positif côté Sage) va
+    au crédit, un remboursement au débit. `compte` (celui de la banque) n'est plus utilisé."""
     total = abs(montant)
     parts = (
         [("frais", "Frais", total - montant_tva), ("tva", "TVA", montant_tva)]
@@ -798,8 +857,14 @@ def lignes_manuelle(
         else [("frais", "", total)]
     )
     return [
-        LigneGL(code, libelle, compte, None if montant > 0 else part, part if montant > 0 else None)
-        for code, libelle, part in parts
+        LigneGL(
+            code,
+            nom,
+            compte_charge(code, libelle, banque),
+            None if montant > 0 else part,
+            part if montant > 0 else None,
+        )
+        for code, nom, part in parts
     ]
 
 
@@ -810,11 +875,14 @@ def lignes_ecriture(
     operations: list[BankTransaction],
 ) -> list[LigneGL]:
     if famille is MANUELLE:
-        return lignes_manuelle(entry.compte, entry.montant, entry.montant_tva)
+        return lignes_manuelle(
+            entry.compte, entry.montant, entry.montant_tva, entry.libelle, account.bank.code
+        )
     return _lignes_de(famille, account, entry, operations)
 
 
 def _equilibree(entry: AccountingEntry, lignes: list[LigneGL]) -> None:
+    """Crédits − débits des lignes = montant de l'écriture (17/10/2026, sans ligne banque)."""
     credit = sum((ligne.credit or ZERO for ligne in lignes), ZERO)
     debit = sum((ligne.debit or ZERO for ligne in lignes), ZERO)
     if credit - debit != entry.montant:
@@ -838,9 +906,9 @@ def exporter(
     acteur_id: int,
     ip: str | None,
 ) -> tuple[str, bytes, int]:
-    """UN classeur Excel à intégrer dans Sage, toutes familles (droits de timbre et commissions),
-    par date : par écriture, une ligne par type au crédit du compte bancaire. Les écritures sont
-    marquées exportées."""
+    """UN fichier CSV à intégrer dans Sage (16/10/2026, « import paramétrable »), toutes
+    familles, par date : par écriture, une ligne par type au débit de son compte et la contrepartie
+    au crédit du compte bancaire. Les écritures sont marquées exportées."""
     reconciliation_repository.lock_company(db, company_id)
     accounts = {a.id: a for a in _accounts(db, company_id, bank_account_id)}
     rows = [
@@ -896,26 +964,22 @@ def exporter(
             + "."
         )
 
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Écritures Sage"
-    sheet.append(EXPORT_HEADERS)
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
+    buffer = StringIO()
+    writer = csv.writer(buffer, delimiter=CSV_SEPARATEUR, lineterminator="\r\n")
+    writer.writerow(EXPORT_HEADERS)
     maintenant = datetime.now(UTC)
     for entry, code, _ in rows:
         piece = entry.numero_piece or code
         for ligne in lignes[entry.id]:
-            # Sage : un montant toujours positif et son sens (frais au crédit de la banque,
-            # remboursement au débit) ; le code de rapprochement en Référence ; les autres
-            # colonnes facultatives restent vides
+            # Sage : un montant toujours positif et son sens ; Référence et les autres colonnes
+            # facultatives restent vides (16/10/2026)
             debit = bool(ligne.debit)
-            sheet.append(
-                [entry.date_ecriture, piece, entry.journal, ligne.compte, None,
+            writer.writerow(
+                [f"{entry.date_ecriture:%d/%m/%Y}", piece, entry.journal, ligne.compte, "",
                  libelle_ligne(entry.libelle, ligne.type),
-                 ligne.debit if debit else ligne.credit,
+                 montant_csv(ligne.debit if debit else ligne.credit),
                  SENS_DEBIT if debit else SENS_CREDIT,
-                 None, None, code, None, None, None, None]
+                 "", "", "", "", "", "", ""]
             )  # fmt: skip
         avant = entry.exportee_le
         if avant is None:
@@ -930,18 +994,14 @@ def exporter(
             apres={"exportee_le": entry.exportee_le, "reexport": avant is not None},
             ip=ip,
         )
-    for row in sheet.iter_rows(min_row=2):
-        row[0].number_format = "DD/MM/YYYY"
-        row[6].number_format = "#,##0.00"
-    largeurs = (14, 16, 14, 18, 15, 26, 14, 8, 17, 15, 12, 15, 15, 17, 15)
-    for index, width in enumerate(largeurs, start=1):
-        sheet.column_dimensions[get_column_letter(index)].width = width
-    sheet.freeze_panes = "A2"
-    buffer = BytesIO()
-    workbook.save(buffer)
     _commit(db)
-    nom = f"ecritures-frais-{business_today():%Y%m%d}.xlsx"
-    return nom, buffer.getvalue(), len(rows)
+    nom = f"ecritures-frais-{business_today():%Y%m%d}.csv"
+    return nom, buffer.getvalue().encode(CSV_ENCODAGE, errors="replace"), len(rows)
+
+
+def montant_csv(montant: Decimal) -> str:
+    """« 1234,50 » : virgule décimale, sans séparateur de milliers (CSV français de Sage)."""
+    return f"{montant:.2f}".replace(".", ",")
 
 
 # --- Comptabilisation manuelle (13/10/2026) -------------------------------------------------------
@@ -1176,7 +1236,7 @@ def comptabiliser_manuellement(
         },
         acteur_id=acteur_id,
     )
-    entry.numero_piece = _nouvelle_piece(db, company_id, entry.date_ecriture)
+    entry.numero_piece = _nouvelle_piece(db, company_id, account, entry.date_ecriture)
     audit_service.log(
         db,
         user_id=acteur_id,

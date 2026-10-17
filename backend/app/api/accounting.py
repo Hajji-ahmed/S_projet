@@ -148,8 +148,8 @@ def list_entries(
     page: Annotated[int, Query(ge=1)] = 1,
     # Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur
     type_operation: Annotated[
-        Literal["Chèque", "Effet", "Espèces", "Virement", "Autre"] | None,
-        Query(description="Chèque, Effet, Espèces, Virement ou Autre"),
+        Literal["Chèque", "Effet", "Espèces", "Virement", "Impayé", "Autre"] | None,
+        Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre"),
     ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_read),

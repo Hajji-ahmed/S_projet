@@ -167,11 +167,31 @@ class _SommesDuJour:
         self._jours = par_compte_jour
         self._cache: dict[tuple[int | None, date], dict[Decimal, list[tuple[Operation, ...]]]] = {}
         self._frais: dict[tuple[int | None, date], list[Operation]] = {}
+        self._trios: dict[tuple[int | None, date], dict[Decimal, list[tuple[Operation, ...]]]] = {}
 
     def frais(self, cle: tuple[int | None, date]) -> list[Operation]:
         if cle not in self._frais:
             self._frais[cle] = [op for op in self._jours.get(cle, []) if famille_frais(op.libelle)]
         return self._frais[cle]
+
+    def commissions_tva(
+        self, cle: tuple[int | None, date]
+    ) -> dict[Decimal, list[tuple[Operation, ...]]]:
+        """Paires (commission, sa TVA à 10 %) du jour, rangées par leur somme : calculées une seule
+        fois par compte et par jour (15/10/2026 : 13 millions de recalculs avant)."""
+        if cle not in self._trios:
+            frais = self.frais(cle)
+            commissions = [op for op in frais if famille_frais(op.libelle) == "commission"]
+            tvas = [op for op in frais if famille_frais(op.libelle) == "tva"]
+            table: dict[Decimal, list[tuple[Operation, ...]]] = {}
+            for commission in commissions:
+                for tva in tvas:
+                    if tva_de_la_commission(commission.montant, tva.montant):
+                        table.setdefault(commission.montant + tva.montant, []).append(
+                            (commission, tva)
+                        )
+            self._trios[cle] = table
+        return self._trios[cle]
 
     def sommes(self, cle: tuple[int | None, date]) -> dict[Decimal, list[tuple[Operation, ...]]]:
         if cle not in self._cache:
@@ -226,6 +246,9 @@ def _groupes_possibles(
     type_sage = type_ecriture(ecriture.libelle)
     trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
     for principale in candidats:
+        paires = sommes.commissions_tva((compte, principale.date_operation))
+        if not paires:
+            continue
         frais, type_op = _principale_possible(principale.libelle)
         # `types_compatibles` sans appel par opération : deux types connus doivent être égaux
         if (
@@ -234,22 +257,11 @@ def _groupes_possibles(
             or (type_op is not None and type_sage is not None and type_op != type_sage)
         ):
             continue
-        reste = cible - principale.montant
-        if reste == 0:
-            continue
-        du_jour = sommes.frais((compte, principale.date_operation))
-        commissions = [op for op in du_jour if famille_frais(op.libelle) == "commission"]
-        tvas = [op for op in du_jour if famille_frais(op.libelle) == "tva"]
-        for commission in commissions:
-            for tva in tvas:
-                if commission.montant + tva.montant != reste:
-                    continue
-                if not tva_de_la_commission(commission.montant, tva.montant):
-                    continue
-                ops = (principale, commission, tva)
-                if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
-                    continue
-                trouves.setdefault(frozenset(op.id for op in ops), ops)
+        for commission, tva in paires.get(cible - principale.montant, ()):
+            ops = (principale, commission, tva)
+            if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+                continue
+            trouves.setdefault(frozenset(op.id for op in ops), ops)
     return list(trouves.values())
 
 
@@ -353,23 +365,66 @@ def operations_couvertes(
     principale. Une paire rejetée par un utilisateur ne couvre rien. `ecart_seul` n'est plus
     utilisé (un frais seul face à une écriture n'est plus couvert)."""
     operations = list(operations)
+    frais_ids = cibles or frozenset()
     par_compte_jour: dict[tuple[int | None, date], list[Operation]] = {}
     for op in operations:
         par_compte_jour.setdefault((op.bank_account_id, op.date_operation), []).append(op)
     sommes = _SommesDuJour(par_compte_jour)
+
+    # Index (15/10/2026) : les jours où une paire commission + TVA existe (contenant un frais à
+    # contrôler), et les opérations principales de ces jours par montant. Une écriture n'y cherche
+    # que l'opération principale qui lui manque : mêmes groupes que `_groupes_possibles`, sans
+    # parcourir toutes ses candidates.
+    paires_du_jour: dict[tuple[int | None, date], dict[Decimal, list[tuple[Operation, ...]]]] = {}
+    principales: dict[tuple[int | None, date, Decimal], list[Operation]] = {}
+    for cle, ops in par_compte_jour.items():
+        table = {
+            somme: [
+                paire for paire in liste if cibles is None or any(o.id in cibles for o in paire)
+            ]
+            for somme, liste in sommes.commissions_tva(cle).items()
+        }
+        table = {somme: liste for somme, liste in table.items() if liste}
+        if not table:
+            continue
+        paires_du_jour[cle] = table
+        for op in ops:
+            frais, _ = _principale_possible(op.libelle)
+            if not frais and op.id not in frais_ids:
+                principales.setdefault((cle[0], cle[1], op.montant), []).append(op)
+
     couvertes: dict[int, int] = {}
+    if not paires_du_jour:
+        return couvertes
+    fenetre = grille.fenetre_jours
     for ecriture in ecritures:
         if ecriture.montant == 0:
             continue
-        candidats = _candidats_ecriture(ecriture, par_compte_jour, grille)
-        # Écriture sans aucune opération à contrôler parmi ses candidates : rien à chercher
-        if cibles is not None and not any(op.id in cibles for op in candidats):
-            continue
-        for ops in _groupes_possibles(ecriture, candidats, sommes, cibles or frozenset(), grille):
-            if any((op.id, ecriture.id) in paires_rejetees for op in ops):
+        compte = ecriture.bank_account_id
+        cible = -ecriture.montant
+        type_sage = type_ecriture(ecriture.libelle)
+        jours = {
+            base + timedelta(decalage)
+            for base in {ecriture.date_ecriture, ecriture.echeance or ecriture.date_ecriture}
+            for decalage in range(-fenetre, fenetre + 1)
+        }
+        for jour in sorted(jours):
+            table = paires_du_jour.get((compte, jour))
+            if not table:
                 continue
-            for op in ops:
-                couvertes.setdefault(op.id, ecriture.id)
+            for somme, paires in table.items():
+                for principale in principales.get((compte, jour, cible - somme), ()):
+                    type_op = _principale_possible(principale.libelle)[1]
+                    if type_op is not None and type_sage is not None and type_op != type_sage:
+                        continue
+                    for commission, tva in paires:
+                        ops = (principale, commission, tva)
+                        if max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+                            continue
+                        if any((op.id, ecriture.id) in paires_rejetees for op in ops):
+                            continue
+                        for op in ops:
+                            couvertes.setdefault(op.id, ecriture.id)
     return couvertes
 
 

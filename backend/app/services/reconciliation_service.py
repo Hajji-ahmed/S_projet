@@ -48,6 +48,8 @@ from app.services.reconciliation_scoring import (
     Operation,
     Resultat,
     Score,
+    _candidat,
+    _ecart_si_comparable,
     comparable,
     proposer,
     score,
@@ -340,27 +342,12 @@ def _engine(
 
     # 4. Chaque proposition est enregistrée, en attente d'une décision humaine
     for proposition in resultat.propositions:
-        tx, entry = by_tx[proposition.operation_id], by_entry[proposition.ecriture_id]
-        repo.add(
+        _enregistrer_proposition(
             db,
-            ReconciliationMatch(
-                company_id=company.id,
-                type="1-1",
-                score=proposition.score.total,
-                statut="Proposée",
-                origine="Automatique",
-                detail_score=_detail_json(proposition.score, proposition.second),
-                items=[
-                    ReconciliationMatchItem(
-                        bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
-                    ),
-                    ReconciliationMatchItem(
-                        accounting_entry_id=entry.id,
-                        montant_affecte=abs(montant_rapprochement(entry)),
-                        actif=True,
-                    ),
-                ],
-            ),
+            company,
+            by_tx[proposition.operation_id],
+            by_entry[proposition.ecriture_id],
+            proposition,
         )
     a_verifier_tx = {p.operation_id for p in resultat.propositions} | resultat.operations_ambigues
     a_verifier_ec = {p.ecriture_id for p in resultat.propositions} | resultat.ecritures_ambigues
@@ -400,6 +387,173 @@ def _engine(
     repo.set_entry_status(db, a_verifier_ec, "À vérifier")
     db.flush()
     return _Moteur(resultat, len(transactions), len(entries), len(anciennes), groupes)
+
+
+def _enregistrer_proposition(
+    db: Session,
+    company: Company,
+    tx: BankTransaction,
+    entry: AccountingEntry,
+    proposition,
+) -> None:
+    repo.add(
+        db,
+        ReconciliationMatch(
+            company_id=company.id,
+            type="1-1",
+            score=proposition.score.total,
+            statut="Proposée",
+            origine="Automatique",
+            detail_score=_detail_json(proposition.score, proposition.second),
+            items=[
+                ReconciliationMatchItem(
+                    bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
+                ),
+                ReconciliationMatchItem(
+                    accounting_entry_id=entry.id,
+                    montant_affecte=abs(montant_rapprochement(entry)),
+                    actif=True,
+                ),
+            ],
+        ),
+    )
+
+
+@dataclass
+class _Voisinage:
+    """Candidates d'un ensemble de lignes, au-dessus du seuil de proposition et hors paires
+    rejetées : opérations et écritures, par id."""
+
+    operations: dict[int, BankTransaction] = field(default_factory=dict)
+    ecritures: dict[int, AccountingEntry] = field(default_factory=dict)
+
+
+def _voisins(
+    db: Session,
+    tx_ids: set[int],
+    entry_ids: set[int],
+    regles: Grille,
+    rejetees: set[tuple[int, int]],
+) -> _Voisinage:
+    voisins = _Voisinage()
+    for tx_id in sorted(tx_ids):
+        _, _, items, seuil, _ = candidates(db, tx_id, regles=regles, rejetees=rejetees)
+        for item in items:
+            if item.score.total >= seuil and not item.rejetee:
+                voisins.ecritures[item.entry.id] = item.entry
+    for entry_id in sorted(entry_ids):
+        _, items, seuil = candidates_of_entry(db, entry_id, regles=regles, rejetees=rejetees)
+        for item in items:
+            if not item.rejetee:
+                voisins.operations[item.transaction.id] = item.transaction
+    return voisins
+
+
+def _relance_ciblee(
+    db: Session,
+    company: Company,
+    tx_ids: set[int],
+    entry_ids: set[int],
+    regles: Grille,
+    liberees: tuple[set[int], set[int]] = (set(), set()),
+) -> Resultat:
+    """Relance du moteur réduite aux lignes en concurrence avec celles qu'on vient de rapprocher
+    (16/10/2026), pour le rapprochement depuis les ambiguës : la relance du compte entier sur ±
+    la fenêtre prenait 13 s pour une seule opération.
+
+    Les lignes concernées sont les candidates des lignes rapprochées encore « À vérifier » sans
+    correspondance (elles étaient à égalité avec elles), et leurs propres candidates dans le même
+    cas (la suite de l'égalité), ainsi que les lignes `liberees` (leur proposition contenait une
+    ligne rapprochée et vient d'être rejetée). Elles sont comparées, avec les mêmes règles que le moteur, à leurs
+    candidates libres (sans correspondance active ; une ligne déjà proposée ailleurs n'est jamais
+    reprise) : une égalité les laisse ambiguës, une meilleure candidate est proposée, sinon elles
+    repassent « Non rapprochée ». Les autres lignes du compte ne bougent pas."""
+    db.flush()
+    rejetees = repo.rejected_pairs(db, company.id)
+
+    def libres_a_verifier(voisins: _Voisinage) -> tuple[set[int], set[int]]:
+        actives_tx = repo.active_matches_by_transaction(db, list(voisins.operations))
+        actives_ec = repo.active_matches_by_entry(db, list(voisins.ecritures))
+        return (
+            {
+                i
+                for i, tx in voisins.operations.items()
+                if tx.statut == "À vérifier" and i not in actives_tx
+            },
+            {
+                i
+                for i, entry in voisins.ecritures.items()
+                if entry.statut == "À vérifier" and i not in actives_ec
+            },
+        )
+
+    premiers = _voisins(db, tx_ids, entry_ids, regles, rejetees)
+    concernees_tx, concernees_ec = libres_a_verifier(premiers)
+    concernees_tx |= liberees[0] - tx_ids
+    concernees_ec |= liberees[1] - entry_ids
+    seconds = _voisins(db, concernees_tx, concernees_ec, regles, rejetees)
+    suite_tx, suite_ec = libres_a_verifier(seconds)
+    concernees_tx |= suite_tx - tx_ids
+    concernees_ec |= suite_ec - entry_ids
+    if not concernees_tx and not concernees_ec:
+        return Resultat()
+    # Contexte : les lignes concernées et toutes leurs candidates libres
+    contexte = _voisins(
+        db, concernees_tx - set(premiers.operations), concernees_ec - set(premiers.ecritures),
+        regles, rejetees,
+    )  # fmt: skip
+    operations = {**premiers.operations, **seconds.operations, **contexte.operations}
+    ecritures = {**premiers.ecritures, **seconds.ecritures, **contexte.ecritures}
+    for tx_id in concernees_tx - set(operations):
+        found = repo.get_transaction(db, tx_id)
+        if found is not None:
+            operations[tx_id] = found[0]
+    for entry_id in concernees_ec - set(ecritures):
+        entry = repo.get_entry(db, entry_id)
+        if entry is not None:
+            ecritures[entry_id] = entry
+    actives_tx = repo.active_matches_by_transaction(db, list(operations))
+    actives_ec = repo.active_matches_by_entry(db, list(ecritures))
+    frais = repo.fee_transaction_ids(db, list(operations))
+    operations = {i: tx for i, tx in operations.items() if i not in actives_tx and i not in frais}
+    ecritures = {i: entry for i, entry in ecritures.items() if i not in actives_ec}
+
+    repo.set_transaction_status(db, concernees_tx, "Non rapprochée")
+    repo.set_entry_status(db, concernees_ec, "Non rapprochée")
+    resultat = proposer(
+        [_operation(tx) for tx in operations.values()],
+        [_ecriture(entry) for entry in ecritures.values()],
+        regles,
+        rejetees,
+    )
+    retenues = [
+        p
+        for p in resultat.propositions
+        if p.operation_id in concernees_tx or p.ecriture_id in concernees_ec
+    ]
+    for proposition in retenues:
+        _enregistrer_proposition(
+            db,
+            company,
+            operations[proposition.operation_id],
+            ecritures[proposition.ecriture_id],
+            proposition,
+        )
+    resultat.propositions = retenues
+    resultat.operations_ambigues &= concernees_tx
+    resultat.ecritures_ambigues &= concernees_ec
+    repo.set_transaction_status(
+        db,
+        {p.operation_id for p in retenues} | resultat.operations_ambigues,
+        "À vérifier",
+    )
+    repo.set_entry_status(
+        db,
+        {p.ecriture_id for p in retenues} | resultat.ecritures_ambigues,
+        "À vérifier",
+    )
+    db.flush()
+    return resultat
 
 
 # --- Décisions -----------------------------------------------------------------------------------
@@ -781,6 +935,7 @@ def match_manually(
     commentaire: str | None,
     acteur_id: int,
     ip: str | None,
+    relance_ciblee: bool = False,
 ) -> ReconciliationMatch:
     """Rapprochement choisi par l'utilisateur, validé d'emblée (origine « Manuelle ») : une ou
     plusieurs opérations avec une ou plusieurs écritures (1-1, 1-N, N-1, N-N ; P13, 15/10/2026).
@@ -916,9 +1071,24 @@ def match_manually(
     snapshot = _snapshot(match)
     # Les lignes qui convoitaient les mêmes opérations ou écritures sont départagées à nouveau
     # (08/10/2026) : relance du moteur sur ce compte, autour des lignes rapprochées
-    marge = timedelta(days=regles.fenetre_jours)
-    dates = [tx.date_operation for tx in operations] + [e.date_ecriture for e in entries]
-    moteur = _engine(db, company, [account.id], min(dates) - marge, max(dates) + marge, regles)
+    # Depuis les ambiguës (16/10/2026) : seulement les lignes qui étaient en concurrence
+    if relance_ciblee:
+        liberees: tuple[set[int], set[int]] = (set(), set())
+        for match_id in remplacees:
+            remplacee = repo.get_match(db, match_id)
+            if remplacee is not None:
+                membres = _members(remplacee)
+                liberees[0].update(membres[0])
+                liberees[1].update(membres[1])
+        resultat = _relance_ciblee(
+            db, company, {tx.id for tx in operations}, {e.id for e in entries}, regles, liberees
+        )
+    else:
+        marge = timedelta(days=regles.fenetre_jours)
+        dates = [tx.date_operation for tx in operations] + [e.date_ecriture for e in entries]
+        resultat = _engine(
+            db, company, [account.id], min(dates) - marge, max(dates) + marge, regles
+        ).resultat
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -929,8 +1099,9 @@ def match_manually(
             **snapshot,
             "propositions_remplacees": sorted(set(remplacees)),
             "relance": {
-                "propositions": len(moteur.resultat.propositions),
-                "operations_ambigues": len(moteur.resultat.operations_ambigues),
+                "ciblee": relance_ciblee,
+                "propositions": len(resultat.propositions),
+                "operations_ambigues": len(resultat.operations_ambigues),
             },
         },
         ip=ip,
@@ -1183,9 +1354,16 @@ def candidates(
     tx, account = found
     regles = regles or grille(db)
     jours = [tx.date_operation] + ([tx.date_valeur] if tx.date_valeur else [])
-    fenetre = timedelta(days=max(regles.fenetre_jours, regles.fenetre_numero_jours))
+    courte = timedelta(days=regles.fenetre_jours)
+    large = timedelta(days=max(regles.fenetre_jours, regles.fenetre_numero_jours))
     entries = repo.candidate_entries(
-        db, tx, account.company_id, min(jours) - fenetre, max(jours) + fenetre
+        db,
+        tx,
+        account.company_id,
+        min(jours) - courte,
+        max(jours) + courte,
+        large_from=min(jours) - large,
+        large_to=max(jours) + large,
     )
     operation = _operation(tx)
     # Seules les écritures comparables sont lues plus loin : la fenêtre de 180 jours (même numéro)
@@ -1215,6 +1393,17 @@ def candidates(
     scored.sort(key=lambda item: (-item.score.total, item.entry.date_ecriture, item.entry.id))
     bank_code = repo.transactions_with_bank(db, {tx.id})[tx.id][1]
     return tx, bank_code, scored[:NB_CANDIDATS], regles.seuil_proposition, regles.seuil_fort
+
+
+def a_egalite(items: list, seuil: Decimal) -> list:
+    """Candidates d'une ligne ambiguë (16/10/2026) : celles au même meilleur score, au-dessus du
+    seuil et non rejetées. Une ligne n'est ambiguë que par cette égalité ; « Aucune
+    correspondance » n'écarte qu'elles."""
+    eligibles = [item for item in items if item.score.total >= seuil and not item.rejetee]
+    if not eligibles:
+        return []
+    meilleur = max(item.score.total for item in eligibles)
+    return [item for item in eligibles if item.score.total == meilleur]
 
 
 # Opérations ambiguës par page ; le total porte sur tout le filtre (08/10/2026)
@@ -1256,17 +1445,16 @@ def list_ambiguous(
         limit=PAGE_AMBIGUES,
         type_operation=type_operation,
     )
+    rejetees = repo.rejected_pairs(db, company.id)
     for tx in transactions:
-        _, bank_code, items, seuil_proposition, _ = candidates(db, tx.id)
+        _, bank_code, items, seuil_proposition, _ = candidates(
+            db, tx.id, regles=regles, rejetees=rejetees
+        )
         views.append(
             AmbiguousView(
                 transaction=tx,
                 bank_code=bank_code,
-                candidats=[
-                    item
-                    for item in items
-                    if item.score.total >= seuil_proposition and not item.rejetee
-                ],
+                candidats=a_egalite(items, seuil_proposition),
             )
         )
     return regles.seuil_fort, total, views
@@ -1320,7 +1508,7 @@ def _ecarts_operation(db: Session, tx: BankTransaction) -> list[Candidate]:
     _, _, items, seuil_proposition, _ = candidates(db, tx.id)
     # Plus aucune candidate (déjà écartées depuis l'autre côté) : la ligne repasse simplement
     # « Non rapprochée » (15/10/2026)
-    return [item for item in items if item.score.total >= seuil_proposition and not item.rejetee]
+    return a_egalite(items, seuil_proposition)
 
 
 def _liberer_ecritures_sans_candidate(db: Session, entry_ids: set[int]) -> list[int]:
@@ -1502,9 +1690,9 @@ def candidates_of_entry(
     regles: Grille | None = None,
     rejetees: set[tuple[int, int]] | None = None,
 ) -> tuple[AccountingEntry, list[CandidateOperation], Decimal]:
-    """Opérations qui pourraient correspondre à l'écriture, de la meilleure à la moins bonne : le
-    symétrique de `candidates` (même compte, sens opposé, fenêtre de dates des types). Retourne
-    aussi le seuil de proposition."""
+    """Opérations qui pourraient correspondre à l'écriture, au-dessus du seuil de proposition, de
+    la meilleure à la moins bonne : le symétrique de `candidates` (même compte, sens opposé,
+    fenêtre de dates des types). Retourne aussi le seuil de proposition."""
     entry = repo.get_entry(db, entry_id)
     if entry is None:
         raise NotFoundError("Écriture comptable introuvable.")
@@ -1522,23 +1710,30 @@ def candidates_of_entry(
         montant=-montant_rapprochement(entry),
     )
     ecriture = _ecriture(entry)
-    comparables = [
-        (tx, operation)
-        for tx in transactions
-        if comparable(operation := _operation(tx), ecriture, regles)
-    ]
+    # Seules les opérations au-dessus du seuil de proposition sont gardées (tous les appelants n'en
+    # retiennent pas d'autres) : le tri rapide du moteur écarte les autres sans calculer leur
+    # libellé (15/10/2026)
+    retenues = []
+    for tx in transactions:
+        operation = _operation(tx)
+        ecart = _ecart_si_comparable(operation, ecriture, regles)
+        if ecart is None:
+            continue
+        resultat = _candidat(operation, ecriture, regles, ecart)
+        if resultat is not None:
+            retenues.append((tx, resultat))
     if rejetees is None:
         rejetees = repo.rejected_pairs(db, entry.company_id)
-    actives = repo.active_matches_by_transaction(db, [tx.id for tx, _ in comparables])
-    codes = repo.transactions_with_bank(db, {tx.id for tx, _ in comparables})
+    actives = repo.active_matches_by_transaction(db, [tx.id for tx, _ in retenues])
+    codes = repo.transactions_with_bank(db, {tx.id for tx, _ in retenues})
     scored = []
-    for tx, operation in comparables:
+    for tx, resultat in retenues:
         active = actives.get(tx.id)
         scored.append(
             CandidateOperation(
                 transaction=tx,
                 bank_code=codes[tx.id][1],
-                score=score(operation, ecriture, regles),
+                score=resultat,
                 rejetee=(tx.id, entry.id) in rejetees,
                 proposee_ailleurs=active is not None and entry.id not in _members(active)[1],
                 actifs=regles.criteres_actifs,
@@ -1548,6 +1743,73 @@ def candidates_of_entry(
         key=lambda item: (-item.score.total, item.transaction.date_operation, item.transaction.id)
     )
     return entry, scored[:NB_CANDIDATS], regles.seuil_proposition
+
+
+def _ecritures_a_egalite(
+    db: Session,
+    entries: list[AccountingEntry],
+    regles: Grille,
+    rejetees: set[tuple[int, int]],
+) -> set[int]:
+    """Parmi ces écritures, celles qui ont au moins deux opérations candidates au même meilleur
+    score (au-dessus du seuil de proposition, hors paires rejetées) : la règle de
+    `candidates_of_entry` + `a_egalite`, avec les opérations lues en une fois par compte au lieu
+    d'une lecture par écriture (16/10/2026)."""
+    courte = timedelta(days=regles.fenetre_jours)
+    large = timedelta(days=max(regles.fenetre_jours, regles.fenetre_numero_jours))
+    par_compte: dict[int, list[AccountingEntry]] = {}
+    for entry in entries:
+        par_compte.setdefault(entry.bank_account_id, []).append(entry)
+    resultat: set[int] = set()
+    for compte_id, ecritures in par_compte.items():
+        bornes = [
+            jour
+            for entry in ecritures
+            for jour in (entry.date_ecriture, entry.echeance)
+            if jour is not None
+        ]
+        transactions = repo.transactions_comparables(
+            db, compte_id, min(bornes) - large, max(bornes) + large
+        )
+        operations = {tx.id: _operation(tx) for tx in transactions}
+        par_jour: dict[date, list[BankTransaction]] = {}
+        par_montant: dict[Decimal, list[BankTransaction]] = {}
+        for tx in transactions:
+            for jour in {tx.date_operation, tx.date_valeur} - {None}:
+                par_jour.setdefault(jour, []).append(tx)
+            par_montant.setdefault(tx.montant, []).append(tx)
+        for entry in ecritures:
+            jours = [entry.date_ecriture] + ([entry.echeance] if entry.echeance else [])
+            debut, fin = min(jours) - courte, max(jours) + courte
+            large_debut, large_fin = min(jours) - large, max(jours) + large
+            # Les opérations que lirait `repo.candidate_transactions` pour cette écriture
+            vues: dict[int, BankTransaction] = {}
+            jour = debut
+            while jour <= fin:
+                for tx in par_jour.get(jour, ()):
+                    vues[tx.id] = tx
+                jour += timedelta(days=1)
+            for tx in par_montant.get(-montant_rapprochement(entry), ()):
+                if any(
+                    j is not None and large_debut <= j <= large_fin
+                    for j in (tx.date_operation, tx.date_valeur)
+                ):
+                    vues[tx.id] = tx
+            ecriture = _ecriture(entry)
+            scores = []
+            for tx in vues.values():
+                if (tx.id, entry.id) in rejetees:
+                    continue
+                operation = operations[tx.id]
+                ecart = _ecart_si_comparable(operation, ecriture, regles)
+                if ecart is None:
+                    continue
+                score = _candidat(operation, ecriture, regles, ecart)
+                if score is not None and score.total >= regles.seuil_proposition:
+                    scores.append(score.total)
+            if len(scores) >= 2 and scores.count(max(scores)) >= 2:
+                resultat.add(entry.id)
+    return resultat
 
 
 def list_ambiguous_entries(
@@ -1562,22 +1824,31 @@ def list_ambiguous_entries(
 ) -> tuple[int, list[AmbiguousEntryView]]:
     """Écritures ambiguës de la période, chacune avec ses opérations candidates au-dessus du
     seuil de proposition (hors paires rejetées). L'utilisateur en coche une (1 → 1) ou plusieurs
-    dont la somme vaut l'écriture (N → 1)."""
+    dont la somme vaut l'écriture (N → 1).
+
+    16/10/2026 : seule une écriture qui a au moins deux opérations au même meilleur score est
+    listée. Une écriture « À vérifier » parce qu'une opération hésite entre elle et une autre
+    écriture n'a rien à choisir de son côté : elle se traite depuis « Opérations ambiguës ». Le
+    total et les pages portent sur ces seules écritures."""
     company = _company(db, company_id)
     _check_period(date_from, date_to)
-    total, entries = repo.ambiguous_entries(
+    regles = grille(db)
+    rejetees = repo.rejected_pairs(db, company.id)
+    _, a_verifier = repo.ambiguous_entries(
         db,
         company.id,
         bank_account_id=bank_account_id,
         date_from=date_from,
         date_to=date_to,
-        offset=(page - 1) * PAGE_AMBIGUES,
-        limit=PAGE_AMBIGUES,
+        offset=0,
+        limit=None,
         type_operation=type_operation,
     )
+    egalites = _ecritures_a_egalite(db, a_verifier, regles, rejetees)
+    ambigues = [entry for entry in a_verifier if entry.id in egalites]
+    total = len(ambigues)
+    entries = ambigues[(page - 1) * PAGE_AMBIGUES : page * PAGE_AMBIGUES]
     codes = repo.entries_with_bank(db, {entry.id for entry in entries})
-    regles = grille(db)
-    rejetees = repo.rejected_pairs(db, company.id)
     views = []
     for entry in entries:
         _, items, seuil = candidates_of_entry(db, entry.id, regles=regles, rejetees=rejetees)
@@ -1585,9 +1856,7 @@ def list_ambiguous_entries(
             AmbiguousEntryView(
                 entry=entry,
                 bank_code=codes[entry.id][1],
-                candidats=[
-                    item for item in items if item.score.total >= seuil and not item.rejetee
-                ],
+                candidats=a_egalite(items, seuil),
             )
         )
     return total, views
@@ -1602,7 +1871,7 @@ def _ecarts_ecriture(db: Session, entry: AccountingEntry) -> list[CandidateOpera
             "traitez-les d'abord."
         )
     _, items, seuil = candidates_of_entry(db, entry.id)
-    return [item for item in items if item.score.total >= seuil and not item.rejetee]
+    return a_egalite(items, seuil)
 
 
 def _ecarter_pour_ecriture(

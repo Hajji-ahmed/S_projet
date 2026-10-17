@@ -1,11 +1,11 @@
 """Comptabilisation des droits de timbre par SIMTIS (13/10/2026)."""
 
+import csv
+import io
 from datetime import date, timedelta
 from decimal import Decimal
-from io import BytesIO
 
 import pytest
-from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.models import AccountingEntry, AuditLog, BankTransaction, ReconciliationMatch
@@ -101,6 +101,12 @@ def exporter(client, headers, db, famille="timbres", **params):
     params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30", **params}
     # Un seul export pour toutes les familles (13/10/2026) : `famille` est ignorée
     return client.get("/api/frais/export", params=params, headers=headers)
+
+
+def lignes_csv(response) -> list[tuple[str, ...]]:
+    """Lignes du fichier CSV pour Sage (16/10/2026) : point-virgule, Windows-1252."""
+    texte = response.content.decode("cp1252")
+    return [tuple(row) for row in csv.reader(io.StringIO(texte), delimiter=";")]
 
 
 def actions(db) -> list[str]:
@@ -203,8 +209,8 @@ def test_validating_creates_the_entry_and_matches_it_at_once(client, comptable, 
 
     assert response.status_code == 200, response.text
     code = response.json()["codes"][0]
-    # N° pièce AAMMNNN (15/10/2026) : premier frais du mois
-    assert code == f"{JOUR:%y%m}001"
+    # N° pièce BANQUE AAMMNNN (16/10/2026) : premier frais BP du mois
+    assert code == f"BP{JOUR:%y%m}001"
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     assert (entry.journal, entry.compte, entry.libelle, entry.numero_piece) == (
         "5543",
@@ -265,9 +271,9 @@ def test_preparing_needs_the_permission(client, direction, db):
 # --- Export pour Sage ------------------------------------------------------------------------------
 
 
-def test_export_writes_one_credit_line_per_day_and_marks_the_entry(client, comptable, db):
-    """Option 2 du 13/10/2026 : seulement le crédit du compte bancaire, la contrepartie est
-    passée dans Sage ; aucun compte de charge n'est nécessaire."""
+def test_export_writes_a_csv_credit_line_and_marks_the_entry(client, comptable, db):
+    """16/10/2026 : un CSV au point-virgule, Référence vide ; 17/10/2026 : le timbre au crédit de
+    61671, sans ligne banque."""
     compte = bp(db, compte_timbre=None)
     timbres_du_jour(db, compte)
     code = valider(client, comptable, db, (compte, JOUR)).json()["codes"][0]
@@ -275,7 +281,9 @@ def test_export_writes_one_credit_line_per_day_and_marks_the_entry(client, compt
     response = exporter(client, comptable, db)
 
     assert response.status_code == 200, response.text
-    rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
+    assert response.headers["content-type"].startswith("text/csv")
+    assert ".csv" in response.headers["content-disposition"]
+    rows = lignes_csv(response)
     # Format d'import paramétrable de Sage (15/10/2026)
     assert rows[0] == (
         "* Date de pièce",
@@ -294,13 +302,11 @@ def test_export_writes_one_credit_line_per_day_and_marks_the_entry(client, compt
         "Cours de la devise",
         "Code ISO devise",
     )
-    [ligne] = rows[1:]
-    assert ligne[0].date() == JOUR
-    assert ligne[1:8] == (code, "5543", "55410003", None, "DT D'ENREGISTREMENT", 202, "Crédit")
-    # Référence = code de rapprochement (15/10/2026), les autres colonnes facultatives vides
-    assert ligne[8:10] == (None, None)
-    assert ligne[10].startswith("BP-")
-    assert ligne[11:] == (None,) * 4
+    vides = ("",) * 7
+    assert rows[1:] == [
+        ("23/04/2026", code, "5543", "61671", "", "DT D'ENREGISTREMENT", "202,00", "Crédit")
+        + vides,
+    ]
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     db.refresh(entry)
     assert entry.exportee_le is not None
@@ -497,13 +503,13 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
 
     export = exporter(client, comptable, db, "commissions")
     assert export.status_code == 200, export.text
-    rows = list(load_workbook(BytesIO(export.content)).active.iter_rows(values_only=True))
-    # Une ligne par type, toutes au crédit du compte bancaire
+    rows = lignes_csv(export)
+    # Une ligne par type au crédit de son compte, sans ligne banque (17/10/2026)
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows[1:]] == [
-        ("55410003", code, "COM", "Crédit", 50),
-        ("55410003", code, "TVA COM", "Crédit", 5),
-        ("55410003", code, "COM", "Crédit", 10),
-        ("55410003", code, "TVA COM", "Crédit", 1),
+        ("61714000", code, "COM", "Crédit", "50,00"),
+        ("34552142", code, "TVA COM", "Crédit", "5,00"),
+        ("61714000", code, "COM", "Crédit", "10,00"),
+        ("34552142", code, "TVA COM", "Crédit", "1,00"),
     ]
 
 
@@ -546,10 +552,10 @@ def test_lines_follow_the_general_ledger_with_one_line_per_type(client, comptabl
     assert [
         (ligne["type"], ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in com["lignes"]
     ] == [
-        ("commission", "55410003", None, "50.00"),
-        ("tva", "55410003", None, "5.00"),
-        ("commission_effet", "55410003", None, "10.00"),
-        ("tva_commission_effet", "55410003", None, "1.00"),
+        ("commission", "61714000", None, "50.00"),
+        ("tva", "34552142", None, "5.00"),
+        ("commission_effet", "61714000", None, "10.00"),
+        ("tva_commission_effet", "34552142", None, "1.00"),
     ]
     assert [(ligne["type"], ligne["debit"], ligne["credit"]) for ligne in timbre["lignes"]] == [
         ("timbre", None, "202.00"),
@@ -586,10 +592,10 @@ def test_one_export_file_holds_stamps_and_commissions(client, comptable, db):
     response = exporter(client, comptable, db)
 
     assert response.status_code == 200, response.text
-    rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
+    rows = lignes_csv(response)
     assert [r[5] for r in rows[1:]] == ["DT D'ENREGISTREMENT", "COM", "TVA COM", "COM", "TVA COM"]
     assert all(r[7] == "Crédit" for r in rows[1:])
-    assert sum(r[6] for r in rows[1:]) == 268
+    assert sum(Decimal(r[6].replace(",", ".")) for r in rows[1:]) == 268
     assert exporter(client, comptable, db).status_code == 409
 
 
@@ -689,14 +695,10 @@ def test_a_manual_entry_with_vat_is_matched_and_exported_on_two_lines(client, co
         ("TVA", None, "15.00"),
     ]
 
-    rows = list(
-        load_workbook(BytesIO(exporter(client, comptable, db).content)).active.iter_rows(
-            values_only=True
-        )
-    )
-    assert [(r[1], r[5], r[7], r[6]) for r in rows[1:]] == [
-        (code, "COM RTGS", "Crédit", 150),
-        (code, "TVA COM RTGS", "Crédit", 15),
+    rows = lignes_csv(exporter(client, comptable, db))
+    assert [(r[1], r[3], r[5], r[7], r[6]) for r in rows[1:]] == [
+        (code, "61714000", "COM RTGS", "Crédit", "150,00"),
+        (code, "34552142", "TVA COM RTGS", "Crédit", "15,00"),
     ]
 
 
@@ -717,16 +719,14 @@ def test_a_manual_entry_without_vat_has_one_line_and_a_refund_goes_to_the_debit(
         Decimal("-151110.79"),
     )
     ecrite = lire(client, comptable, db, None).json()["ecritures"][0]
-    assert [(ligne["debit"], ligne["credit"]) for ligne in ecrite["lignes"]] == [
-        ("151110.79", None)
+    assert [(ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in ecrite["lignes"]] == [
+        ("63112000", "151110.79", None),
     ]
-    # Sage : montant positif et sens « Débit » pour un remboursement (15/10/2026)
-    rows = list(
-        load_workbook(BytesIO(exporter(client, comptable, db).content)).active.iter_rows(
-            values_only=True
-        )
-    )
-    assert [(r[5], r[6], r[7]) for r in rows[1:]] == [("AGIOS REMBOURSES", 151110.79, "Débit")]
+    # Sage : montant positif ; un remboursement d'agios BP au débit de 63112000 (17/10/2026)
+    rows = lignes_csv(exporter(client, comptable, db))
+    assert [(r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+        ("63112000", "AGIOS REMBOURSES", "151110,79", "Débit"),
+    ]
 
 
 def test_fees_of_a_currency_account_are_not_exported_yet(client, comptable, db):
@@ -964,10 +964,13 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     ]
     [ecriture_frais] = frais["propositions"]
     assert (ecriture_frais["libelle"], ecriture_frais["total"]) == ("FRAIS", "77.50")
-    assert [(ligne["type_libelle"], ligne["credit"]) for ligne in ecriture_frais["lignes"]] == [
-        ("Frais récupérés", "25.00"),
-        ("TVA frais récupérés", "2.50"),
-        ("Timbre frais récupérés", "50.00"),
+    assert [
+        (ligne["type_libelle"], ligne["compte"], ligne["credit"])
+        for ligne in ecriture_frais["lignes"]
+    ] == [
+        ("Frais récupérés", "61473000", "25.00"),
+        ("TVA frais récupérés", "34552142", "2.50"),
+        ("Timbre frais récupérés", "61671", "50.00"),
     ]
     assert [a["id"] for a in tous["autres_frais"]] == [remboursement.id]
 
@@ -989,19 +992,15 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     ]
     assert "comptabilisation_frais" in actions(db)
 
-    rows = list(
-        load_workbook(BytesIO(exporter(client, comptable, db).content)).active.iter_rows(
-            values_only=True
-        )
-    )
-    assert [(r[1], r[5], r[6]) for r in rows[1:]] == [
-        (code_com, "COM", 150),
-        (code_com, "TVA COM", 15),
-        (code_com, "COM", 10),
-        (code_com, "TVA COM", 1),
-        (code_frais, "FRAIS", 25),
-        (code_frais, "TVA FRAIS", 2.5),
-        (code_frais, "FRAIS", 50),
+    rows = lignes_csv(exporter(client, comptable, db))
+    assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+        (code_com, "61473000", "COM", "150,00", "Crédit"),
+        (code_com, "34552142", "TVA COM", "15,00", "Crédit"),
+        (code_com, "61473000", "COM", "10,00", "Crédit"),
+        (code_com, "34552142", "TVA COM", "1,00", "Crédit"),
+        (code_frais, "61473000", "FRAIS", "25,00", "Crédit"),
+        (code_frais, "34552142", "TVA FRAIS", "2,50", "Crédit"),
+        (code_frais, "61671", "FRAIS", "50,00", "Crédit"),
     ]
     # Même libellé à l'écran (14/10/2026)
     assert [ligne["libelle"] for ligne in ecriture_frais["lignes"]] == [
@@ -1019,14 +1018,14 @@ def test_a_day_with_a_sage_frais_entry_is_not_proposed(client, comptable, db):
     assert lire(client, comptable, db, "frais").json()["propositions"] == []
 
 
-# --- N° de pièce AAMMNNN (15/10/2026) --------------------------------------------------------------
+# --- N° de pièce BANQUE AAMMNNN (16/10/2026) -----------------------------------------------------
 
 
-def test_a_piece_number_is_year_month_and_three_digits():
-    assert numero_piece(date(2026, 10, 3), 18) == "2610018"
-    assert numero_piece(date(2027, 1, 31), 1) == "2701001"
+def test_a_piece_number_is_bank_year_month_and_three_digits():
+    assert numero_piece("BP", date(2026, 10, 3), 123) == "BP2610123"
+    assert numero_piece("AWB", date(2027, 1, 31), 1) == "AWB2701001"
     with pytest.raises(ConflictError, match="épuisé"):
-        numero_piece(date(2026, 10, 3), 1000)
+        numero_piece("BP", date(2026, 10, 3), 1000)
 
 
 def test_piece_numbers_follow_each_other_within_a_month_and_restart_the_next(client, comptable, db):
@@ -1042,7 +1041,22 @@ def test_piece_numbers_follow_each_other_within_a_month_and_restart_the_next(cli
     ]
 
     assert pieces == [
-        f"{JOUR:%y%m}001",
-        f"{JOUR:%y%m}002",
-        f"{mois_suivant:%y%m}001",
+        f"BP{JOUR:%y%m}001",
+        f"BP{JOUR:%y%m}002",
+        f"BP{mois_suivant:%y%m}001",
     ]
+
+
+def test_each_bank_has_its_own_piece_counter(client, comptable, db):
+    compte = bp(db)
+    awb = account(db, bank_code="AWB")
+    awb.journal_sage = "5141"
+    awb.compte_comptable = "55410001"
+    db.flush()
+    timbres_du_jour(db, compte)
+    timbres_du_jour(db, awb)
+
+    response = valider(client, comptable, db, (compte, JOUR), (awb, JOUR))
+
+    assert response.status_code == 200, response.text
+    assert sorted(response.json()["codes"]) == [f"AWB{JOUR:%y%m}001", f"BP{JOUR:%y%m}001"]

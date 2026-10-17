@@ -31,7 +31,7 @@ router = APIRouter(prefix="/frais", tags=["frais"])
 
 can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
 can_prepare = require_permission(PermissionCode.ACCOUNTING_PREPARE)
-XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CSV = "text/csv; charset=windows-1252"
 
 DateFrom = Annotated[date | None, Query(alias="from")]
 DateTo = Annotated[date | None, Query(alias="to")]
@@ -55,7 +55,7 @@ def supprimer(
 @router.get(
     "/export",
     response_class=Response,
-    responses={200: {"content": {XLSX: {}}, "description": "Écritures à intégrer dans Sage"}},
+    responses={200: {"content": {CSV: {}}, "description": "Écritures à intégrer dans Sage"}},
 )
 def exporter(
     request: Request,
@@ -67,8 +67,8 @@ def exporter(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_prepare),
 ) -> Response:
-    """UN fichier Excel pour Sage, droits de timbre et commissions ; les écritures exportées ne se
-    suppriment plus dans SIMTIS."""
+    """UN fichier CSV pour Sage (16/10/2026), toutes familles de frais ; les écritures exportées
+    ne se suppriment plus dans SIMTIS."""
     nom, content, _ = frais_service.exporter(
         db,
         company_id,
@@ -81,7 +81,7 @@ def exporter(
     )
     return Response(
         content=content,
-        media_type=XLSX,
+        media_type=CSV,
         headers={"Content-Disposition": f'attachment; filename="{nom}"'},
     )
 

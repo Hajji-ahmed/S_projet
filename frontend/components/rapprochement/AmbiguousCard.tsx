@@ -6,6 +6,7 @@ import { BankLabel } from "@/components/banks/BankLabel";
 import { ScoreBadge } from "@/components/rapprochement/Score";
 import { Button } from "@/components/ui/Button";
 import { formatDate } from "@/lib/balances";
+import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
   montantEcriture,
@@ -25,6 +26,8 @@ type AmbiguousCardProps = {
   canValidate: boolean;
   canSignal: boolean;
   busy: boolean;
+  /** Rapprochement de cette carte en cours (16/10/2026) : carte grisée, bouton « … ». */
+  enCours?: boolean;
   /** Rapprochement manuel avec l'écriture choisie (validé d'emblée, tracé). */
   onChoose: (candidat: Candidat) => void;
   onSignal: () => void;
@@ -46,6 +49,7 @@ export function AmbiguousCard({
   canValidate,
   canSignal,
   busy,
+  enCours = false,
   onChoose,
   onSignal,
   onOpen,
@@ -56,7 +60,11 @@ export function AmbiguousCard({
   return (
     <article
       aria-label={`Opération ambiguë : ${operation.libelle}`}
-      className="rounded-card border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis"
+      aria-busy={enCours}
+      className={cn(
+        "rounded-card border border-l-4 border-simtis-border border-l-simtis-warning bg-simtis-card p-4 shadow-simtis transition-opacity",
+        enCours && "opacity-60",
+      )}
     >
       {selection && (
         <label className="mb-3 flex w-fit cursor-pointer items-center gap-2 text-xs font-medium text-simtis-muted">
@@ -157,7 +165,7 @@ export function AmbiguousCard({
                   />
                   {canValidate && (
                     <Button icon={Link2} disabled={busy || !ok} onClick={() => onChoose(candidat)}>
-                      Rapprocher
+                      {enCours ? "Rapprochement…" : "Rapprocher"}
                     </Button>
                   )}
                 </div>

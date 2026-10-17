@@ -390,6 +390,9 @@ class ManuelIn(BaseModel):
     transaction_ids: list[int] | None = None
     ecriture_ids: list[int] | None = None
     commentaire: Commentaire | None = None
+    # Rapprochement depuis une carte ambiguë (16/10/2026) : le moteur ne refait que les lignes
+    # qui étaient en concurrence avec celles-ci
+    relance_ciblee: bool = False
 
     @model_validator(mode="after")
     def _une_seule_forme(self) -> "ManuelIn":
