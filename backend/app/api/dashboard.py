@@ -23,13 +23,16 @@ def lire(
     company_id: Annotated[int, Query(description="Société affichée")],
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
+    bank_id: Annotated[int | None, Query(description="Banque affichée ; vide = toutes")] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> DashboardOut:
     """KPI, évolution des soldes, frais, comptes, dernières opérations et alertes de la période
     (par défaut, le mois en cours)."""
     return DashboardOut.of(
-        dashboard_service.dashboard(db, company_id, date_from=date_from, date_to=date_to)
+        dashboard_service.dashboard(
+            db, company_id, date_from=date_from, date_to=date_to, bank_id=bank_id
+        )
     )
 
 
@@ -40,5 +43,5 @@ def lire_alertes(
     _user: CurrentUser = Depends(can_view),
 ) -> AlertesOut:
     """Alertes du mois en cours : la cloche de l'en-tête."""
-    vue = dashboard_service.dashboard(db, company_id)
+    vue = dashboard_service.dashboard(db, company_id, avec_taches=False)
     return AlertesOut(alertes=[AlerteOut.of(alerte) for alerte in vue.alertes])

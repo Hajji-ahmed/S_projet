@@ -1,5 +1,5 @@
 import { fromCents, toCents } from "@/lib/statementLines";
-import type { PropositionTimbres } from "@/types/frais";
+import type { LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
 
 /** Identifiant d'une écriture proposée : sa famille, un compte et un jour. */
 export function cleJour(
@@ -54,4 +54,49 @@ export function ventilerTva(total: string, taux: string): { ht: string; tva: str
   const denominateur = base + centiemes;
   const ht = (BigInt(2) * ttc * base + denominateur) / (BigInt(2) * denominateur);
   return { ht: fromCents(ht), tva: fromCents(ttc - ht) };
+}
+
+/** Lignes d'une proposition, modifiables (19/10/2026) : montant positif et son sens. */
+export function lignesSaisies(lignes: LigneGL[]): LigneSaisie[] {
+  return lignes.map((ligne) => ({
+    compte: ligne.compte ?? "",
+    libelle: ligne.libelle,
+    montant: ligne.credit ?? ligne.debit ?? "0.00",
+    sens: ligne.credit ? "Crédit" : "Débit",
+  }));
+}
+
+/**
+ * Contrôle des lignes saisies, comme le serveur : chacune a un compte, un libellé et un montant
+ * positif, et crédits − débits = total des opérations. `ecart` = total − lignes, en texte exact.
+ */
+export function etatLignes(
+  lignes: LigneSaisie[],
+  total: string,
+): { somme: string; ecart: string; erreur: string | null } {
+  let somme = BigInt(0);
+  let erreur: string | null = null;
+  if (lignes.length === 0) erreur = "L'écriture doit garder au moins une ligne.";
+  for (const ligne of lignes) {
+    const montant = /^\d+(\.\d{1,2})?$/.test(ligne.montant) ? toCents(ligne.montant) : null;
+    if (!ligne.compte.trim()) erreur ??= "Chaque ligne a un N° compte général.";
+    else if (ligne.compte.replace(/\s/g, "").length > 20)
+      erreur ??= "Un N° compte général a 20 caractères au plus.";
+    if (!ligne.libelle.trim()) erreur ??= "Chaque ligne a un libellé.";
+    else if (ligne.libelle.trim().length > 60) erreur ??= "Un libellé a 60 caractères au plus.";
+    if (montant === null || montant <= BigInt(0)) {
+      erreur ??= "Chaque montant est positif, au centime près.";
+      continue;
+    }
+    somme += ligne.sens === "Crédit" ? montant : -montant;
+  }
+  const ecart = toCents(total) - somme;
+  if (!erreur && ecart !== BigInt(0))
+    erreur = "Le total des lignes doit être égal à la somme des opérations.";
+  return { somme: fromCents(somme), ecart: fromCents(ecart), erreur };
+}
+
+/** Libellé d'une ligne quand seul le libellé de l'écriture change : « TVA … » pour la TVA. */
+export function libelleModifie(ligne: LigneGL, libelleOrigine: string, libelle: string): string {
+  return ligne.libelle === `TVA ${libelleOrigine}` ? `TVA ${libelle}` : libelle;
 }

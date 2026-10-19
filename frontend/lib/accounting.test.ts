@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { accountingForm, entriesQuery, pageCount } from "./accounting";
+import {
+  OPERATION_POSSIBLE,
+  accountingForm,
+  entriesQuery,
+  pageCount,
+  statutEcritures,
+} from "./accounting";
 
 describe("entriesQuery", () => {
   it("n'envoie que les filtres renseignés, la page toujours", () => {
@@ -58,5 +64,26 @@ describe("accountingForm, lignes cochées", () => {
     expect(form.get("lignes_choisies")).toBe("[2,9]");
     expect(form.get("garder_doublons")).toBeNull();
     expect(form.get("ecarter_erreurs")).toBeNull();
+  });
+});
+
+describe("statutEcritures (19/10/2026)", () => {
+  it("« Non rapprochée » ne garde que les écritures sans opération possible", () => {
+    expect(statutEcritures("Non rapprochée")).toEqual({
+      statut: "Non rapprochée",
+      operationPossible: false,
+    });
+    expect(statutEcritures(OPERATION_POSSIBLE)).toEqual({
+      statut: "Non rapprochée",
+      operationPossible: true,
+    });
+    expect(statutEcritures("Rapprochée")).toEqual({ statut: "Rapprochée" });
+    expect(statutEcritures("")).toEqual({ statut: undefined });
+  });
+
+  it("envoie operation_possible à l'API", () => {
+    expect(entriesQuery(1, { page: 1, operationPossible: false })).toBe(
+      "?company_id=1&operation_possible=false&page=1",
+    );
   });
 });

@@ -72,8 +72,12 @@ def entries_query(
     statut: str | None = None,
     q: str | None = None,
     type_operation: str | None = None,
+    operation_possible: bool | None = None,
+    fenetre_jours: int = 10,
 ) -> Select:
-    """Écritures d'UNE société, filtrées (sans ordre ni pagination)."""
+    """Écritures d'UNE société, filtrées (sans ordre ni pagination). `operation_possible`
+    (19/10/2026) : True = une opération bancaire libre au montant opposé existe dans la fenêtre,
+    False = aucune (écriture sans banque), None = pas de filtre."""
     query = select(AccountingEntry).where(AccountingEntry.company_id == company_id)
     if bank_account_id is not None:
         query = query.where(AccountingEntry.bank_account_id == bank_account_id)
@@ -89,6 +93,9 @@ def entries_query(
                 AccountingEntry.libelle, TYPES_SAGE, type_operation
             )
         )
+    if operation_possible is not None:
+        existe = reconciliation_repository.operation_possible(fenetre_jours)
+        query = query.where(existe if operation_possible else ~existe)
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
         columns = (

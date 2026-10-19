@@ -224,3 +224,45 @@ def test_a_fee_rise_alert_is_written_the_french_way():
     )
 
     assert alerte.message == "Frais bancaires en hausse (+12,5 %)"
+
+
+# --- Onglets Suivi / Indicateurs et filtre banque (19/10/2026) ------------------------------------
+
+
+def test_the_bank_filter_keeps_only_that_bank(client, comptable, db):
+    awb = account(db)
+    bmci = account(db, bank_code="BMCI")
+    operation(
+        db, awb, montant="1000", jour=date(2026, 9, 5), libelle="VIR A", solde=Decimal("1000")
+    )
+    operation(db, bmci, montant="200", jour=date(2026, 9, 6), libelle="VIR B", solde=Decimal("200"))
+    operation(db, bmci, montant="-15", jour=date(2026, 9, 7), libelle="AGIOS BANCAIRES")
+
+    tous = lire(client, comptable, db).json()
+    seul = lire(client, comptable, db, bank_id=str(bmci.bank_id)).json()
+
+    assert tous["solde_total"]["valeur"] == "1200.00"
+    assert [b["code"] for b in tous["banques"]] == ["AWB", "BMCI"]
+    assert seul["bank_id"] == bmci.bank_id
+    assert [b["code"] for b in seul["banques_societe"]] == ["AWB", "BMCI"]
+    assert seul["solde_total"]["valeur"] == "200.00"
+    assert seul["encaissements"]["valeur"] == "200.00"
+    assert [c["bank_code"] for c in seul["comptes"]] == ["BMCI"]
+    assert [(b["code"], b["total"], b["frais"]) for b in seul["banques"]] == [("BMCI", 2, "15.00")]
+    assert seul["taches"]["a_comptabiliser"] == 1
+
+
+def test_the_tasks_count_strong_and_weak_proposals(client, comptable, db):
+    from tests.test_reconciliation_api import ecriture, run
+
+    compte = account(db)
+    operation(db, compte, jour=date(2026, 9, 24))
+    ecriture(db, compte, jour=date(2026, 9, 24))
+    operation(db, compte, montant="700", jour=date(2026, 9, 10), libelle="VIR XYZ")
+    ecriture(db, compte, montant="-700", jour=date(2026, 9, 14), libelle="Divers", numero_piece="Z")
+    assert run(client, comptable, db).status_code == 200
+
+    taches = lire(client, comptable, db).json()["taches"]
+
+    assert (taches["propositions_fortes"], taches["propositions_a_verifier"]) == (1, 1)
+    assert (taches["operations_ambigues"], taches["ecritures_ambigues"]) == (0, 0)

@@ -1060,3 +1060,127 @@ def test_each_bank_has_its_own_piece_counter(client, comptable, db):
 
     assert response.status_code == 200, response.text
     assert sorted(response.json()["codes"]) == [f"AWB{JOUR:%y%m}001", f"BP{JOUR:%y%m}001"]
+
+
+# --- Propositions modifiées ou écartées (19/10/2026) ----------------------------------------------
+
+
+def valider_modifie(client, headers, db, compte, **modif):
+    body = {
+        "company_id": company(db).id,
+        "jours": [{"famille": "timbres", "bank_account_id": compte.id, "date": str(JOUR), **modif}],
+    }
+    return client.post("/api/frais/valider", json=body, headers=headers)
+
+
+def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, comptable, db):
+    compte = bp(db)
+    timbres_du_jour(db, compte)
+    lignes = [
+        {"compte": "61671", "libelle": "DT VERSEMENTS", "montant": "2.00", "sens": "Crédit"},
+        {"compte": "61473000", "libelle": "DT REMISE LCN", "montant": "200.00", "sens": "Crédit"},
+    ]
+
+    response = valider_modifie(
+        client,
+        comptable,
+        db,
+        compte,
+        libelle="dt avril",
+        date_ecriture=str(JOUR + timedelta(days=2)),
+        lignes=lignes,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["codes"] == [f"BP{JOUR:%y%m}001"]
+    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
+    assert (entry.libelle, entry.date_ecriture, entry.montant) == (
+        "DT AVRIL",
+        JOUR + timedelta(days=2),
+        Decimal("202.00"),
+    )
+    [ecrite] = lire(client, comptable, db).json()["ecritures"]
+    assert ecrite["modifiee"] is True
+    assert [(g["compte"], g["libelle"], g["credit"]) for g in ecrite["lignes"]] == [
+        ("61671", "DT VERSEMENTS", "2.00"),
+        ("61473000", "DT REMISE LCN", "200.00"),
+    ]
+    rows = lignes_csv(exporter(client, comptable, db))
+    assert [(r[0], r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+        ("25/04/2026", "61671", "DT VERSEMENTS", "2,00", "Crédit"),
+        ("25/04/2026", "61473000", "DT REMISE LCN", "200,00", "Crédit"),
+    ]
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "comptabilisation_timbres"))
+    assert audit.nouvelle_valeur["modifiee"] is True
+
+
+def test_changed_lines_must_make_the_total_and_the_date_stay_in_bounds(client, comptable, db):
+    compte = bp(db)
+    timbres_du_jour(db, compte)
+    faux = [{"compte": "61671", "libelle": "DT", "montant": "200.00", "sens": "Crédit"}]
+
+    total = valider_modifie(client, comptable, db, compte, lignes=faux)
+    avant = valider_modifie(
+        client, comptable, db, compte, date_ecriture=str(JOUR - timedelta(days=1))
+    )
+
+    assert total.status_code == 409
+    assert "écart 2.00" in total.json()["detail"]
+    assert avant.status_code == 409
+    assert db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS")) is None
+
+
+def test_a_dismissed_day_goes_to_the_fees_booked_by_hand_until_proposed_again(
+    client, comptable, direction, db
+):
+    compte = bp(db)
+    timbres = timbres_du_jour(db, compte)
+    jour = {"famille": "timbres", "bank_account_id": compte.id, "date": str(JOUR)}
+    body = {"company_id": company(db).id, "jours": [jour], "motif": "Déjà payé autrement"}
+
+    assert client.post("/api/frais/ecarter", json=body, headers=direction).status_code == 403
+    response = client.post("/api/frais/ecarter", json=body, headers=comptable)
+
+    assert response.status_code == 200, response.text
+    tableau = lire(client, comptable, db, None).json()
+    assert tableau["propositions"] == []
+    assert {a["id"] for a in tableau["autres_frais"]} == {tx.id for tx in timbres}
+    [ecarte] = tableau["ecartes"]
+    assert (ecarte["famille"], ecarte["date"], ecarte["motif"]) == (
+        "timbres",
+        str(JOUR),
+        "Déjà payé autrement",
+    )
+    # Deux fois : la journée n'est plus proposée
+    assert client.post("/api/frais/ecarter", json=body, headers=comptable).status_code == 409
+    assert manuelle(client, comptable, db, timbres, libelle="DT").status_code == 200
+
+    # Reproposer : plus rien à proposer (les timbres sont passés à la main), la ligne disparaît
+    retour = client.post(
+        "/api/frais/reproposer",
+        json={"company_id": company(db).id, "jours": [jour]},
+        headers=comptable,
+    )
+    assert retour.status_code == 200
+    assert lire(client, comptable, db, None).json()["ecartes"] == []
+    assert "ecartement_frais" in actions(db) and "reproposition_frais" in actions(db)
+
+
+def test_a_dismissed_day_comes_back_when_proposed_again(client, comptable, db):
+    compte = bp(db)
+    timbres_du_jour(db, compte)
+    jour = {"famille": "timbres", "bank_account_id": compte.id, "date": str(JOUR)}
+    client.post(
+        "/api/frais/ecarter",
+        json={"company_id": company(db).id, "jours": [jour]},
+        headers=comptable,
+    )
+
+    client.post(
+        "/api/frais/reproposer",
+        json={"company_id": company(db).id, "jours": [jour]},
+        headers=comptable,
+    )
+
+    [proposition] = lire(client, comptable, db).json()["propositions"]
+    assert proposition["total"] == "202.00"

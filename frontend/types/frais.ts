@@ -67,6 +67,36 @@ export type EcritureFrais = {
   nb_operations: number;
   exportee_le: string | null;
   lignes: LigneGL[];
+  /** Libellé, date ou lignes changés avant la validation (19/10/2026). */
+  modifiee: boolean;
+};
+
+/** Ligne saisie d'une proposition (19/10/2026) : montant positif et son sens. */
+export type LigneSaisie = {
+  compte: string;
+  libelle: string;
+  montant: string;
+  sens: "Crédit" | "Débit";
+};
+
+/** Changements apportés à une proposition avant sa validation (19/10/2026). */
+export type ModificationFrais = {
+  libelle?: string;
+  date_ecriture?: string;
+  /** Absent : les lignes calculées par SIMTIS. */
+  lignes?: LigneSaisie[];
+};
+
+/** Journée écartée de la comptabilisation automatique (19/10/2026). */
+export type JourEcarte = {
+  famille: FamilleFrais;
+  famille_libelle: string;
+  bank_account_id: number;
+  bank_code: string;
+  bank_logo: string | null;
+  date: string;
+  motif: string | null;
+  ecarte_le: string;
 };
 
 /** Frais à comptabiliser à la main : une opération du relevé (13/10/2026). */
@@ -106,6 +136,8 @@ export type Timbres = {
   propositions: PropositionTimbres[];
   total_propositions: string;
   ecritures: EcritureFrais[];
+  /** Journées écartées de la comptabilisation automatique (19/10/2026). */
+  ecartes?: JourEcarte[];
 };
 
 export type ValidationTimbres = {

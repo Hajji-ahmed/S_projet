@@ -1,9 +1,20 @@
 "use client";
 
-import { Check, ChevronDown, ChevronRight, Landmark, PenLine, Trash2 } from "lucide-react";
+import {
+  Ban,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Landmark,
+  Pencil,
+  PenLine,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { EditFraisModal } from "@/components/rapprochement/EditFraisModal";
 import { ManualFeeModal } from "@/components/rapprochement/ManualFeeModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -16,11 +27,24 @@ import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { cleJour, selectionTimbres, sommeMontants } from "@/lib/frais";
+import { cleJour, libelleModifie, selectionTimbres, sommeMontants } from "@/lib/frais";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
 import { formatDateTime } from "@/lib/statements";
-import { listFrais, supprimerEcritureFrais, validerFrais } from "@/services/frais";
-import type { EcritureFrais, LigneGL, Timbre, Timbres } from "@/types/frais";
+import {
+  ecarterFrais,
+  listFrais,
+  reproposerFrais,
+  supprimerEcritureFrais,
+  validerFrais,
+} from "@/services/frais";
+import type {
+  EcritureFrais,
+  LigneGL,
+  ModificationFrais,
+  PropositionTimbres,
+  Timbre,
+  Timbres,
+} from "@/types/frais";
 
 type FraisCardProps = {
   companyId: number;
@@ -75,6 +99,11 @@ export function FraisCard({
   const [suppression, setSuppression] = useState<EcritureFrais | null>(null);
   const [motif, setMotif] = useState("");
   const [modalError, setModalError] = useState<string | null>(null);
+  // Propositions modifiées avant validation (19/10/2026), par clé de jour ; remises à zéro au
+  // rechargement de la liste
+  const [modifs, setModifs] = useState<Map<string, ModificationFrais>>(new Map());
+  const [edition, setEdition] = useState<PropositionTimbres | null>(null);
+  const [ecartement, setEcartement] = useState<PropositionTimbres | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +114,7 @@ export function FraisCard({
         // Toutes les écritures proposées sont cochées par défaut
         setSelection(new Set(result.propositions.map(cleJour)));
         setManuels(new Set());
+        setModifs(new Map());
         setState("ready");
         onAExporter(result.ecritures.filter((item) => !item.exportee_le).length);
       },
@@ -119,6 +149,7 @@ export function FraisCard({
         famille: item.famille,
         bank_account_id: item.bank_account_id,
         date: item.date,
+        ...modifs.get(cleJour(item)),
       }));
     setBusy(true);
     try {
@@ -129,6 +160,47 @@ export function FraisCard({
       );
     } catch (error) {
       toast(error instanceof ApiError ? error.message : "La comptabilisation a échoué.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmerEcartement() {
+    if (!ecartement) return;
+    setBusy(true);
+    setModalError(null);
+    try {
+      await ecarterFrais(
+        companyId,
+        [
+          {
+            famille: ecartement.famille,
+            bank_account_id: ecartement.bank_account_id,
+            date: ecartement.date,
+          },
+        ],
+        motif,
+      );
+      setEcartement(null);
+      onChanged("Proposition écartée : ses frais sont à passer à la main.");
+    } catch (error) {
+      setModalError(error instanceof ApiError ? error.message : "L'écartement a échoué.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reproposer(jour: {
+    famille: PropositionTimbres["famille"];
+    bank_account_id: number;
+    date: string;
+  }) {
+    setBusy(true);
+    try {
+      await reproposerFrais(companyId, [jour]);
+      onChanged("Journée proposée de nouveau.");
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "L'opération a échoué.", "error");
     } finally {
       setBusy(false);
     }
@@ -196,20 +268,24 @@ export function FraisCard({
             {propositions.length === 0 ? (
               <Vide>Aucun frais à comptabiliser sur cette période.</Vide>
             ) : (
-              <GrandLivre avecCase={canPrepare} fin={["Opérations"]}>
+              <GrandLivre
+                avecCase={canPrepare}
+                fin={canPrepare ? ["Opérations", "Actions"] : ["Opérations"]}
+              >
                 {propositions.map((item) => {
                   const cle = cleJour(item);
                   const label = `${item.libelle} du ${formatDate(item.date)} ${item.bank_code}`;
                   const open = ouverts.has(cle);
                   const Chevron = open ? ChevronDown : ChevronRight;
+                  const modif = modifs.get(cle);
                   return (
                     <Ecriture
                       key={cle}
-                      famille={item.famille}
+                      famille={modif?.lignes ? "manuelle" : item.famille}
                       journal={item.journal}
-                      date={item.date}
+                      date={modif?.date_ecriture ?? item.date}
                       piece={null}
-                      lignes={item.lignes}
+                      lignes={lignesAffichees(item, modif)}
                       nbOperations={item.nb_operations}
                       case={
                         canPrepare ? (
@@ -233,6 +309,39 @@ export function FraisCard({
                           <Chevron className="h-4 w-4" aria-hidden />
                           {item.nb_operations}
                         </button>,
+                        ...(canPrepare
+                          ? [
+                              <span key="actions" className="flex flex-wrap items-center gap-1">
+                                {modif && (
+                                  <span className="rounded-full bg-simtis-info-bg px-2 py-0.5 text-xs font-medium text-simtis-info-fg">
+                                    modifiée
+                                  </span>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  icon={Pencil}
+                                  disabled={busy}
+                                  aria-label={`Modifier ${label}`}
+                                  onClick={() => setEdition(item)}
+                                >
+                                  Modifier
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  icon={Ban}
+                                  disabled={busy}
+                                  aria-label={`Écarter ${label}`}
+                                  onClick={() => {
+                                    setMotif("");
+                                    setModalError(null);
+                                    setEcartement(item);
+                                  }}
+                                >
+                                  Écarter
+                                </Button>
+                              </span>,
+                            ]
+                          : []),
                       ]}
                       detail={open ? <Operations operations={item.operations} /> : null}
                     />
@@ -241,6 +350,67 @@ export function FraisCard({
               </GrandLivre>
             )}
           </section>
+
+          {(data.ecartes ?? []).length > 0 && (
+            <details className="rounded-[12px] border border-simtis-border bg-simtis-background">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-simtis-text">
+                Propositions écartées · {plural((data.ecartes ?? []).length, "journée")}
+              </summary>
+              <div className="overflow-x-auto border-t border-simtis-border bg-simtis-card">
+                <table className="w-full text-sm">
+                  <thead className="bg-simtis-light text-left text-xs text-simtis-primary-dark">
+                    <tr>
+                      <th className={TH}>Date</th>
+                      <th className={TH}>Banque</th>
+                      <th className={TH}>Écriture</th>
+                      <th className={TH}>Motif</th>
+                      <th className={TH}>Écartée le</th>
+                      {canPrepare && (
+                        <th className={TH}>
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-simtis-border">
+                    {(data.ecartes ?? []).map((jour) => (
+                      <tr key={`${jour.famille}|${jour.bank_account_id}|${jour.date}`}>
+                        <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">
+                          {formatDate(jour.date)}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <BankLabel code={jour.bank_code} logo={jour.bank_logo} />
+                        </td>
+                        <td className="px-3 py-1.5">{jour.famille_libelle}</td>
+                        <td className="px-3 py-1.5 text-simtis-muted">{jour.motif ?? "-"}</td>
+                        <td className="px-3 py-1.5 whitespace-nowrap">
+                          {formatDateTime(jour.ecarte_le)}
+                        </td>
+                        {canPrepare && (
+                          <td className="px-3 py-1.5 text-right">
+                            <Button
+                              variant="ghost"
+                              icon={RotateCcw}
+                              disabled={busy}
+                              onClick={() =>
+                                reproposer({
+                                  famille: jour.famille,
+                                  bank_account_id: jour.bank_account_id,
+                                  date: jour.date,
+                                })
+                              }
+                            >
+                              Reproposer
+                            </Button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
 
           <section aria-labelledby="frais-manuels">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
@@ -442,6 +612,62 @@ export function FraisCard({
         </div>
       )}
 
+      {edition && (
+        <EditFraisModal
+          item={edition}
+          modification={modifs.get(cleJour(edition))}
+          onClose={() => setEdition(null)}
+          onSave={(modification) => {
+            setModifs((courantes) => {
+              const suivantes = new Map(courantes);
+              if (modification) suivantes.set(cleJour(edition), modification);
+              else suivantes.delete(cleJour(edition));
+              return suivantes;
+            });
+            setEdition(null);
+          }}
+        />
+      )}
+
+      <Modal
+        open={ecartement !== null}
+        onClose={() => setEcartement(null)}
+        title="Écarter la proposition"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEcartement(null)}>
+              Retour
+            </Button>
+            <Button variant="danger" icon={Ban} disabled={busy} onClick={confirmerEcartement}>
+              Écarter
+            </Button>
+          </>
+        }
+      >
+        {modalError && (
+          <p
+            role="alert"
+            className="mb-3 rounded-[10px] bg-simtis-danger-bg px-3 py-2 text-simtis-danger-fg"
+          >
+            {modalError}
+          </p>
+        )}
+        <p className="mb-4 text-simtis-muted">
+          {ecartement &&
+            `${ecartement.libelle} du ${formatDate(ecartement.date)} (${ecartement.bank_code}) : `}
+          la journée ne sera plus proposée et ses frais passeront dans « Autres frais à passer à la
+          main ». « Reproposer » l&apos;annule.
+        </p>
+        <Field label="Motif (facultatif)" htmlFor="frais-ecart-motif">
+          <TextInput
+            id="frais-ecart-motif"
+            value={motif}
+            maxLength={500}
+            onChange={(event) => setMotif(event.target.value)}
+          />
+        </Field>
+      </Modal>
+
       {saisie && (
         <ManualFeeModal
           companyId={companyId}
@@ -497,6 +723,30 @@ export function FraisCard({
       </Modal>
     </Card>
   );
+}
+
+/** Lignes affichées d'une proposition : les lignes saisies, ou les lignes calculées avec le
+ * libellé modifié. */
+function lignesAffichees(
+  item: PropositionTimbres,
+  modif: ModificationFrais | undefined,
+): LigneGL[] {
+  if (modif?.lignes) {
+    return modif.lignes.map((ligne) => ({
+      type: "saisie",
+      type_libelle: "",
+      libelle: ligne.libelle,
+      compte: ligne.compte,
+      debit: ligne.sens === "Débit" ? ligne.montant : null,
+      credit: ligne.sens === "Crédit" ? ligne.montant : null,
+    }));
+  }
+  const libelle = modif?.libelle;
+  if (!libelle) return item.lignes;
+  return item.lignes.map((ligne) => ({
+    ...ligne,
+    libelle: libelleModifie(ligne, item.libelle, libelle),
+  }));
 }
 
 function Vide({ children }: { children: ReactNode }) {

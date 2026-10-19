@@ -26,6 +26,7 @@ from app.repositories import (
 from app.services.errors import ConflictError, NotFoundError
 from app.services.position_banques_service import soldes_par_compte
 from app.services.position_service import business_today
+from app.services.reconciliation_service import _ecritures_a_egalite, grille
 
 ZERO = Decimal("0.00")
 PERIODE_MAX_JOURS = 366
@@ -196,6 +197,30 @@ class CompteDashboard:
         return self.solde + self.ligne
 
 
+@dataclass(frozen=True)
+class Taches:
+    """Travail en attente (onglet « Suivi », 19/10/2026)."""
+
+    propositions_fortes: int
+    propositions_a_verifier: int
+    operations_ambigues: int
+    ecritures_ambigues: int
+    a_comptabiliser: int
+    a_exporter: int
+
+
+@dataclass(frozen=True)
+class Banque:
+    """Avancement du rapprochement et frais d'une banque sur la période."""
+
+    code: str
+    logo: str | None
+    rapprochees: int
+    a_rapprocher: int
+    total: int
+    frais: Decimal
+
+
 @dataclass
 class Dashboard:
     company: Company
@@ -223,6 +248,11 @@ class Dashboard:
     ecritures_exportees: int
     ecritures_a_exporter: int
     alertes: list[Alerte] = field(default_factory=list)
+    bank_id: int | None = None
+    # Banques de la société qui ont un compte actif (liste du filtre), dans l'ordre d'affichage
+    banques_societe: list[tuple[int, str, str | None]] = field(default_factory=list)
+    taches: Taches | None = None
+    banques: list[Banque] = field(default_factory=list)
 
 
 def _periode(date_from: date | None, date_to: date | None) -> tuple[date, date]:
@@ -244,21 +274,32 @@ def _company(db: Session, company_id: int) -> Company:
 
 
 def dashboard(
-    db: Session, company_id: int, *, date_from: date | None = None, date_to: date | None = None
+    db: Session,
+    company_id: int,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    bank_id: int | None = None,
+    avec_taches: bool = True,
 ) -> Dashboard:
+    """`bank_id` (19/10/2026) : tous les chiffres pour cette banque seulement ; None = toutes."""
     company = _company(db, company_id)
     date_from, date_to = _periode(date_from, date_to)
     duree = date_to - date_from
     prec_to = date_from - timedelta(days=1)
     prec_from = prec_to - duree
 
-    comptes = [
-        account
-        for account in reconciliation_repository.company_accounts(db, company.id)
-        if account.actif
-    ]
+    actifs = [a for a in reconciliation_repository.company_accounts(db, company.id) if a.actif]
+    banques_societe = sorted(
+        {(a.bank.ordre_affichage, a.bank_id, a.bank.code, a.bank.logo) for a in actifs}
+    )
+    comptes = [account for account in actifs if bank_id is None or account.bank_id == bank_id]
     tous = [account.id for account in comptes]
-    mad = [account.id for account in position_repository.current_mad_accounts(db, company.id)]
+    mad = [
+        account.id
+        for account in position_repository.current_mad_accounts(db, company.id)
+        if bank_id is None or account.bank_id == bank_id
+    ]
     soldes = soldes_par_compte(db, tous, date_to)
 
     def total_mad(jour: date) -> Decimal | None:
@@ -279,9 +320,7 @@ def dashboard(
     frais_prec = sum(
         (m for _, m in dashboard_repository.frais_debites(db, mad, prec_from, prec_to)), ZERO
     )
-    exportees, a_exporter = dashboard_repository.ecritures_simtis(
-        db, company.id, date_from, date_to
-    )
+    exportees, a_exporter = dashboard_repository.ecritures_simtis(db, tous, date_from, date_to)
 
     lignes = {account.id: account for account in comptes}
     # LIGNE des seuls comptes au solde connu, comme le TOTAL du tableau Banques : la LIGNE d'un
@@ -301,6 +340,51 @@ def dashboard(
         account = lignes.get(account_id)
         if solde is not None and account is not None and solde + account.credit_autorise < 0:
             depassements.append((account.bank.code, solde + account.credit_autorise))
+
+    taches = None
+    banques: list[Banque] = []
+    if avec_taches:
+        regles = grille(db)
+        fortes, a_verifier = dashboard_repository.propositions(
+            db, tous, date_from, date_to, regles.seuil_fort
+        )
+        operations_ambigues = sum(
+            reconciliation_repository.ambiguous_transactions(
+                db, company.id, bank_account_id=i, date_from=date_from, date_to=date_to,
+                offset=0, limit=0,
+            )[0]
+            for i in tous
+        )  # fmt: skip
+        # Écritures ambiguës : seulement celles qui ont au moins deux opérations à égalité, la
+        # règle de la liste « Écritures ambiguës » (sans calculer le détail de ses cartes)
+        a_verifier_ec = [
+            entry
+            for i in tous
+            for entry in reconciliation_repository.ambiguous_entries(
+                db, company.id, bank_account_id=i, date_from=date_from, date_to=date_to,
+                offset=0, limit=None,
+            )[1]
+        ]  # fmt: skip
+        ecritures_ambigues = len(
+            _ecritures_a_egalite(
+                db, a_verifier_ec, regles, reconciliation_repository.rejected_pairs(db, company.id)
+            )
+        )
+        taches = Taches(
+            propositions_fortes=fortes,
+            propositions_a_verifier=a_verifier,
+            operations_ambigues=operations_ambigues,
+            ecritures_ambigues=ecritures_ambigues,
+            a_comptabiliser=a_comptabiliser,
+            a_exporter=a_exporter,
+        )
+        frais_banque = dict(dashboard_repository.frais_par_banque(db, mad, date_from, date_to))
+        banques = [
+            Banque(code, logo, rapprochees, a_rapp, total, frais_banque.get(code, ZERO))
+            for code, logo, rapprochees, a_rapp, total in dashboard_repository.par_banque(
+                db, tous, date_from, date_to
+            )
+        ]
 
     return Dashboard(
         company=company,
@@ -348,4 +432,8 @@ def dashboard(
             a_exporter=a_exporter,
             hausse_frais=variation(frais_total, frais_prec),
         ),
+        bank_id=bank_id,
+        banques_societe=[(i, code, logo) for _, i, code, logo in banques_societe],
+        taches=taches,
+        banques=banques,
     )

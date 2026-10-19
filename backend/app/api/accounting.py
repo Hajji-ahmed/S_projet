@@ -151,6 +151,8 @@ def list_entries(
         Literal["Chèque", "Effet", "Espèces", "Virement", "Impayé", "Autre"] | None,
         Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre"),
     ] = None,
+    # 19/10/2026 : false = écritures sans opération bancaire possible, true = avec
+    operation_possible: bool | None = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_read),
 ) -> EcrituresPageOut:
@@ -165,6 +167,7 @@ def list_entries(
         q=q,
         page=page,
         type_operation=type_operation,
+        operation_possible=operation_possible,
     )
     return EcrituresPageOut.from_page(result)
 

@@ -18,6 +18,8 @@ from app.models import (
     CashForecast,
     Discrepancy,
     ExchangeRate,
+    FraisJourEcarte,
+    FraisLigne,
     ImportBatch,
     ReconciliationMatch,
     ReconciliationMatchItem,
@@ -1103,3 +1105,47 @@ def test_a_currency_amount_has_the_same_direction_as_the_line(db, world):
         assert_rejected(
             db, "ck_accounting_entries_devise_meme_sens", _entry(world, montant_devise=valeur)
         )
+
+
+# --- Propositions de frais modifiées ou écartées (0032, 19/10/2026) -------------------------------
+
+
+def _ligne(entry_id: int, **over) -> FraisLigne:
+    return FraisLigne(
+        **{
+            "accounting_entry_id": entry_id,
+            "ordre": 1,
+            "compte": "61671",
+            "libelle": "DT",
+            "montant": Decimal("10"),
+            "sens": "Crédit",
+            **over,
+        }
+    )
+
+
+def test_a_saved_fee_line_is_positive_with_a_known_direction_and_one_per_rank(db, world):
+    entry = save(db, build_entry(world.company))
+    save(db, _ligne(entry.id))
+
+    assert_rejected(db, "ck_frais_lignes_montant_positif", _ligne(entry.id, ordre=2, montant=0))
+    assert_rejected(db, "ck_frais_lignes_sens_valide", _ligne(entry.id, ordre=3, sens="Debit"))
+    assert_rejected(db, "uq_frais_lignes_ecriture_ordre", _ligne(entry.id))
+
+
+def test_a_dismissed_fee_day_has_a_known_family_and_is_unique(db, world):
+    def ecarte(**over) -> FraisJourEcarte:
+        return FraisJourEcarte(
+            **{
+                "company_id": world.company.id,
+                "bank_account_id": world.account.id,
+                "jour": date(2026, 9, 24),
+                "famille": "timbres",
+                **over,
+            }
+        )
+
+    save(db, ecarte())
+
+    assert_rejected(db, "ck_frais_jours_ecartes_famille_valide", ecarte(famille="agios"))
+    assert_rejected(db, "uq_frais_jours_ecartes_compte_jour_famille", ecarte())

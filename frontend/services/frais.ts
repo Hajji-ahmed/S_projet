@@ -1,6 +1,6 @@
 import { apiDownload, apiFetch } from "@/lib/api";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
-import type { FamilleFrais, Timbres, ValidationTimbres } from "@/types/frais";
+import type { FamilleFrais, ModificationFrais, Timbres, ValidationTimbres } from "@/types/frais";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -23,7 +23,7 @@ export function listFrais(companyId: number, filter: ReconciliationFilter) {
 /** Comptabilise les jours choisis : écritures créées et rapprochées d'emblée (tous ou aucun). */
 export function validerFrais(
   companyId: number,
-  jours: { famille: FamilleFrais; bank_account_id: number; date: string }[],
+  jours: ({ famille: FamilleFrais; bank_account_id: number; date: string } & ModificationFrais)[],
 ) {
   return apiFetch<ValidationTimbres>("/frais/valider", {
     method: "POST",
@@ -62,5 +62,25 @@ export function comptabiliserManuellement(body: {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
+  });
+}
+
+type JourChoisi = { famille: FamilleFrais; bank_account_id: number; date: string };
+
+/** Écarte des journées proposées (19/10/2026) : leurs frais passent à la main. */
+export function ecarterFrais(companyId: number, jours: JourChoisi[], motif?: string) {
+  return apiFetch<{ nb: number }>("/frais/ecarter", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ company_id: companyId, jours, motif: motif?.trim() || null }),
+  });
+}
+
+/** Annule l'écartement : SIMTIS propose de nouveau ces journées. */
+export function reproposerFrais(companyId: number, jours: JourChoisi[]) {
+  return apiFetch<{ nb: number }>("/frais/reproposer", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ company_id: companyId, jours }),
   });
 }

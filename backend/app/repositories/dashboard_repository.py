@@ -6,7 +6,13 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import AccountingEntry, BankTransaction
+from app.models import (
+    AccountingEntry,
+    BankAccount,
+    BankTransaction,
+    ReconciliationMatch,
+    ReconciliationMatchItem,
+)
 from app.repositories import reconciliation_repository
 from app.repositories.import_repository import ORDRE_CHRONOLOGIQUE
 
@@ -123,13 +129,16 @@ def dernieres_operations(db: Session, account_ids: list[int], date_to: date, lim
 
 
 def ecritures_simtis(
-    db: Session, company_id: int, date_from: date, date_to: date
+    db: Session, account_ids: list[int], date_from: date, date_to: date
 ) -> tuple[int, int]:
-    """(exportées, à exporter) : écritures de frais créées par SIMTIS sur la période."""
+    """(exportées, à exporter) : écritures de frais créées par SIMTIS sur la période, pour ces
+    comptes (filtre banque du 19/10/2026)."""
+    if not account_ids:
+        return 0, 0
     rows = db.execute(
         select(AccountingEntry.exportee_le.is_not(None), func.count())
         .where(
-            AccountingEntry.company_id == company_id,
+            AccountingEntry.bank_account_id.in_(account_ids),
             AccountingEntry.origine == "SIMTIS",
             AccountingEntry.date_ecriture.between(date_from, date_to),
         )
@@ -137,3 +146,88 @@ def ecritures_simtis(
     )
     compte = {bool(row[0]): row[1] for row in rows}
     return compte.get(True, 0), compte.get(False, 0)
+
+
+# --- Onglet « Suivi » (19/10/2026) ---------------------------------------------------------------
+
+
+def propositions(
+    db: Session, account_ids: list[int], date_from: date, date_to: date, seuil_fort: Decimal
+) -> tuple[int, int]:
+    """(fortes, à vérifier) : propositions en attente dont une opération est de la période."""
+    if not account_ids:
+        return 0, 0
+    ids = (
+        select(ReconciliationMatch.id, ReconciliationMatch.score)
+        .join(ReconciliationMatchItem, ReconciliationMatchItem.match_id == ReconciliationMatch.id)
+        .join(BankTransaction, BankTransaction.id == ReconciliationMatchItem.bank_transaction_id)
+        .where(
+            ReconciliationMatch.statut == "Proposée",
+            ReconciliationMatchItem.actif.is_(True),
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.date_operation.between(date_from, date_to),
+        )
+        .distinct()
+        .subquery()
+    )
+    row = db.execute(
+        select(
+            func.count().filter(ids.c.score >= seuil_fort),
+            func.count().filter(ids.c.score < seuil_fort),
+        ).select_from(ids)
+    ).one()
+    return row[0] or 0, row[1] or 0
+
+
+def par_banque(
+    db: Session, account_ids: list[int], date_from: date, date_to: date
+) -> list[tuple[str, str | None, int, int, int]]:
+    """(banque, logo, rapprochées, à rapprocher, total) des opérations de la période, par banque,
+    dans l'ordre d'affichage des banques."""
+    if not account_ids:
+        return []
+    from app.models import Bank
+
+    rows = db.execute(
+        select(
+            Bank.code,
+            Bank.logo,
+            Bank.ordre_affichage,
+            func.count().filter(BankTransaction.statut == "Rapprochée"),
+            func.count().filter(BankTransaction.statut.in_(STATUTS_A_RAPPROCHER)),
+            func.count(),
+        )
+        .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
+        .join(Bank, Bank.id == BankAccount.bank_id)
+        .where(
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.date_operation.between(date_from, date_to),
+        )
+        .group_by(Bank.code, Bank.logo, Bank.ordre_affichage)
+        .order_by(Bank.ordre_affichage)
+    )
+    return [(r[0], r[1], r[3], r[4], r[5]) for r in rows]
+
+
+def frais_par_banque(
+    db: Session, account_ids: list[int], date_from: date, date_to: date
+) -> list[tuple[str, Decimal]]:
+    """(banque, total des frais débités) de la période, dans l'ordre d'affichage des banques."""
+    if not account_ids:
+        return []
+    from app.models import Bank
+
+    rows = db.execute(
+        select(Bank.code, Bank.ordre_affichage, func.sum(BankTransaction.debit))
+        .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
+        .join(Bank, Bank.id == BankAccount.bank_id)
+        .where(
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.date_operation.between(date_from, date_to),
+            BankTransaction.montant < 0,
+            reconciliation_repository.frais_bancaire(),
+        )
+        .group_by(Bank.code, Bank.ordre_affichage)
+        .order_by(Bank.ordre_affichage)
+    )
+    return [(r[0], Decimal(r[2])) for r in rows]

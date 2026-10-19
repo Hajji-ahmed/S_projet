@@ -15,10 +15,14 @@ from app.core.db import get_db
 from app.core.permissions import PermissionCode
 from app.schemas.frais import (
     AutreFraisOut,
+    EcarterIn,
     EcritureFraisOut,
     FraisInclusOut,
+    JourEcarteOut,
     ManuelleIn,
+    NombreOut,
     PropositionTimbresOut,
+    ReproposerIn,
     SuppressionIn,
     TimbresOut,
     ValidationTimbresIn,
@@ -107,6 +111,7 @@ def lire(
         ecritures=[EcritureFraisOut.of(item) for item in vue.ecritures],
         autres_frais=[AutreFraisOut.of(item) for item in vue.autres],
         frais_inclus=[FraisInclusOut.of(item) for item in vue.inclus],
+        ecartes=[JourEcarteOut.of(item) for item in vue.ecartes],
     )
 
 
@@ -128,10 +133,63 @@ def valider(
         ],
         acteur_id=user.id,
         ip=client_ip(request),
+        modifications={
+            (jour.famille, jour.bank_account_id, jour.date): frais_service.Modification(
+                libelle=jour.libelle,
+                date_ecriture=jour.date_ecriture,
+                lignes=None
+                if jour.lignes is None
+                else tuple(
+                    frais_service.LigneSaisie(
+                        ligne.compte, ligne.libelle, ligne.montant, ligne.sens
+                    )
+                    for ligne in jour.lignes
+                ),
+            )
+            for jour in body.jours
+            if jour.libelle or jour.date_ecriture or jour.lignes is not None
+        },
     )
     return ValidationTimbresOut(
         nb_ecritures=len(entries), codes=[entry.numero_piece for entry in entries]
     )
+
+
+@router.post("/ecarter", response_model=NombreOut)
+def ecarter(
+    body: EcarterIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_prepare),
+) -> NombreOut:
+    """Écarte des journées proposées (toutes ou aucune) : leurs frais passent à la main."""
+    nb = frais_service.ecarter(
+        db,
+        body.company_id,
+        [(frais_service.famille(j.famille), j.bank_account_id, j.date) for j in body.jours],
+        motif=body.motif,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return NombreOut(nb=nb)
+
+
+@router.post("/reproposer", response_model=NombreOut)
+def reproposer(
+    body: ReproposerIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_prepare),
+) -> NombreOut:
+    """Annule l'écartement de journées : SIMTIS les propose de nouveau."""
+    nb = frais_service.reproposer(
+        db,
+        body.company_id,
+        [(frais_service.famille(j.famille), j.bank_account_id, j.date) for j in body.jours],
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return NombreOut(nb=nb)
 
 
 @router.post("/manuelle", response_model=ValidationTimbresOut)

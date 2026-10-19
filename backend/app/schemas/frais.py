@@ -13,10 +13,11 @@ from app.services.frais_service import (
     Detail,
     EcritureSimtis,
     FraisInclus,
+    JourEcarte,
     LigneGL,
     Proposition,
-    libelle_ligne,
     lignes_gl,
+    texte_ligne,
 )
 
 # Une validation porte au plus sur cinq ans de jours, comptes compris
@@ -69,7 +70,7 @@ class LigneGLOut(BaseModel):
     def of(cls, ligne: LigneGL, libelle_ecriture: str) -> "LigneGLOut":
         return cls(
             type=ligne.type,
-            libelle=libelle_ligne(libelle_ecriture, ligne.type),
+            libelle=texte_ligne(libelle_ecriture, ligne),
             type_libelle=ligne.type_libelle,
             compte=ligne.compte,
             debit=ligne.debit,
@@ -139,6 +140,8 @@ class EcritureFraisOut(BaseModel):
     nb_operations: int
     exportee_le: datetime | None
     lignes: list[LigneGLOut]
+    # Libellé, date ou lignes changés avant la validation (19/10/2026)
+    modifiee: bool = False
 
     @classmethod
     def of(cls, item: EcritureSimtis) -> "EcritureFraisOut":
@@ -158,6 +161,7 @@ class EcritureFraisOut(BaseModel):
             nb_operations=item.nb_operations,
             exportee_le=entry.exportee_le,
             lignes=[LigneGLOut.of(ligne, entry.libelle) for ligne in item.lignes],
+            modifiee=item.modifiee,
         )
 
 
@@ -231,6 +235,33 @@ class FraisInclusOut(BaseModel):
         )
 
 
+class JourEcarteOut(BaseModel):
+    """Journée écartée de la comptabilisation automatique (19/10/2026)."""
+
+    famille: FamilleFrais
+    famille_libelle: str
+    bank_account_id: int
+    bank_code: str
+    bank_logo: str | None
+    date: date
+    motif: str | None
+    ecarte_le: datetime
+
+    @classmethod
+    def of(cls, item: JourEcarte) -> "JourEcarteOut":
+        row = item.ecarte
+        return cls(
+            famille=item.famille.code,
+            famille_libelle=item.famille.libelle,
+            bank_account_id=row.bank_account_id,
+            bank_code=item.bank_code,
+            bank_logo=item.bank_logo,
+            date=row.jour,
+            motif=row.motif,
+            ecarte_le=row.created_at,
+        )
+
+
 class TimbresOut(BaseModel):
     propositions: list[PropositionTimbresOut]
     total_propositions: Decimal
@@ -239,6 +270,19 @@ class TimbresOut(BaseModel):
     autres_frais: list[AutreFraisOut] = []
     # Déjà dans une écriture Sage : à rapprocher (13/10/2026)
     frais_inclus: list[FraisInclusOut] = []
+    # Journées écartées de la comptabilisation automatique (19/10/2026)
+    ecartes: list[JourEcarteOut] = []
+
+
+class LigneIn(BaseModel):
+    """Ligne saisie d'une proposition (19/10/2026) : montant positif et son sens."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    compte: Annotated[str, Field(max_length=40)]
+    libelle: Annotated[str, Field(max_length=120)]
+    montant: Decimal
+    sens: Literal["Crédit", "Débit"]
 
 
 class JourIn(BaseModel):
@@ -247,6 +291,37 @@ class JourIn(BaseModel):
     famille: FamilleFrais
     bank_account_id: int
     date: date
+    # Modifications avant validation (19/10/2026), toutes facultatives
+    libelle: Annotated[str | None, Field(max_length=120)] = None
+    date_ecriture: date | None = None
+    lignes: Annotated[list[LigneIn] | None, Field(max_length=50)] = None
+
+
+class JourChoisiIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    famille: FamilleFrais
+    bank_account_id: int
+    date: date
+
+
+class EcarterIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company_id: int
+    jours: Annotated[list[JourChoisiIn], Field(min_length=1, max_length=JOURS_MAX)]
+    motif: Annotated[str | None, Field(max_length=500)] = None
+
+
+class ReproposerIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company_id: int
+    jours: Annotated[list[JourChoisiIn], Field(min_length=1, max_length=JOURS_MAX)]
+
+
+class NombreOut(BaseModel):
+    nb: int
 
 
 class ValidationTimbresIn(BaseModel):

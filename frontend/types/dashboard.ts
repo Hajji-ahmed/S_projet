@@ -41,9 +41,35 @@ export type Alerte = {
   lien: string;
 };
 
+/** Travail en attente de la période (onglet « Suivi », 19/10/2026). */
+export type Taches = {
+  propositions_fortes: number;
+  propositions_a_verifier: number;
+  operations_ambigues: number;
+  ecritures_ambigues: number;
+  a_comptabiliser: number;
+  a_exporter: number;
+};
+
+/** Avancement du rapprochement et frais d'une banque sur la période. */
+export type BanqueDashboard = {
+  code: string;
+  logo: string | null;
+  rapprochees: number;
+  a_rapprocher: number;
+  total: number;
+  frais: string;
+};
+
 export type Dashboard = {
   date_from: string;
   date_to: string;
+  /** Banque filtrée ; null = toutes (19/10/2026). */
+  bank_id: number | null;
+  /** Banques de la société (liste du filtre). */
+  banques_societe: { id: number; code: string; logo: string | null }[];
+  taches: Taches;
+  banques: BanqueDashboard[];
   solde_total: Kpi;
   /** Somme des LIGNES des comptes courants MAD. */
   ligne_totale: string;

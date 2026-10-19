@@ -16,6 +16,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -224,3 +225,48 @@ class FraisPieceCounter(Base):
     annee: Mapped[int] = mapped_column(Integer, primary_key=True)
     mois: Mapped[int] = mapped_column(Integer, primary_key=True)
     dernier: Mapped[int] = mapped_column(Integer)
+
+
+class FraisLigne(Base):
+    """Ligne saisie d'une écriture de frais SIMTIS (0032, 19/10/2026) : quand l'utilisateur a
+    modifié les lignes d'une proposition avant de la valider, elles remplacent le calcul
+    automatique (écran, export Sage). Montant positif et son sens, comme dans le fichier Sage."""
+
+    __tablename__ = "frais_lignes"
+    __table_args__ = (
+        UniqueConstraint("accounting_entry_id", "ordre", name="uq_frais_lignes_ecriture_ordre"),
+        CheckConstraint("montant > 0", name="montant_positif"),
+        check_in("sens_valide", "sens", ("Crédit", "Débit")),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    accounting_entry_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_entries.id", ondelete="CASCADE"), index=True
+    )
+    ordre: Mapped[int] = mapped_column(Integer)
+    compte: Mapped[str] = mapped_column(String(20))
+    libelle: Mapped[str] = mapped_column(String(60))
+    montant: Mapped[Montant]
+    sens: Mapped[str] = mapped_column(String(10))
+
+
+class FraisJourEcarte(Base, TimestampMixin):
+    """Journée de frais écartée de la comptabilisation automatique (0032, 19/10/2026) : elle n'est
+    plus proposée, ses frais passent dans « Autres frais à passer à la main ». « Reproposer »
+    supprime la ligne."""
+
+    __tablename__ = "frais_jours_ecartes"
+    __table_args__ = (
+        UniqueConstraint(
+            "bank_account_id", "jour", "famille", name="uq_frais_jours_ecartes_compte_jour_famille"
+        ),
+        check_in("famille_valide", "famille", ("timbres", "commissions", "frais")),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
+    bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_accounts.id"))
+    jour: Mapped[date] = mapped_column(Date)
+    famille: Mapped[str] = mapped_column(String(20))
+    motif: Mapped[str | None] = mapped_column(String(500))
+    cree_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))

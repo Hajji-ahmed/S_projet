@@ -709,11 +709,20 @@ def list_entries(
     q: str | None = None,
     page: int = 1,
     type_operation: str | None = None,
+    operation_possible: bool | None = None,
 ) -> EntriesPage:
-    """Une page d'écritures de la société (50 par page) ; les totaux portent sur tout le filtre."""
+    """Une page d'écritures de la société (50 par page) ; les totaux portent sur tout le filtre.
+
+    `operation_possible` (19/10/2026) : avec ou sans opération bancaire libre au montant opposé
+    dans la fenêtre de comparaison du moteur (Paramètres)."""
     company = _company(db, company_id)
     if date_from and date_to and date_from > date_to:
         raise ConflictError("La date de début doit précéder la date de fin.")
+    fenetre = 10
+    if operation_possible is not None:
+        from app.services.reconciliation_service import grille
+
+        fenetre = grille(db).fenetre_jours
     query = accounting_repository.entries_query(
         company.id,
         bank_account_id=bank_account_id,
@@ -722,6 +731,8 @@ def list_entries(
         statut=statut,
         q=q,
         type_operation=type_operation,
+        operation_possible=operation_possible,
+        fenetre_jours=fenetre,
     )
     total, debit, credit = accounting_repository.totals_of_entries(db, query)
     rows = accounting_repository.page_of_entries(

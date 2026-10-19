@@ -1,12 +1,4 @@
-import {
-  ArrowRight,
-  Bell,
-  ChevronRight,
-  FileText,
-  LineChart,
-  RefreshCw,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowRight, Bell, ChevronRight, FileText, RefreshCw, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -14,62 +6,52 @@ import { cn } from "@/lib/cn";
 import { pourcentage } from "@/lib/dashboard";
 import type { Alerte, Dashboard } from "@/types/dashboard";
 
-/** Les quatre petites cartes du bas : rapprochement, écritures, prévisions, alertes. */
-export function SyntheseCards({ data }: { data: Dashboard }) {
-  const totalEcritures = data.ecritures_exportees + data.ecritures_a_exporter;
+/** Avancement du rapprochement de la période (onglet « Suivi »). */
+export function RapprochementCard({ data }: { data: Dashboard }) {
   return (
-    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-      <Petite
-        titre="Rapprochement bancaire"
-        icon={RefreshCw}
-        pastille="bg-simtis-success-bg text-simtis-success-fg"
-        lien={{ label: "Voir le détail", href: "/rapprochement" }}
-      >
-        <Anneau
-          pourcent={pourcentage(data.rapprochees, data.total_operations)}
-          couleur="stroke-simtis-success"
-          valeurs={[
-            [data.rapprochees, "rapprochées", "bg-simtis-success"],
-            [data.a_rapprocher, "à rapprocher", "bg-simtis-warning"],
-            [data.total_operations, "total", "bg-simtis-chart-4"],
-          ]}
-        />
-      </Petite>
-      <Petite
-        titre="Écritures comptables"
-        icon={FileText}
-        pastille="bg-simtis-violet-bg text-simtis-violet-fg"
-        lien={{ label: "Voir les écritures", href: "/ecritures" }}
-      >
-        <Anneau
-          pourcent={pourcentage(data.ecritures_exportees, totalEcritures)}
-          couleur="stroke-simtis-info"
-          valeurs={[
-            [data.ecritures_exportees, "exportées", "bg-simtis-info"],
-            [data.ecritures_a_exporter, "à exporter", "bg-simtis-secondary"],
-            [totalEcritures, "total", "bg-simtis-chart-4"],
-          ]}
-        />
-      </Petite>
-      <Petite
-        titre="Prévisions (30 jours)"
-        icon={LineChart}
-        pastille="bg-simtis-success-bg text-simtis-success-fg"
-      >
-        <p className="text-sm text-simtis-muted">Solde prévisionnel</p>
-        <p className="mt-1 text-lg font-semibold text-simtis-text">
-          Disponible avec la phase Prévisions
-        </p>
-        <p className="mt-1 text-xs text-simtis-muted">
-          Position prévisionnelle calculée jour par jour.
-        </p>
-      </Petite>
-      <Alertes alertes={data.alertes} />
-    </div>
+    <Petite
+      titre="Rapprochement bancaire"
+      icon={RefreshCw}
+      pastille="bg-simtis-success-bg text-simtis-success-fg"
+      lien={{ label: "Voir le détail", href: "/rapprochement" }}
+    >
+      <Anneau
+        pourcent={pourcentage(data.rapprochees, data.total_operations)}
+        couleur="stroke-simtis-success"
+        valeurs={[
+          [data.rapprochees, "rapprochées", "bg-simtis-success"],
+          [data.a_rapprocher, "à rapprocher", "bg-simtis-warning"],
+          [data.total_operations, "total", "bg-simtis-chart-4"],
+        ]}
+      />
+    </Petite>
   );
 }
 
-function Petite({
+/** Écritures de frais SIMTIS exportées / à exporter (onglet « Suivi »). */
+export function EcrituresCard({ data }: { data: Dashboard }) {
+  const totalEcritures = data.ecritures_exportees + data.ecritures_a_exporter;
+  return (
+    <Petite
+      titre="Écritures comptables"
+      icon={FileText}
+      pastille="bg-simtis-violet-bg text-simtis-violet-fg"
+      lien={{ label: "Voir les écritures", href: "/ecritures" }}
+    >
+      <Anneau
+        pourcent={pourcentage(data.ecritures_exportees, totalEcritures)}
+        couleur="stroke-simtis-info"
+        valeurs={[
+          [data.ecritures_exportees, "exportées", "bg-simtis-info"],
+          [data.ecritures_a_exporter, "à exporter", "bg-simtis-secondary"],
+          [totalEcritures, "total", "bg-simtis-chart-4"],
+        ]}
+      />
+    </Petite>
+  );
+}
+
+export function Petite({
   titre,
   icon: Icon,
   pastille,
@@ -185,7 +167,7 @@ const PUCES: Record<Alerte["niveau"], string> = {
   info: "bg-simtis-info",
 };
 
-function Alertes({ alertes }: { alertes: Alerte[] }) {
+export function Alertes({ alertes }: { alertes: Alerte[] }) {
   return (
     <Petite
       titre="Alertes et notifications"
@@ -203,7 +185,7 @@ function Alertes({ alertes }: { alertes: Alerte[] }) {
         <p className="text-sm text-simtis-muted">Aucune alerte sur cette période.</p>
       ) : (
         <ul className="space-y-1.5 text-[13px]">
-          {alertes.slice(0, 4).map((alerte) => (
+          {alertes.map((alerte) => (
             <li key={alerte.message}>
               <Link
                 href={alerte.lien}
@@ -220,11 +202,6 @@ function Alertes({ alertes }: { alertes: Alerte[] }) {
             </li>
           ))}
         </ul>
-      )}
-      {alertes.length > 4 && (
-        <p className="mt-2 text-xs text-simtis-muted">
-          et {alertes.length - 4} autre{alertes.length - 4 > 1 ? "s" : ""}
-        </p>
       )}
     </Petite>
   );

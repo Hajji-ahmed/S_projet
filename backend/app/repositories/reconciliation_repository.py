@@ -718,7 +718,7 @@ POINTAGES_FRAIS = (
 # Sans pointage : mots du libellé (droit de timbre, TVA, commission, frais, agios, intérêts,
 # prélèvements)
 LIBELLE_FRAIS = (
-    r"(DROIT DE TIMBRE|DT D.ENREGISTREMENT|TAXE SUR VALEUR AJOUTEE|^TVA\M|COMMISSION|^COM\M"
+    r"(DROITS? DE TIMBRE|DT D.ENREGISTREMENT|TAXE SUR VALEUR AJOUTEE|^TVA\M|COMMISSION|^COM\M"
     r"|FRAIS|AGIOS|INTERET|PRELEV|PRLV)"
 )
 # Jamais un frais, quel que soit le pointage choisi (13/10/2026) : ces opérations repassent dans

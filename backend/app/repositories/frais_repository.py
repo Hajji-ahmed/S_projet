@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session, aliased
 from app.models import (
     AccountingEntry,
     BankTransaction,
+    FraisJourEcarte,
+    FraisLigne,
     PointageType,
     ReconciliationMatch,
     ReconciliationMatchItem,
@@ -243,3 +245,50 @@ def next_piece_number(db: Session, company_id: int, bank_id: int, annee: int, mo
     return db.execute(
         statement, {"societe": company_id, "banque": bank_id, "annee": annee, "mois": mois}
     ).scalar_one()
+
+
+# --- Propositions modifiées ou écartées (19/10/2026) ---------------------------------------------
+
+
+def lignes_saisies(db: Session, entry_ids: list[int]) -> dict[int, list[FraisLigne]]:
+    """Lignes saisies de chaque écriture demandée, dans leur ordre ; absente = lignes calculées."""
+    if not entry_ids:
+        return {}
+    result: dict[int, list[FraisLigne]] = {}
+    for ligne in db.scalars(
+        select(FraisLigne)
+        .where(FraisLigne.accounting_entry_id.in_(entry_ids))
+        .order_by(FraisLigne.accounting_entry_id, FraisLigne.ordre)
+    ):
+        result.setdefault(ligne.accounting_entry_id, []).append(ligne)
+    return result
+
+
+def jours_ecartes(
+    db: Session, account_ids: list[int], date_from: date, date_to: date
+) -> list[FraisJourEcarte]:
+    """Journées écartées des comptes sur la période, de la plus récente à la plus ancienne."""
+    if not account_ids:
+        return []
+    return list(
+        db.scalars(
+            select(FraisJourEcarte)
+            .where(
+                FraisJourEcarte.bank_account_id.in_(account_ids),
+                FraisJourEcarte.jour.between(date_from, date_to),
+            )
+            .order_by(FraisJourEcarte.jour.desc(), FraisJourEcarte.id.desc())
+        )
+    )
+
+
+def jour_ecarte(
+    db: Session, bank_account_id: int, jour: date, famille: str
+) -> FraisJourEcarte | None:
+    return db.scalar(
+        select(FraisJourEcarte).where(
+            FraisJourEcarte.bank_account_id == bank_account_id,
+            FraisJourEcarte.jour == jour,
+            FraisJourEcarte.famille == famille,
+        )
+    )

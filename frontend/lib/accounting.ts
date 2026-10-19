@@ -8,6 +8,8 @@ export type EntriesFilter = {
   q?: string;
   /** Type d'opération (14/10/2026). */
   typeOperation?: string;
+  /** 19/10/2026 : false = sans opération bancaire possible, true = avec. */
+  operationPossible?: boolean;
   page: number;
 };
 
@@ -17,6 +19,20 @@ export const STATUTS_RAPPROCHEMENT = [
   "Rapprochée",
   "Écart",
 ] as const;
+
+/**
+ * Filtre Statut du volet Écritures du rapprochement (19/10/2026) : « Non rapprochée » ne montre
+ * que les écritures sans opération bancaire possible ; celles qui en ont une sont à part.
+ */
+export const OPERATION_POSSIBLE = "Non rapprochée · opération possible";
+
+export function statutEcritures(
+  valeur: string,
+): Pick<EntriesFilter, "statut" | "operationPossible"> {
+  if (valeur === "Non rapprochée") return { statut: valeur, operationPossible: false };
+  if (valeur === OPERATION_POSSIBLE) return { statut: "Non rapprochée", operationPossible: true };
+  return { statut: valeur || undefined };
+}
 
 /** « ?company_id=…&… » : seuls les filtres renseignés, la page toujours. */
 export function entriesQuery(companyId: number, filter: EntriesFilter): string {
@@ -29,6 +45,9 @@ export function entriesQuery(companyId: number, filter: EntriesFilter): string {
   if (filter.statut) params.set("statut", filter.statut);
   if (filter.q?.trim()) params.set("q", filter.q.trim());
   if (filter.typeOperation) params.set("type_operation", filter.typeOperation);
+  if (filter.operationPossible !== undefined) {
+    params.set("operation_possible", String(filter.operationPossible));
+  }
   params.set("page", String(filter.page));
   return `?${params}`;
 }

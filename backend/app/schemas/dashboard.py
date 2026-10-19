@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
-from app.services.dashboard_service import Alerte, CompteDashboard, Dashboard
+from app.services.dashboard_service import Alerte, Banque, CompteDashboard, Dashboard
 
 
 class KpiOut(BaseModel):
@@ -84,9 +84,51 @@ class AlerteOut(BaseModel):
         return cls(niveau=alerte.niveau, message=alerte.message, lien=alerte.lien)
 
 
+class TachesOut(BaseModel):
+    """Travail en attente de la période (onglet « Suivi », 19/10/2026)."""
+
+    propositions_fortes: int
+    propositions_a_verifier: int
+    operations_ambigues: int
+    ecritures_ambigues: int
+    a_comptabiliser: int
+    a_exporter: int
+
+
+class BanqueOut(BaseModel):
+    code: str
+    logo: str | None
+    rapprochees: int
+    a_rapprocher: int
+    total: int
+    frais: Decimal
+
+    @classmethod
+    def of(cls, item: Banque) -> "BanqueOut":
+        return cls(
+            code=item.code,
+            logo=item.logo,
+            rapprochees=item.rapprochees,
+            a_rapprocher=item.a_rapprocher,
+            total=item.total,
+            frais=item.frais,
+        )
+
+
+class BanqueFiltreOut(BaseModel):
+    id: int
+    code: str
+    logo: str | None
+
+
 class DashboardOut(BaseModel):
     date_from: date
     date_to: date
+    # Banque filtrée (19/10/2026) ; null = toutes
+    bank_id: int | None
+    banques_societe: list[BanqueFiltreOut]
+    taches: TachesOut
+    banques: list[BanqueOut]
     solde_total: KpiOut
     ligne_totale: Decimal
     disponible: Decimal | None
@@ -108,9 +150,23 @@ class DashboardOut(BaseModel):
 
     @classmethod
     def of(cls, vue: Dashboard) -> "DashboardOut":
+        taches = vue.taches
         return cls(
             date_from=vue.date_from,
             date_to=vue.date_to,
+            bank_id=vue.bank_id,
+            banques_societe=[
+                BanqueFiltreOut(id=i, code=code, logo=logo) for i, code, logo in vue.banques_societe
+            ],
+            taches=TachesOut(
+                propositions_fortes=taches.propositions_fortes if taches else 0,
+                propositions_a_verifier=taches.propositions_a_verifier if taches else 0,
+                operations_ambigues=taches.operations_ambigues if taches else 0,
+                ecritures_ambigues=taches.ecritures_ambigues if taches else 0,
+                a_comptabiliser=vue.a_comptabiliser,
+                a_exporter=vue.ecritures_a_exporter,
+            ),
+            banques=[BanqueOut.of(item) for item in vue.banques],
             solde_total=KpiOut(valeur=vue.solde_total, variation=vue.solde_total_variation),
             ligne_totale=vue.ligne_totale,
             disponible=vue.disponible,
