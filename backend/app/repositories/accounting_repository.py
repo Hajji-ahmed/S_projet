@@ -74,6 +74,7 @@ def entries_query(
     type_operation: str | None = None,
     operation_possible: bool | None = None,
     fenetre_jours: int = 10,
+    sens: str | None = None,
 ) -> Select:
     """Écritures d'UNE société, filtrées (sans ordre ni pagination). `operation_possible`
     (19/10/2026) : True = une opération bancaire libre au montant opposé existe dans la fenêtre,
@@ -87,6 +88,11 @@ def entries_query(
         query = query.where(AccountingEntry.date_ecriture <= date_to)
     if statut is not None:
         query = query.where(AccountingEntry.statut == statut)
+    # Débit / Crédit de l'écriture, comme dans Sage (19/10/2026)
+    if sens == "Débit":
+        query = query.where(AccountingEntry.debit > 0)
+    elif sens == "Crédit":
+        query = query.where(AccountingEntry.credit > 0)
     if type_operation is not None:
         query = query.where(
             reconciliation_repository.type_condition(

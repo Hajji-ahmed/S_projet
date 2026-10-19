@@ -710,6 +710,7 @@ def list_entries(
     page: int = 1,
     type_operation: str | None = None,
     operation_possible: bool | None = None,
+    sens: str | None = None,
 ) -> EntriesPage:
     """Une page d'écritures de la société (50 par page) ; les totaux portent sur tout le filtre.
 
@@ -733,6 +734,7 @@ def list_entries(
         type_operation=type_operation,
         operation_possible=operation_possible,
         fenetre_jours=fenetre,
+        sens=sens,
     )
     total, debit, credit = accounting_repository.totals_of_entries(db, query)
     rows = accounting_repository.page_of_entries(

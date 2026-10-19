@@ -24,6 +24,8 @@ export const TYPES_OPERATION = [
 
 export type TransactionsFilter = ReconciliationFilter & {
   statut?: string;
+  /** « Débit » (argent sorti) ou « Crédit » (argent entré), 19/10/2026. */
+  sens?: string;
   /** Ne pas lister les opérations « À vérifier » : elles sont dans l'onglet Propositions. */
   sansAVerifier?: boolean;
   q?: string;
@@ -57,8 +59,32 @@ export function reconciliationQuery(
   if (filter.sansAVerifier) params.set("sans_a_verifier", "true");
   if (filter.q?.trim()) params.set("q", filter.q.trim());
   if (filter.typeOperation) params.set("type_operation", filter.typeOperation);
+  if (filter.sens) params.set("sens", filter.sens);
   if (filter.page !== undefined) params.set("page", String(filter.page));
   return `?${params}`;
+}
+
+/** Filtre « Sens » des deux volets (19/10/2026). */
+export const SENS_VOLET = ["Débit", "Crédit"] as const;
+
+/**
+ * Dates propres à un volet (19/10/2026), bornées par la période de l'écran : elles ne font que la
+ * réduire. Vides = toute la période. `ajustee` : une date sortait de la période ou Du > Au.
+ */
+export function bornerPeriode(
+  periode: { from: string; to: string },
+  du: string,
+  au: string,
+): { from: string; to: string; ajustee: boolean } {
+  let from = du && du > periode.from ? du : periode.from;
+  let to = au && au < periode.to ? au : periode.to;
+  let ajustee = (du !== "" && du < periode.from) || (au !== "" && au > periode.to);
+  if (from > to) {
+    from = periode.from;
+    to = periode.to;
+    ajustee = true;
+  }
+  return { from, to, ajustee };
 }
 
 /**

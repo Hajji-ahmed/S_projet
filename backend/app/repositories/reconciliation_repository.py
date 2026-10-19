@@ -275,8 +275,10 @@ def transactions_query(
     date_to: date | None = None,
     q: str | None = None,
     type_operation: str | None = None,
+    sens: str | None = None,
 ) -> Select:
-    """Opérations d'UNE société, filtrées, sans filtre de statut (ni ordre, ni pagination)."""
+    """Opérations d'UNE société, filtrées, sans filtre de statut (ni ordre, ni pagination).
+    `sens` (19/10/2026) : « Débit » (argent sorti) ou « Crédit » (argent entré)."""
     query = (
         select(BankTransaction)
         .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
@@ -290,6 +292,10 @@ def transactions_query(
         query = query.where(BankTransaction.date_operation <= date_to)
     if type_operation is not None:
         query = query.where(type_condition(BankTransaction.libelle, TYPES_BANQUE, type_operation))
+    if sens == "Débit":
+        query = query.where(BankTransaction.debit > 0)
+    elif sens == "Crédit":
+        query = query.where(BankTransaction.credit > 0)
     if q and q.strip():
         pattern = f"%{_escape_like(q.strip())}%"
         query = query.where(

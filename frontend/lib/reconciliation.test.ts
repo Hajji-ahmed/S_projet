@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  bornerPeriode,
   montantEcriture,
   unite,
   uniteEcriture,
@@ -253,5 +254,32 @@ describe("comptes en devise", () => {
     expect(uniteEcriture({ montant_devise: null, devise: "MAD" })).toBe("DH");
     expect(unite("USD")).toBe("USD");
     expect(unite("MAD")).toBe("DH");
+  });
+});
+
+describe("dates propres à un volet (19/10/2026)", () => {
+  const periode = { from: "2026-08-01", to: "2026-08-31" };
+
+  it("garde la période quand les dates sont vides", () => {
+    expect(bornerPeriode(periode, "", "")).toEqual({ ...periode, ajustee: false });
+  });
+
+  it("réduit la période sans en sortir", () => {
+    expect(bornerPeriode(periode, "2026-08-10", "2026-08-12")).toEqual({
+      from: "2026-08-10",
+      to: "2026-08-12",
+      ajustee: false,
+    });
+    expect(bornerPeriode(periode, "2026-07-20", "2026-09-05")).toEqual({
+      ...periode,
+      ajustee: true,
+    });
+  });
+
+  it("revient à la période quand Du est après Au", () => {
+    expect(bornerPeriode(periode, "2026-08-20", "2026-08-10")).toEqual({
+      ...periode,
+      ajustee: true,
+    });
   });
 });

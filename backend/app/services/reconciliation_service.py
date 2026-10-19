@@ -1171,6 +1171,7 @@ def list_transactions(
     sans_a_verifier: bool = False,
     a_comptabiliser: bool = False,
     type_operation: str | None = None,
+    sens: str | None = None,
 ) -> TransactionsPage:
     """Volet « Transactions bancaires » : 50 par page ; le décompte par statut porte sur tout le
     filtre, hors filtre de statut.
@@ -1187,6 +1188,7 @@ def list_transactions(
         date_to=date_to,
         q=q,
         type_operation=type_operation,
+        sens=sens,
     )
     par_statut = repo.count_by_status(db, query)
     # Frais bancaires non rapprochés : « À comptabiliser », comptés à part (12/10/2026)

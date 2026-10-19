@@ -153,6 +153,10 @@ def list_entries(
     ] = None,
     # 19/10/2026 : false = écritures sans opération bancaire possible, true = avec
     operation_possible: bool | None = None,
+    sens: Annotated[
+        Literal["Débit", "Crédit"] | None,
+        Query(description="Débit ou Crédit de l'écriture, comme dans Sage (19/10/2026)"),
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_read),
 ) -> EcrituresPageOut:
@@ -168,6 +172,7 @@ def list_entries(
         page=page,
         type_operation=type_operation,
         operation_possible=operation_possible,
+        sens=sens,
     )
     return EcrituresPageOut.from_page(result)
 

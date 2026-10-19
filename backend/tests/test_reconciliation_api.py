@@ -1578,3 +1578,27 @@ def test_a_targeted_match_frees_the_other_tied_entry(client, comptable, db):
     assert manuel_cible(client, comptable, tx, ec1).status_code == 201
 
     assert statuses(db, tx, ec1, ec2) == ["Rapprochée", "Rapprochée", "Non rapprochée"]
+
+
+def test_both_panes_filter_by_debit_or_credit(client, comptable, db):
+    """19/10/2026 : filtre « Sens » des volets (banque : argent sorti / entré ; Sage : colonne)."""
+    compte = account(db)
+    sortie = operation(db, compte, montant="-300", libelle="CHEQUE 12")
+    entree = operation(db, compte, montant="400", libelle="VIR CLIENT")
+    debit = ecriture(db, compte, montant="-400", libelle="Client")
+    credit = ecriture(db, compte, montant="300", libelle="Fournisseur", numero_piece="F1")
+    base = {"company_id": str(company(db).id)}
+
+    def ids(url, cle, sens):
+        reponse = client.get(url, params={**base, "sens": sens}, headers=comptable)
+        assert reponse.status_code == 200, reponse.text
+        return [item["id"] for item in reponse.json()[cle]]
+
+    assert ids("/api/reconciliation/transactions", "operations", "Débit") == [sortie.id]
+    assert ids("/api/reconciliation/transactions", "operations", "Crédit") == [entree.id]
+    assert ids("/api/accounting/entries", "ecritures", "Débit") == [debit.id]
+    assert ids("/api/accounting/entries", "ecritures", "Crédit") == [credit.id]
+    refus = client.get(
+        "/api/reconciliation/transactions", params={**base, "sens": "Autre"}, headers=comptable
+    )
+    assert refus.status_code == 422

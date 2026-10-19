@@ -1,6 +1,6 @@
 "use client";
 
-import { BookText, Search } from "lucide-react";
+import { BookText, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { Field, Select, TextInput } from "@/components/ui/Field";
+import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -16,7 +16,7 @@ import { STATUTS_RAPPROCHEMENT, pageCount } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
-import { TYPES_OPERATION, unite } from "@/lib/reconciliation";
+import { bornerPeriode, SENS_VOLET, TYPES_OPERATION, unite } from "@/lib/reconciliation";
 import { listEntries } from "@/services/accounting";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
 
@@ -49,18 +49,28 @@ export function EntriesPane({
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   const [typeOperation, setTypeOperation] = useState("");
+  // Sens et dates propres au volet (19/10/2026)
+  const [sens, setSens] = useState("");
+  const [du, setDu] = useState("");
+  const [au, setAu] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<EcrituresPage | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
   const [retryKey, setRetryKey] = useState(0);
 
+  const periode = bornerPeriode(filter, du, au);
+  const filtresActifs = !!(statut || typeOperation || sens || du || au || q || search);
+
   useEffect(() => {
     let cancelled = false;
     listEntries(companyId, {
       ...filter,
+      from: periode.from,
+      to: periode.to,
       statut: statut || undefined,
       q: q || undefined,
       typeOperation: typeOperation || undefined,
+      sens: sens || undefined,
       page,
     }).then(
       (result) => {
@@ -76,7 +86,20 @@ export function EntriesPane({
     return () => {
       cancelled = true;
     };
-  }, [companyId, filter, statut, q, typeOperation, page, reloadKey, retryKey, onLoaded]);
+  }, [
+    companyId,
+    filter,
+    periode.from,
+    periode.to,
+    statut,
+    q,
+    typeOperation,
+    sens,
+    page,
+    reloadKey,
+    retryKey,
+    onLoaded,
+  ]);
 
   const pages = data ? pageCount(data.total, data.taille) : 1;
   const caseColumn: Column<Ecriture>[] = multi
@@ -194,6 +217,51 @@ export function EntriesPane({
             />
           </Field>
         </div>
+        <div className="w-full max-w-[120px]">
+          <Field label="Sens" htmlFor="rapprochement-ec-sens">
+            <Select
+              id="rapprochement-ec-sens"
+              value={sens}
+              placeholder="Tous"
+              options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
+              onChange={(event) => {
+                setState("loading");
+                setPage(1);
+                setSens(event.target.value);
+              }}
+            />
+          </Field>
+        </div>
+        <div className="w-full max-w-[160px]">
+          <Field label="Du" htmlFor="rapprochement-ec-du">
+            <DateInput
+              id="rapprochement-ec-du"
+              value={du}
+              min={filter.from}
+              max={filter.to}
+              onChange={(event) => {
+                setState("loading");
+                setPage(1);
+                setDu(event.target.value);
+              }}
+            />
+          </Field>
+        </div>
+        <div className="w-full max-w-[160px]">
+          <Field label="Au" htmlFor="rapprochement-ec-au">
+            <DateInput
+              id="rapprochement-ec-au"
+              value={au}
+              min={filter.from}
+              max={filter.to}
+              onChange={(event) => {
+                setState("loading");
+                setPage(1);
+                setAu(event.target.value);
+              }}
+            />
+          </Field>
+        </div>
         <div className="w-full max-w-[200px]">
           <Field label="Recherche" htmlFor="rapprochement-ec-recherche">
             <TextInput
@@ -213,7 +281,32 @@ export function EntriesPane({
         >
           Rechercher
         </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          icon={X}
+          disabled={!filtresActifs}
+          onClick={() => {
+            setState("loading");
+            setPage(1);
+            setStatut("");
+            setTypeOperation("");
+            setSens("");
+            setDu("");
+            setAu("");
+            setSearch("");
+            setQ("");
+          }}
+        >
+          Effacer les filtres
+        </Button>
       </form>
+      {periode.ajustee && (
+        <p className="-mt-2 mb-3 text-xs text-simtis-warning-fg">
+          Dates ramenées à la période de l&apos;écran ({formatDate(filter.from)} au{" "}
+          {formatDate(filter.to)}).
+        </p>
+      )}
 
       {state === "loading" && <LoadingState rows={5} />}
       {state === "error" && (

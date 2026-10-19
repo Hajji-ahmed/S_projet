@@ -87,6 +87,10 @@ def list_transactions(
     type_operation: Annotated[
         TypeOperation | None, Query(description="Chèque, Effet, Espèces, Virement, Impayé ou Autre")
     ] = None,
+    sens: Annotated[
+        Literal["Débit", "Crédit"] | None,
+        Query(description="Débit (argent sorti) ou Crédit (argent entré), 19/10/2026"),
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> OperationsPageOut:
@@ -103,6 +107,7 @@ def list_transactions(
         sans_a_verifier=sans_a_verifier,
         a_comptabiliser=a_comptabiliser,
         type_operation=type_operation,
+        sens=sens,
     )
     return OperationsPageOut.from_page(result)
 

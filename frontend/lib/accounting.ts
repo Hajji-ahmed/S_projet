@@ -10,6 +10,8 @@ export type EntriesFilter = {
   typeOperation?: string;
   /** 19/10/2026 : false = sans opération bancaire possible, true = avec. */
   operationPossible?: boolean;
+  /** « Débit » ou « Crédit » de l'écriture (19/10/2026). */
+  sens?: string;
   page: number;
 };
 
@@ -48,6 +50,7 @@ export function entriesQuery(companyId: number, filter: EntriesFilter): string {
   if (filter.operationPossible !== undefined) {
     params.set("operation_possible", String(filter.operationPossible));
   }
+  if (filter.sens) params.set("sens", filter.sens);
   params.set("page", String(filter.page));
   return `?${params}`;
 }
