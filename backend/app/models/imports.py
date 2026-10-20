@@ -88,6 +88,9 @@ class BankStatement(TimestampMixin, Base):
     periode_fin: Mapped[date | None] = mapped_column(Date)
     solde_ouverture: Mapped[Montant | None]
     solde_cloture: Mapped[Montant | None]
+    # Fichier des opérations en cours d'une banque qui les envoie à part (20/10/2026) : ses
+    # lignes sont en cours, sans solde ; il ne donne ni solde de clôture ni contrôle
+    en_cours: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     bank_account: Mapped[BankAccount] = relationship()
 
@@ -140,6 +143,9 @@ class BankTransaction(TimestampMixin, Base):
     # garde son solde (le solde du jour reste exact) et n'apparaît plus dans le rapprochement.
     en_cours: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     remplacee_par_id: Mapped[int | None] = mapped_column(ForeignKey("bank_transactions.id"))
+    # Empreinte de la ligne définitive qui a complété cette opération « (*) » (0035, 20/10/2026) :
+    # un réimport de son relevé la reconnaît comme déjà importée
+    hash_definitive: Mapped[str | None] = mapped_column(String(64))
 
     statement: Mapped[BankStatement] = relationship()
     # Devise du compte, pour l'affichage (14/10/2026) : lecture seule

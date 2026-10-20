@@ -69,6 +69,9 @@ export type Correspondance = {
   score_second?: string | null;
   /** Un autre candidat à moins de 10 points : jamais coché d'office. */
   concurrente_proche?: boolean;
+  /** Recherche élargie (20/10/2026) : écart entre les dates ; jamais cochée d'office. */
+  elargie?: boolean;
+  ecart_jours?: number | null;
   criteres: Critere[];
   commentaire: string | null;
   valide_par: string | null;
@@ -119,6 +122,14 @@ export type RunResult = {
   /** Groupes N → 1 proposés (12/10/2026). */
   nb_groupes?: number;
   nb_ecritures_ambigues: number;
+};
+
+/** Résultat de la recherche élargie (20/10/2026). */
+export type RunElargiResult = {
+  nb_operations: number;
+  nb_ecritures: number;
+  nb_propositions: number;
+  fenetre_jours: number;
 };
 
 export type StatutDecision = "Validée" | "Rejetée" | "Annulée";

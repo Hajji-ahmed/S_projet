@@ -385,7 +385,11 @@ export function EditablePreview({
                           {/\(\s*\*\s*\)\s*$/.test(ligne.libelle ?? "") && <EnCoursBadge />}
                           {line?.remplace_date && (
                             <span className="block text-xs font-medium text-simtis-primary">
-                              remplace l&apos;opération en cours du {formatDate(line.remplace_date)}
+                              {line.remplace_avec_solde
+                                ? "complète l'opération en cours du "
+                                : "remplace l'opération en cours du "}
+                              {formatDate(line.remplace_date)}
+                              {line.remplace_avec_solde && " (pas de nouvelle ligne)"}
                             </span>
                           )}
                         </span>

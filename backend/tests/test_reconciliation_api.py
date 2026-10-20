@@ -1632,3 +1632,33 @@ def test_a_pending_operation_is_never_compared_nor_matched_by_hand(client, compt
     assert {op["id"] for op in page["operations"]} == {en_cours.id, definitive.id}
     assert page["en_cours"] == 1
     assert page["par_statut"]["Non rapprochée"] == 1
+
+
+def test_the_wide_search_proposes_far_pairs_without_touching_the_engine(client, comptable, db):
+    """20/10/2026 : bouton « Recherche élargie » ; ses propositions sont marquées, jamais
+    cochées, et le moteur normal ne les remplace pas."""
+    compte = account(db)
+    cheque = operation(db, compte, montant="20000", libelle="ENCAISSEMENT CHEQUE N 0174512")
+    loin = ecriture(
+        db, compte, montant="-20000", jour=date(2026, 3, 1), libelle="EAR1° 174512 X",
+        numero_piece="P1",
+    )  # fmt: skip
+    proche_tx = operation(db, compte, montant="700", libelle="VIR ABC")
+    proche_ec = ecriture(db, compte, montant="-700", libelle="Virement ABC", numero_piece="P2")
+    body = {"company_id": company(db).id, **PERIODE}
+
+    refus = client.post("/api/reconciliation/run-elargie", json=body, headers={})
+    response = client.post("/api/reconciliation/run-elargie", json=body, headers=comptable)
+
+    assert refus.status_code == 401
+    assert response.status_code == 200, response.text
+    assert response.json()["nb_propositions"] == 1
+    assert statuses(db, cheque, loin) == ["À vérifier", "À vérifier"]
+    run(client, comptable, db)
+    proposees = {
+        p["operation"]["id"]: p for p in proposals(client, comptable, db).json()["correspondances"]
+    }
+    assert proposees[cheque.id]["elargie"] is True
+    assert proposees[cheque.id]["ecart_jours"] == (JOUR - date(2026, 3, 1)).days
+    assert proposees[proche_tx.id]["elargie"] is False
+    assert proche_ec.id == proposees[proche_tx.id]["ecriture"]["id"]

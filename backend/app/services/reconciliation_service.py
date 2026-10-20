@@ -52,6 +52,7 @@ from app.services.reconciliation_scoring import (
     _ecart_si_comparable,
     comparable,
     proposer,
+    proposer_elargi,
     score,
     type_ecriture,
     type_operation,
@@ -99,6 +100,9 @@ def grille(db: Session) -> Grille:
             case "FENETRE":
                 if rule.tolerance is not None:
                     valeurs["fenetre_jours"] = int(rule.tolerance)
+            case "FENETRE_ELARGIE":
+                if rule.tolerance is not None:
+                    valeurs["fenetre_elargie_jours"] = int(rule.tolerance)
             case "SEUIL_PROPOSITION" | "SEUIL_FORT" | "ECART_AMBIGUITE":
                 valeurs[rule.code.lower()] = rule.poids
     return Grille(**{**GRILLE_PAR_DEFAUT.__dict__, **valeurs})
@@ -259,6 +263,122 @@ def run(
     return result
 
 
+@dataclass(frozen=True)
+class RunElargiResult:
+    nb_operations: int
+    nb_ecritures: int
+    nb_propositions: int
+    fenetre_jours: int
+
+
+def run_elargi(
+    db: Session,
+    *,
+    company_id: int,
+    bank_account_id: int | None,
+    date_from: date,
+    date_to: date,
+    acteur_id: int,
+    ip: str | None,
+) -> RunElargiResult:
+    """Recherche élargie (20/10/2026) : parmi les lignes encore libres de la période, les paires
+    au montant exactement opposé et au même n° jusqu'à `fenetre_elargie_jours` d'écart
+    (`proposer_elargi`). Seules ses propres propositions en attente sont refaites ; celles du
+    moteur normal ne bougent pas. Jamais validée d'office."""
+    _check_period(date_from, date_to)
+    if (date_to - date_from).days >= PERIODE_MAX_JOURS:
+        raise ConflictError("La période ne peut pas dépasser 5 ans.")
+    company = _company(db, company_id, lock=True, sans_attendre=True)
+    accounts = repo.company_accounts(db, company.id, bank_account_id)
+    if bank_account_id is not None and not accounts:
+        raise NotFoundError("Compte bancaire introuvable pour cette société.")
+    account_ids = [account.id for account in accounts]
+    regles = grille(db)
+    db.flush()
+
+    anciennes = [
+        match
+        for match in repo.automatic_proposals_of_period(db, account_ids, date_from, date_to)
+        if (match.detail_score or {}).get("elargie")
+    ]
+    anciennes_tx = {
+        i.bank_transaction_id for m in anciennes for i in m.items if i.bank_transaction_id
+    }
+    anciennes_ec = {
+        i.accounting_entry_id for m in anciennes for i in m.items if i.accounting_entry_id
+    }
+    repo.delete_matches(db, [match.id for match in anciennes])
+    repo.set_transaction_status(db, anciennes_tx, "Non rapprochée")
+    repo.set_entry_status(db, anciennes_ec, "Non rapprochée")
+    db.expire_all()
+
+    lecture = timedelta(days=regles.fenetre_elargie_jours)
+    transactions = repo.free_transactions(db, account_ids, date_from, date_to)
+    frais = repo.fee_transaction_ids(db, [tx.id for tx in transactions])
+    transactions = [tx for tx in transactions if tx.id not in frais]
+    entries = repo.free_entries(db, company.id, account_ids, date_from - lecture, date_to + lecture)
+    by_tx = {tx.id: tx for tx in transactions}
+    by_entry = {entry.id: entry for entry in entries}
+    propositions = proposer_elargi(
+        [_operation(tx) for tx in transactions],
+        [_ecriture(entry) for entry in entries],
+        regles,
+        repo.rejected_pairs(db, company.id),
+    )
+    for proposition in propositions:
+        tx, entry = by_tx[proposition.operation_id], by_entry[proposition.ecriture_id]
+        repo.add(
+            db,
+            ReconciliationMatch(
+                company_id=company.id,
+                type="1-1",
+                score=proposition.score.total,
+                statut="Proposée",
+                origine="Automatique",
+                detail_score={
+                    **_detail_json(proposition.score),
+                    "elargie": True,
+                    "ecart_jours": proposition.ecart_jours,
+                },
+                items=[
+                    ReconciliationMatchItem(
+                        bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
+                    ),
+                    ReconciliationMatchItem(
+                        accounting_entry_id=entry.id,
+                        montant_affecte=abs(montant_rapprochement(entry)),
+                        actif=True,
+                    ),
+                ],
+            ),
+        )
+    repo.set_transaction_status(db, {p.operation_id for p in propositions}, "À vérifier")
+    repo.set_entry_status(db, {p.ecriture_id for p in propositions}, "À vérifier")
+    result = RunElargiResult(
+        nb_operations=len(transactions),
+        nb_ecritures=len(entries),
+        nb_propositions=len(propositions),
+        fenetre_jours=regles.fenetre_elargie_jours,
+    )
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="rapprochement_elargi",
+        entite="company",
+        entite_id=company.id,
+        apres={
+            "compte": bank_account_id,
+            "du": date_from,
+            "au": date_to,
+            "propositions_remplacees": len(anciennes),
+            **result.__dict__,
+        },
+        ip=ip,
+    )
+    _commit(db)
+    return result
+
+
 @dataclass
 class _Moteur:
     resultat: Resultat
@@ -285,7 +405,12 @@ def _engine(
     entry_to = date_to + timedelta(days=lecture)
 
     # 1. Les propositions en attente de la période sont refaites
-    anciennes = repo.automatic_proposals_of_period(db, account_ids, date_from, date_to)
+    anciennes = [
+        match
+        for match in repo.automatic_proposals_of_period(db, account_ids, date_from, date_to)
+        # Une proposition de la recherche élargie se refait par son propre bouton (20/10/2026)
+        if not (match.detail_score or {}).get("elargie")
+    ]
     anciennes_tx = {
         i.bank_transaction_id for m in anciennes for i in m.items if i.bank_transaction_id
     }
@@ -1132,6 +1257,9 @@ class MatchView:
     # Une autre écriture (ou opération) à moins de `ecart_ambiguite` points (08/10/2026)
     score_second: Decimal | None = None
     concurrente_proche: bool = False
+    # Recherche élargie (20/10/2026) : écart en jours ; jamais cochée d'office
+    elargie: bool = False
+    ecart_jours: int | None = None
     # Toutes les opérations (une seule en 1 → 1, plusieurs pour un groupe N → 1), avec leur banque
     transactions: list[tuple[BankTransaction, str]] = field(default_factory=list)
     # Toutes les écritures (plusieurs en 1 → N et N → N, P13), la plus grosse en tête
@@ -1265,6 +1393,8 @@ def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> l
                 concurrente_proche=second is not None
                 and match.score is not None
                 and match.score - second < regles.ecart_ambiguite,
+                elargie=bool((match.detail_score or {}).get("elargie")),
+                ecart_jours=(match.detail_score or {}).get("ecart_jours"),
             )
         )
     return views

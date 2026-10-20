@@ -283,3 +283,13 @@ describe("dates propres à un volet (19/10/2026)", () => {
     });
   });
 });
+
+describe("propositions éloignées (20/10/2026)", () => {
+  it("ne coche jamais d'office une proposition éloignée et la filtre à part", () => {
+    const eloignee = { ...proposal(1, "90.00", true), elargie: true, ecart_jours: 200 };
+    const normale = proposal(2, "95.00", true);
+
+    expect([...defaultSelection([eloignee, normale])]).toEqual([2]);
+    expect(filterProposals([eloignee, normale], "eloignees").map((item) => item.id)).toEqual([1]);
+  });
+});

@@ -148,6 +148,14 @@ export function ProposalCard({
               Concurrente proche · 2e à {formatScore(item.score_second ?? null)}
             </span>
           )}
+          {item.elargie && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-simtis-info-bg px-2 py-0.5 text-[11px] font-medium text-simtis-info-fg"
+              title="Trouvée par la recherche élargie : même n° et même montant, dates très éloignées. Jamais cochée d'office."
+            >
+              Écart de {item.ecart_jours ?? "?"} jours
+            </span>
+          )}
           <ul className="flex flex-wrap justify-center gap-1" aria-label="Critères du score">
             {item.criteres.map((critere) => {
               const gained = Number(critere.points) > 0;

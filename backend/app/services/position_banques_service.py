@@ -47,8 +47,17 @@ def _soldes(
         db, account_ids, date_fin
     ):
         operations[account_id].append((jour, solde))
+    # Opérations en cours d'un fichier à part : déjà dans le solde de la banque (20/10/2026)
+    en_cours: dict[int, list[tuple[date, date | None, Decimal]]] = defaultdict(list)
+    for account_id, debut, fin, montant in position_repository.en_cours_hors_releve(
+        db, account_ids, date_fin
+    ):
+        en_cours[account_id].append((debut, fin, montant))
     return {
-        account_id: position_service.fusion_soldes(operations[account_id], saisies[account_id])
+        account_id: position_service.avec_en_cours(
+            position_service.fusion_soldes(operations[account_id], saisies[account_id]),
+            en_cours[account_id],
+        )
         for account_id in account_ids
     }
 

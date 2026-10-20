@@ -58,6 +58,8 @@ class Grille:
     fenetre_jours: int = 10
     # Chèque ou effet au même n° et au même montant : comparé jusqu'à ± 180 jours (12/10/2026)
     fenetre_numero_jours: int = 180
+    # Recherche élargie (bouton à part, 20/10/2026) : même n° et même montant jusqu'à ± 365 jours
+    fenetre_elargie_jours: int = 365
     # En dessous : aucune proposition
     seuil_proposition: Decimal = Decimal("50")
     # À partir de : « Forte correspondance », validable en lot (toujours par un humain) ; 80 depuis
@@ -694,3 +696,61 @@ def regex_type(regles: tuple[tuple[str, str], ...], nom: str | None = None) -> s
         if nom is None or type_ == nom
     ]
     return f"^{_SEPARATEUR}*({'|'.join(prefixes)})({_SEPARATEUR}|$)"
+
+
+# --- Recherche élargie (20/10/2026) ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PropositionElargie:
+    operation_id: int
+    ecriture_id: int
+    score: Score
+    ecart_jours: int
+    second: Decimal | None = None
+
+
+def proposer_elargi(
+    operations: Iterable[Operation],
+    ecritures: Iterable[Ecriture],
+    grille: Grille = GRILLE_PAR_DEFAUT,
+    paires_rejetees: frozenset[tuple[int, int]] | set[tuple[int, int]] = frozenset(),
+) -> list[PropositionElargie]:
+    """Paires très éloignées en date (au-delà de `fenetre_jours`, jusqu'à `fenetre_elargie_jours`) :
+    montant exactement opposé,
+    même compte, types compatibles et un n° commun (5 chiffres ou plus, ou la référence). Les
+    écritures sont rangées par (compte, montant) : chaque opération ne regarde que celles de son
+    montant opposé. Une paire n'est proposée que si chacune n'a QUE cette candidate."""
+    par_montant: dict[tuple[int | None, Decimal], list[Ecriture]] = {}
+    for ecriture in ecritures:
+        par_montant.setdefault((ecriture.bank_account_id, ecriture.montant), []).append(ecriture)
+    candidats: dict[int, list[tuple[Operation, Ecriture, int]]] = {}
+    par_ecriture: dict[int, int] = {}
+    for operation in operations:
+        numeros_op = numeros(operation.libelle, operation.reference)
+        if not numeros_op:
+            continue
+        for ecriture in par_montant.get((operation.bank_account_id, -operation.montant), ()):
+            if (operation.id, ecriture.id) in paires_rejetees:
+                continue
+            if not types_compatibles(operation, ecriture):
+                continue
+            if not numeros_op & _numeros_ecriture(ecriture):
+                continue
+            ecart = ecart_jours(operation, ecriture)
+            # Dans la fenêtre normale, c'est le moteur habituel qui compare
+            if ecart <= grille.fenetre_jours or ecart > grille.fenetre_elargie_jours:
+                continue
+            candidats.setdefault(operation.id, []).append((operation, ecriture, ecart))
+            par_ecriture[ecriture.id] = par_ecriture.get(ecriture.id, 0) + 1
+    propositions = []
+    for liste in candidats.values():
+        if len(liste) != 1:
+            continue
+        operation, ecriture, ecart = liste[0]
+        if par_ecriture[ecriture.id] != 1:
+            continue
+        resultat = score(operation, ecriture, grille)
+        if resultat.total >= grille.seuil_proposition:
+            propositions.append(PropositionElargie(operation.id, ecriture.id, resultat, ecart))
+    return propositions

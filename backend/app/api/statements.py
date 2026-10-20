@@ -198,6 +198,15 @@ SoldeOuvertureForm = Annotated[
 ]
 
 
+EnCoursForm = Annotated[
+    bool,
+    Form(
+        description="Fichier des opérations en cours (banque qui les envoie à part) : toutes ses "
+        "lignes sont en cours, sans solde (20/10/2026)"
+    ),
+]
+
+
 def _opening(raw: str | None) -> Decimal | None:
     """Solde d'ouverture saisi ; illisible → 422."""
     if raw is None or not raw.strip():
@@ -224,6 +233,7 @@ def analyse_statement(
     mapping: MappingForm = None,
     feuille: FeuilleForm = None,
     solde_ouverture: SoldeOuvertureForm = None,
+    en_cours: EnCoursForm = False,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_import),
 ) -> AnalyseOut:
@@ -239,6 +249,7 @@ def analyse_statement(
         mapping=_mapping(mapping),
         feuille=feuille or None,
         solde_ouverture=_opening(solde_ouverture),
+        en_cours=en_cours,
     )
     return AnalyseOut.from_analysis(analysis)
 
@@ -257,6 +268,7 @@ def confirm_statement(
         bool, Form(description="Importer malgré des lignes en erreur, en les écartant")
     ] = False,
     solde_ouverture: SoldeOuvertureForm = None,
+    en_cours: EnCoursForm = False,
     lignes: Annotated[
         UploadFile | None,
         File(
@@ -298,5 +310,6 @@ def confirm_statement(
         acteur_id=user.id,
         ip=client_ip(request),
         solde_ouverture=_opening(solde_ouverture),
+        en_cours=en_cours,
     )
     return ConfirmationOut.from_import(result)

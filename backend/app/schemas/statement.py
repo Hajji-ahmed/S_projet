@@ -112,6 +112,11 @@ class LigneAnalyseOut(BaseModel):
     remplace_date: date | None = Field(
         None, description="Remplace l'opération en cours importée à cette date (20/10/2026)"
     )
+    remplace_avec_solde: bool = Field(
+        False,
+        description="L'opération en cours est une ligne « (*) » du relevé : elle est complétée par "
+        "celle-ci (pas de nouvelle ligne)",
+    )
 
 
 class ResumeOut(BaseModel):
@@ -332,6 +337,8 @@ class StatementOut(BaseModel):
     nb_erreurs: int
     nb_doublons: int
     controle_solde: ControleSoldeOut | None
+    # Fichier des opérations en cours (20/10/2026)
+    en_cours: bool = False
 
     @classmethod
     def from_row(cls, row: StatementRow) -> "StatementOut":
@@ -351,6 +358,7 @@ class StatementOut(BaseModel):
             periode_fin=statement.periode_fin,
             solde_ouverture=statement.solde_ouverture,
             solde_cloture=statement.solde_cloture,
+            en_cours=statement.en_cours,
             nb_lignes=batch.nb_lignes,
             nb_erreurs=batch.nb_erreurs,
             nb_doublons=batch.nb_doublons,

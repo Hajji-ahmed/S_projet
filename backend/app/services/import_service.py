@@ -151,6 +151,9 @@ class AnalysedLine:
     # Ligne définitive qui remplace une opération en cours déjà importée : son id et sa date
     remplace_id: int | None = None
     remplace_date: date | None = None
+    # L'opération en cours remplacée avait un solde (ligne « (*) » du relevé) : son montant est déjà
+    # dans la suite des soldes, la définitive ne l'ajoute pas au solde calculé (20/10/2026)
+    remplace_avec_solde: bool = False
 
 
 @dataclass
@@ -204,6 +207,8 @@ class StatementAnalysis:
     # La colonne Solde recopiait le montant de chaque ligne : ignorée (12/10/2026)
     solde_colonne_ignoree: bool = False
     solde_ouverture_choisi: Decimal | None = None
+    # Fichier des opérations en cours (20/10/2026)
+    en_cours: bool = False
 
 
 # --- Lecture du classeur et correspondance (module commun `import_file`) --------------------------
@@ -450,14 +455,20 @@ def _line_key(line: AnalysedLine) -> tuple:
 JOURS_REMPLACEMENT = 10
 
 
-def _marquer_en_cours(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
+def _marquer_en_cours(
+    db: Session, account: BankAccount, lines: list[AnalysedLine], fichier_en_cours: bool = False
+) -> None:
     """Opérations en cours et remplacements (20/10/2026). Une ligne dont le libellé finit par
     « (*) » est en cours. Une ligne définitive (sans « (*) ») remplace une opération en cours déjà
-    importée du même compte : même montant, même libellé sans « (*) », dates à
-    `JOURS_REMPLACEMENT` jours au plus ; la plus ancienne d'abord, chacune une seule fois."""
+    importée du même compte : même montant et même sens, dates à `JOURS_REMPLACEMENT` jours au
+    plus, et même référence (colonne Référence, ou n° lu dans le libellé) ; le libellé peut
+    changer. Sans référence d'un côté : même libellé sans « (*) ». La plus ancienne d'abord, chacune
+    une seule fois."""
     for line in lines:
-        line.en_cours = est_en_cours(line.libelle)
+        # Fichier des opérations en cours (20/10/2026) : toutes ses lignes le sont
+        line.en_cours = fichier_en_cours or est_en_cours(line.libelle)
         line.remplace_id = line.remplace_date = None
+        line.remplace_avec_solde = False
     candidates = [
         line
         for line in lines
@@ -470,17 +481,31 @@ def _marquer_en_cours(db: Session, account: BankAccount, lines: list[AnalysedLin
     libres = import_repository.operations_en_cours(db, account.id, debut, fin)
     pris: set[int] = set()
     for line in sorted(candidates, key=lambda ligne: (ligne.date_operation, ligne.numero)):
-        cle = libelle_definitif(line.libelle)
         for tx in libres:
             if (
                 tx.id not in pris
                 and tx.montant == line.montant
-                and libelle_definitif(tx.libelle) == cle
                 and abs((tx.date_operation - line.date_operation).days) <= JOURS_REMPLACEMENT
+                and _meme_operation(tx, line)
             ):
                 pris.add(tx.id)
                 line.remplace_id, line.remplace_date = tx.id, tx.date_operation
+                line.remplace_avec_solde = tx.solde is not None
                 break
+
+
+def _reference_comparee(reference: str | None, libelle: str | None) -> str | None:
+    texte = reference or extract_reference(libelle)
+    return "".join(texte.upper().split()) if texte else None
+
+
+def _meme_operation(tx: BankTransaction, line: AnalysedLine) -> bool:
+    """Même référence des deux côtés ; sans référence d'un côté, même libellé sans « (*) »."""
+    ref_tx = _reference_comparee(tx.reference, tx.libelle)
+    ref_ligne = _reference_comparee(line.reference, line.libelle)
+    if ref_tx and ref_ligne:
+        return ref_tx == ref_ligne
+    return libelle_definitif(tx.libelle) == libelle_definitif(line.libelle)
 
 
 def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
@@ -596,6 +621,9 @@ def running_balances(
             solde = line.solde
             continue
         value = None if line.montant is None else solde + line.montant
+        if line.remplace_avec_solde and line.montant is not None:
+            # Déjà compté avec l'opération en cours qu'elle remplace (20/10/2026)
+            value = solde
         if value is not None:
             solde = value
         if apercu:
@@ -792,8 +820,12 @@ def analyse_statement(
     feuille: str | None = None,
     today: date | None = None,
     solde_ouverture: Decimal | None = None,
+    en_cours: bool = False,
 ) -> StatementAnalysis:
     """Analyse un relevé pour un compte. Ne modifie pas la base.
+
+    `en_cours` (20/10/2026) : fichier des opérations en cours d'une banque qui les envoie à part ;
+    toutes ses lignes sont en cours, ses soldes sont ignorés.
 
     Fichier sans soldes : `solde_ouverture` (saisi à l'étape Validation) remplace le solde
     d'ouverture proposé, et les soldes de l'aperçu en sont calculés."""
@@ -881,9 +913,18 @@ def analyse_statement(
         for line in lines:
             line.solde = None
     _direction_from_balances(lines, mapping, analysis.solde_initial_fichier, pointages)
+    if en_cours:
+        # Opérations en cours : sans solde (leur montant s'ajoute au solde du compte)
+        for line in lines:
+            line.solde = None
+        analysis.solde_initial_fichier = analysis.solde_final_fichier = None
     _mark_duplicates(db, account, lines)
-    _marquer_en_cours(db, account, lines)
+    _marquer_en_cours(db, account, lines, en_cours)
     analysis.lignes = lines
+    if en_cours:
+        analysis.en_cours = True
+        analysis.resume = _summarise(lines, ignored)
+        return analysis
     # Pas de soldes dans le fichier : ils sont calculés depuis un solde d'ouverture
     # Une case Solde vide sur une ligne lisible (colonne absente ou remplie à moitié) : SIMTIS la
     # calcule (09/10/2026). Une ligne en erreur ne compte pas : elle n'est pas importée telle quelle
@@ -1251,6 +1292,7 @@ def confirm_statement(
     ip: str | None = None,
     today: date | None = None,
     solde_ouverture: Decimal | None = None,
+    en_cours: bool = False,
 ) -> StatementImport:
     """Enregistre un relevé : le fichier est analysé à nouveau, puis ses lignes retenues sont importées.
 
@@ -1267,6 +1309,7 @@ def confirm_statement(
         feuille=feuille,
         today=today,
         solde_ouverture=solde_ouverture,
+        en_cours=en_cours,
     )
     account = analysis.account
     if analysis.erreurs_mapping:
@@ -1283,7 +1326,10 @@ def confirm_statement(
         selection = _file_selection(analysis, garder_doublons, ecarter_erreurs)
     lines = selection.lines
     # En cours et remplacements recalculés sur les lignes retenues (libellés corrigés compris)
-    _marquer_en_cours(db, account, lines)
+    if en_cours:
+        for line in lines:
+            line.solde = None
+    _marquer_en_cours(db, account, lines, en_cours)
     dates = [line.date_operation for line in lines]
     if analysis.soldes_calcules:
         # Le serveur refait le calcul sur les lignes retenues, jamais celui de l'écran
@@ -1321,10 +1367,13 @@ def confirm_statement(
             periode_fin=max(dates),
             solde_ouverture=balances.solde_ouverture,
             solde_cloture=balances.solde_cloture,
+            en_cours=en_cours,
         )
         import_repository.add(db, statement)
         # Même ordre que le calcul des soldes : un fichier du plus récent au plus ancien est retourné
         rang = {id(line): numero for numero, line in enumerate(_chronological(lines), start=1)}
+        # Une définitive d'une opération « (*) » du relevé la complète : pas de nouvelle ligne
+        completees = [line for line in lines if line.remplace_id and line.remplace_avec_solde]
         nouvelles = [
             (
                 line,
@@ -1350,9 +1399,11 @@ def confirm_statement(
                 ),
             )
             for line in lines
+            if not (line.remplace_id and line.remplace_avec_solde)
         ]
         import_repository.add(db, *(tx for _, tx in nouvelles))
         remplacements = _remplacer_en_cours(db, nouvelles, acteur_id, ip)
+        remplacements += _completer_en_cours(db, completees, acteur_id, ip)
     except IntegrityError as error:  # le même fichier ou les mêmes lignes importés en parallèle
         db.rollback()
         raise ConflictError(
@@ -1407,6 +1458,52 @@ def confirm_statement(
         solde_du_jour=solde_du_jour,
         modele_enregistre=modele,
     )
+
+
+def _completer_en_cours(
+    db: Session, lines: list[AnalysedLine], acteur_id: int, ip: str | None
+) -> list[int]:
+    """Opération « (*) » du relevé et sa définitive (20/10/2026) : une seule ligne. L'ancienne
+    prend le libellé, la date de valeur et la référence de la définitive, garde sa date, son relevé
+    et son solde, n'est plus en cours et entre dans le rapprochement. L'empreinte de la définitive
+    est gardée : un réimport la reconnaît. Tracé avec l'ancien libellé."""
+    completees = []
+    for line in lines:
+        ancienne = db.get(BankTransaction, line.remplace_id)
+        if ancienne is None or not ancienne.en_cours or ancienne.remplacee_par_id is not None:
+            raise ConflictError(
+                "Une opération en cours vient d'être remplacée par ailleurs : relancez l'analyse."
+            )
+        avant = {
+            "libelle": ancienne.libelle,
+            "date_valeur": ancienne.date_valeur,
+            "reference": ancienne.reference,
+            "en_cours": True,
+        }
+        ancienne.libelle = line.libelle
+        ancienne.date_valeur = line.date_valeur or ancienne.date_valeur
+        ancienne.reference = line.reference or ancienne.reference
+        ancienne.en_cours = False
+        ancienne.hash_definitive = line.hash_ligne
+        completees.append(ancienne.id)
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="remplacement_en_cours",
+            entite="bank_transaction",
+            entite_id=ancienne.id,
+            avant=avant,
+            apres={
+                "libelle": ancienne.libelle,
+                "date_valeur": ancienne.date_valeur,
+                "reference": ancienne.reference,
+                "en_cours": False,
+                "completee_par_la_ligne": line.numero,
+            },
+            ip=ip,
+        )
+    db.flush()
+    return completees
 
 
 def _remplacer_en_cours(

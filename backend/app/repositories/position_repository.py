@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import distinct_on
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models import Bank, BankAccount, BankAccountBalance, BankTransaction
 
@@ -144,3 +144,30 @@ def dernier_solde_releve(
         )
     )
     return {row[0]: (row[1], row[2]) for row in db.execute(query)}
+
+
+def en_cours_hors_releve(
+    db: Session, account_ids: list[int], date_fin: date
+) -> list[tuple[int, date, date | None, Decimal]]:
+    """Opérations en cours d'un fichier à part (sans solde, 20/10/2026) jusqu'à `date_fin` :
+    (compte, date d'opération, date de sa définitive ou None, montant). Leur montant compte dans le
+    solde du compte de leur date à celle de leur définitive (exclue)."""
+    if not account_ids:
+        return []
+    definitive = aliased(BankTransaction)
+    rows = db.execute(
+        select(
+            BankTransaction.bank_account_id,
+            BankTransaction.date_operation,
+            definitive.date_operation,
+            BankTransaction.montant,
+        )
+        .outerjoin(definitive, definitive.id == BankTransaction.remplacee_par_id)
+        .where(
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.en_cours.is_(True),
+            BankTransaction.solde.is_(None),
+            BankTransaction.date_operation <= date_fin,
+        )
+    )
+    return [(row[0], row[1], row[2], row[3]) for row in rows]

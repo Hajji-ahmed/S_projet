@@ -11,6 +11,7 @@ import type {
   Correspondances,
   Historique,
   OperationsPage,
+  RunElargiResult,
   RunResult,
   StatutCorrespondance,
   StatutDecision,
@@ -18,6 +19,20 @@ import type {
 } from "@/types/reconciliation";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+
+/** Recherche élargie (20/10/2026) : même n° et même montant jusqu'à la fenêtre élargie. */
+export function runReconciliationElargie(companyId: number, filter: ReconciliationFilter) {
+  return apiFetch<RunElargiResult>("/reconciliation/run-elargie", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      company_id: companyId,
+      bank_account_id: filter.bankAccountId ?? null,
+      du: filter.from,
+      au: filter.to,
+    }),
+  });
+}
 
 /** Lance le moteur sur la période : il propose, il ne valide jamais. */
 export function runReconciliation(companyId: number, filter: ReconciliationFilter) {

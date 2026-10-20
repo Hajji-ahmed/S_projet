@@ -28,6 +28,15 @@ def existing_line_hashes(db: Session, account_id: int, hashes: list[str]) -> set
             BankTransaction.bank_account_id == account_id, BankTransaction.hash_ligne.in_(batch)
         )
         found.update(db.scalars(query))
+        # Ligne définitive qui a complété une opération « (*) » (20/10/2026)
+        found.update(
+            db.scalars(
+                select(BankTransaction.hash_definitive).where(
+                    BankTransaction.bank_account_id == account_id,
+                    BankTransaction.hash_definitive.in_(batch),
+                )
+            )
+        )
     return found
 
 

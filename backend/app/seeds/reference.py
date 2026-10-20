@@ -70,6 +70,15 @@ RECONCILIATION_RULES = [
     ("LIBELLE", "Libellé similaire", "libelle", "20", None, True),
     ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None, False),
     ("FENETRE", "Fenêtre de comparaison des dates (jours)", "fenetre", "0", "10", True),
+    # Recherche élargie (20/10/2026) : même n° et même montant, jusqu'à 365 jours d'écart
+    (
+        "FENETRE_ELARGIE",
+        "Recherche élargie : écart maximal entre les dates (jours)",
+        "fenetre",
+        "0",
+        "365",
+        True,
+    ),
     ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None, True),
     ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "80", None, True),
     (

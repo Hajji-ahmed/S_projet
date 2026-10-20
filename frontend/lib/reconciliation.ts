@@ -139,13 +139,13 @@ export function validable(item: Correspondance): boolean {
 export function defaultSelection(items: readonly Correspondance[]): Set<number> {
   return new Set(
     items
-      .filter((item) => item.forte && !item.concurrente_proche && validable(item))
+      .filter((item) => item.forte && !item.concurrente_proche && !item.elargie && validable(item))
       .map((item) => item.id),
   );
 }
 
 export type ProposalsFilter =
-  "toutes" | "fortes" | "a_verifier" | "ambigues" | "ecritures_ambigues";
+  "toutes" | "fortes" | "a_verifier" | "ambigues" | "ecritures_ambigues" | "eloignees";
 
 /** Filtre Toutes · Fortes (≥ seuil) · À vérifier (< seuil), la plus forte d'abord. */
 export function filterProposals(
@@ -156,7 +156,9 @@ export function filterProposals(
     .filter(
       (item) =>
         filtre === "toutes" ||
+        (filtre === "eloignees" && !!item.elargie) ||
         (filtre !== "ambigues" &&
+          filtre !== "eloignees" &&
           filtre !== "ecritures_ambigues" &&
           (filtre === "fortes") === item.forte),
     )

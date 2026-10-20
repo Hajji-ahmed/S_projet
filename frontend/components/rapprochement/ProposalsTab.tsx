@@ -88,6 +88,7 @@ function filtres(seuil: string): { value: ProposalsFilter; label: string }[] {
     { value: "a_verifier", label: `À vérifier (< ${seuil})` },
     { value: "ambigues", label: "Opérations ambiguës" },
     { value: "ecritures_ambigues", label: "Écritures ambiguës" },
+    { value: "eloignees", label: "Éloignées" },
   ];
 }
 

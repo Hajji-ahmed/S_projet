@@ -53,6 +53,8 @@ export type AnalysedLine = {
   en_cours?: boolean;
   /** Remplace l'opération en cours importée à cette date. */
   remplace_date?: string | null;
+  /** L'opération en cours est une ligne « (*) » du relevé : complétée, pas de nouvelle ligne. */
+  remplace_avec_solde?: boolean;
 };
 
 export type AnalysisSummary = {
@@ -155,6 +157,8 @@ export type Statement = {
   nb_erreurs: number;
   nb_doublons: number;
   controle_solde: BalanceCheck | null;
+  /** Fichier des opérations en cours (20/10/2026). */
+  en_cours?: boolean;
 };
 
 /** Opération au format standard du relevé : ses 11 champs, puis référence, montant et statut. */
@@ -214,6 +218,8 @@ export type ImportRequest = {
   feuille?: string;
   /** Fichier sans soldes : solde d'ouverture du calcul (« 5000000.00 »). */
   soldeOuverture?: string;
+  /** Fichier des opérations en cours d'une banque qui les envoie à part (20/10/2026). */
+  enCours?: boolean;
 };
 
 /** Une ligne du fichier telle que l'aperçu modifiable l'envoie (corrigée ou non). Pas d'ajout. */

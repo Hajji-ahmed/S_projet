@@ -13,6 +13,7 @@ from app.services.reconciliation_scoring import (
     ecart_jours,
     numeros,
     proposer,
+    proposer_elargi,
     ratio_date,
     score,
     type_ecriture,
@@ -464,3 +465,36 @@ def test_two_identical_operations_facing_two_identical_entries_are_all_ambiguous
     assert resultat.propositions == []
     assert resultat.operations_ambigues == {1, 2}
     assert resultat.ecritures_ambigues == {10, 11}
+
+
+# --- Recherche élargie (20/10/2026) ---------------------------------------------------------------
+
+
+def test_a_far_pair_with_the_same_number_and_amount_is_found():
+    banque = op(id=1, montant="20000", libelle="ENCAISSEMENT CHEQUE N 0174512 TIRE SUR ATW")
+    loin = ec(id=10, montant="-20000", jour=JOUR - timedelta(days=200), libelle="EAR1° 174512 X")
+
+    [proposition] = proposer_elargi([banque], [loin])
+
+    assert (proposition.operation_id, proposition.ecriture_id) == (1, 10)
+    assert proposition.ecart_jours == 200
+    assert proposition.score.total >= Decimal("90")
+
+
+def test_the_wide_search_needs_a_number_one_candidate_and_the_window():
+    banque = op(id=1, montant="20000", libelle="ENCAISSEMENT CHEQUE N 0174512 TIRE SUR ATW")
+    sans_numero = op(id=2, montant="700", libelle="VIR ABC")
+    autre_montant = ec(
+        id=10, montant="-19000", jour=JOUR - timedelta(days=50), libelle="EAR1° 174512"
+    )
+    trop_loin = ec(id=11, montant="-20000", jour=JOUR - timedelta(days=400), libelle="EAR1° 174512")
+    vir = ec(id=12, montant="-700", jour=JOUR - timedelta(days=50), libelle="Virement ABC")
+
+    assert proposer_elargi([banque, sans_numero], [autre_montant, trop_loin, vir]) == []
+    # Deux écritures possibles pour la même opération : rien n'est choisi au hasard
+    double = [
+        ec(id=20, montant="-20000", jour=JOUR - timedelta(days=60), libelle="EAR1° 174512 A"),
+        ec(id=21, montant="-20000", jour=JOUR - timedelta(days=90), libelle="EAR1° 174512 B"),
+    ]
+    assert proposer_elargi([banque], double) == []
+    assert proposer_elargi([banque], [double[0]], paires_rejetees={(1, 20)}) == []

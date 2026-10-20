@@ -84,7 +84,7 @@ def test_reference_seed_creates_the_expected_rows(db):
         # accounting.prepare est créée par la migration 0024
         permissions=12,
         roles=5,
-        reconciliation_rules=9,
+        reconciliation_rules=10,  # + FENETRE_ELARGIE (20/10/2026)
     )
 
 

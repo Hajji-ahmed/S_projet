@@ -39,6 +39,17 @@ def figures_for_accounts(
     # Compte alimenté par un relevé : le solde est le solde de clôture du relevé (08/10/2026)
     soldes.update(position_repository.dernier_solde_releve(db, ids, as_of))
     alimentes = position_repository.comptes_alimentes_par_releve(db, ids)
+    # Opérations en cours d'un fichier à part : déjà dans le solde de la banque (20/10/2026)
+    en_cours: dict[int, list] = {}
+    for account_id, debut, fin, montant in position_repository.en_cours_hors_releve(db, ids, as_of):
+        en_cours.setdefault(account_id, []).append((debut, fin, montant))
+    for account_id, ajustements in en_cours.items():
+        if account_id in soldes:
+            jour, valeur = soldes[account_id]
+            soldes[account_id] = (
+                jour,
+                valeur + position_service.montant_en_cours(ajustements, as_of),
+            )
 
     figures = {}
     for account in accounts:

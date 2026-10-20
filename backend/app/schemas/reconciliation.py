@@ -188,6 +188,9 @@ class CorrespondanceOut(BaseModel):
         False,
         description="Un autre candidat à moins de l'écart d'ambiguïté : jamais coché d'office",
     )
+    # Recherche élargie (20/10/2026) : écart entre les dates ; jamais cochée d'office
+    elargie: bool = False
+    ecart_jours: int | None = None
     criteres: list[CritereOut]
     commentaire: str | None
     valide_par: str | None
@@ -232,6 +235,8 @@ class CorrespondanceOut(BaseModel):
             forte=view.forte,
             score_second=view.score_second,
             concurrente_proche=view.concurrente_proche,
+            elargie=view.elargie,
+            ecart_jours=view.ecart_jours,
             criteres=criteres(match.detail_score, view.actifs),
             commentaire=match.commentaire,
             valide_par=view.valide_par,

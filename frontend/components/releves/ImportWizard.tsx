@@ -80,6 +80,8 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   const [accountsError, setAccountsError] = useState(false);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  // Fichier des opérations en cours d'une banque qui les envoie à part (20/10/2026)
+  const [enCours, setEnCours] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [pointages, setPointages] = useState<PointageType[]>([]);
 
@@ -132,7 +134,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   async function run(
     chosenFile: File,
     chosenAccount: number,
-    options: { mapping?: ColumnMapping; feuille?: string } = {},
+    options: { mapping?: ColumnMapping; feuille?: string; enCours?: boolean } = {},
   ) {
     setBusy(true);
     setError(null);
@@ -142,6 +144,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         accountId: chosenAccount,
         mapping: options.mapping,
         feuille: options.feuille,
+        enCours: options.enCours ?? enCours,
       });
       const read = result.lignes.map(draftFromLine);
       setAnalysis(result);
@@ -242,6 +245,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
             accountId: account.id,
             mapping,
             feuille,
+            enCours,
             // Solde verrouillé (banque ou relevé précédent) : le serveur le retrouve seul
             soldeOuverture:
               analysis.soldes_calcules && analysis.solde_ouverture_modifiable !== false
@@ -285,6 +289,27 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
               }))}
             />
           </Field>
+          <label className="mt-3 flex items-start gap-2 text-sm text-simtis-text">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-simtis-primary"
+              checked={enCours}
+              disabled={busy}
+              onChange={(event) => {
+                const suivant = event.target.checked;
+                setEnCours(suivant);
+                setAnalysis(null);
+                if (file && accountId !== null) void run(file, accountId, { enCours: suivant });
+              }}
+            />
+            <span>
+              Ce fichier contient des opérations en cours
+              <span className="block text-xs text-simtis-muted">
+                Pour une banque qui les envoie à part : elles entrent dans le solde du compte
+                jusqu&apos;à l&apos;arrivée de leur définitive, sans être rapprochées.
+              </span>
+            </span>
+          </label>
           <p className="text-xs text-simtis-muted">
             Le compte fixe la société et la banque du relevé. Le fichier est analysé dès qu&apos;il
             est choisi : ses colonnes sont reconnues, ou reprises du dernier import de la même

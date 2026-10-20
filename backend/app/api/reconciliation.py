@@ -4,6 +4,7 @@ from datetime import date
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, require_permission
@@ -67,6 +68,36 @@ def run(
         ip=client_ip(request),
     )
     return RunOut.from_result(result)
+
+
+class RunElargiOut(BaseModel):
+    """Résultat de la recherche élargie (20/10/2026)."""
+
+    nb_operations: int
+    nb_ecritures: int
+    nb_propositions: int
+    fenetre_jours: int
+
+
+@router.post("/run-elargie", response_model=RunElargiOut)
+def run_elargie(
+    body: RunIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> RunElargiOut:
+    """Recherche élargie (20/10/2026) : lignes encore libres, même n° et montant exactement
+    opposé, jusqu'à la « fenêtre élargie » des Paramètres (365 jours par défaut)."""
+    result = reconciliation_service.run_elargi(
+        db,
+        company_id=body.company_id,
+        bank_account_id=body.bank_account_id,
+        date_from=body.du,
+        date_to=body.au,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return RunElargiOut(**result.__dict__)
 
 
 @router.get("/transactions", response_model=OperationsPageOut)

@@ -139,7 +139,20 @@ function Releves({ companyId }: { companyId: number }) {
         </span>
       ),
     },
-    { key: "fichier_nom", header: "Fichier" },
+    {
+      key: "fichier_nom",
+      header: "Fichier",
+      render: (row) => (
+        <span>
+          {row.fichier_nom}
+          {row.en_cours && (
+            <span className="ml-2 inline-block rounded-full bg-simtis-warning-bg px-2 py-0.5 text-xs font-medium text-simtis-warning-fg">
+              Opérations en cours
+            </span>
+          )}
+        </span>
+      ),
+    },
     {
       key: "periode",
       header: "Période",

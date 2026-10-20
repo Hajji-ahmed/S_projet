@@ -177,6 +177,39 @@ def fusion_soldes(
     return tuple(sorted(par_jour.items()))
 
 
+def montant_en_cours(
+    ajustements: Iterable[tuple[date, date | None, Decimal]], jour: date
+) -> Decimal:
+    """Somme des opérations en cours actives le `jour` : de leur date à celle de leur définitive
+    (exclue), 20/10/2026."""
+    return sum(
+        (m for debut, fin, m in ajustements if debut <= jour and (fin is None or jour < fin)),
+        Decimal("0.00"),
+    )
+
+
+def avec_en_cours(
+    soldes: Sequence[tuple[date, Decimal]], ajustements: Sequence[tuple[date, date | None, Decimal]]
+) -> tuple[tuple[date, Decimal], ...]:
+    """Soldes du compte + opérations en cours d'un fichier à part (20/10/2026) : la banque les a
+    déjà passées dans son solde, pas encore dans son relevé. Un jour où une opération en cours
+    commence ou finit devient un jour de solde ; avant le premier solde connu, rien."""
+    if not ajustements:
+        return tuple(soldes)
+    jours = sorted(
+        {jour for jour, _ in soldes}
+        | {debut for debut, _, _ in ajustements}
+        | {fin for _, fin, _ in ajustements if fin is not None}
+    )
+    resultat = []
+    for jour in jours:
+        connus = [solde for date_solde, solde in soldes if date_solde <= jour]
+        if not connus:
+            continue
+        resultat.append((jour, connus[-1] + montant_en_cours(ajustements, jour)))
+    return tuple(resultat)
+
+
 def _disponible(banques: Sequence[BanqueColonne], fin: LigneTableau) -> LigneTableau:
     """Disponible Fc reel : facilité de caisse du dernier jour − LIGNE, banque par banque ;
     TOTAL = somme des banques renseignées ; DEPASSEMENT = TOTAL, la LIGNE étant déjà retirée

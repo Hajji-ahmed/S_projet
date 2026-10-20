@@ -8,6 +8,7 @@ import {
   Layers,
   ListChecks,
   Play,
+  Search,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -49,6 +50,7 @@ import {
   listAmbiguousEntries,
   listProposals,
   runReconciliation,
+  runReconciliationElargie,
 } from "@/services/reconciliation";
 import type { Account } from "@/types/account";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
@@ -262,6 +264,21 @@ function Rapprochement({ companyId }: { companyId: number }) {
     }
   }
 
+  /** Recherche élargie (20/10/2026) : lignes encore libres, même n° et même montant, ± 1 an. */
+  async function runElargie() {
+    setRunning(true);
+    try {
+      const result = await runReconciliationElargie(companyId, filter);
+      reload(
+        `Recherche élargie (${result.fenetre_jours} jours) : ${plural(result.nb_propositions, "proposition")} éloignée(s).`,
+      );
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "La recherche élargie a échoué.", "error");
+    } finally {
+      setRunning(false);
+    }
+  }
+
   // Tout ce qui est à vérifier : les propositions en attente et les opérations ambiguës
   const aVerifier =
     pending && ambigues && ecrituresAmbigues
@@ -278,9 +295,20 @@ function Rapprochement({ companyId }: { companyId: number }) {
         description="Rapprochement des transactions bancaires et des écritures comptables"
         actions={
           canValidate && (
-            <Button icon={Play} disabled={running || !!periodError} onClick={run}>
-              {running ? "Rapprochement en cours…" : "Lancer le rapprochement"}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                icon={Search}
+                disabled={running || !!periodError}
+                onClick={runElargie}
+                title="Lignes encore libres : même n° et même montant, jusqu'à 1 an d'écart"
+              >
+                Recherche élargie (1 an)
+              </Button>
+              <Button icon={Play} disabled={running || !!periodError} onClick={run}>
+                {running ? "Rapprochement en cours…" : "Lancer le rapprochement"}
+              </Button>
+            </div>
           )
         }
       />
