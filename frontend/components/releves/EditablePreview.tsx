@@ -1,5 +1,6 @@
 "use client";
 
+import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
 import { Check, CircleAlert, PenLine, RotateCcw } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 
@@ -379,6 +380,12 @@ export function EditablePreview({
                           {ligne.reference && (
                             <span className="block text-xs text-simtis-muted">
                               Réf. {ligne.reference}
+                            </span>
+                          )}
+                          {/\(\s*\*\s*\)\s*$/.test(ligne.libelle ?? "") && <EnCoursBadge />}
+                          {line?.remplace_date && (
+                            <span className="block text-xs font-medium text-simtis-primary">
+                              remplace l&apos;opération en cours du {formatDate(line.remplace_date)}
                             </span>
                           )}
                         </span>

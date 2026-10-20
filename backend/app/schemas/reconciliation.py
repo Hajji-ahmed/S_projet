@@ -97,6 +97,8 @@ class OperationOut(BaseModel):
     statut: StatutRapprochement
     correspondance: CorrespondanceResumeOut | None = None
     ecart_id: int | None = Field(None, description="Écart ouvert de l'opération (P12)")
+    # Libellé terminé par « (*) » : en cours, jamais rapprochée (20/10/2026)
+    en_cours: bool = False
 
     @classmethod
     def of(
@@ -133,6 +135,7 @@ class OperationOut(BaseModel):
             statut=tx.statut,
             correspondance=resume,
             ecart_id=ecart_id,
+            en_cours=tx.en_cours,
         )
 
 
@@ -146,6 +149,8 @@ class OperationsPageOut(BaseModel):
     # Frais bancaires non rapprochés (hors « Non rapprochée ») : à passer dans Sage (12/10/2026)
     a_comptabiliser: int = 0
     total_a_comptabiliser: Decimal = Decimal(0)
+    # Opérations en cours du filtre, hors `par_statut` (20/10/2026)
+    en_cours: int = 0
     operations: list[OperationOut]
 
     @classmethod
@@ -156,6 +161,7 @@ class OperationsPageOut(BaseModel):
             taille=result.taille,
             a_comptabiliser=result.a_comptabiliser,
             total_a_comptabiliser=result.total_a_comptabiliser,
+            en_cours=result.en_cours,
             par_statut={
                 statut: result.par_statut.get(statut, 0) for statut in StatutRapprochement.__args__
             },

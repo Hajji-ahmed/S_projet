@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -153,6 +154,7 @@ export function TransactionsPane({
           {row.reference && (
             <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
           )}
+          {row.en_cours && <EnCoursBadge />}
         </span>
       ),
     },

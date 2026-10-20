@@ -1149,3 +1149,11 @@ def test_a_dismissed_fee_day_has_a_known_family_and_is_unique(db, world):
 
     assert_rejected(db, "ck_frais_jours_ecartes_famille_valide", ecarte(famille="agios"))
     assert_rejected(db, "uq_frais_jours_ecartes_compte_jour_famille", ecarte())
+
+
+def test_only_a_pending_operation_can_be_replaced(db, world):
+    """0033 (20/10/2026) : `remplacee_par_id` exige une opération en cours."""
+    definitive = save(db, build_transaction(world.statement))
+    normale = build_transaction(world.statement, remplacee_par_id=definitive.id)
+
+    assert_rejected(db, "ck_bank_transactions_remplacee_si_en_cours", normale)

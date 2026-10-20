@@ -103,6 +103,8 @@ class BankTransaction(TimestampMixin, Base):
         CheckConstraint("debit >= 0", name="debit_positif"),
         CheckConstraint("credit >= 0", name="credit_positif"),
         CheckConstraint("montant = credit - debit", name="montant_coherent"),
+        # Seule une opération en cours (« (*) ») se remplace par sa définitive (0033, 20/10/2026)
+        CheckConstraint("remplacee_par_id IS NULL OR en_cours", name="remplacee_si_en_cours"),
         Index("ix_bank_transactions_compte_date", "bank_account_id", "date_operation"),
         Index("ix_bank_transactions_date_montant", "date_operation", "montant"),
     )
@@ -133,6 +135,11 @@ class BankTransaction(TimestampMixin, Base):
     # Rang chronologique dans son relevé (08/10/2026) : un fichier du plus récent au plus ancien est
     # importé dans son ordre, l'id ne dit donc pas quelle opération est la dernière du jour
     ordre: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Opération en cours (20/10/2026) : libellé terminé par « (*) », déjà dans le solde de la banque
+    # mais pas encore définitive ; jamais rapprochée. Remplacée à l'import de sa définitive, elle
+    # garde son solde (le solde du jour reste exact) et n'apparaît plus dans le rapprochement.
+    en_cours: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    remplacee_par_id: Mapped[int | None] = mapped_column(ForeignKey("bank_transactions.id"))
 
     statement: Mapped[BankStatement] = relationship()
     # Devise du compte, pour l'affichage (14/10/2026) : lecture seule

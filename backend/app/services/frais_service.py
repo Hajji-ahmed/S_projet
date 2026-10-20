@@ -30,8 +30,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -105,6 +108,9 @@ _COMMISSIONS_TVA = (
 _FRAIS_RECUPERES = (("frais_recuperes", re.compile(r"^FRAIS RECUPERES PAR LA BANQUE\b")),)
 _FRAIS_TVA = _COMMISSIONS_TVA + _FRAIS_RECUPERES
 TAUX_TVA_FRAIS = Decimal("10")
+# Décision du 19/10/2026 : une opération de frais de plus de 200 DH (hors droits de timbre) n'est
+# jamais comptabilisée en automatique ; elle se passe à la main et se justifie auprès de la banque
+SEUIL_MANUEL = Decimal("200")
 # FRAIS RECUPERES PAR LA BANQUE de 77,50 : droit de timbre 50 + commission 25 + TVA 2,50
 FRAIS_RECUPERES_AVEC_TIMBRE = Decimal("77.50")
 TIMBRE_FRAIS_RECUPERES = Decimal("50.00")
@@ -327,7 +333,7 @@ def regrouper(
     groupes: dict[tuple[int, date], JourFrais] = {}
     for tx in operations:
         code = famille.type_de(tx.libelle)
-        if tx.montant >= 0 or code is None:
+        if tx.montant >= 0 or code is None or au_dessus_du_seuil(famille, tx.montant):
             continue
         cle = (tx.bank_account_id, tx.date_operation)
         if cle in jours_dans_sage:
@@ -412,11 +418,25 @@ def _ecartes(
     }
 
 
+def au_dessus_du_seuil(famille: "Famille", montant: Decimal) -> bool:
+    """Frais débité de plus de `SEUIL_MANUEL` (19/10/2026) : jamais en automatique, sauf un droit
+    de timbre."""
+    return famille.code != "timbres" and -montant > SEUIL_MANUEL
+
+
 def famille_automatique(libelle: str | None, montant: Decimal | None) -> str | None:
-    """Code de la famille automatique d'un frais débité, ou None (frais à passer à la main)."""
+    """Code de la famille automatique d'un frais débité, ou None (frais à passer à la main, dont
+    un frais de plus de 200 DH hors droits de timbre)."""
     if montant is None or montant >= 0:
         return None
-    return next((code for code, regle in FAMILLES.items() if regle.type_de(libelle)), None)
+    return next(
+        (
+            code
+            for code, regle in FAMILLES.items()
+            if regle.type_de(libelle) and not au_dessus_du_seuil(regle, montant)
+        ),
+        None,
+    )
 
 
 def a_la_main(tx: BankTransaction, ecartes: set[tuple[int, date, str]]) -> bool:
@@ -1314,6 +1334,8 @@ def est_automatique(libelle: str | None, montant: Decimal | None = None) -> bool
     TVA comprise). Un remboursement (montant positif) ne l'est jamais : il se passe à la main."""
     if montant is not None and montant >= 0:
         return False
+    if montant is not None:
+        return famille_automatique(libelle, montant) is not None
     return any(famille.type_de(libelle) for famille in FAMILLES.values())
 
 
@@ -1545,3 +1567,117 @@ def reproposer(
         db.delete(row)
     _commit(db)
     return len(lignes)
+
+
+# --- Frais à justifier auprès de la banque (19/10/2026) -------------------------------------------
+
+JUSTIFICATIF_HEADERS = (
+    "Banque",
+    "Compte",
+    "Date d'opération",
+    "Date de valeur",
+    "Libellé",
+    "Référence",
+    "Montant",
+    "Statut",
+    "N° pièce SIMTIS",
+    "Commentaire",
+)
+
+
+def _statut_justificatif(tx: BankTransaction, origine: str | None) -> str:
+    if origine == "SIMTIS":
+        return "Comptabilisé"
+    if tx.statut == "Rapprochée":
+        return "Rapprochée"
+    return "À comptabiliser" if tx.statut == "Non rapprochée" else tx.statut
+
+
+def justificatif(
+    db: Session,
+    company_id: int,
+    *,
+    bank_account_id: int | None,
+    date_from: date | None,
+    date_to: date | None,
+    acteur_id: int,
+    ip: str | None,
+) -> tuple[str, bytes, int]:
+    """Fichier Excel des frais de plus de 200 DH (hors droits de timbre) de la période, quel que
+    soit leur statut, à envoyer à la banque pour justification ; un total par banque et un total
+    général. Rien n'est marqué : le fichier se retélécharge."""
+    date_from, date_to = _periode(date_from, date_to)
+    accounts = {a.id: a for a in _accounts(db, company_id, bank_account_id)}
+    rows = frais_repository.frais_au_dessus(db, list(accounts), date_from, date_to, SEUIL_MANUEL)
+    rows = [(tx, piece, origine) for tx, piece, origine in rows if not est_timbre(tx.libelle)]
+    if not rows:
+        raise ConflictError(f"Aucun frais de plus de {SEUIL_MANUEL:.0f} DH sur cette période.")
+    rows.sort(
+        key=lambda row: (
+            accounts[row[0].bank_account_id].bank.ordre_affichage,
+            row[0].bank_account_id,
+            row[0].date_operation,
+            row[0].id,
+        )
+    )
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Frais à justifier"
+    sheet.append(JUSTIFICATIF_HEADERS)
+    gras = Font(bold=True)
+    for cell in sheet[1]:
+        cell.font = gras
+    general = ZERO
+    banque_courante: str | None = None
+    sous_total = ZERO
+
+    def total_banque() -> None:
+        sheet.append([f"Total {banque_courante}", None, None, None, None, None, sous_total])
+        for cell in sheet[sheet.max_row]:
+            cell.font = gras
+
+    for tx, piece, origine in rows:
+        account = accounts[tx.bank_account_id]
+        if banque_courante is not None and account.bank.code != banque_courante:
+            total_banque()
+            sous_total = ZERO
+        banque_courante = account.bank.code
+        montant = -tx.montant
+        sous_total += montant
+        general += montant
+        sheet.append(
+            [account.bank.code, account.numero, tx.date_operation, tx.date_valeur, tx.libelle,
+             tx.reference, montant, _statut_justificatif(tx, origine),
+             piece if origine == "SIMTIS" else None, tx.commentaire]
+        )  # fmt: skip
+    total_banque()
+    sheet.append(["Total général", None, None, None, None, None, general])
+    for cell in sheet[sheet.max_row]:
+        cell.font = gras
+    for row in sheet.iter_rows(min_row=2):
+        row[2].number_format = "DD/MM/YYYY"
+        row[3].number_format = "DD/MM/YYYY"
+        row[6].number_format = "#,##0.00"
+    for index, width in enumerate((10, 22, 16, 16, 48, 22, 14, 18, 16, 30), start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    sheet.freeze_panes = "A2"
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="export_frais_banque",
+        entite="company",
+        entite_id=company_id,
+        apres={
+            "du": date_from,
+            "au": date_to,
+            "bank_account_id": bank_account_id,
+            "nb_frais": len(rows),
+            "total": general,
+        },
+        ip=ip,
+    )
+    _commit(db)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    nom = f"frais-a-justifier-{date_from:%Y%m%d}-{date_to:%Y%m%d}.xlsx"
+    return nom, buffer.getvalue(), len(rows)

@@ -1602,3 +1602,33 @@ def test_both_panes_filter_by_debit_or_credit(client, comptable, db):
         "/api/reconciliation/transactions", params={**base, "sens": "Autre"}, headers=comptable
     )
     assert refus.status_code == 422
+
+
+def test_a_pending_operation_is_never_compared_nor_matched_by_hand(client, comptable, db):
+    """20/10/2026 : une opération en cours (« (*) ») n'est jamais proposée ni rapprochée ; une
+    opération remplacée n'est plus listée."""
+    compte = account(db)
+    en_cours = operation(db, compte, libelle="VIR ABC (*)", en_cours=True)
+    entry = ecriture(db, compte)
+    remplacee = operation(db, compte, montant="700", libelle="VIR Z (*)", en_cours=True)
+    definitive = operation(db, compte, montant="700", libelle="VIR Z")
+    remplacee.remplacee_par_id = definitive.id
+    db.flush()
+
+    run(client, comptable, db)
+    manuel = client.post(
+        "/api/reconciliation/matches",
+        json={"transaction_id": en_cours.id, "ecriture_id": entry.id},
+        headers=comptable,
+    )
+    page = client.get(
+        "/api/reconciliation/transactions",
+        params={"company_id": str(company(db).id)},
+        headers=comptable,
+    ).json()
+
+    assert statuses(db, en_cours, entry) == ["Non rapprochée", "Non rapprochée"]
+    assert manuel.status_code == 409
+    assert {op["id"] for op in page["operations"]} == {en_cours.id, definitive.id}
+    assert page["en_cours"] == 1
+    assert page["par_statut"]["Non rapprochée"] == 1

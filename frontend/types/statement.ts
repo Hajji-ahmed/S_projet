@@ -49,6 +49,10 @@ export type AnalysedLine = {
   hash_ligne: string | null;
   /** Ligne identique plus haut dans le fichier : celle-ci peut être gardée. */
   doublon_de: number | null;
+  /** Libellé terminé par « (*) » : opération en cours (20/10/2026). */
+  en_cours?: boolean;
+  /** Remplace l'opération en cours importée à cette date. */
+  remplace_date?: string | null;
 };
 
 export type AnalysisSummary = {
@@ -158,6 +162,9 @@ export type Transaction = {
   id: number;
   /** Code du rapprochement validé de l'opération (13/10/2026). */
   code_rapprochement?: string | null;
+  /** Opération en cours ; remplacée par sa définitive (20/10/2026). */
+  en_cours?: boolean;
+  remplacee?: boolean;
   societe: string;
   /** Type d'opération ; null s'il est inconnu. */
   pointage: string | null;

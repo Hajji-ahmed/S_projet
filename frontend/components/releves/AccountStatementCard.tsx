@@ -1,5 +1,6 @@
 "use client";
 
+import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
 import { ChevronUp, Download, ListOrdered, PenLine, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -225,6 +226,7 @@ export function AccountStatementCard({
               corrigée avant l&apos;import
             </span>
           )}
+          {row.en_cours && <EnCoursBadge remplacee={row.remplacee} />}
         </span>
       ),
     },

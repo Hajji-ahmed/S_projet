@@ -1,6 +1,14 @@
 "use client";
 
-import { Download, GitCompareArrows, History, Layers, ListChecks, Play } from "lucide-react";
+import {
+  Download,
+  FileSpreadsheet,
+  GitCompareArrows,
+  History,
+  Layers,
+  ListChecks,
+  Play,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -35,7 +43,7 @@ import {
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { saveFile } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
-import { exporterFrais } from "@/services/frais";
+import { exporterFrais, exporterJustificatif } from "@/services/frais";
 import {
   listAmbiguous,
   listAmbiguousEntries,
@@ -99,6 +107,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [parStatut, setParStatut] = useState<Record<StatutRapprochement, number> | null>(null);
   // Frais bancaires non rapprochés : compteur « À comptabiliser » (12/10/2026)
   const [aComptabiliser, setAComptabiliser] = useState<number | null>(null);
+  // Opérations en cours (« (*) », 20/10/2026) : jamais rapprochées, comptées à part
+  const [enCours, setEnCours] = useState<number | null>(null);
   const [pending, setPending] = useState<Correspondances | null>(null);
   const [ambigues, setAmbigues] = useState<Ambigues | null>(null);
   // Écritures ambiguës (15/10/2026) : leur propre page, revenue à 1 quand le filtre change
@@ -115,6 +125,20 @@ function Rapprochement({ companyId }: { companyId: number }) {
   // Écritures de frais pas encore exportées : un seul export pour Sage (13/10/2026)
   const [totalAExporter, setTotalAExporter] = useState(0);
   const [exporting, setExporting] = useState(false);
+
+  /** Frais de plus de 200 DH à envoyer à la banque (19/10/2026) : ne marque rien. */
+  async function exporterPourBanque() {
+    setExporting(true);
+    try {
+      const blob = await exporterJustificatif(companyId, filter);
+      saveFile(blob, `frais-a-justifier-${filter.from}-${filter.to}.xlsx`);
+      toast("Frais à justifier exportés pour la banque.");
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "L'export a échoué.", "error");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function exporterPourSage() {
     setExporting(true);
@@ -190,6 +214,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const handleOperations = useCallback((page: OperationsPage) => {
     setParStatut(page.par_statut);
     setAComptabiliser(page.a_comptabiliser ?? 0);
+    setEnCours(page.en_cours ?? 0);
     setOperation((current) =>
       current ? (page.operations.find((row) => row.id === current.id) ?? current) : current,
     );
@@ -313,7 +338,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
           {!periodError && (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
               <div
-                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4"
+                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5"
                 role="group"
                 aria-label="Résumé du rapprochement : un clic filtre les transactions"
               >
@@ -347,6 +372,17 @@ function Rapprochement({ companyId }: { companyId: number }) {
                   description="Voir les propositions en attente"
                   onClick={() => setTab("propositions")}
                 />
+                {!!enCours && (
+                  <div
+                    className="rounded-[10px] px-3 py-2"
+                    title="Opérations « (*) » en attente de leur définitive : jamais rapprochées"
+                  >
+                    <span className="block text-simtis-muted">En cours</span>
+                    <span className="block text-[17px] font-semibold text-simtis-warning-fg tabular-nums">
+                      {enCours}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -433,11 +469,22 @@ function Rapprochement({ companyId }: { companyId: number }) {
 
       {!periodError && tab === "rapprochement" && statut === A_COMPTABILISER && (
         <div className="space-y-5">
-          {canPrepare && (
-            <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <Button
+              variant="secondary"
+              icon={FileSpreadsheet}
+              disabled={exporting}
+              onClick={exporterPourBanque}
+              title="Frais de plus de 200 DH (hors droits de timbre) à justifier"
+            >
+              Exporter pour la banque
+            </Button>
+            {canPrepare && (
               <span className="text-sm text-simtis-muted">
                 {plural(totalAExporter, "écriture")} de frais à exporter
               </span>
+            )}
+            {canPrepare && (
               <Button
                 icon={Download}
                 disabled={exporting || totalAExporter === 0}
@@ -445,8 +492,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
               >
                 Exporter pour Sage ({totalAExporter})
               </Button>
-            </div>
-          )}
+            )}
+          </div>
           <FraisCard
             companyId={companyId}
             filter={filter}

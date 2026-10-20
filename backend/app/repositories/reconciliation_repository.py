@@ -74,6 +74,8 @@ def free_transactions(
             BankTransaction.date_operation <= date_to,
             BankTransaction.statut.not_in(STATUTS_FIGES),
             BankTransaction.id.not_in(_active_transaction_ids()),
+            # Opération en cours (« (*) », 20/10/2026) : jamais comparée
+            BankTransaction.en_cours.is_(False),
         )
         .order_by(BankTransaction.date_operation, BankTransaction.id)
     )
@@ -278,11 +280,12 @@ def transactions_query(
     sens: str | None = None,
 ) -> Select:
     """Opérations d'UNE société, filtrées, sans filtre de statut (ni ordre, ni pagination).
-    `sens` (19/10/2026) : « Débit » (argent sorti) ou « Crédit » (argent entré)."""
+    `sens` (19/10/2026) : « Débit » (argent sorti) ou « Crédit » (argent entré). Une opération en
+    cours remplacée par sa définitive n'est jamais listée (20/10/2026)."""
     query = (
         select(BankTransaction)
         .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
-        .where(BankAccount.company_id == company_id)
+        .where(BankAccount.company_id == company_id, BankTransaction.remplacee_par_id.is_(None))
     )
     if bank_account_id is not None:
         query = query.where(BankTransaction.bank_account_id == bank_account_id)
@@ -411,6 +414,7 @@ def transactions_comparables(
             BankTransaction.date_valeur.between(date_from, date_to),
         ),
         BankTransaction.statut != "Écart",
+        BankTransaction.en_cours.is_(False),
         BankTransaction.id.not_in(validated_tx_ids),
     )
     return list(db.scalars(query))
@@ -453,6 +457,7 @@ def candidate_transactions(
             ),
         ),
         BankTransaction.statut != "Écart",
+        BankTransaction.en_cours.is_(False),
         BankTransaction.id.not_in(validated_tx_ids),
     )
     return list(db.scalars(query))
@@ -843,3 +848,8 @@ def validated_matches(db: Session, ids_query: Select) -> list[ReconciliationMatc
             .order_by(ReconciliationMatch.code, ReconciliationMatch.id)
         )
     )
+
+
+def count_rows(db: Session, query: Select) -> int:
+    """Nombre de lignes d'une requête."""
+    return db.scalar(select(func.count()).select_from(query.subquery())) or 0

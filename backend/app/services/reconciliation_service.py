@@ -988,6 +988,10 @@ def match_manually(
         )
     if any(tx.montant == 0 for tx in operations):
         raise ConflictError("Une opération à zéro ne se rapproche pas.")
+    if any(tx.en_cours for tx in operations):
+        raise ConflictError(
+            "Une opération en cours (« (*) ») ne se rapproche pas : attendez sa définitive."
+        )
     total_banque = sum((tx.montant for tx in operations), Decimal("0"))
     total_sage = sum((montant_rapprochement(entry) for entry in entries), Decimal("0"))
     if total_banque != -total_sage:
@@ -1146,6 +1150,8 @@ class TransactionsPage:
     # Frais bancaires non rapprochés du filtre : nombre et total (12/10/2026)
     a_comptabiliser: int = 0
     total_a_comptabiliser: Decimal = Decimal(0)
+    # Opérations en cours du filtre (20/10/2026)
+    en_cours: int = 0
 
 
 @dataclass
@@ -1190,9 +1196,12 @@ def list_transactions(
         type_operation=type_operation,
         sens=sens,
     )
-    par_statut = repo.count_by_status(db, query)
+    # Opérations en cours (20/10/2026) : listées avec leur badge, comptées à part
+    en_cours = repo.count_rows(db, query.where(BankTransaction.en_cours.is_(True)))
+    comptees = query.where(BankTransaction.en_cours.is_(False))
+    par_statut = repo.count_by_status(db, comptees)
     # Frais bancaires non rapprochés : « À comptabiliser », comptés à part (12/10/2026)
-    nb_frais, total_frais = repo.a_comptabiliser(db, query)
+    nb_frais, total_frais = repo.a_comptabiliser(db, comptees)
     par_statut["Non rapprochée"] = par_statut.get("Non rapprochée", 0) - nb_frais
     listed = repo.without_status(query, "À vérifier") if sans_a_verifier else query
     if a_comptabiliser:
@@ -1211,6 +1220,7 @@ def list_transactions(
         par_statut=par_statut,
         a_comptabiliser=nb_frais,
         total_a_comptabiliser=total_frais,
+        en_cours=en_cours,
         operations=[(tx, code, matches.get(tx.id)) for tx, code in rows],
         ecarts=discrepancy_repository.open_discrepancy_by_transaction(
             db, [tx.id for tx, _ in rows]

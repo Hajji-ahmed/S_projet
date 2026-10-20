@@ -36,6 +36,7 @@ router = APIRouter(prefix="/frais", tags=["frais"])
 can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
 can_prepare = require_permission(PermissionCode.ACCOUNTING_PREPARE)
 CSV = "text/csv; charset=windows-1252"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 DateFrom = Annotated[date | None, Query(alias="from")]
 DateTo = Annotated[date | None, Query(alias="to")]
@@ -53,6 +54,40 @@ def supprimer(
     comptabiliser."""
     frais_service.supprimer(
         db, entry_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+
+
+@router.get(
+    "/justificatif",
+    response_class=Response,
+    responses={
+        200: {"content": {XLSX: {}}, "description": "Frais à justifier auprès de la banque"}
+    },
+)
+def justificatif(
+    request: Request,
+    company_id: int,
+    bank_account_id: int | None = None,
+    date_from: DateFrom = None,
+    date_to: DateTo = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_view),
+) -> Response:
+    """Excel des frais de plus de 200 DH (hors droits de timbre) à envoyer à la banque
+    (19/10/2026)."""
+    nom, content, _ = frais_service.justificatif(
+        db,
+        company_id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return Response(
+        content=content,
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{nom}"'},
     )
 
 

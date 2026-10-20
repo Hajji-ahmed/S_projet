@@ -38,6 +38,8 @@ export type Operation = {
   correspondance: CorrespondanceResume | null;
   /** Écart ouvert de l'opération (P12). */
   ecart_id: number | null;
+  /** Libellé terminé par « (*) » : en cours, jamais rapprochée (20/10/2026). */
+  en_cours?: boolean;
 };
 
 /** Une page de 50 opérations ; total et décompte par statut portent sur tout le filtre. */
@@ -49,6 +51,8 @@ export type OperationsPage = {
   /** Frais bancaires non rapprochés, à passer dans Sage (hors « Non rapprochée », 12/10/2026). */
   a_comptabiliser?: number;
   total_a_comptabiliser?: string;
+  /** Opérations en cours du filtre, hors décompte par statut (20/10/2026). */
+  en_cours?: number;
   operations: Operation[];
 };
 

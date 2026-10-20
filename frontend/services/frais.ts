@@ -84,3 +84,9 @@ export function reproposerFrais(companyId: number, jours: JourChoisi[]) {
     body: JSON.stringify({ company_id: companyId, jours }),
   });
 }
+
+/** Excel des frais de plus de 200 DH (hors droits de timbre) à justifier auprès de la banque
+ * (19/10/2026) ; rien n'est marqué, il se retélécharge. */
+export function exporterJustificatif(companyId: number, filter: ReconciliationFilter) {
+  return apiDownload(`/frais/justificatif${query(companyId, filter)}`);
+}

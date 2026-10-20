@@ -273,3 +273,20 @@ def line_hash(account_id: int, parts: tuple[object, ...], occurrence: int) -> st
     """
     text = "|".join("" if part is None else str(part) for part in (account_id, *parts, occurrence))
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+# --- Opérations en cours (20/10/2026) -------------------------------------------------------------
+
+_MARQUE_EN_COURS = re.compile(r"\(\s*\*\s*\)\s*$")
+
+
+def est_en_cours(libelle: str | None) -> bool:
+    """Libellé terminé par « (*) » (espaces ignorés) : opération en cours. Un nom masqué par des
+    étoiles (« … SIM*** ») n'en est pas une."""
+    return bool(libelle) and _MARQUE_EN_COURS.search(libelle) is not None
+
+
+def libelle_definitif(libelle: str | None) -> str:
+    """Libellé comparé entre l'opération en cours et sa définitive : sans « (*) », en majuscules,
+    espaces réduits."""
+    return " ".join(_MARQUE_EN_COURS.sub("", libelle or "").upper().split())

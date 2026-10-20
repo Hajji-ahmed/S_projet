@@ -227,3 +227,22 @@ def last_operation_before(
         .limit(1)
     ).first()
     return None if row is None else (row[0], row[1])
+
+
+def operations_en_cours(
+    db: Session, account_id: int, date_from: date, date_to: date
+) -> list[BankTransaction]:
+    """Opérations en cours pas encore remplacées du compte, de la plus ancienne à la plus récente
+    (20/10/2026)."""
+    return list(
+        db.scalars(
+            select(BankTransaction)
+            .where(
+                BankTransaction.bank_account_id == account_id,
+                BankTransaction.en_cours.is_(True),
+                BankTransaction.remplacee_par_id.is_(None),
+                BankTransaction.date_operation.between(date_from, date_to),
+            )
+            .order_by(BankTransaction.date_operation, BankTransaction.id)
+        )
+    )

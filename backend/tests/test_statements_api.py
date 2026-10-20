@@ -150,6 +150,8 @@ def test_lines_are_normalised(client, tresorerie, account, db):
         "commentaire": None,
         "hash_ligne": None,
         "doublon_de": None,
+        "en_cours": False,
+        "remplace_date": None,
     }
     assert (cheque["date_operation"], cheque["debit"], cheque["montant"]) == (
         "2026-09-25",
@@ -1108,6 +1110,8 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
         "origine": "Fichier",
         "pointage_type_id": pointage_id(db, "CHEQUE_DE_BANQUE"),
         "code_rapprochement": None,
+        "en_cours": False,
+        "remplacee": False,
     }
     # Les 11 champs du format standard d'abord, dans leur ordre
     assert list(second)[1:12] == [
@@ -2323,3 +2327,67 @@ def test_a_real_running_balance_is_kept(client, tresorerie, account):
 
     assert body["solde_colonne_ignoree"] is False
     assert body["soldes_calcules"] is False
+
+
+# --- Opérations en cours « (*) » (20/10/2026) -----------------------------------------------------
+
+
+def _releve_en_cours(lignes):
+    return xlsx(("Relevé", [HEADER, *lignes]))
+
+
+def test_a_pending_operation_is_imported_and_replaced_by_its_final_one(
+    client, tresorerie, account, db
+):
+    from app.models import AuditLog, BankTransaction
+
+    premier = _releve_en_cours(
+        [
+            [date(2026, 9, 24), date(2026, 9, 24), "VIR RECU CLIENT ABC (*)", None, 5000, 105000],
+            [date(2026, 9, 24), date(2026, 9, 24), "EPAIEMENT PORTNET SIM***", 25, None, 104975],
+        ]
+    )
+    assert confirm(client, tresorerie, account.id, premier, nom="r1.xlsx").status_code == 201
+    en_cours = db.scalar(select(BankTransaction).filter_by(libelle="VIR RECU CLIENT ABC (*)"))
+    masque = db.scalar(select(BankTransaction).filter_by(libelle="EPAIEMENT PORTNET SIM***"))
+    assert (en_cours.en_cours, masque.en_cours) == (True, False)
+
+    second = _releve_en_cours(
+        [[date(2026, 9, 26), date(2026, 9, 26), "vir recu client abc", None, 5000, 109975]]
+    )
+    apercu = analyse(client, tresorerie, account.id, second, nom="r2.xlsx").json()
+    assert apercu["lignes"][0]["remplace_date"] == "2026-09-24"
+    response = confirm(client, tresorerie, account.id, second, nom="r2.xlsx")
+
+    assert response.status_code == 201, response.text
+    db.refresh(en_cours)
+    definitive = db.scalar(select(BankTransaction).filter_by(libelle="VIR RECU CLIENT ABC"))
+    assert en_cours.remplacee_par_id == definitive.id
+    assert en_cours.solde == Decimal("105000.00")  # garde son solde
+    assert definitive.en_cours is False
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "remplacement_en_cours"))
+    assert audit.entite_id == str(en_cours.id)
+
+
+def test_a_final_line_too_far_or_of_another_amount_replaces_nothing(
+    client, tresorerie, account, db
+):
+    from app.models import BankTransaction
+
+    premier = _releve_en_cours(
+        [[date(2026, 9, 1), date(2026, 9, 1), "VIR RECU X (*)", None, 300, 300]]
+    )
+    confirm(client, tresorerie, account.id, premier, nom="r1.xlsx")
+    second = _releve_en_cours(
+        [
+            [date(2026, 9, 20), date(2026, 9, 20), "VIR RECU X", None, 300, 600],
+            [date(2026, 9, 21), date(2026, 9, 21), "VIR RECU X", None, 301, 901],
+        ]
+    )
+
+    apercu = analyse(client, tresorerie, account.id, second, nom="r2.xlsx").json()
+
+    assert [ligne["remplace_date"] for ligne in apercu["lignes"]] == [None, None]
+    assert confirm(client, tresorerie, account.id, second, nom="r2.xlsx").status_code == 201
+    en_cours = db.scalar(select(BankTransaction).filter_by(libelle="VIR RECU X (*)"))
+    assert en_cours.remplacee_par_id is None

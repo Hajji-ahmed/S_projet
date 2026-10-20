@@ -49,6 +49,7 @@ def frais_libres(
             BankTransaction.date_operation.between(date_from, date_to),
             BankTransaction.montant < 0,
             BankTransaction.statut.in_(STATUTS_LIBRES),
+            BankTransaction.en_cours.is_(False),
             BankTransaction.libelle.op("~*")(libelle_sql),
             BankTransaction.id.not_in(actives),
         )
@@ -191,6 +192,8 @@ def _libres_a_comptabiliser():
         BankTransaction.statut == "Non rapprochée",
         reconciliation_repository.frais_bancaire(),
         BankTransaction.id.not_in(actives),
+        # Opération en cours (20/10/2026) : ni comptabilisée, ni rapprochée
+        BankTransaction.en_cours.is_(False),
     )
 
 
@@ -292,3 +295,43 @@ def jour_ecarte(
             FraisJourEcarte.famille == famille,
         )
     )
+
+
+def frais_au_dessus(
+    db: Session, account_ids: list[int], date_from: date, date_to: date, seuil
+) -> list[tuple[BankTransaction, str | None, str | None]]:
+    """Frais débités de plus de `seuil` (règle de « À comptabiliser »), quel que soit leur
+    statut, avec le N° pièce et l'origine de l'écriture de leur rapprochement actif (19/10/2026)."""
+    if not account_ids:
+        return []
+    item_tx = aliased(ReconciliationMatchItem)
+    item_ec = aliased(ReconciliationMatchItem)
+    rows = db.execute(
+        select(BankTransaction, AccountingEntry.numero_piece, AccountingEntry.origine)
+        .outerjoin(
+            item_tx,
+            (item_tx.bank_transaction_id == BankTransaction.id) & item_tx.actif.is_(True),
+        )
+        .outerjoin(
+            item_ec,
+            (item_ec.match_id == item_tx.match_id)
+            & item_ec.actif.is_(True)
+            & item_ec.accounting_entry_id.is_not(None),
+        )
+        .outerjoin(AccountingEntry, AccountingEntry.id == item_ec.accounting_entry_id)
+        .where(
+            BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.date_operation.between(date_from, date_to),
+            BankTransaction.montant < -seuil,
+            reconciliation_repository.frais_bancaire(),
+        )
+        .order_by(BankTransaction.date_operation, BankTransaction.id)
+    )
+    vus: set[int] = set()
+    result = []
+    for tx, piece, origine in rows:
+        if tx.id in vus:
+            continue
+        vus.add(tx.id)
+        result.append((tx, piece, origine))
+    return result

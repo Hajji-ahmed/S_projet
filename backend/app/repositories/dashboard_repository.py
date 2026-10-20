@@ -31,6 +31,7 @@ def mouvements(
             func.coalesce(func.sum(BankTransaction.debit), 0),
         ).where(
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
         )
     ).one()
@@ -51,6 +52,7 @@ def flux_par_jour(
         )
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
         )
         .group_by(BankTransaction.date_operation)
@@ -66,6 +68,8 @@ def statuts(db: Session, account_ids: list[int], date_from: date, date_to: date)
         select(BankTransaction.statut, func.count())
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
+            BankTransaction.en_cours.is_(False),
             BankTransaction.date_operation.between(date_from, date_to),
         )
         .group_by(BankTransaction.statut)
@@ -83,6 +87,7 @@ def frais_debites(
     rows = db.execute(
         select(BankTransaction.libelle, BankTransaction.debit).where(
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
             BankTransaction.montant < 0,
             reconciliation_repository.frais_bancaire(),
@@ -101,6 +106,8 @@ def frais_a_comptabiliser(
         db.scalar(
             select(func.count()).where(
                 BankTransaction.bank_account_id.in_(account_ids),
+                BankTransaction.remplacee_par_id.is_(None),
+                BankTransaction.remplacee_par_id.is_(None),
                 BankTransaction.date_operation.between(date_from, date_to),
                 BankTransaction.statut == "Non rapprochée",
                 reconciliation_repository.frais_bancaire(),
@@ -120,6 +127,8 @@ def dernieres_operations(db: Session, account_ids: list[int], date_to: date, lim
             select(BankTransaction)
             .where(
                 BankTransaction.bank_account_id.in_(account_ids),
+                BankTransaction.remplacee_par_id.is_(None),
+                BankTransaction.remplacee_par_id.is_(None),
                 BankTransaction.date_operation <= date_to,
             )
             .order_by(*ordre)
@@ -165,6 +174,7 @@ def propositions(
             ReconciliationMatch.statut == "Proposée",
             ReconciliationMatchItem.actif.is_(True),
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
         )
         .distinct()
@@ -201,6 +211,7 @@ def par_banque(
         .join(Bank, Bank.id == BankAccount.bank_id)
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
         )
         .group_by(Bank.code, Bank.logo, Bank.ordre_affichage)
@@ -223,6 +234,7 @@ def frais_par_banque(
         .join(Bank, Bank.id == BankAccount.bank_id)
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
+            BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
             BankTransaction.montant < 0,
             reconciliation_repository.frais_bancaire(),

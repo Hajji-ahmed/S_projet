@@ -108,6 +108,10 @@ class LigneAnalyseOut(BaseModel):
     doublon_de: int | None = Field(
         description="Ligne identique plus haut dans le fichier : celle-ci peut être gardée"
     )
+    en_cours: bool = Field(False, description="Libellé terminé par « (*) » : opération en cours")
+    remplace_date: date | None = Field(
+        None, description="Remplace l'opération en cours importée à cette date (20/10/2026)"
+    )
 
 
 class ResumeOut(BaseModel):
@@ -382,6 +386,9 @@ class TransactionOut(BaseModel):
     pointage_type_id: int | None
     # Code du rapprochement validé de l'opération (« BP-26-000123 », 13/10/2026)
     code_rapprochement: str | None = None
+    # Opération en cours ; remplacée par sa définitive (20/10/2026)
+    en_cours: bool = False
+    remplacee: bool = False
 
     @classmethod
     def from_row(
@@ -410,6 +417,8 @@ class TransactionOut(BaseModel):
             montant=transaction.montant,
             statut=transaction.statut,
             origine=transaction.origine,
+            en_cours=transaction.en_cours,
+            remplacee=transaction.remplacee_par_id is not None,
         )
 
 

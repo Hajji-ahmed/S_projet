@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.models import AccountingEntry, AuditLog, BankTransaction, ReconciliationMatch
@@ -1184,3 +1185,60 @@ def test_a_dismissed_day_comes_back_when_proposed_again(client, comptable, db):
 
     [proposition] = lire(client, comptable, db).json()["propositions"]
     assert proposition["total"] == "202.00"
+
+
+# --- Frais de plus de 200 DH : à la main et à justifier (19/10/2026) -----------------------------
+
+
+def test_a_fee_above_200_leaves_the_automatic_proposal_but_a_stamp_does_not(client, comptable, db):
+    compte = bp(db)
+    petite = operation(db, compte, "-150", JOUR, "COMMISSION")
+    grande = operation(db, compte, "-250", JOUR, "COMMISSION")
+    timbre = operation(db, compte, "-300", JOUR, REMISE)
+
+    tableau = lire(client, comptable, db, None).json()
+
+    totaux = {p["famille"]: p["total"] for p in tableau["propositions"]}
+    assert totaux == {"commissions": "150.00", "timbres": "300.00"}
+    assert [a["id"] for a in tableau["autres_frais"]] == [grande.id]
+    assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
+    assert statuses(db, petite, grande, timbre) == [
+        "Rapprochée",
+        "Non rapprochée",
+        "Non rapprochée",
+    ]
+    # Elle se comptabilise à la main
+    assert manuelle(client, comptable, db, [grande], libelle="COM").status_code == 200
+
+
+def test_fees_above_200_are_exported_for_the_bank(client, comptable, direction, db):
+    compte = bp(db)
+    operation(db, compte, "-150", JOUR, "COMMISSION")
+    grande = operation(db, compte, "-250", JOUR, "COMMISSION", reference="R1")
+    operation(db, compte, "-300", JOUR, REMISE)
+    agios = operation(db, compte, "-604.71", date(2026, 4, 24), "AGIOS BANCAIRES")
+    manuelle(client, comptable, db, [agios], libelle="AGIOS")
+    params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30"}
+
+    response = client.get("/api/frais/justificatif", params=params, headers=direction)
+
+    assert response.status_code == 200, response.text
+    rows = list(load_workbook(io.BytesIO(response.content)).active.iter_rows(values_only=True))
+    assert rows[0][:8] == (
+        "Banque",
+        "Compte",
+        "Date d'opération",
+        "Date de valeur",
+        "Libellé",
+        "Référence",
+        "Montant",
+        "Statut",
+    )
+    assert [(r[0], r[4], r[5], r[6], r[7]) for r in rows[1:3]] == [
+        ("BP", "COMMISSION", "R1", 250, "À comptabiliser"),
+        ("BP", "AGIOS BANCAIRES", None, 604.71, "Comptabilisé"),
+    ]
+    assert rows[2][8].startswith("BP2604")
+    assert rows[3][0] == "Total BP" and rows[3][6] == 854.71
+    assert rows[4][0] == "Total général"
+    assert grande.id and "export_frais_banque" in actions(db)
