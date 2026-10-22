@@ -1,7 +1,7 @@
 "use client";
 
 import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
-import { ChevronUp, Download, ListOrdered, PenLine, X } from "lucide-react";
+import { ChevronUp, Download, ListOrdered, PenLine, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
@@ -13,6 +13,7 @@ import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { Modal } from "@/components/ui/Modal";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
@@ -27,11 +28,13 @@ import {
   showLast,
   type Period,
 } from "@/lib/statements";
+import { fromCents, toCents } from "@/lib/statementLines";
 import { listPointageTypes } from "@/services/referentiel";
 import {
   exportAccountStatement,
   getAccountStatement,
   updateTransaction,
+  supprimerEnCours,
 } from "@/services/statements";
 import type { AccountStatement, PointageType, Transaction } from "@/types/statement";
 import type { Status } from "@/types/status";
@@ -79,6 +82,11 @@ export function AccountStatementCard({
   const [editing, setEditing] = useState<Transaction | null>(null);
   // Nombre d'opérations affichées : les plus anciennes restent masquées jusqu'au clic
   const [shown, setShown] = useState(OPERATIONS_AFFICHEES);
+  // Opérations en cours (21/10/2026) : filtre, sélection et suppression avant le relevé suivant
+  const [enCoursSeules, setEnCoursSeules] = useState(false);
+  const [aSupprimer, setASupprimer] = useState<Set<number>>(new Set());
+  const [confirmation, setConfirmation] = useState(false);
+  const [suppression, setSuppression] = useState(false);
 
   // Liste de choix de la fenêtre de modification (seulement pour qui peut modifier)
   useEffect(() => {
@@ -115,6 +123,7 @@ export function AccountStatementCard({
         setData(result);
         // Autre compte, autre période ou nouvel import : retour aux dernières opérations
         setShown(OPERATIONS_AFFICHEES);
+        setASupprimer(new Set());
         setState("ready");
       },
       () => {
@@ -164,14 +173,63 @@ export function AccountStatementCard({
     }
   }
 
+  const enCours = (data?.operations ?? []).filter((row) => row.en_cours && !row.remplacee);
+  const totalASupprimer = enCours
+    .filter((row) => aSupprimer.has(row.id))
+    .reduce((total, row) => total + toCents(row.montant), BigInt(0));
+
+  async function confirmerSuppression() {
+    setSuppression(true);
+    try {
+      const { nb } = await supprimerEnCours([...aSupprimer]);
+      toast(`${nb} opération${nb > 1 ? "s" : ""} en cours supprimée${nb > 1 ? "s" : ""}.`);
+      setConfirmation(false);
+      setState("loading");
+      setRetryKey((key) => key + 1);
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "Suppression impossible.", "error");
+    } finally {
+      setSuppression(false);
+    }
+  }
+
   const devise = data?.devise ?? accounts.find((a) => a.bank_account_id === selectedId)?.devise;
   const suffix = currencySuffix(devise ?? "MAD");
   const logo = data ? logos.get(data.bank_code) : undefined;
   // Seul le tableau est raccourci : le résumé et l'export portent sur tout le relevé
-  const visible = showLast(data?.operations ?? [], shown, OPERATIONS_AFFICHEES);
+  const visible = showLast(
+    enCoursSeules ? enCours : (data?.operations ?? []),
+    shown,
+    OPERATIONS_AFFICHEES,
+  );
 
   // Les 11 colonnes du relevé standard, dans leur ordre, puis le statut de rapprochement
   const columns: Column<Transaction>[] = [
+    ...(canEdit && enCoursSeules
+      ? [
+          {
+            key: "choix",
+            header: "",
+            render: (row: Transaction) => (
+              <input
+                type="checkbox"
+                aria-label={`Choisir l'opération en cours du ${formatDate(row.date_operation)} ${row.libelle}`}
+                className="h-4 w-4 accent-simtis-primary"
+                checked={aSupprimer.has(row.id)}
+                disabled={row.statut !== "Non rapprochée"}
+                onChange={() =>
+                  setASupprimer((ids) => {
+                    const suivants = new Set(ids);
+                    if (suivants.has(row.id)) suivants.delete(row.id);
+                    else suivants.add(row.id);
+                    return suivants;
+                  })
+                }
+              />
+            ),
+          } satisfies Column<Transaction>,
+        ]
+      : []),
     { key: "societe", header: "Société" },
     {
       key: "pointage",
@@ -216,7 +274,7 @@ export function AccountStatementCard({
       header: "Libellé",
       // Largeur minimale : avec les 12 colonnes du format standard, le libellé serait écrasé
       render: (row) => (
-        <span className="block min-w-[260px]">
+        <span className="block min-w-[300px] break-words">
           <span className="block">{row.libelle}</span>
           {row.reference && (
             <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
@@ -432,6 +490,53 @@ export function AccountStatementCard({
               </dd>
             </div>
           </dl>
+          <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-simtis-primary"
+                checked={enCoursSeules}
+                onChange={(event) => {
+                  setEnCoursSeules(event.target.checked);
+                  setShown(OPERATIONS_AFFICHEES);
+                  setASupprimer(new Set());
+                }}
+              />
+              Opérations en cours seulement ({enCours.length})
+            </label>
+            {canEdit && enCoursSeules && enCours.length > 0 && (
+              <>
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    setASupprimer(
+                      new Set(
+                        enCours.filter((r) => r.statut === "Non rapprochée").map((r) => r.id),
+                      ),
+                    )
+                  }
+                >
+                  Tout cocher
+                </Button>
+                <Button
+                  variant="ghost"
+                  icon={X}
+                  disabled={aSupprimer.size === 0}
+                  onClick={() => setASupprimer(new Set())}
+                >
+                  Tout décocher
+                </Button>
+                <Button
+                  variant="danger"
+                  icon={Trash2}
+                  disabled={aSupprimer.size === 0}
+                  onClick={() => setConfirmation(true)}
+                >
+                  Supprimer la sélection ({aSupprimer.size})
+                </Button>
+              </>
+            )}
+          </div>
           {visible.hidden > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
               <p className="text-simtis-muted">
@@ -456,6 +561,35 @@ export function AccountStatementCard({
           />
         </>
       )}
+      <Modal
+        open={confirmation}
+        onClose={() => setConfirmation(false)}
+        title="Supprimer les opérations en cours"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirmation(false)}>
+              Retour
+            </Button>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              disabled={suppression}
+              onClick={confirmerSuppression}
+            >
+              Supprimer ({aSupprimer.size})
+            </Button>
+          </>
+        }
+      >
+        <p className="text-simtis-muted">
+          {aSupprimer.size} opération{aSupprimer.size > 1 ? "s" : ""} en cours, total{" "}
+          <span className="font-medium text-simtis-text tabular-nums">
+            {formatAmount(fromCents(totalASupprimer), suffix)}
+          </span>
+          . À faire avant d&apos;importer le relevé suivant, qui contient leurs opérations
+          définitives. La suppression est tracée dans l&apos;Historique.
+        </p>
+      </Modal>
       {editing && (
         <TransactionEditModal
           transaction={editing}

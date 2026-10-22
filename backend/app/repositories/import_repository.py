@@ -255,3 +255,30 @@ def operations_en_cours(
             .order_by(BankTransaction.date_operation, BankTransaction.id)
         )
     )
+
+
+def transactions_by_ids(db: Session, ids: list[int]) -> list[BankTransaction]:
+    """Opérations demandées, verrouillées le temps de la suppression (21/10/2026)."""
+    return list(
+        db.scalars(select(BankTransaction).where(BankTransaction.id.in_(ids)).with_for_update())
+    )
+
+
+def delete_transactions(db: Session, ids: list[int]) -> None:
+    """Supprime des opérations et ce qui les cite encore (prévisions, écarts, remplacements)."""
+    from sqlalchemy import delete, update
+
+    from app.models import CashForecast, Discrepancy
+
+    db.execute(
+        update(CashForecast)
+        .where(CashForecast.bank_transaction_id.in_(ids))
+        .values(bank_transaction_id=None)
+    )
+    db.execute(delete(Discrepancy).where(Discrepancy.bank_transaction_id.in_(ids)))
+    db.execute(
+        update(BankTransaction)
+        .where(BankTransaction.remplacee_par_id.in_(ids))
+        .values(remplacee_par_id=None)
+    )
+    db.execute(delete(BankTransaction).where(BankTransaction.id.in_(ids)))

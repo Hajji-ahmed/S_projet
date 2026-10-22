@@ -17,7 +17,7 @@ import { BankLabel } from "@/components/banks/BankLabel";
 import { Card } from "@/components/ui/Card";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatCompact } from "@/lib/format";
 import { JOURS_GRAPHIQUE, evolutionPoints, type EvolutionPoint } from "@/lib/position";
 import type { BanqueColonne, JourBanques } from "@/types/position";
 
@@ -95,7 +95,7 @@ export function PositionChart({ jours, banques }: PositionChartProps) {
                   minTickGap={16}
                 />
                 <YAxis
-                  tickFormatter={(value: number) => formatAmount(value)}
+                  tickFormatter={(value: number) => formatCompact(value)}
                   tick={{ fill: MUTED, fontSize: 12 }}
                   tickLine={false}
                   axisLine={false}

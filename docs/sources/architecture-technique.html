@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Architecture technique SIMTIS V2</title>
+<link rel="stylesheet" href="simtis-doc.css">
+<style>@page { @bottom-left { content: "SIMTIS · Architecture technique V2"; } } @page :first { @bottom-left { content: none; } }</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-band"></div>
+  <div class="cover-body">
+    <div class="cover-logo"><img src="../../frontend/public/logo-simtis.png" alt="SIMTIS"></div>
+    <div class="cover-kicker">Plateforme Finance &amp; Trésorerie</div>
+    <h1>Architecture technique détaillée</h1>
+    <div class="subtitle">Version 2 · Next.js · FastAPI · PostgreSQL · Docker Compose</div>
+  </div>
+  <div class="cover-meta">
+    <div><span>Version</span><strong>V2 (remplace la V1)</strong></div>
+    <div><span>Date</span><strong>21/10/2026</strong></div>
+    <div><span>Public</span><strong>Développeurs, exploitation</strong></div>
+  </div>
+  <div class="cover-foot">Ce document décrit l'application telle qu'elle est construite au 21/10/2026 : stack, organisation du code, services, API, base de données, sécurité, performances, tests et déploiement. Le fichier CLAUDE.md du dépôt reste la référence détaillée de chaque règle.</div>
+</div>
+
+<section class="toc">
+  <h2>Sommaire</h2>
+  <ol>
+    <li>Vue d'ensemble et chiffres clés</li>
+    <li>Stack et bibliothèques</li>
+    <li>Déploiement Docker Compose</li>
+    <li>Frontend Next.js</li>
+    <li>Backend FastAPI</li>
+    <li>Services métier</li>
+    <li>API REST</li>
+    <li>Base de données PostgreSQL</li>
+    <li>Pipeline d'import</li>
+    <li>Moteur de rapprochement</li>
+    <li>Frais bancaires et export Sage</li>
+    <li>Sécurité</li>
+    <li>Audit et traçabilité</li>
+    <li>Qualité : tests et intégration continue</li>
+    <li>Exploitation et évolutions</li>
+  </ol>
+</section>
+
+<section class="chapter first">
+  <h2>1. Vue d'ensemble</h2>
+  <p class="lead">Une application web en trois conteneurs. Le navigateur ne parle qu'à l'API ; l'API applique la sécurité et toutes les règles métier ; PostgreSQL stocke les données normalisées et l'historique.</p>
+  <div class="stack">
+    <div class="layer l1"><b>Navigateur</b><span>Trésorerie, Comptabilité, Responsable, Direction, Administrateur</span></div>
+    <div class="down">▼ HTTPS / REST (JSON, multipart pour les fichiers)</div>
+    <div class="layer l2"><b>Frontend Next.js</b><span>App Router, React 19, TypeScript, Tailwind · port 3000</span></div>
+    <div class="down">▼ apiFetch + jeton Bearer</div>
+    <div class="layer l3"><b>Backend FastAPI</b><span>api → services → repositories → models · port 8000</span></div>
+    <div class="down">▼ SQLAlchemy 2 / psycopg 3</div>
+    <div class="layer l5"><b>PostgreSQL 17</b><span>34 tables, migrations Alembic, contraintes et déclencheurs · port 5434 (hôte)</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><strong>34</strong><span>tables</span></div>
+    <div class="kpi"><strong>35</strong><span>migrations</span></div>
+    <div class="kpi"><strong>~95</strong><span>points d'API</span></div>
+    <div class="kpi"><strong>1 331</strong><span>tests automatiques</span></div>
+  </div>
+  <div class="box info"><strong>Règle d'architecture.</strong> SIMTIS est une couche d'intégration, de contrôle et de pilotage, pas un second Sage. Le frontend ne contient aucune règle métier ni calcul financier ; il ne parle jamais à PostgreSQL.</div>
+</section>
+
+<section class="chapter">
+  <h2>2. Stack et bibliothèques</h2>
+  <table>
+    <thead><tr><th>Couche</th><th>Technologie</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="5">Frontend</td><td>Next.js 16 (App Router), React 19, TypeScript 5</td><td>Pages, routage, rendu.</td></tr>
+      <tr><td>Tailwind CSS 4 + jetons <code>simtis-*</code></td><td>Design system teal (<code>globals.css</code>).</td></tr>
+      <tr><td>Recharts 3</td><td>Graphiques (évolution, donut, barres, courbes KPI).</td></tr>
+      <tr><td>lucide-react</td><td>Icônes (pas d'emoji).</td></tr>
+      <tr><td>clsx, tailwind-merge</td><td>Composition des classes.</td></tr>
+      <tr><td rowspan="8">Backend</td><td>Python 3.11, FastAPI, Uvicorn</td><td>API REST, validation, documentation OpenAPI.</td></tr>
+      <tr><td>Pydantic 2, pydantic-settings</td><td>Schémas d'entrée / sortie (<code>extra="forbid"</code>), configuration.</td></tr>
+      <tr><td>SQLAlchemy 2, Alembic</td><td>ORM et migrations.</td></tr>
+      <tr><td>psycopg 3</td><td>Pilote PostgreSQL.</td></tr>
+      <tr><td>PyJWT, pwdlib (argon2)</td><td>Jetons d'accès, hachage des mots de passe.</td></tr>
+      <tr><td>openpyxl, xlrd</td><td>Lecture <code>.xlsx</code> et <code>.xls</code> ; écriture des exports Excel.</td></tr>
+      <tr><td>python-multipart</td><td>Réception des fichiers.</td></tr>
+      <tr><td>cydifflib</td><td>Ressemblance des libellés (difflib compilé, ~4× plus rapide, mêmes résultats).</td></tr>
+      <tr><td>Base</td><td>PostgreSQL 17</td><td>Données, contraintes, déclencheurs, audit non modifiable.</td></tr>
+      <tr><td>Qualité</td><td>pytest, httpx, ruff · Vitest, ESLint, Prettier, tsc</td><td>Tests et contrôles, lancés aussi en CI.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="chapter">
+  <h2>3. Déploiement Docker Compose</h2>
+  <table>
+    <thead><tr><th>Service</th><th>Image</th><th>Port</th><th>Rôle</th></tr></thead>
+    <tbody>
+      <tr><td><code>db</code></td><td>postgres:17-alpine</td><td>127.0.0.1:5434 → 5432</td><td>Base ; volume persistant.</td></tr>
+      <tr><td><code>backend</code></td><td>python:3.11-slim</td><td>8000</td><td>Au démarrage : migrations Alembic, seeds de référence, puis l'API. Contrôle de santé <code>GET /api/health</code>.</td></tr>
+      <tr><td><code>frontend</code></td><td>node:22-slim</td><td>3000</td><td><code>next dev --webpack</code> avec scrutation des fichiers (Windows) ; <code>node_modules</code> dans un volume nommé.</td></tr>
+    </tbody>
+  </table>
+  <div class="formula">docker compose up --build          # tout démarrer (sans .env)
+docker compose up -d --wait        # en arrière-plan, attendre l'état sain</div>
+  <ul>
+    <li><b>Accès réseau local</b> (désactivé par défaut) : <code>BIND_ADDRESS=0.0.0.0</code>, <code>CORS_ORIGIN_REGEX</code>, <code>ALLOWED_DEV_ORIGINS</code> dans <code>.env</code> ; règle de pare-feu Windows 3000/8000. Le navigateur appelle l'API sur l'hôte de la page, port 8000. La base reste sur 127.0.0.1.</li>
+    <li>Redis ou un worker ne sont pas nécessaires : les plus gros imports (50 000 lignes) prennent 7 s à l'analyse et 19 s à la confirmation.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>4. Frontend Next.js</h2>
+  <h3>4.1 Organisation</h3>
+  <table>
+    <thead><tr><th>Dossier</th><th>Contenu</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/(app)/</code></td><td>Routes protégées : dashboard, banques, comptes, releves, position-bancaire, ecritures, rapprochement, rapports, historique, administration, ecarts (masqué), design-system ; <code>app/login</code>.</td></tr>
+      <tr><td><code>components/</code></td><td>Par module (dashboard, releves, rapprochement, position, accounts…) + <code>ui/</code> (Card, DataTable, Modal, Button, Field, StatusBadge, Pagination, états chargement / vide / erreur) + <code>layout/</code> (AppShell, barre latérale, en-tête, cloche).</td></tr>
+      <tr><td><code>services/</code></td><td>Une fonction par appel d'API, typée.</td></tr>
+      <tr><td><code>lib/</code></td><td>Client API (<code>api.ts</code>), règles d'affichage pures et testées (<code>format.ts</code>, <code>reconciliation.ts</code>, <code>statementLines.ts</code>, <code>frais.ts</code>…), permissions, drapeaux (<code>features.ts</code>).</td></tr>
+      <tr><td><code>types/</code></td><td>Types TypeScript des réponses de l'API.</td></tr>
+    </tbody>
+  </table>
+  <h3>4.2 Règles</h3>
+  <ul>
+    <li>Tout appel passe par <code>apiFetch</code> : jeton Bearer, un rafraîchissement sur 401 puis retour à <code>/login</code>, message « Requête refusée : données invalides. » pour un 422 sans message métier ; <code>apiDownload</code> pour les fichiers.</li>
+    <li>Le jeton d'accès reste en mémoire, jamais dans <code>localStorage</code>.</li>
+    <li>Argent : chaînes exactes (<code>"500000.00"</code>) ; les sommes d'écran se font en centimes <code>BigInt</code>, jamais en <code>float</code>. <code>formatAmount()</code> pour tout montant affiché, <code>formatCompact()</code> (« 18 M ») pour les axes.</li>
+    <li>Société active : <code>useCompany()</code> ; chaque écran ne lit qu'une société.</li>
+    <li>Menu filtré par <code>ROUTE_PERMISSIONS</code> (<code>lib/permissions.ts</code>, copie vérifiée par un test de <code>core/permissions.py</code>). Masquer un menu ne protège rien : l'API vérifie.</li>
+    <li>Les tableaux Banques, Devises et Prévisions ont une structure imposée et n'utilisent pas <code>DataTable</code>.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>5. Backend FastAPI</h2>
+  <div class="flow">
+    <div class="step"><b>api/</b>Points d'entrée minces, dépendances de sécurité</div><div class="arrow">›</div>
+    <div class="step"><b>schemas/</b>Pydantic, <code>extra="forbid"</code></div><div class="arrow">›</div>
+    <div class="step"><b>services/</b>Toutes les règles métier</div><div class="arrow">›</div>
+    <div class="step"><b>repositories/</b>Requêtes SQL</div><div class="arrow">›</div>
+    <div class="step dark"><b>models/</b>ORM SQLAlchemy</div>
+  </div>
+  <ul>
+    <li>Les erreurs métier sont levées par les services (<code>NotFoundError</code> → 404, <code>ConflictError</code> → 409, message en français) et converties par <code>main.py</code> en <code>{"detail": message}</code>.</li>
+    <li>Un nouveau routeur s'ajoute au <code>protected_router</code> de <code>api/router.py</code> (401 sans session) ; un nouveau modèle s'importe dans <code>models/__init__.py</code> (sinon Alembic ne le voit pas).</li>
+    <li>Argent : <code>NUMERIC(18,2)</code> en base, <code>Decimal</code> en Python. Formules de position en fonctions pures (<code>position_service</code>).</li>
+    <li>Date métier : <code>business_today()</code>, fuseau Africa/Casablanca.</li>
+    <li>Commandes : <code>python -m app.seeds [--demo]</code>, <code>python -m app.cli create-user</code>, <code>python -m app.cli recalculer-soldes</code>.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>6. Services métier</h2>
+  <table>
+    <thead><tr><th style="width:32%">Service</th><th>Responsabilité</th></tr></thead>
+    <tbody>
+      <tr><td><code>auth_service</code></td><td>Connexion, sessions, rafraîchissement, déconnexion, verrouillage.</td></tr>
+      <tr><td><code>bank_service</code>, <code>account_service</code></td><td>Banques, comptes, journaux Sage, suppression d'un compte sans historique.</td></tr>
+      <tr><td><code>balance_service</code></td><td>Soldes saisis, chiffres d'un compte (crédit et position disponibles).</td></tr>
+      <tr><td><code>import_file</code></td><td>Lecture commune des fichiers : feuille, en-tête, colonnes, synonymes, abréviations, limites.</td></tr>
+      <tr><td><code>normalization_service</code></td><td>Fonctions pures : dates, montants (« 213,68* »), libellés, références, empreintes, pointage, opérations en cours.</td></tr>
+      <tr><td><code>import_service</code></td><td>Import des relevés : analyse, soldes, sens, doublons, confirmation, export standard, suppression des opérations en cours.</td></tr>
+      <tr><td><code>accounting_import_service</code></td><td>Import Sage : lignes banque des journaux de banque, montant devise, doublons, retours d'écritures SIMTIS.</td></tr>
+      <tr><td><code>position_service</code>, <code>position_banques_service</code></td><td>Formules en <code>Decimal</code>, tableau Banques, soldes par compte (relevé, saisie, opérations en cours).</td></tr>
+      <tr><td><code>saisie_service</code></td><td>Saisies Devises et Prévisions.</td></tr>
+      <tr><td><code>reconciliation_scoring</code></td><td>Règles pures du moteur : types, dates, score, filtrage rapide des paires, attribution, recherche élargie.</td></tr>
+      <tr><td><code>reconciliation_groupes</code></td><td>Groupes N → 1 (principal + commission + TVA), score des rapprochements manuels.</td></tr>
+      <tr><td><code>reconciliation_service</code></td><td>Lancement, propositions, ambiguës, validation, rejet, annulation, manuel, codes, historique, lettrage.</td></tr>
+      <tr><td><code>frais_service</code></td><td>Frais bancaires : familles, ventilation TVA, comptes généraux, N° pièce, validation, écritures manuelles, export CSV, justificatif.</td></tr>
+      <tr><td><code>discrepancy_service</code></td><td>Écarts (module masqué côté écran).</td></tr>
+      <tr><td><code>dashboard_service</code></td><td>KPI, évolution, frais, comptes, tâches, alertes, filtre banque.</td></tr>
+      <tr><td><code>admin_service</code>, <code>parametres_service</code></td><td>Utilisateurs, rôles, gardes ; paramètres du rapprochement, modèles de colonnes.</td></tr>
+      <tr><td><code>historique_service</code>, <code>audit_service</code></td><td>Lecture du journal ; écriture des entrées d'audit (masquage des secrets).</td></tr>
+      <tr><td><code>rapports_service</code></td><td>Exports Excel position et rapprochement.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="chapter">
+  <h2>7. API REST</h2>
+  <p>Préfixe <code>/api</code>. Toutes les routes sauf la santé et l'authentification exigent une session ; chaque route métier exige une permission.</p>
+  <table>
+    <thead><tr><th style="width:20%">Module</th><th>Points d'entrée principaux</th></tr></thead>
+    <tbody>
+      <tr><td>Auth</td><td><code>POST /auth/login</code>, <code>/auth/refresh</code>, <code>/auth/logout</code>, <code>GET /auth/me</code></td></tr>
+      <tr><td>Référentiel</td><td><code>GET /companies</code>, <code>/currencies</code>, <code>/pointage-types</code>, <code>/health</code></td></tr>
+      <tr><td>Banques, comptes</td><td><code>/banks</code> (CRUD, statut), <code>/accounts</code> (CRUD, statut, <code>DELETE</code>), <code>/accounts/{id}/balances</code>, <code>PUT …/balances/{jour}</code></td></tr>
+      <tr><td>Relevés</td><td><code>POST /statements/import/analyse</code>, <code>/import/confirm</code> ; <code>GET /statements</code>, <code>/statements/{id}/transactions</code>, <code>/statements/accounts/{id}</code> et leurs exports ; <code>PATCH /statements/transactions/{id}</code> ; <code>POST /statements/transactions/supprimer-en-cours</code></td></tr>
+      <tr><td>Sage</td><td><code>POST /accounting/import/analyse</code>, <code>/import/confirm</code> ; <code>GET /accounting/entries</code>, <code>/entries/{id}</code>, <code>/imports</code></td></tr>
+      <tr><td>Position</td><td><code>GET /position/banques</code>, <code>/position/devises/soldes</code> ; <code>GET</code>/<code>PUT /position/devises</code>, <code>/position/previsions</code></td></tr>
+      <tr><td>Rapprochement</td><td><code>POST /reconciliation/run</code>, <code>/run-elargie</code> ; <code>GET /transactions</code>, <code>/proposals</code>, <code>/ambiguous</code>, <code>/ambiguous-entries</code>, <code>/candidates</code>, <code>/history</code>, <code>/export</code> ; <code>POST /matches</code> (manuel), <code>/matches/validate-batch</code>, <code>/matches/reject-batch</code>, <code>/matches/{id}/validate</code>, <code>/reject</code>, <code>DELETE /matches/{id}</code> ; « aucune correspondance » unitaire et en lot</td></tr>
+      <tr><td>Frais</td><td><code>GET /frais</code>, <code>POST /frais/valider</code>, <code>/manuelle</code>, <code>/ecarter</code>, <code>/reproposer</code>, <code>DELETE /frais/ecritures/{id}</code>, <code>GET /frais/export</code> (CSV), <code>/frais/justificatif</code></td></tr>
+      <tr><td>Dashboard</td><td><code>GET /dashboard</code>, <code>/dashboard/alertes</code></td></tr>
+      <tr><td>Écarts</td><td><code>/discrepancies</code> (liste, création, génération, modification, clôture)</td></tr>
+      <tr><td>Administration</td><td><code>/admin/users</code>, <code>/admin/roles</code>, <code>/admin/permissions</code> ; <code>/parametres/rapprochement</code>, <code>/parametres/mappings</code></td></tr>
+      <tr><td>Historique, rapports</td><td><code>GET /audit</code>, <code>/audit/filtres</code>, <code>/audit/{id}</code> ; <code>GET /rapports/position</code>, <code>/rapports/rapprochement</code></td></tr>
+    </tbody>
+  </table>
+  <p class="small">Les imports sont sans état : la confirmation renvoie le fichier, qui est ré-analysé et re-contrôlé par le serveur. Les lignes choisies voyagent en partie JSON (jusqu'à 60 Mo), car un champ texte multipart est limité à 1 Mo.</p>
+</section>
+
+<section class="chapter">
+  <h2>8. Base de données PostgreSQL</h2>
+  <h3>8.1 Tables (34)</h3>
+  <table>
+    <thead><tr><th style="width:22%">Domaine</th><th>Tables</th></tr></thead>
+    <tbody>
+      <tr><td>Référentiel</td><td><code>companies</code>, <code>banks</code>, <code>currencies</code>, <code>exchange_rates</code>, <code>pointage_types</code>, <code>forecast_categories</code></td></tr>
+      <tr><td>Comptes et soldes</td><td><code>bank_accounts</code>, <code>bank_account_balances</code>, <code>balance_checks</code></td></tr>
+      <tr><td>Imports</td><td><code>import_batches</code>, <code>column_mappings</code>, <code>bank_statements</code>, <code>bank_transactions</code>, <code>accounting_entries</code></td></tr>
+      <tr><td>Rapprochement</td><td><code>reconciliation_matches</code>, <code>reconciliation_match_items</code>, <code>reconciliation_rules</code>, <code>reconciliation_code_counters</code></td></tr>
+      <tr><td>Frais</td><td><code>frais_piece_counters</code>, <code>frais_lignes</code>, <code>frais_jours_ecartes</code></td></tr>
+      <tr><td>Écarts, prévisions</td><td><code>discrepancies</code>, <code>cash_forecasts</code>, <code>saisies_devises</code>, <code>saisies_previsions</code>, <code>saisies_previsions_jour</code></td></tr>
+      <tr><td>Sécurité, audit</td><td><code>users</code>, <code>roles</code>, <code>permissions</code>, <code>user_roles</code>, <code>role_permissions</code>, <code>user_sessions</code>, <code>audit_logs</code></td></tr>
+    </tbody>
+  </table>
+  <h3>8.2 Relations</h3>
+  <div class="formula">Company 1─N BankAccount ;  Bank 1─N BankAccount 1─N BankStatement 1─N BankTransaction
+BankTransaction N─N AccountingEntry  via  reconciliation_matches + reconciliation_match_items (1-1, 1-N, N-1, N-N)
+AccountingEntry (origine Sage ou SIMTIS) 1─N frais_lignes</div>
+  <h3>8.3 Garanties en base</h3>
+  <ul>
+    <li>Un compte actif par (société, banque, devise, type) : index unique partiel ; un journal Sage par compte actif et par société : déclencheur.</li>
+    <li>Une seule correspondance active par opération et par écriture : index uniques partiels sur <code>reconciliation_match_items.actif</code>.</li>
+    <li>Code de rapprochement unique par société ; compteurs sans trou (<code>INSERT … ON CONFLICT … RETURNING</code>).</li>
+    <li>CHECK : décision tracée, montant devise de même signe, famille de frais posée exactement pour les écritures SIMTIS, TVA et taux cohérents, opération remplacée seulement si en cours…</li>
+    <li><code>audit_logs</code> non modifiable (déclencheur) : ni mise à jour ni suppression.</li>
+  </ul>
+  <div class="box warn"><strong>Migrations.</strong> 35 migrations Alembic appliquées à chaque démarrage. Une migration générée se relit toujours (elle ignore déclencheurs et fonctions). <code>alembic check</code> ne compare pas les CHECK : chaque contrainte a son test dans <code>tests/test_constraints.py</code>. Les seeds créent sans jamais modifier ni supprimer.</div>
+</section>
+
+<section class="chapter">
+  <h2>9. Pipeline d'import</h2>
+  <div class="flow">
+    <div class="step"><b>Upload</b>multipart, ≤ 20 Mo</div><div class="arrow">›</div>
+    <div class="step"><b>read_sheet</b>OLE2 → xlrd, sinon openpyxl</div><div class="arrow">›</div>
+    <div class="step"><b>En-tête &amp; mapping</b>Synonymes, abréviations, modèle mémorisé</div><div class="arrow">›</div>
+    <div class="step"><b>Lecture des lignes</b>Normalisation, erreurs, ignorées</div><div class="arrow">›</div>
+    <div class="step"><b>Contrôles</b>Soldes, sens, doublons par lots de 5 000</div><div class="arrow">›</div>
+    <div class="step dark"><b>Confirmation</b>Une transaction : lot, relevé, lignes, mapping, contrôle, solde, audit</div>
+  </div>
+  <ul>
+    <li>Empreinte de ligne (hash) pour les doublons ; rang dans le fichier pour distinguer deux lignes identiques ; empreinte définitive gardée pour une opération en cours complétée.</li>
+    <li>Ordre chronologique : date, relevé, puis <code>bank_transactions.ordre</code> (rang dans le fichier), utilisé pour le solde du jour et les soldes calculés.</li>
+    <li>Soldes calculés : <code>solde_calcule = true</code> ; recalcul possible par <code>app.cli recalculer-soldes</code>.</li>
+    <li>Mesures : 50 000 lignes analysées en 7 s, confirmées en 19 s ; export Sage de même taille 3 s / 10 s.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>10. Moteur de rapprochement</h2>
+  <h3>10.1 Étapes d'un lancement</h3>
+  <ol>
+    <li>Verrou de la société en <code>FOR UPDATE NOWAIT</code> (un second lancement reçoit 409 immédiatement).</li>
+    <li>Lecture des opérations libres (hors frais et opérations en cours) et des écritures libres de la période (≤ 5 ans).</li>
+    <li>Paires comparables : même compte, sens opposé, types compatibles, fenêtre de dates (± 10 j, 180 j à montant et numéro égaux).</li>
+    <li>Score par <code>reconciliation_scoring</code>, avec rejet rapide prouvé sous le seuil (points sans libellé, référence, bornes supérieures du ratio de libellé).</li>
+    <li>Attribution du meilleur score au plus faible ; égalité → ambiguë ; second score gardé pour « Concurrente proche ».</li>
+    <li>Groupes N → 1 (principal + commission + TVA 10 %) ; remplacement des seules propositions en attente du moteur ; audit.</li>
+  </ol>
+  <h3>10.2 Performances mesurées (données de développement)</h3>
+  <table>
+    <thead><tr><th>Traitement</th><th class="num">Avant</th><th class="num">Après</th></tr></thead>
+    <tbody>
+      <tr><td>Lancement complet, une année, tous comptes</td><td class="num">dizaines de min</td><td class="num">99 s</td></tr>
+      <tr><td>Étape 1 → 1</td><td class="num">290 s</td><td class="num">89 s</td></tr>
+      <tr><td>Recherche élargie (1 an)</td><td class="num">—</td><td class="num">1,2 s</td></tr>
+      <tr><td>Relance ciblée depuis une carte ambiguë</td><td class="num">12,5–14 s</td><td class="num">0,35–1,9 s</td></tr>
+      <tr><td>Carte « Frais bancaires », une année</td><td class="num">86 s</td><td class="num">1,9 s</td></tr>
+      <tr><td>Validation en lot de 1 513 propositions</td><td class="num">—</td><td class="num">≈ 6 s</td></tr>
+    </tbody>
+  </table>
+  <p class="small">La grille et les seuils sont dans <code>reconciliation_rules</code>, modifiables par l'écran Paramètres ; ils s'appliquent au lancement suivant.</p>
+</section>
+
+<section class="chapter">
+  <h2>11. Frais bancaires et export Sage</h2>
+  <ul>
+    <li>Propositions <b>calculées, jamais stockées</b> (<code>GET /frais</code>) ; la validation recalcule tout côté serveur, tout ou rien.</li>
+    <li>Écriture : <code>accounting_entries</code> avec <code>origine = 'SIMTIS'</code>, <code>famille_frais</code>, N° pièce de <code>frais_piece_counters</code> (par société, banque, mois), plus un rapprochement validé d'origine « Frais ».</li>
+    <li>Lignes saisies par l'utilisateur dans <code>frais_lignes</code> ; journées écartées dans <code>frais_jours_ecartes</code>.</li>
+    <li>Export CSV : séparateur « ; », Windows-1252, virgule décimale, dates JJ/MM/AAAA, 15 colonnes de l'import paramétrable Sage ; marque <code>exportee_le</code>. Refusé pour un compte EUR / USD (pas de taux).</li>
+    <li>Seuil <code>SEUIL_MANUEL</code> = 200 DH pour les familles COM et FRAIS ; justificatif Excel pour la banque.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>12. Sécurité</h2>
+  <div class="flow">
+    <div class="step"><b>Connexion</b>Mot de passe argon2</div><div class="arrow">›</div>
+    <div class="step"><b>Session</b>Cookie HttpOnly limité à /api/auth</div><div class="arrow">›</div>
+    <div class="step"><b>Jeton d'accès</b>JWT en mémoire, porte l'id de session</div><div class="arrow">›</div>
+    <div class="step"><b>Permissions</b>Rechargées de la base à chaque requête</div><div class="arrow">›</div>
+    <div class="step dark"><b>API</b>401 / 403 avant tout traitement</div>
+  </div>
+  <ul>
+    <li>Les permissions ne sont jamais dans le JWT : un changement de rôle s'applique tout de suite ; déconnexion, changement de mot de passe et désactivation coupent l'accès immédiatement.</li>
+    <li>Tolérance d'horloge de 60 s au décodage (l'horloge de la VM Docker recule parfois).</li>
+    <li><code>tests/test_permissions.py</code> échoue si une route répond sans jeton hors liste publique.</li>
+    <li>Codes de référence (banques, sociétés, rôles) immuables ; schémas d'entrée stricts (champ inconnu → 422).</li>
+    <li>CORS limité aux origines configurées.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>13. Audit et traçabilité</h2>
+  <ul>
+    <li><code>audit_service.log(db, user_id, action, entite, entite_id, avant, apres, ip)</code> dans la même transaction que la modification, puis un seul commit.</li>
+    <li>Masquage automatique des mots de passe et jetons ; <code>Decimal</code> stockés en texte exact.</li>
+    <li>Plus de 60 actions tracées : imports, corrections, suppressions d'opérations en cours, propositions, validations, rejets, annulations, rapprochements manuels et élargis, comptabilisations, exports, administration, paramètres.</li>
+    <li>Lecture par <code>/api/audit</code> (50 par page, &lt; 0,05 s sur 36 000 entrées) ; le détail n'est chargé qu'à l'ouverture d'une ligne.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>14. Qualité : tests et intégration continue</h2>
+  <table>
+    <thead><tr><th>Côté</th><th>Outils</th><th class="num">Tests</th><th>Principe</th></tr></thead>
+    <tbody>
+      <tr><td>Backend</td><td>pytest, httpx, ruff</td><td class="num">1 070</td><td>Base dédiée <code>simtis_test</code>, créée et migrée par <code>conftest.py</code> (la vraie migration est testée), chaque test dans une transaction annulée ; <code>assert_rejected</code> pour les contraintes.</td></tr>
+      <tr><td>Frontend</td><td>Vitest, tsc, ESLint, Prettier, build</td><td class="num">261</td><td>Règles pures de <code>lib/</code> (montants en BigInt, filtres, sélection, format).</td></tr>
+    </tbody>
+  </table>
+  <div class="formula">docker compose run --rm backend ruff check . &amp;&amp; ruff format --check . &amp;&amp; pytest
+npm run lint &amp;&amp; npm run format:check &amp;&amp; npm run typecheck &amp;&amp; npm test &amp;&amp; npm run build</div>
+  <p>La CI (<code>.github/workflows/ci.yml</code>) lance les mêmes contrôles ; une tâche n'est terminée que si tout passe.</p>
+</section>
+
+<section class="chapter">
+  <h2>15. Exploitation et évolutions</h2>
+  <h3>15.1 Mise en production (à faire)</h3>
+  <ul>
+    <li>Images de production : <code>next build</code> + <code>next start</code>, Uvicorn sans rechargement, variables d'environnement de production (<code>APP_ENV=production</code> refuse les données de démo).</li>
+    <li>HTTPS par un reverse proxy (Nginx ou Caddy) sur le serveur local ; base non exposée.</li>
+    <li>Sauvegarde quotidienne de PostgreSQL (<code>pg_dump</code>) et test de restauration.</li>
+    <li>Comptes réels créés par <code>python -m app.cli create-user</code>.</li>
+  </ul>
+  <h3>15.2 Évolutions prévues</h3>
+  <table>
+    <thead><tr><th>Évolution</th><th>Remarque</th></tr></thead>
+    <tbody>
+      <tr><td>P14 Prévisions</td><td>Forecast service, position prévisionnelle en cascade, alertes ; bloqué par une question métier.</td></tr>
+      <tr><td>P9 Devises calculées</td><td>Taux de change saisis avec date, équivalent MAD, export des frais des comptes en devise.</td></tr>
+      <tr><td>P13.3 1 → N automatique</td><td>2 à 5 écritures pour une opération, somme exacte.</td></tr>
+      <tr><td>Recherche globale</td><td>Champ de l'en-tête masqué tant qu'il n'est pas construit.</td></tr>
+      <tr><td>Réactivation des Écarts</td><td>Drapeau <code>ECARTS_ACTIFS</code> dans <code>lib/features.ts</code>.</td></tr>
+      <tr><td>Worker asynchrone</td><td>Seulement si les volumes l'exigent.</td></tr>
+    </tbody>
+  </table>
+</section>
+</body>
+</html>

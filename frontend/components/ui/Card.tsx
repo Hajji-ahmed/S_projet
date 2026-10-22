@@ -23,7 +23,7 @@ export function Card({ title, icon: Icon, action, className, children }: CardPro
       )}
     >
       {title && (
-        <header className="mb-4 flex items-center justify-between gap-3">
+        <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             {Icon && (
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-simtis-light text-simtis-primary">

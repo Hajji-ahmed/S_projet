@@ -2,7 +2,7 @@ import { Landmark } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Card } from "@/components/ui/Card";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatCompact } from "@/lib/format";
 import type { Dashboard } from "@/types/dashboard";
 
 /** Frais bancaires débités sur la période, par banque (comptes courants MAD, 19/10/2026). */
@@ -26,7 +26,7 @@ export function FraisParBanque({ data }: { data: Dashboard }) {
                 axisLine={false}
                 fontSize={11}
                 width={70}
-                tickFormatter={(valeur: number) => formatAmount(valeur)}
+                tickFormatter={(valeur: number) => formatCompact(valeur)}
               />
               <Tooltip
                 cursor={{ fill: "var(--simtis-surface)" }}

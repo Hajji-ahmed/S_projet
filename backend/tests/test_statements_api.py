@@ -2338,192 +2338,88 @@ def _releve_en_cours(lignes):
     return xlsx(("Relevé", [HEADER, *lignes]))
 
 
-def test_a_pending_operation_is_imported_and_replaced_by_its_final_one(
+def _supprimer_en_cours(client, headers, ids):
+    return client.post(
+        "/api/statements/transactions/supprimer-en-cours", json={"ids": ids}, headers=headers
+    )
+
+
+def test_a_bp_pending_line_is_imported_then_deleted_before_the_next_statement(
     client, tresorerie, account, db
 ):
+    """21/10/2026 : plus de remplacement automatique ; l'opération « (*) » se supprime à la main,
+    le solde du jour redevient celui de l'opération restante."""
     from app.models import AuditLog, BankTransaction
+    from app.services.position_banques_service import soldes_par_compte
 
-    premier = _releve_en_cours(
+    releve = _releve_en_cours(
         [
-            [date(2026, 9, 24), date(2026, 9, 24), "VIR RECU CLIENT ABC (*)", None, 5000, 105000],
-            [date(2026, 9, 24), date(2026, 9, 24), "EPAIEMENT PORTNET SIM***", 25, None, 104975],
+            [date(2026, 9, 24), date(2026, 9, 24), "VIR RECU A", None, 1000, 101000],
+            [date(2026, 9, 24), date(2026, 9, 24), "VIR RECU CLIENT ABC (*)", None, 5000, 106000],
+            [date(2026, 9, 24), date(2026, 9, 24), "EPAIEMENT PORTNET SIM***", 25, None, 105975],
         ]
     )
-    assert confirm(client, tresorerie, account.id, premier, nom="r1.xlsx").status_code == 201
+    assert confirm(client, tresorerie, account.id, releve, nom="r1.xlsx").status_code == 201
     en_cours = db.scalar(select(BankTransaction).filter_by(libelle="VIR RECU CLIENT ABC (*)"))
     masque = db.scalar(select(BankTransaction).filter_by(libelle="EPAIEMENT PORTNET SIM***"))
     assert (en_cours.en_cours, masque.en_cours) == (True, False)
 
-    second = _releve_en_cours(
-        [[date(2026, 9, 26), date(2026, 9, 26), "vir recu client abc", None, 5000, 109975]]
-    )
-    apercu = analyse(client, tresorerie, account.id, second, nom="r2.xlsx").json()
-    assert apercu["lignes"][0]["remplace_date"] == "2026-09-24"
-    response = confirm(client, tresorerie, account.id, second, nom="r2.xlsx")
+    refus = _supprimer_en_cours(client, tresorerie, [en_cours.id, masque.id])
+    response = _supprimer_en_cours(client, tresorerie, [en_cours.id])
 
-    assert response.status_code == 201, response.text
-    assert apercu["lignes"][0]["remplace_avec_solde"] is True
-    # Une seule ligne : l'opération « (*) » est complétée par sa définitive (20/10/2026)
-    db.refresh(en_cours)
-    assert (en_cours.libelle, en_cours.en_cours, en_cours.statut) == (
-        "VIR RECU CLIENT ABC",
-        False,
-        "Non rapprochée",
+    assert refus.status_code == 409
+    assert response.status_code == 200, response.text
+    assert response.json() == {"nb": 1}
+    assert db.get(BankTransaction, en_cours.id) is None
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "suppression_en_cours"))
+    soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
+    assert soldes[date(2026, 9, 24)] == Decimal("105975.00")
+    # La définitive du relevé suivant s'importe normalement, sans rien remplacer
+    suivant = _releve_en_cours(
+        [[date(2026, 9, 26), date(2026, 9, 26), "VIREMENT ATLAS SARL", None, 5000, 110975]]
     )
-    assert en_cours.solde == Decimal("105000.00")  # garde son solde
-    assert en_cours.remplacee_par_id is None
-    assert (
-        db.scalar(
-            select(func.count())
-            .select_from(BankTransaction)
-            .where(BankTransaction.libelle.ilike("vir recu client abc%"))
-        )
-        == 1
-    )
-    audit = db.scalar(select(AuditLog).where(AuditLog.action == "remplacement_en_cours"))
-    assert audit.ancienne_valeur["libelle"] == "VIR RECU CLIENT ABC (*)"
-    # Le même relevé réimporté : la définitive est déjà importée
-    again = analyse(client, tresorerie, account.id, second, nom="r2-bis.xlsx").json()
-    assert again["lignes"][0]["statut"] == "Doublon"
+    apercu = analyse(client, tresorerie, account.id, suivant, nom="r2.xlsx").json()
+    assert apercu["lignes"][0]["remplace_date"] is None
 
 
-def test_a_final_line_too_far_or_of_another_amount_replaces_nothing(
+def test_a_bmce_pending_file_with_starred_amounts_adds_to_the_balance_until_deleted(
     client, tresorerie, account, db
 ):
+    """Fichier à part, montants « 213,68* » (BMCE) : lus, en cours, comptés dans le solde jusqu'à
+    leur suppression."""
     from app.models import BankTransaction
-
-    premier = _releve_en_cours(
-        [[date(2026, 9, 1), date(2026, 9, 1), "VIR RECU X (*)", None, 300, 300]]
-    )
-    confirm(client, tresorerie, account.id, premier, nom="r1.xlsx")
-    second = _releve_en_cours(
-        [
-            [date(2026, 9, 20), date(2026, 9, 20), "VIR RECU X", None, 300, 600],
-            [date(2026, 9, 21), date(2026, 9, 21), "VIR RECU X", None, 301, 901],
-        ]
-    )
-
-    apercu = analyse(client, tresorerie, account.id, second, nom="r2.xlsx").json()
-
-    assert [ligne["remplace_date"] for ligne in apercu["lignes"]] == [None, None]
-    assert confirm(client, tresorerie, account.id, second, nom="r2.xlsx").status_code == 201
-    en_cours = db.scalar(select(BankTransaction).filter_by(libelle="VIR RECU X (*)"))
-    assert en_cours.remplacee_par_id is None
-
-
-def test_a_separate_pending_file_adds_to_the_balance_until_its_final_line(
-    client, tresorerie, account, db
-):
-    """20/10/2026 : fichier à part des opérations en cours ; leur montant s'ajoute au solde du
-    compte jusqu'à leur définitive, comptée une seule fois."""
-    from app.models import BankStatement, BankTransaction
     from app.services.position_banques_service import soldes_par_compte
 
     releve = _releve_en_cours(
         [[date(2026, 9, 24), date(2026, 9, 24), "VIR RECU A", None, 1000, 101000]]
     )
     confirm(client, tresorerie, account.id, releve, nom="releve.xlsx")
-    encours = _releve_en_cours(
-        [[date(2026, 9, 25), date(2026, 9, 25), "PRELEVEMENT X", 300, None, 999999]]
-    )
-
-    apercu = analyse(client, tresorerie, account.id, encours, nom="encours.xlsx", en_cours="true")
-    response = confirm(client, tresorerie, account.id, encours, nom="encours.xlsx", en_cours=True)
-    again = analyse(client, tresorerie, account.id, encours, nom="encours2.xlsx", en_cours="true")
-
-    assert apercu.status_code == 200, apercu.text
-    assert apercu.json()["lignes"][0]["solde"] is None
-    assert response.status_code == 201, response.text
-    tx = db.scalar(select(BankTransaction).filter_by(libelle="PRELEVEMENT X"))
-    assert (tx.en_cours, tx.solde) == (True, None)
-    assert db.get(BankStatement, tx.statement_id).en_cours is True
-    assert again.json()["lignes"][0]["statut"] == "Doublon"
-    soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
-    assert soldes[date(2026, 9, 25)] == Decimal("100700.00")
-
-    # La définitive arrive (soldes du fichier) : le prélèvement n'est compté qu'une fois
-    definitive = _releve_en_cours(
-        [[date(2026, 9, 27), date(2026, 9, 27), "PRELEVEMENT X", 300, None, 100700]]
-    )
-    assert confirm(client, tresorerie, account.id, definitive, nom="r3.xlsx").status_code == 201
-    db.refresh(tx)
-    assert tx.remplacee_par_id is not None
-    soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
-    assert soldes[date(2026, 9, 25)] == Decimal("100700.00")
-    assert soldes[date(2026, 9, 27)] == Decimal("100700.00")
-
-
-def test_a_final_line_does_not_add_an_amount_already_in_the_computed_balances(
-    client, tresorerie, account, db
-):
-    """Relevé sans soldes : la définitive d'une ligne « (*) » du relevé n'ajoute pas son montant."""
-    from app.models import BankTransaction
-
-    entete = ["Date opération", "Date valeur", "Libellé", "Débit", "Crédit"]
-    premier = xlsx(
-        ("R", [entete, [date(2026, 9, 24), date(2026, 9, 24), "VIR RECU B (*)", None, 500]])
-    )
-    un = confirm(client, tresorerie, account.id, premier, nom="r1.xlsx", solde_ouverture="1000")
-    assert un.status_code == 201, un.text
-    second = xlsx(
-        (
-            "R",
-            [
-                entete,
-                [date(2026, 9, 26), date(2026, 9, 26), "VIR RECU B", None, 500],
-                [date(2026, 9, 27), date(2026, 9, 27), "VIR RECU C", None, 100],
-            ],
-        )
-    )
-
-    reponse = confirm(client, tresorerie, account.id, second, nom="r2.xlsx", solde_ouverture=None)
-    assert reponse.status_code == 201, reponse.text
-
-    soldes = {
-        tx.libelle: tx.solde
-        for tx in db.scalars(select(BankTransaction).filter_by(bank_account_id=account.id))
-    }
-    assert soldes == {"VIR RECU B": Decimal("1500.00"), "VIR RECU C": Decimal("1600.00")}
-
-
-def test_the_final_line_is_found_by_its_reference_even_with_another_label(
-    client, tresorerie, account, db
-):
-    """20/10/2026 : même référence + même montant, le libellé peut changer ; une autre référence
-    ne remplace rien. Le fichier des opérations en cours n'a que la date d'opération."""
-    from app.models import BankTransaction
-
-    entete = ["Date opération", "Libellé", "Référence", "Débit", "Crédit"]
+    entete = ["Code", "Date Opération", "Libellé", "Débit", "Crédit"]
     encours = xlsx(
         (
             "En cours",
             [
                 entete,
-                [date(2026, 9, 24), "VIR EMIS FOURNISSEUR", "FT26141F8PLY", 4000, None],
-                [date(2026, 9, 24), "VIR EMIS AUTRE", "FT26141AAAAA", 900, None],
+                [None, date(2026, 9, 25), "COM.LDOC.CRIMP", "213,68*", None],
+                [None, date(2026, 9, 25), "Remboursement FINEX ref.", "927.349,01*", None],
+                [None, date(2026, 9, 25), "VIREMENT RECU SRBM, REF OPER :", None, "1.500.000,00*"],
             ],
         )
     )
-    reponse = confirm(client, tresorerie, account.id, encours, nom="encours.xlsx", en_cours=True)
-    assert reponse.status_code == 201, reponse.text
-    releve = _releve_en_cours(
-        [
-            [date(2026, 9, 26), date(2026, 9, 26), "VIREMENT ZIZ SARL REF FT26141F8PLY", 4000,
-             None, 96000],
-            [date(2026, 9, 26), date(2026, 9, 26), "VIR EMIS AUTRE REF FT26141BBBBB", 900,
-             None, 95100],
-        ]
-    )  # fmt: skip
 
-    apercu = analyse(client, tresorerie, account.id, releve, nom="releve.xlsx").json()
+    response = confirm(client, tresorerie, account.id, encours, nom="encours.xlsx", en_cours=True)
 
-    assert [ligne["remplace_date"] for ligne in apercu["lignes"]] == ["2026-09-24", None]
-    assert apercu["lignes"][0]["remplace_avec_solde"] is False
-    assert confirm(client, tresorerie, account.id, releve, nom="releve.xlsx").status_code == 201
-    fournisseur = db.scalar(
-        select(BankTransaction).filter_by(reference="FT26141F8PLY", en_cours=True)
-    )
-    autre = db.scalar(select(BankTransaction).filter_by(reference="FT26141AAAAA"))
-    assert fournisseur.remplacee_par_id is not None
-    assert autre.remplacee_par_id is None
-    assert fournisseur.date_valeur is None
+    assert response.status_code == 201, response.text
+    lignes = db.scalars(select(BankTransaction).filter_by(en_cours=True)).all()
+    assert sorted(tx.montant for tx in lignes) == [
+        Decimal("-927349.01"),
+        Decimal("-213.68"),
+        Decimal("1500000.00"),
+    ]
+    soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
+    assert soldes[date(2026, 9, 25)] == Decimal("101000.00") + Decimal("572437.31")
+
+    assert _supprimer_en_cours(client, tresorerie, [tx.id for tx in lignes]).status_code == 200
+
+    soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
+    assert soldes == {date(2026, 9, 24): Decimal("101000.00")}

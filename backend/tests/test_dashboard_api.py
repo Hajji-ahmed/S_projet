@@ -266,3 +266,15 @@ def test_the_tasks_count_strong_and_weak_proposals(client, comptable, db):
 
     assert (taches["propositions_fortes"], taches["propositions_a_verifier"]) == (1, 1)
     assert (taches["operations_ambigues"], taches["ecritures_ambigues"]) == (0, 0)
+
+
+def test_pending_operations_are_left_out_of_the_bank_rates_like_the_ring(client, comptable, db):
+    """21/10/2026 : le total par banque comptait les opérations en cours (809 contre 797)."""
+    awb = account(db)
+    operation(db, awb, montant="1000", jour=date(2026, 9, 5), libelle="VIR A")
+    operation(db, awb, montant="500", jour=date(2026, 9, 6), libelle="VIR B (*)", en_cours=True)
+
+    vue = lire(client, comptable, db).json()
+
+    assert vue["total_operations"] == 1
+    assert [(b["code"], b["a_rapprocher"], b["total"]) for b in vue["banques"]] == [("AWB", 1, 1)]

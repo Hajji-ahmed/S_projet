@@ -722,15 +722,19 @@ def active_matches_by_entry(db: Session, entry_ids: list[int]) -> dict[int, Reco
 
 # --- Frais bancaires « À comptabiliser » (12/10/2026) ---------------------------------------------
 # Pointages des frais bancaires (code interne = `pointage_code` du libellé de la catégorie)
+# CERTIFICATION_CHEQUE retiré le 21/10/2026 : l'opération porte le montant du chèque certifié
+# (57 847,94…), pas un frais
 POINTAGES_FRAIS = (
     "COM", "DROIT", "TVA", "FRAIS", "AGIOS", "AGIOS_D_ECHELLE", "INTERET", "TCA",
-    "CERTIFICATION_CHEQUE", "FRAIS_RETENUE_A_LA_SOURCE",
+    "FRAIS_RETENUE_A_LA_SOURCE",
 )  # fmt: skip
-# Sans pointage : mots du libellé (droit de timbre, TVA, commission, frais, agios, intérêts,
-# prélèvements)
+# Sans pointage : mots du libellé (droit de timbre, TVA, commission, frais, agios, intérêts).
+# PRELEV / PRLV retirés le 21/10/2026 : un prélèvement (DGI, leasing, assurance) ou « FINEX
+# REMBOURSSEMENT DU MONTANT A PRELEVER » n'est pas un frais ; un vrai frais prélevé garde son mot
+# (« PRELEVEMENT DES FRAIS DE DOSSIER », « … COMMISSION … »)
 LIBELLE_FRAIS = (
     r"(DROITS? DE TIMBRE|DT D.ENREGISTREMENT|TAXE SUR VALEUR AJOUTEE|^TVA\M|COMMISSION|^COM\M"
-    r"|FRAIS|AGIOS|INTERET|PRELEV|PRLV)"
+    r"|FRAIS|AGIOS|INTERET)"
 )
 # Jamais un frais, quel que soit le pointage choisi (13/10/2026) : ces opérations repassent dans
 # « Non rapprochée ». Le libellé l'emporte sur le pointage (« INTERET », « FRAIS »…).

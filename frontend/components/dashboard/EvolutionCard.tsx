@@ -12,7 +12,7 @@ import {
 import { Card } from "@/components/ui/Card";
 import { formatDate } from "@/lib/balances";
 import { jourCourt } from "@/lib/dashboard";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatCompact } from "@/lib/format";
 import type { Dashboard } from "@/types/dashboard";
 
 // Couleurs des graphiques : tokens du design system uniquement
@@ -21,10 +21,7 @@ const GRILLE = "var(--simtis-border)";
 const GRIS = "var(--simtis-muted)";
 
 function axe(value: number): string {
-  const absolu = Math.abs(value);
-  if (absolu >= 1_000_000) return `${(value / 1_000_000).toFixed(0)}M DH`;
-  if (absolu >= 1000) return `${Math.round(value / 1000)}k DH`;
-  return `${Math.round(value)} DH`;
+  return formatCompact(value);
 }
 
 /** Solde total des comptes courants MAD, jour par jour (dernier solde connu de chaque compte). */

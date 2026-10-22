@@ -1,0 +1,247 @@
+/* Feuille de style des documents SIMTIS (cahier des charges, architectures). Palette du design
+   system (frontend/app/globals.css). Converti en PDF par Edge : voir docs/sources/README.md. */
+:root {
+  --primary: #006b70;
+  --primary-dark: #004f54;
+  --secondary: #18b7c8;
+  --light: #e6f7f7;
+  --surface: #f5f8fa;
+  --text: #17324d;
+  --muted: #64748b;
+  --border: #d9e3e8;
+  --success: #16a66a;
+  --success-bg: #e3f6ed;
+  --warning: #b45309;
+  --warning-bg: #fef3c7;
+  --danger: #c53030;
+  --danger-bg: #fde8e8;
+  --info: #1d4ed8;
+  --info-bg: #e0ecff;
+}
+
+@page {
+  size: A4;
+  margin: 18mm 16mm 18mm 16mm;
+  @bottom-left {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 8pt;
+    color: #64748b;
+  }
+  @bottom-right {
+    content: "Page " counter(page) " / " counter(pages);
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 8pt;
+    color: #64748b;
+  }
+}
+@page :first {
+  margin: 0;
+  @bottom-left { content: none; }
+  @bottom-right { content: none; }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Inter", Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* --- Couverture ------------------------------------------------------------------------------ */
+.cover {
+  height: 297mm;
+  display: flex;
+  flex-direction: column;
+  background: var(--primary-dark);
+  color: #fff;
+  page-break-after: always;
+}
+.cover-band { height: 10mm; background: var(--secondary); }
+.cover-body { flex: 1; padding: 30mm 22mm 0; }
+.cover-logo {
+  display: inline-block;
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px 16px;
+}
+.cover-logo img { height: 46px; display: block; }
+.cover-kicker {
+  margin-top: 34mm;
+  font-size: 11pt;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9fe3ea;
+}
+.cover h1 {
+  margin: 6px 0 0;
+  font-size: 30pt;
+  line-height: 1.15;
+  font-weight: 700;
+}
+.cover .subtitle { margin-top: 8px; font-size: 13pt; color: #cfeff2; }
+.cover-meta {
+  margin: 22mm 22mm 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  padding-top: 8mm;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6mm;
+}
+.cover-meta div span { display: block; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.1em; color: #9fe3ea; }
+.cover-meta div strong { font-size: 11pt; font-weight: 600; }
+.cover-foot { padding: 0 22mm 18mm; font-size: 8.5pt; color: #9fe3ea; }
+
+/* --- Sommaire -------------------------------------------------------------------------------- */
+.toc { page-break-after: always; }
+.toc ol { list-style: none; padding: 0; margin: 0; counter-reset: toc; }
+.toc li {
+  counter-increment: toc;
+  display: flex;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 10.5pt;
+}
+.toc li::before {
+  content: counter(toc, decimal-leading-zero);
+  color: var(--secondary);
+  font-weight: 700;
+  width: 26px;
+}
+.toc li span { color: var(--muted); margin-left: auto; font-size: 9pt; }
+
+/* --- Titres ---------------------------------------------------------------------------------- */
+h2 {
+  font-size: 16pt;
+  color: var(--primary-dark);
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 3px solid var(--secondary);
+  page-break-after: avoid;
+}
+section.chapter { page-break-before: always; }
+section.chapter.first { page-break-before: auto; }
+h3 { font-size: 12pt; color: var(--primary); margin: 16px 0 6px; page-break-after: avoid; }
+h4 { font-size: 10.5pt; margin: 12px 0 4px; color: var(--text); page-break-after: avoid; }
+p { margin: 0 0 8px; }
+ul, ol { margin: 0 0 8px; padding-left: 18px; }
+li { margin-bottom: 3px; }
+code {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 8.8pt;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.lead { font-size: 11pt; color: var(--muted); margin-bottom: 12px; }
+
+/* --- Tableaux -------------------------------------------------------------------------------- */
+table { width: 100%; border-collapse: collapse; margin: 6px 0 12px; font-size: 9pt; page-break-inside: auto; }
+tr { page-break-inside: avoid; }
+thead { display: table-header-group; }
+th {
+  background: var(--light);
+  color: var(--primary-dark);
+  text-align: left;
+  font-weight: 600;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+}
+td { padding: 5px 8px; border: 1px solid var(--border); vertical-align: top; }
+tbody tr:nth-child(even) td { background: #fbfdfe; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.nowrap { white-space: nowrap; }
+
+/* --- Encadrés et badges ---------------------------------------------------------------------- */
+.box {
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 0 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  page-break-inside: avoid;
+}
+.box strong:first-child { color: var(--primary-dark); }
+.box.info { background: var(--light); border-color: #b9e6e8; }
+.box.warn { background: var(--warning-bg); border-color: #f6d58a; }
+.box.danger { background: var(--danger-bg); border-color: #f3b4b4; }
+.formula {
+  font-family: Consolas, monospace;
+  background: var(--primary-dark);
+  color: #e6f7f7;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 9.2pt;
+  white-space: pre-wrap;
+  page-break-inside: avoid;
+  margin: 6px 0 12px;
+}
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 7.8pt;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.b-ok { background: var(--success-bg); color: var(--success); }
+.b-part { background: var(--warning-bg); color: var(--warning); }
+.b-todo { background: var(--info-bg); color: var(--info); }
+.b-off { background: #eceff3; color: var(--muted); }
+.b-new { background: var(--light); color: var(--primary); }
+
+/* --- Schémas de flux ------------------------------------------------------------------------- */
+.flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 8px 0 14px; page-break-inside: avoid; }
+.flow .step {
+  flex: 1 1 0;
+  min-width: 80px;
+  background: var(--light);
+  border: 1px solid #b9e6e8;
+  border-radius: 10px;
+  padding: 8px;
+  text-align: center;
+  font-size: 8.6pt;
+}
+.flow .step b { display: block; color: var(--primary-dark); font-size: 9pt; }
+.flow .arrow { align-self: center; color: var(--secondary); font-weight: 700; font-size: 13pt; }
+.flow .step.dark { background: var(--primary-dark); color: #e6f7f7; border-color: var(--primary-dark); }
+.flow .step.dark b { color: #fff; }
+
+.stack { margin: 8px 0 14px; page-break-inside: avoid; }
+.stack .layer {
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 9pt;
+  border: 1px solid var(--border);
+}
+.stack .layer b { color: var(--primary-dark); min-width: 130px; }
+.stack .layer.l1 { background: #fff; }
+.stack .layer.l2 { background: var(--light); }
+.stack .layer.l3 { background: #cdeff1; }
+.stack .layer.l4 { background: var(--primary); color: #fff; }
+.stack .layer.l4 b { color: #fff; }
+.stack .layer.l5 { background: var(--primary-dark); color: #fff; }
+.stack .layer.l5 b { color: #fff; }
+.stack .down { text-align: center; color: var(--secondary); font-size: 10pt; line-height: 1; margin: 0 0 4px; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  page-break-inside: avoid;
+}
+.card h4 { margin-top: 0; color: var(--primary); }
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0 14px; }
+.kpi { background: var(--light); border-radius: 10px; padding: 8px 10px; text-align: center; }
+.kpi strong { display: block; font-size: 16pt; color: var(--primary-dark); }
+.kpi span { font-size: 8pt; color: var(--muted); }
+.small { font-size: 8.5pt; color: var(--muted); }

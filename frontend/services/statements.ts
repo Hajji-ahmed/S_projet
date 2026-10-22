@@ -53,3 +53,12 @@ export function updateTransaction(transactionId: number, data: TransactionUpdate
 export function exportAccountStatement(accountId: number, period: Period = {}) {
   return apiDownload(`/statements/accounts/${accountId}/export${periodQuery(period)}`);
 }
+
+/** Supprime des opérations en cours (toutes ou aucune), avant le relevé suivant (21/10/2026). */
+export function supprimerEnCours(ids: number[]) {
+  return apiFetch<{ nb: number }>("/statements/transactions/supprimer-en-cours", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+}

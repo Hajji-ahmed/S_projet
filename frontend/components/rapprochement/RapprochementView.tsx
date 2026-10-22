@@ -556,7 +556,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
       )}
 
       {!periodError && tab === "rapprochement" && (
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]">
           <TransactionsPane
             key={`tx-${filterKey}`}
             companyId={companyId}

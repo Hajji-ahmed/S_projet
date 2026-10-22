@@ -453,22 +453,27 @@ def _line_key(line: AnalysedLine) -> tuple:
 
 # Écart de dates admis entre une opération en cours et sa définitive (20/10/2026)
 JOURS_REMPLACEMENT = 10
+# Remplacement automatique d'une opération en cours par sa définitive : retiré le 21/10/2026 (les
+# opérations en cours se suppriment à la main avant le relevé suivant) ; le code reste, inactif
+REMPLACEMENT_AUTOMATIQUE = False
 
 
 def _marquer_en_cours(
     db: Session, account: BankAccount, lines: list[AnalysedLine], fichier_en_cours: bool = False
 ) -> None:
-    """Opérations en cours et remplacements (20/10/2026). Une ligne dont le libellé finit par
-    « (*) » est en cours. Une ligne définitive (sans « (*) ») remplace une opération en cours déjà
-    importée du même compte : même montant et même sens, dates à `JOURS_REMPLACEMENT` jours au
-    plus, et même référence (colonne Référence, ou n° lu dans le libellé) ; le libellé peut
-    changer. Sans référence d'un côté : même libellé sans « (*) ». La plus ancienne d'abord, chacune
-    une seule fois."""
+    """Opérations en cours (20/10/2026) : une ligne dont le libellé finit par « (*) », ou
+    toute ligne d'un fichier des opérations en cours.
+
+    Depuis le 21/10/2026 il n'y a plus de remplacement automatique (les libellés des banques
+    changent complètement, sans référence) : l'utilisateur supprime ses opérations en cours avant
+    d'importer le relevé suivant (`supprimer_en_cours`)."""
     for line in lines:
         # Fichier des opérations en cours (20/10/2026) : toutes ses lignes le sont
         line.en_cours = fichier_en_cours or est_en_cours(line.libelle)
         line.remplace_id = line.remplace_date = None
         line.remplace_avec_solde = False
+    if REMPLACEMENT_AUTOMATIQUE is False:
+        return
     candidates = [
         line
         for line in lines
@@ -1574,6 +1579,62 @@ def list_statements(
 
 
 BUSINESS_FIELDS = ("pointage_type_id", "lettrage_escompte", "commentaire")
+
+
+# Au plus 2 000 opérations en cours supprimées à la fois (21/10/2026)
+SUPPRESSION_EN_COURS_MAX = 2000
+
+
+def supprimer_en_cours(
+    db: Session, ids: list[int], *, acteur_id: int, ip: str | None = None
+) -> int:
+    """Supprime des opérations en cours (21/10/2026), avant l'import du relevé suivant : toutes
+    ou aucune. Seule une opération en cours, non rapprochée et sans correspondance active se
+    supprime ; chacune est tracée (`suppression_en_cours`). Le solde du jour redevient celui de la
+    dernière opération restante (le relevé suivant fait foi) ; le montant d'une opération d'un
+    fichier à part sort du solde du compte."""
+    ids = sorted(set(ids))
+    if not ids:
+        raise ConflictError("Choisissez au moins une opération en cours à supprimer.")
+    if len(ids) > SUPPRESSION_EN_COURS_MAX:
+        raise ConflictError(
+            f"{SUPPRESSION_EN_COURS_MAX} opérations au plus par suppression : réduisez la sélection."
+        )
+    operations = import_repository.transactions_by_ids(db, ids)
+    if len(operations) != len(ids):
+        raise NotFoundError("Opération introuvable.")
+    actives = reconciliation_repository.active_matches_by_transaction(db, ids)
+    for tx in operations:
+        if not tx.en_cours:
+            raise ConflictError(
+                f"« {tx.libelle} » du {tx.date_operation:%d/%m/%Y} n'est pas une opération en "
+                "cours : elle ne se supprime pas. Rien n'a été supprimé."
+            )
+        if tx.statut != "Non rapprochée" or tx.id in actives:
+            raise ConflictError(
+                f"« {tx.libelle} » du {tx.date_operation:%d/%m/%Y} est rapprochée ou proposée : "
+                "annulez d'abord son rapprochement. Rien n'a été supprimé."
+            )
+    for tx in operations:
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="suppression_en_cours",
+            entite="bank_transaction",
+            entite_id=tx.id,
+            avant={
+                "bank_account_id": tx.bank_account_id,
+                "date_operation": tx.date_operation,
+                "libelle": tx.libelle,
+                "debit": tx.debit,
+                "credit": tx.credit,
+                "solde": tx.solde,
+            },
+            ip=ip,
+        )
+    import_repository.delete_transactions(db, ids)
+    db.commit()
+    return len(ids)
 
 
 def update_transaction(

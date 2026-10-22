@@ -15,6 +15,17 @@ export const GRID_FRAME =
 // border-hidden : le contour extérieur est celui du cadre arrondi, pas celui des cellules
 export const GRID_TABLE =
   "w-full border-collapse border-hidden text-[13.5px] text-simtis-text [&_td]:border [&_td]:border-simtis-border [&_th]:border [&_th]:border-simtis-border [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-simtis-light/40";
+/**
+ * Largeur minimale d'une colonne de banque (21/10/2026) : un montant comme « -12 345 678,90 » ou
+ * « 48 299,91 EUR » tient sur sa ligne ; un écran plus étroit fait défiler le tableau dans son cadre.
+ */
+export const LARGEUR_BANQUE = 150;
+
+/** Largeur minimale d'un tableau imposé : colonnes fixes + une colonne par banque. */
+export function largeurMin(fixes: number, nbBanques: number) {
+  return { minWidth: fixes + nbBanques * LARGEUR_BANQUE };
+}
+
 /** En-tête de colonne, comme `DataTable`. */
 export const GRID_HEAD =
   "bg-simtis-light/60 px-3 py-2.5 text-center text-[13px] font-semibold whitespace-nowrap text-simtis-primary-dark";

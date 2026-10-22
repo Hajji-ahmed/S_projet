@@ -55,9 +55,10 @@ export function TachesCard({ data }: { data: Dashboard }) {
 }
 
 /** Taux de rapprochement de chaque banque sur la période. */
-export function BanquesCard({ data }: { data: Dashboard }) {
+export function BanquesCard({ data, className }: { data: Dashboard; className?: string }) {
   return (
     <Petite
+      className={className}
       titre="Rapprochement par banque"
       icon={Building2}
       pastille="bg-simtis-info-bg text-simtis-info-fg"

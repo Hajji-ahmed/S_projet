@@ -4,6 +4,7 @@ import { CalendarClock } from "lucide-react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import {
+  largeurMin,
   GRID_FRAME,
   GRID_GREY,
   GRID_HEAD,
@@ -86,7 +87,11 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
       {grid.loadState === "ready" && (
         <>
           <div className={GRID_FRAME}>
-            <table className={cn(GRID_TABLE, "min-w-[1000px] table-fixed")} aria-label="Prévisions">
+            <table
+              className={cn(GRID_TABLE, "table-fixed")}
+              style={largeurMin(110 + 180 + COLONNES_JOUR.length * 120, banks.length)}
+              aria-label="Prévisions"
+            >
               <colgroup>
                 <col className="w-[110px]" />
                 <col className="w-[180px]" />

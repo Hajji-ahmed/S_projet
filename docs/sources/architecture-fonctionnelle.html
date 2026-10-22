@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Architecture fonctionnelle SIMTIS V2</title>
+<link rel="stylesheet" href="simtis-doc.css">
+<style>@page { @bottom-left { content: "SIMTIS · Architecture fonctionnelle V2"; } } @page :first { @bottom-left { content: none; } }</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-band"></div>
+  <div class="cover-body">
+    <div class="cover-logo"><img src="../../frontend/public/logo-simtis.png" alt="SIMTIS"></div>
+    <div class="cover-kicker">Plateforme Finance &amp; Trésorerie</div>
+    <h1>Architecture fonctionnelle détaillée</h1>
+    <div class="subtitle">Version 2 · Flux métier, modules, écrans, utilisateurs et responsabilités</div>
+  </div>
+  <div class="cover-meta">
+    <div><span>Version</span><strong>V2 (remplace la V1)</strong></div>
+    <div><span>Date</span><strong>21/10/2026</strong></div>
+    <div><span>Public</span><strong>Métier, chefs de projet</strong></div>
+  </div>
+  <div class="cover-foot">Ce document décrit comment l'application fonctionne pour ses utilisateurs : les flux de données, chaque module, les écrans et le travail quotidien de la Trésorerie et de la Comptabilité. Il accompagne le cahier des charges V4.</div>
+</div>
+
+<section class="toc">
+  <h2>Sommaire</h2>
+  <ol>
+    <li>Vue globale</li>
+    <li>Utilisateurs, rôles et permissions</li>
+    <li>Carte des écrans</li>
+    <li>Sources et intégration des données</li>
+    <li>Module Relevés bancaires</li>
+    <li>Module Écritures Sage</li>
+    <li>Module Position bancaire</li>
+    <li>Module Rapprochement</li>
+    <li>Module Frais bancaires</li>
+    <li>Modules Écarts et Prévisions</li>
+    <li>Dashboard, alertes et rapports</li>
+    <li>Administration, historique et paramètres</li>
+    <li>Journées types</li>
+    <li>Cycle de vie des données</li>
+  </ol>
+</section>
+
+<section class="chapter first">
+  <h2>1. Vue globale</h2>
+  <p class="lead">SIMTIS reçoit les relevés des banques et les écritures de Sage, les met dans un format commun, puis calcule la position bancaire, propose les rapprochements, prépare les écritures de frais et présente le tout dans un tableau de bord.</p>
+  <div class="stack">
+    <div class="layer l1"><b>Sources</b><span>Relevés Excel des 5 banques (AWB, BMCE, BP, CIH, BMCI) · export Sage / SI (grand livre des comptes de banque)</span></div>
+    <div class="down">▼</div>
+    <div class="layer l2"><b>Intégration</b><span>Assistant d'import en 2 étapes · détection des colonnes · contrôles · doublons · opérations en cours</span></div>
+    <div class="down">▼</div>
+    <div class="layer l2"><b>Normalisation</b><span>Format standard à 11 champs · dates, montants, sens · pointage automatique · soldes calculés</span></div>
+    <div class="down">▼</div>
+    <div class="layer l3"><b>Traitements</b><span>Position bancaire · Rapprochement (moteur + validation humaine) · Frais bancaires · (Prévisions à venir)</span></div>
+    <div class="down">▼</div>
+    <div class="layer l4"><b>Pilotage</b><span>Dashboard Suivi / Indicateurs · alertes · rapports Excel · export Sage des frais · lettrage</span></div>
+    <div class="down">▼</div>
+    <div class="layer l5"><b>Utilisateurs</b><span>Trésorerie · Comptabilité · Responsable · Direction · Administrateur</span></div>
+  </div>
+  <div class="box info"><strong>Règles transverses.</strong> Une seule société affichée à la fois (Simtis ou Tefil, choisie dans l'en-tête). Deux devises ne sont jamais additionnées. Le moteur propose, l'humain valide. Toute action sensible est tracée.</div>
+</section>
+
+<section class="chapter">
+  <h2>2. Utilisateurs, rôles et permissions</h2>
+  <h3>2.1 Responsabilités</h3>
+  <table>
+    <thead><tr><th>Utilisateur</th><th>Responsabilités dans SIMTIS</th></tr></thead>
+    <tbody>
+      <tr><td>Trésorerie (Salma)</td><td>Banques et comptes, import des relevés, suppression des opérations en cours, position bancaire, saisies Devises et Prévisions.</td></tr>
+      <tr><td>Comptabilité (Mustapha)</td><td>Import Sage, rapprochement (lancement, validation, rapprochement manuel), comptabilisation et export des frais bancaires, lettrage.</td></tr>
+      <tr><td>Responsable Finance</td><td>Validation et supervision du rapprochement, consultation du journal d'audit.</td></tr>
+      <tr><td>Direction</td><td>Dashboard, position et rapprochement en lecture.</td></tr>
+      <tr><td>Administrateur</td><td>Utilisateurs, rôles, permissions, paramètres du rapprochement, modèles de colonnes.</td></tr>
+    </tbody>
+  </table>
+  <h3>2.2 Matrice des permissions (rôles système)</h3>
+  <table>
+    <thead><tr><th>Permission</th><th>Usage</th><th class="num">Admin</th><th class="num">Trés.</th><th class="num">Compt.</th><th class="num">Resp.</th><th class="num">Dir.</th></tr></thead>
+    <tbody>
+      <tr><td><code>dashboard.view</code></td><td>Dashboard, cloche</td><td class="num">●</td><td class="num">●</td><td class="num">●</td><td class="num">●</td><td class="num">●</td></tr>
+      <tr><td><code>position.view</code></td><td>Banques, position, rapport position</td><td class="num">●</td><td class="num">●</td><td class="num">●</td><td class="num">●</td><td class="num">●</td></tr>
+      <tr><td><code>reconciliation.view</code></td><td>Lecture rapprochement, relevés, écritures</td><td class="num">●</td><td class="num">●</td><td class="num">●</td><td class="num">●</td><td class="num">●</td></tr>
+      <tr><td><code>banks.manage</code></td><td>Banques, comptes, soldes saisis</td><td class="num">●</td><td class="num">●</td><td class="num"></td><td class="num"></td><td class="num"></td></tr>
+      <tr><td><code>statements.import</code></td><td>Import et modification des relevés</td><td class="num">●</td><td class="num">●</td><td class="num"></td><td class="num"></td><td class="num"></td></tr>
+      <tr><td><code>forecasts.manage</code></td><td>Saisies Devises / Prévisions</td><td class="num">●</td><td class="num">●</td><td class="num"></td><td class="num"></td><td class="num"></td></tr>
+      <tr><td><code>accounting.import</code></td><td>Import Sage</td><td class="num">●</td><td class="num"></td><td class="num">●</td><td class="num"></td><td class="num"></td></tr>
+      <tr><td><code>accounting.prepare</code></td><td>Comptabilisation des frais</td><td class="num">●</td><td class="num"></td><td class="num">●</td><td class="num"></td><td class="num"></td></tr>
+      <tr><td><code>reconciliation.validate</code></td><td>Lancer, valider, rejeter, rapprocher</td><td class="num">●</td><td class="num"></td><td class="num">●</td><td class="num">●</td><td class="num"></td></tr>
+      <tr><td><code>discrepancies.manage</code></td><td>Écarts (module masqué)</td><td class="num">●</td><td class="num"></td><td class="num">●</td><td class="num">●</td><td class="num"></td></tr>
+      <tr><td><code>audit.view</code></td><td>Historique (journal d'audit)</td><td class="num">●</td><td class="num"></td><td class="num"></td><td class="num">●</td><td class="num"></td></tr>
+      <tr><td><code>admin.users</code> / <code>admin.roles</code> / <code>admin.settings</code></td><td>Administration</td><td class="num">●</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr>
+    </tbody>
+  </table>
+  <p class="small">Les rôles « Personnalisé » sont créés par l'administrateur avec n'importe quelle combinaison. Le menu n'affiche que les écrans autorisés ; le serveur vérifie la permission à chaque appel.</p>
+</section>
+
+<section class="chapter">
+  <h2>3. Carte des écrans</h2>
+  <table>
+    <thead><tr><th style="width:22%">Écran</th><th>Contenu</th><th style="width:20%">Permission</th></tr></thead>
+    <tbody>
+      <tr><td>Dashboard</td><td>Onglets Suivi et Indicateurs, filtres période et banque.</td><td><code>dashboard.view</code></td></tr>
+      <tr><td>Banques / détail</td><td>Carte par banque (solde) ; détail : comptes, crédit et position disponibles, soldes quotidiens.</td><td><code>position.view</code></td></tr>
+      <tr><td>Comptes</td><td>Comptes actifs, création, modification, journaux Sage, saisie de solde, désactivation / suppression.</td><td><code>banks.manage</code></td></tr>
+      <tr><td>Relevés</td><td>Assistant d'import, relevé continu du compte, journal des imports, opérations en cours, export.</td><td>import ou lecture</td></tr>
+      <tr><td>Position bancaire</td><td>Tableaux Banques, Devises, Prévisions et graphique d'évolution.</td><td><code>position.view</code></td></tr>
+      <tr><td>Écritures</td><td>Import Sage, liste filtrable des écritures, historique des imports.</td><td>import ou lecture</td></tr>
+      <tr><td>Rapprochement</td><td>Compteurs, frais bancaires, volets Transactions · Correspondance · Écritures, onglets Propositions et Historique.</td><td><code>reconciliation.view</code></td></tr>
+      <tr><td>Rapports</td><td>Exports Excel position, synthèse du rapprochement, lettrage.</td><td>position ou rapprochement</td></tr>
+      <tr><td>Historique</td><td>Journal d'audit filtrable, détail avant / après.</td><td><code>audit.view</code></td></tr>
+      <tr><td>Administration</td><td>Utilisateurs, rôles et permissions, paramètres.</td><td><code>admin.*</code></td></tr>
+      <tr><td>Écarts</td><td>Masqué depuis le 07/10/2026.</td><td>—</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="chapter">
+  <h2>4. Sources et intégration des données</h2>
+  <div class="grid2">
+    <div class="card"><h4>Relevés bancaires</h4>
+      <p>Fichiers Excel (.xlsx, .xls) propres à chaque banque, jusqu'à 50 000 lignes. Opérations en cours : dans le relevé (BP, « (*) ») ou en fichier séparé (BMCE, CIH).</p></div>
+    <div class="card"><h4>Export Sage / SI</h4>
+      <p>Grand livre des comptes de banque, par société. Seules les lignes banque des journaux de banque sont gardées. Colonne « Devise » pour les comptes EUR / USD.</p></div>
+  </div>
+  <h3>Principe commun aux deux imports</h3>
+  <div class="flow">
+    <div class="step"><b>Choix</b>Compte (relevé) ou société (Sage) + fichier</div><div class="arrow">›</div>
+    <div class="step"><b>Analyse</b>Rien n'est écrit</div><div class="arrow">›</div>
+    <div class="step"><b>Aperçu</b>Valides, erreurs, doublons, ignorées</div><div class="arrow">›</div>
+    <div class="step"><b>Choix des lignes</b>Cases à cocher</div><div class="arrow">›</div>
+    <div class="step dark"><b>Confirmation</b>Contrôle refait par le serveur, enregistrement, audit</div>
+  </div>
+  <p>Le modèle de colonnes est mémorisé (par banque pour les relevés, par société pour Sage) et complété automatiquement si une colonne apparaît. L'écran de mapping n'apparaît que si des colonnes ne sont pas reconnues.</p>
+</section>
+
+<section class="chapter">
+  <h2>5. Module Relevés bancaires</h2>
+  <h3>5.1 Import</h3>
+  <ol>
+    <li>Choisir le compte (liste avec logos) et déposer le fichier : l'analyse démarre seule.</li>
+    <li>Étape Validation : le relevé tel qu'il sera enregistré, au format standard, modifiable ligne par ligne ; tuiles de filtre ; solde d'ouverture proposé (modifiable seulement au premier import du compte) ; soldes calculés en gris.</li>
+    <li>Confirmer : les lignes cochées sont enregistrées, la clôture devient le solde du jour du compte, un contrôle de solde est enregistré.</li>
+  </ol>
+  <h3>5.2 Consultation</h3>
+  <ul>
+    <li>Un relevé continu par compte, en ordre chronologique, avec résumé (ouverture, mouvements, clôture), période et recherche.</li>
+    <li>Modifiables après import : Pointage (liste des 74 catégories), Lettrage / Escompte, Commentaire.</li>
+    <li>Colonne « Code rapprochement » ; export Excel du relevé ou de la période.</li>
+  </ul>
+  <h3>5.3 Opérations en cours</h3>
+  <div class="flow">
+    <div class="step"><b>Import</b>Ligne « (*) » ou fichier « en cours »</div><div class="arrow">›</div>
+    <div class="step"><b>Compte</b>Solde à jour, hors rapprochement</div><div class="arrow">›</div>
+    <div class="step"><b>Avant le relevé suivant</b>Filtre « en cours », Tout cocher, Supprimer</div><div class="arrow">›</div>
+    <div class="step dark"><b>Relevé suivant</b>Opérations définitives importées et rapprochées</div>
+  </div>
+</section>
+
+<section class="chapter">
+  <h2>6. Module Écritures Sage</h2>
+  <ul>
+    <li>Prérequis : chaque compte a ses journaux Sage et son compte comptable (écran Comptes).</li>
+    <li>Import par société ; une case « Importer » par ligne ; une ligne en erreur se corrige dans Sage.</li>
+    <li>Liste des écritures : 50 par page, filtres compte, dates, statut, sens, recherche (libellé, pièce, code de rapprochement), totaux sur tout le filtre, colonne Devise.</li>
+    <li>Les écritures de frais créées par SIMTIS apparaissent avec l'origine « SIMTIS » ; leur retour dans un export Sage est reconnu comme doublon.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>7. Module Position bancaire</h2>
+  <div class="flow">
+    <div class="step"><b>Relevés</b>Solde de la dernière opération du jour</div><div class="arrow">›</div>
+    <div class="step"><b>Saisie</b>Comptes sans relevé (soldes, crédit utilisé)</div><div class="arrow">›</div>
+    <div class="step"><b>Solde du jour</b>Sinon dernier connu (gris)</div><div class="arrow">›</div>
+    <div class="step dark"><b>Tableau Banques</b>facilité de caisse, TOTAL, DEPASSEMENT, Disponible Fc reel</div>
+  </div>
+  <table>
+    <thead><tr><th>Tableau</th><th>Fonctionnement actuel</th></tr></thead>
+    <tbody>
+      <tr><td>Banques</td><td>Calculé pour la date choisie : LIGNE, Taux, une ligne « facilité de caisse » par jour (10 derniers visibles), TOTAL, DEPASSEMENT, Disponible Fc reel. Compte courant MAD seulement.</td></tr>
+      <tr><td>Devises</td><td>EUR et USD : soldes des comptes en devise, dans leur devise (lecture seule). Exp DH convertible : saisi.</td></tr>
+      <tr><td>Prévisions</td><td>Saisie manuelle par date et par ligne, sans calcul (en attendant P14).</td></tr>
+      <tr><td>Évolution</td><td>Courbe du TOTAL sur 30 jours.</td></tr>
+    </tbody>
+  </table>
+  <div class="formula">facilité de caisse = Solde du jour + LIGNE
+DEPASSEMENT        = TOTAL facilités de caisse − TOTAL LIGNES
+Disponible Fc reel = facilité de caisse du dernier jour − LIGNE</div>
+</section>
+
+<section class="chapter">
+  <h2>8. Module Rapprochement</h2>
+  <h3>8.1 Organisation de l'écran</h3>
+  <div class="kpis">
+    <div class="kpi"><strong>Rapprochées</strong><span>Opérations validées</span></div>
+    <div class="kpi"><strong>Non rapprochées</strong><span>Sans proposition</span></div>
+    <div class="kpi"><strong>À comptabiliser</strong><span>Frais bancaires</span></div>
+    <div class="kpi"><strong>Propositions</strong><span>En attente + ambiguës</span></div>
+  </div>
+  <ul>
+    <li>Filtres de l'écran : compte, période ; boutons « Lancer le rapprochement », « Recherche élargie (1 an) », « Rapprocher plusieurs lignes ».</li>
+    <li>Onglet <b>Rapprochement</b> : volets Transactions bancaires | Correspondance | Écritures comptables, chacun avec statut, type, sens, dates propres et recherche.</li>
+    <li>Onglet <b>Propositions</b> : une carte par proposition (opération | score et critères | écriture), cartes ambiguës (opérations, écritures), actions en lot.</li>
+    <li>Onglet <b>Historique</b> : décisions de la période, annulation avec motif, export du lettrage.</li>
+  </ul>
+  <h3>8.2 Flux</h3>
+  <div class="flow">
+    <div class="step"><b>1. Import</b>Relevé + Sage</div><div class="arrow">›</div>
+    <div class="step"><b>2. Lancer</b>Moteur : score, types, groupes</div><div class="arrow">›</div>
+    <div class="step"><b>3. Propositions</b>Fortes pré-cochées</div><div class="arrow">›</div>
+    <div class="step"><b>4. Décision</b>Valider · Rejeter · Aucune correspondance · Manuel</div><div class="arrow">›</div>
+    <div class="step dark"><b>5. Rapprochée</b>Code BANQUE-AA-NNNNNN, historique, lettrage</div>
+  </div>
+  <h3>8.3 Classement des lignes après un lancement</h3>
+  <table>
+    <thead><tr><th>Situation</th><th>Résultat</th></tr></thead>
+    <tbody>
+      <tr><td>Un meilleur candidat clair (score ≥ 50)</td><td>Proposition ; les deux lignes passent « À vérifier ». « Forte » si score ≥ 80.</td></tr>
+      <tr><td>Un concurrent à moins de 10 points</td><td>Proposition « Concurrente proche », jamais pré-cochée.</td></tr>
+      <tr><td>Deux meilleurs candidats à égalité</td><td>Pas de proposition, ligne « Ambiguë » (À vérifier) à trancher à la main.</td></tr>
+      <tr><td>Principal + commission + TVA = écriture</td><td>Proposition de groupe N → 1.</td></tr>
+      <tr><td>Frais bancaire</td><td>Jamais proposé seul ; part dans « À comptabiliser ».</td></tr>
+      <tr><td>Opération en cours</td><td>Exclue.</td></tr>
+      <tr><td>Aucun candidat</td><td>Non rapprochée.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="chapter">
+  <h2>9. Module Frais bancaires</h2>
+  <p>Accessible par le compteur « À comptabiliser » du Rapprochement : une carte « Frais bancaires ».</p>
+  <div class="flow">
+    <div class="step"><b>Frais du relevé</b>Pointage ou libellé de frais</div><div class="arrow">›</div>
+    <div class="step"><b>Proposition</b>1 écriture / compte / jour : DT D'ENREGISTREMENT, COM, FRAIS</div><div class="arrow">›</div>
+    <div class="step"><b>Contrôle</b>Modifier · Écarter · Valider</div><div class="arrow">›</div>
+    <div class="step"><b>Écriture SIMTIS</b>N° pièce BP2610123 + rapprochement validé</div><div class="arrow">›</div>
+    <div class="step dark"><b>Export Sage</b>CSV import paramétrable</div>
+  </div>
+  <table>
+    <thead><tr><th>Section de la carte</th><th>Contenu</th></tr></thead>
+    <tbody>
+      <tr><td>À valider</td><td>Propositions automatiques cochées, lignes au crédit des comptes généraux ; Modifier, Écarter, Valider la sélection.</td></tr>
+      <tr><td>Autres frais à passer à la main</td><td>Agios, intérêts, frais de tenue, frais &gt; 200 DH, journées écartées : sélection puis saisie (libellé, date, TVA).</td></tr>
+      <tr><td>Propositions écartées</td><td>Avec motif ; Reproposer.</td></tr>
+      <tr><td>Comptabilisés par SIMTIS</td><td>Au format du fichier Sage ; état d'export ; suppression avant export.</td></tr>
+    </tbody>
+  </table>
+  <p>Boutons au-dessus de la carte : <b>Exporter pour Sage</b> (CSV des écritures non exportées) et <b>Exporter pour la banque</b> (Excel des frais &gt; 200 DH à justifier).</p>
+</section>
+
+<section class="chapter">
+  <h2>10. Modules Écarts et Prévisions</h2>
+  <div class="grid2">
+    <div class="card"><h4>Écarts <span class="badge b-off">Mis de côté</span></h4>
+      <p>Construit (signalement depuis le rapprochement, génération à la demande, cycle À traiter → En cours → Traité → Clôturé, historique) puis masqué le 07/10/2026. Réactivable par un simple réglage.</p></div>
+    <div class="card"><h4>Prévisions <span class="badge b-todo">À venir</span></h4>
+      <p>Aujourd'hui : saisie manuelle dans le tableau Prévisions de la Position bancaire. Demain (P14) : flux par catégorie et statut, position prévisionnelle en cascade, prévu contre réalisé, alertes. Bloqué par la lecture de la colonne C du classeur.</p></div>
+  </div>
+</section>
+
+<section class="chapter">
+  <h2>11. Dashboard, alertes et rapports</h2>
+  <table>
+    <thead><tr><th>Élément</th><th>Fonction</th></tr></thead>
+    <tbody>
+      <tr><td>Onglet Suivi</td><td>Le travail du jour : alertes, tâches cliquables vers le Rapprochement, taux de rapprochement global et par banque, écritures de frais à exporter, activité récente.</td></tr>
+      <tr><td>Onglet Indicateurs</td><td>Solde total (comptes MAD), encaissements, décaissements, à rapprocher (avec variation), évolution des soldes, répartition des frais, comptes, frais par banque.</td></tr>
+      <tr><td>Filtres</td><td>Période (mois en cours par défaut, un an au plus) et banque ; gardés dans l'adresse de la page.</td></tr>
+      <tr><td>Cloche</td><td>Alertes du mois en cours dans un panneau, avec lien vers la page concernée ; mise à jour à chaque page.</td></tr>
+      <tr><td>Rapports</td><td>Position bancaire (structure imposée), synthèse du rapprochement par compte et statut avec « À rapprocher », lettrage. Excel uniquement.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="chapter">
+  <h2>12. Administration, historique et paramètres</h2>
+  <ul>
+    <li><b>Utilisateurs</b> : création (mot de passe à usage unique affiché une fois), modification, rôles, activation / désactivation, réinitialisation. Un administrateur ne peut ni se désactiver ni retirer son propre rôle d'administrateur ; il reste toujours un administrateur actif.</li>
+    <li><b>Rôles</b> : matrice des permissions, rôles personnalisés, suppression d'un rôle sans utilisateur.</li>
+    <li><b>Paramètres</b> : points des critères, tolérance de date, fenêtres (normale, même numéro, élargie), seuils de proposition et « forte » ; modèles de colonnes mémorisés.</li>
+    <li><b>Historique</b> : journal de toutes les actions sensibles, filtrable par utilisateur, action, objet et date, avec le détail avant / après.</li>
+  </ul>
+</section>
+
+<section class="chapter">
+  <h2>13. Journées types</h2>
+  <div class="grid2">
+    <div class="card"><h4>Trésorerie</h4><ol>
+      <li>Supprimer les opérations en cours du compte (BP, BMCE, CIH).</li>
+      <li>Importer les relevés du jour de chaque banque, puis les fichiers d'opérations en cours.</li>
+      <li>Vérifier les pointages « À choisir ».</li>
+      <li>Saisir les soldes des comptes sans relevé et le crédit utilisé.</li>
+      <li>Lire la Position bancaire et le dashboard (dépassements de ligne).</li></ol></div>
+    <div class="card"><h4>Comptabilité</h4><ol>
+      <li>Importer l'export Sage de la période.</li>
+      <li>Lancer le rapprochement (et la recherche élargie au besoin).</li>
+      <li>Valider les propositions fortes, examiner les autres, trancher les ambiguës.</li>
+      <li>Valider les frais bancaires proposés, passer les autres à la main, exporter pour Sage.</li>
+      <li>Exporter le lettrage et les frais &gt; 200 DH pour la banque.</li></ol></div>
+  </div>
+</section>
+
+<section class="chapter">
+  <h2>14. Cycle de vie des données</h2>
+  <table>
+    <thead><tr><th>Objet</th><th>Cycle</th></tr></thead>
+    <tbody>
+      <tr><td>Opération bancaire</td><td>Importée (Non rapprochée, ou En cours) → À vérifier (proposition) → Rapprochée (validation) ; retour à Non rapprochée après rejet ou annulation ; suppression possible seulement si en cours et libre.</td></tr>
+      <tr><td>Écriture Sage</td><td>Importée → À vérifier → Rapprochée ; jamais modifiée dans SIMTIS.</td></tr>
+      <tr><td>Correspondance</td><td>Proposée → Validée (code) ou Rejetée (jamais reproposée) ; Validée → Annulée (motif, code conservé).</td></tr>
+      <tr><td>Écriture de frais SIMTIS</td><td>Proposée (calculée) → Validée (écriture + rapprochement) → Exportée ; suppression possible avant export.</td></tr>
+      <tr><td>Journée de frais</td><td>Proposée → Écartée (motif) → Reproposée.</td></tr>
+    </tbody>
+  </table>
+  <div class="box info"><strong>Traçabilité.</strong> Chaque transition ci-dessus écrit une ligne dans le journal d'audit (qui, quand, avant, après), consultable dans Historique.</div>
+</section>
+</body>
+</html>

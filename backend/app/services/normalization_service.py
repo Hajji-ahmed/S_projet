@@ -106,6 +106,8 @@ def parse_amount(value: object) -> Decimal | None:
 
 def _parse_amount_text(raw: str) -> Decimal:
     text = _SPACES.sub("", _CURRENCY.sub("", raw)).replace("'", "").replace("−", "-")
+    # Montant d'une opération en cours marqué d'une étoile (BMCE, « 213,68* », 21/10/2026)
+    text = text.rstrip("*")
     negative = False
     if text.startswith("(") and text.endswith(")"):
         negative, text = True, text[1:-1]

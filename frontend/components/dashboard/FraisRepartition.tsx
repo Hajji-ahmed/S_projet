@@ -3,7 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
 import { Card } from "@/components/ui/Card";
 import { partFrais } from "@/lib/dashboard";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatCompact } from "@/lib/format";
 import type { Dashboard } from "@/types/dashboard";
 
 // Couleurs des catégories : tokens du design system uniquement
@@ -58,8 +58,12 @@ export function FraisRepartition({ data }: { data: Dashboard }) {
             </ResponsiveContainer>
             <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
               <div>
-                <p className="text-[15px] font-bold tracking-tight text-simtis-text tabular-nums">
-                  {formatAmount(data.frais_total, "DH")}
+                {/* Format court : le montant exact déborderait du cercle (21/10/2026) */}
+                <p
+                  className="text-[15px] font-bold tracking-tight whitespace-nowrap text-simtis-text tabular-nums"
+                  title={formatAmount(data.frais_total, "DH")}
+                >
+                  {formatCompact(data.frais_total, "DH")}
                 </p>
                 <p className="text-xs text-simtis-muted">Total des frais</p>
               </div>
@@ -76,7 +80,7 @@ export function FraisRepartition({ data }: { data: Dashboard }) {
                 <span className="min-w-0 flex-1 truncate text-simtis-text" title={item.libelle}>
                   {item.libelle}
                 </span>
-                <span className="w-12 shrink-0 text-right font-semibold tabular-nums">
+                <span className="w-16 shrink-0 text-right font-semibold whitespace-nowrap tabular-nums">
                   {partFrais(item.total, data.frais_total)} %
                 </span>
               </li>

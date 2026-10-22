@@ -9,6 +9,8 @@ export type Column<T> = {
   /** « right » pour les montants : alignement à droite, chiffres tabulaires. */
   align?: "left" | "right";
   render?: (row: T) => ReactNode;
+  /** Colonne figée à droite quand le tableau défile (Actions, 21/10/2026). */
+  sticky?: boolean;
 };
 
 type DataTableProps<T> = {
@@ -31,6 +33,9 @@ type DataTableProps<T> = {
   stickyHeader?: boolean;
 };
 
+// Cellule figée à droite : fond opaque, sinon les colonnes défilent à travers
+const STICKY_CELL = "sticky right-0 z-[1] border-l border-simtis-border/70 bg-simtis-card";
+
 /**
  * Tableau de base, avec sélection d'une ligne au clic (`onRowClick`, `isRowSelected`). Le tri et la
  * sélection multiple seront ajoutés dans les phases dont les pages en ont besoin. Les tableaux Banques, Devises et
@@ -50,7 +55,11 @@ export function DataTable<T extends Record<string, unknown>>({
   stickyHeader = false,
 }: DataTableProps<T>) {
   const cellClass = (column: Column<T>) =>
-    cn("px-4 py-3", column.align === "right" && "text-right whitespace-nowrap tabular-nums");
+    cn(
+      "px-4 py-3",
+      column.align === "right" && "text-right whitespace-nowrap tabular-nums",
+      column.sticky && STICKY_CELL,
+    );
 
   return (
     <div
@@ -75,6 +84,7 @@ export function DataTable<T extends Record<string, unknown>>({
                 className={cn(
                   "px-4 py-3 whitespace-nowrap",
                   column.align === "right" ? "text-right" : "text-left",
+                  column.sticky && cn(STICKY_CELL, "bg-simtis-light"),
                 )}
               >
                 {column.header}

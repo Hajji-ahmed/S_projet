@@ -4,7 +4,8 @@ from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import Field as PydField
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, require_any_permission, require_permission
@@ -82,6 +83,28 @@ def list_transactions(
     statement, rows = import_service.statement_transactions(db, statement_id)
     account = statement.bank_account
     return [TransactionOut.from_row(account, row, pointage) for row, pointage in rows]
+
+
+class SuppressionEnCoursIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ids: Annotated[list[int], PydField(min_length=1, max_length=2000)]
+
+
+class SuppressionEnCoursOut(BaseModel):
+    nb: int
+
+
+@router.post("/transactions/supprimer-en-cours", response_model=SuppressionEnCoursOut)
+def supprimer_en_cours(
+    body: SuppressionEnCoursIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> SuppressionEnCoursOut:
+    """Supprime des opérations en cours (toutes ou aucune), avant le relevé suivant (21/10/2026)."""
+    nb = import_service.supprimer_en_cours(db, body.ids, acteur_id=user.id, ip=client_ip(request))
+    return SuppressionEnCoursOut(nb=nb)
 
 
 @router.patch("/transactions/{transaction_id}", response_model=TransactionOut)

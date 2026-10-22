@@ -34,6 +34,7 @@ export function KpiTiles({ data }: { data: Dashboard }) {
           />
         }
       >
+        <p className="mb-1 text-xs text-simtis-muted">Comptes MAD (hors EUR / USD)</p>
         <Variation kpi={data.solde_total} />
       </Tuile>
       <Tuile

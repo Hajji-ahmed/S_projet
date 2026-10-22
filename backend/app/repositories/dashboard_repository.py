@@ -212,6 +212,8 @@ def par_banque(
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
             BankTransaction.remplacee_par_id.is_(None),
+            # Comme `statuts` : une opération en cours ne se rapproche pas (21/10/2026)
+            BankTransaction.en_cours.is_(False),
             BankTransaction.date_operation.between(date_from, date_to),
         )
         .group_by(Bank.code, Bank.logo, Bank.ordre_affichage)

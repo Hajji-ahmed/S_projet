@@ -207,7 +207,8 @@ function Suivi({ data, voitHistorique }: { data: Dashboard; voitHistorique: bool
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
         <RapprochementCard data={data} />
         <EcrituresCard data={data} />
-        <BanquesCard data={data} />
+        {/* Sur 2 colonnes, la 3e carte prend toute la largeur au lieu de laisser un vide */}
+        <BanquesCard data={data} className="sm:col-span-2 xl:col-span-1" />
       </div>
       {voitHistorique && <ActiviteCard />}
     </div>

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import {
+  largeurMin,
   GRID_FRAME,
   GRID_GREY,
   GRID_HEAD,
@@ -125,7 +126,11 @@ export function DevisesTable({ companyId, jour, banks, canEdit }: DevisesTablePr
       {!loading && !failed && soldes && (
         <>
           <div className={GRID_FRAME}>
-            <table className={cn(GRID_TABLE, "min-w-[860px] table-fixed")} aria-label="Devises">
+            <table
+              className={cn(GRID_TABLE, "table-fixed")}
+              style={largeurMin(200 + COLONNES_DEVISES.length * 130, banks.length)}
+              aria-label="Devises"
+            >
               <colgroup>
                 <col className="w-[200px]" />
                 {banks.map((bank) => (

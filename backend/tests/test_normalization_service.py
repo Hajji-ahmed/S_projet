@@ -202,3 +202,10 @@ def test_solde_au_lines_are_recognised():
     assert not is_solde_au("SOLDE AUTOMATIQUE")
     assert not is_solde_au("VIR SOLDE AU CLIENT")
     assert not is_solde_au(None)
+
+
+def test_a_starred_amount_of_a_pending_operation_is_read():
+    """21/10/2026 : BMCE marque d'une étoile le montant d'une opération en cours."""
+    assert parse_amount("213,68*") == Decimal("213.68")
+    assert parse_amount("927.349,01*") == Decimal("927349.01")
+    assert parse_amount("1.500.000,00 *") == Decimal("1500000.00")

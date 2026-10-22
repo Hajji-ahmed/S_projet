@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { CompanySelector } from "@/components/company/CompanySelector";
 import { AlertBell } from "@/components/layout/AlertBell";
-import { SearchBar } from "@/components/ui/SearchBar";
 import { cn } from "@/lib/cn";
 
 function UserMenu() {
@@ -109,7 +108,7 @@ export function AppHeader({ onMenuClick }: { onMenuClick: () => void }) {
         >
           <Menu className="h-6 w-6" aria-hidden />
         </button>
-        <SearchBar />
+        {/* Recherche globale masquée tant qu'elle n'est pas construite (21/10/2026) */}
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3">

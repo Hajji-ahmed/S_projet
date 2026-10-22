@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatAmount } from "./format";
+import { formatAmount, formatCompact } from "./format";
 
 describe("formatAmount", () => {
   it("sépare les milliers par une espace et ajoute la devise", () => {
@@ -36,5 +36,23 @@ describe("formatAmount", () => {
 
   it("n'utilise jamais d'espace insécable", () => {
     expect(formatAmount(1234567.89, "DH")).not.toMatch(/[  ]/);
+  });
+});
+
+describe("formatCompact", () => {
+  const sans = (texte: string) => texte.replace(/ /g, " ");
+
+  it("raccourcit les grands montants pour les axes", () => {
+    expect(sans(formatCompact(18_000_000))).toBe("18 M");
+    expect(sans(formatCompact(1_500_000))).toBe("1,5 M");
+    expect(sans(formatCompact(-250_400))).toBe("-250 k");
+    expect(sans(formatCompact(2_300_000_000))).toBe("2,3 Md");
+    expect(sans(formatCompact(840))).toBe("840");
+    expect(sans(formatCompact("839889.38", "DH"))).toBe("840 k DH");
+    expect(formatCompact(null)).toBe("-");
+  });
+
+  it("n'a que des espaces insécables, qu'un axe ne coupe pas", () => {
+    expect(formatCompact(100_000_000, "DH")).not.toMatch(/ /);
   });
 });

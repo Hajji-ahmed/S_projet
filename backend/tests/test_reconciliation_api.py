@@ -872,7 +872,8 @@ def test_bank_fees_are_counted_apart_as_to_be_booked(client, comptable, db):
     operation(db, compte, montant="-1", libelle="DROIT DE TIMBRE SUR VERSEMENT")
     operation(db, compte, montant="-2.50", libelle="TAXE SUR VALEUR AJOUTEE")
     operation(db, compte, montant="-25", libelle="COMMISSION")
-    operation(db, compte, montant="-900", libelle="PRELEVEMENT ONEE")
+    # Un prélèvement n'est pas un frais (21/10/2026)
+    prelevement = operation(db, compte, montant="-900", libelle="PRELEVEMENT ONEE")
     autre = operation(db, compte, montant="50000", libelle="VIR CLIENT ATLAS")
     url = "/api/reconciliation/transactions"
     params = {"company_id": company(db).id}
@@ -883,10 +884,10 @@ def test_bank_fees_are_counted_apart_as_to_be_booked(client, comptable, db):
         url, params={**params, "statut": "Non rapprochée"}, headers=comptable
     ).json()
 
-    assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (4, "928.50")
-    assert tous["par_statut"]["Non rapprochée"] == 1
-    assert frais["total"] == 4
-    assert [op["id"] for op in non_rapprochees["operations"]] == [autre.id]
+    assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (3, "28.50")
+    assert tous["par_statut"]["Non rapprochée"] == 2
+    assert frais["total"] == 3
+    assert {op["id"] for op in non_rapprochees["operations"]} == {autre.id, prelevement.id}
 
 
 def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, comptable, db):
@@ -1662,3 +1663,30 @@ def test_the_wide_search_proposes_far_pairs_without_touching_the_engine(client, 
     assert proposees[cheque.id]["ecart_jours"] == (JOUR - date(2026, 3, 1)).days
     assert proposees[proche_tx.id]["elargie"] is False
     assert proche_ec.id == proposees[proche_tx.id]["ecriture"]["id"]
+
+
+def test_withdrawals_finex_repayments_and_certified_cheques_are_not_fees(client, comptable, db):
+    """21/10/2026 : ces opérations gonflaient les frais (52 M DH sur septembre-octobre) et sortaient
+    du rapprochement ; un vrai frais prélevé reste un frais."""
+    from app.models import PointageType
+
+    compte = account(db)
+    certification = db.scalar(select(PointageType).filter_by(code="CERTIFICATION_CHEQUE"))
+    pas_frais = [
+        operation(db, compte, montant="-1000000",
+                  libelle="FINEX REMBOURSSEMENT DU MONTANT A PRELEVER AU COURS NEGOCIE"),
+        operation(db, compte, montant="-150000", libelle="PRELEVEMENT EN FAV. DGI"),
+        operation(db, compte, montant="-80000", libelle="REGLEMENT PRELEVEMENT EN FAVEUR DE X"),
+        operation(db, compte, montant="-57847.94", libelle="CERTIFICATION CHEQUE AAA000255",
+                  pointage_type_id=certification.id if certification else None),
+    ]  # fmt: skip
+    frais = operation(db, compte, montant="-500", libelle="PRELEVEMENT DES FRAIS DE DOSSIER")
+
+    page = client.get(
+        "/api/reconciliation/transactions",
+        params={"company_id": company(db).id, "a_comptabiliser": "true"},
+        headers=comptable,
+    ).json()
+
+    assert [op["id"] for op in page["operations"]] == [frais.id]
+    assert all(tx.id not in {op["id"] for op in page["operations"]} for tx in pas_frais)

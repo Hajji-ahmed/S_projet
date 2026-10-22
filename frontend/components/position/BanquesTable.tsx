@@ -4,7 +4,13 @@ import { ChevronUp, Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
-import { GRID_FRAME, GRID_HEAD, GRID_ROW_HEAD, GRID_TABLE } from "@/components/position/GridCell";
+import {
+  largeurMin,
+  GRID_FRAME,
+  GRID_HEAD,
+  GRID_ROW_HEAD,
+  GRID_TABLE,
+} from "@/components/position/GridCell";
 import { PositionChart } from "@/components/position/PositionChart";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -22,7 +28,7 @@ type LoadState = "loading" | "error" | "ready";
 
 const NUMBER = "px-3 py-2.5 text-right tabular-nums whitespace-nowrap";
 const ROW_HEAD = GRID_ROW_HEAD;
-const GRID = cn(GRID_TABLE, "min-w-[860px] table-fixed");
+const GRID = cn(GRID_TABLE, "table-fixed");
 // Disponible Fc reel : vert > 0, rouge < 0 (tokens de statut, pas le vert du classeur)
 const TONES: Record<Tone, string> = {
   positive: "text-simtis-success",
@@ -121,14 +127,18 @@ function Grid({
       )}
       {/* GRID_FRAME est relative : le texte des lecteurs d'écran ne doit pas élargir la page */}
       <div className={GRID_FRAME}>
-        <table className={GRID} aria-label="Banques">
+        <table
+          className={GRID}
+          style={largeurMin(200 + 2 * 150, table.banques.length)}
+          aria-label="Banques"
+        >
           <colgroup>
             <col className="w-[200px]" />
             {table.banques.map((banque) => (
               <col key={banque.bank_id} />
             ))}
-            <col className="w-[130px]" />
-            <col className="w-[130px]" />
+            <col className="w-[150px]" />
+            <col className="w-[150px]" />
           </colgroup>
           <thead>
             <tr>

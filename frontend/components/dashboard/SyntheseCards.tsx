@@ -57,6 +57,7 @@ export function Petite({
   pastille,
   lien,
   badge,
+  className,
   children,
 }: {
   titre: string;
@@ -64,10 +65,16 @@ export function Petite({
   pastille: string;
   lien?: { label: string; href: string };
   badge?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis">
+    <section
+      className={cn(
+        "flex flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis",
+        className,
+      )}
+    >
       <header className="mb-4 flex items-center gap-3">
         <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-[10px]", pastille)}>
           <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden />
@@ -161,7 +168,7 @@ function Anneau({
   );
 }
 
-const PUCES: Record<Alerte["niveau"], string> = {
+export const PUCES: Record<Alerte["niveau"], string> = {
   danger: "bg-simtis-danger",
   warning: "bg-simtis-warning",
   info: "bg-simtis-info",
@@ -181,6 +188,8 @@ export function Alertes({ alertes }: { alertes: Alerte[] }) {
         )
       }
     >
+      {/* La cloche de l'en-tête compte le mois en cours : ce chiffre peut donc différer */}
+      <p className="mb-2 text-xs text-simtis-muted">Période et banque choisies</p>
       {alertes.length === 0 ? (
         <p className="text-sm text-simtis-muted">Aucune alerte sur cette période.</p>
       ) : (

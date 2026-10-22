@@ -187,7 +187,12 @@ export function AccountsView() {
         <BankLabel code={row.bank_code} logo={row.bank_logo} className="font-medium" />
       ),
     },
-    { key: "libelle", header: "Libellé" },
+    {
+      key: "libelle",
+      header: "Libellé",
+      // Largeur minimale : sinon le libellé tient sur 4 lignes (21/10/2026)
+      render: (row) => <span className="block min-w-[200px]">{row.libelle}</span>,
+    },
     {
       key: "numero",
       header: "Numéro",
@@ -226,6 +231,7 @@ export function AccountsView() {
       key: "actions",
       header: "Actions",
       align: "right",
+      sticky: true,
       render: (row) => (
         <span className="inline-flex gap-1">
           <IconAction
