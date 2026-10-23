@@ -211,8 +211,45 @@ def list_imports(
         .where(
             ImportBatch.company_id == company_id,
             ImportBatch.type == type_import,
-            ImportBatch.statut == "Confirmé",
+            # Un import supprimé reste au journal, au statut « Annulé » (23/10/2026)
+            ImportBatch.statut.in_(("Confirmé", "Annulé")),
         )
         .order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc())
     )
     return [tuple(row) for row in db.execute(query)]
+
+
+# --- Suppression d'un import (23/10/2026) --------------------------------------------------------
+
+
+def entry_ids_of_batch(db: Session, batch_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(AccountingEntry.id)
+            .where(AccountingEntry.import_batch_id == batch_id)
+            .with_for_update()
+        )
+    )
+
+
+def periode_of_entries(db: Session, entry_ids: list[int]) -> tuple[date | None, date | None]:
+    if not entry_ids:
+        return None, None
+    row = db.execute(
+        select(
+            func.min(AccountingEntry.date_ecriture), func.max(AccountingEntry.date_ecriture)
+        ).where(AccountingEntry.id.in_(entry_ids))
+    ).one()
+    return row[0], row[1]
+
+
+def delete_entries(db: Session, entry_ids: list[int]) -> None:
+    """Supprime des écritures importées et les écarts qui les citent."""
+    if not entry_ids:
+        return
+    from sqlalchemy import delete
+
+    from app.models import Discrepancy
+
+    db.execute(delete(Discrepancy).where(Discrepancy.accounting_entry_id.in_(entry_ids)))
+    db.execute(delete(AccountingEntry).where(AccountingEntry.id.in_(entry_ids)))

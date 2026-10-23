@@ -159,6 +159,10 @@ export type Statement = {
   controle_solde: BalanceCheck | null;
   /** Fichier des opérations en cours (20/10/2026). */
   en_cours?: boolean;
+  /** « Confirmé » ou « Annulé » (import supprimé, 23/10/2026). */
+  statut?: string;
+  /** Pourquoi l'import ne peut pas être supprimé maintenant ; null : il peut l'être. */
+  raison_non_supprimable?: string | null;
 };
 
 /** Opération au format standard du relevé : ses 11 champs, puis référence, montant et statut. */

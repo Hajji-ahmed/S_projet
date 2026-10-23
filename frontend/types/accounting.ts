@@ -145,4 +145,6 @@ export type ImportComptable = {
   nb_ecritures: number;
   total_debit: string;
   total_credit: string;
+  /** « Confirmé » ou « Annulé » (import supprimé, 23/10/2026). */
+  statut?: string;
 };

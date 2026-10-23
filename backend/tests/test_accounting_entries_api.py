@@ -193,6 +193,7 @@ def test_imports_journal(client, direction, db):
         "nb_ecritures": 2,
         "total_debit": "3.00",
         "total_credit": "10.00",
+        "statut": "Confirmé",
     }
 
 

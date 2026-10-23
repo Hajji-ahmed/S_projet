@@ -62,3 +62,15 @@ export function supprimerEnCours(ids: number[]) {
     body: JSON.stringify({ ids }),
   });
 }
+
+/** Supprime tout ce qu'un relevé importé a apporté (23/10/2026), avec un motif. */
+export function supprimerReleve(statementId: number, motif: string) {
+  return apiFetch<{ nb_lignes: number; nb_propositions_retirees: number }>(
+    `/statements/${statementId}/supprimer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motif }),
+    },
+  );
+}

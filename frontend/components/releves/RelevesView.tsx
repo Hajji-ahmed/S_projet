@@ -1,12 +1,22 @@
 "use client";
 
-import { ChevronDown, CircleCheck, FileSpreadsheet, History, Plus, Upload, X } from "lucide-react";
+import {
+  ChevronDown,
+  CircleCheck,
+  FileSpreadsheet,
+  History,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { BankLabel, logosByCode } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountStatementCard } from "@/components/releves/AccountStatementCard";
+import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
 import { ImportWizard } from "@/components/releves/ImportWizard";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -27,7 +37,7 @@ import {
   showFirst,
 } from "@/lib/statements";
 import { listBanks } from "@/services/banks";
-import { listStatements } from "@/services/statements";
+import { listStatements, supprimerReleve } from "@/services/statements";
 import type { Confirmation, Statement } from "@/types/statement";
 
 type LoadState = "loading" | "error" | "ready";
@@ -60,6 +70,8 @@ function Releves({ companyId }: { companyId: number }) {
   const [logos, setLogos] = useState<Map<string, string | null>>(new Map());
   // Nombre d'imports affichés dans le journal : les plus anciens restent masqués jusqu'au clic
   const [shownImports, setShownImports] = useState(IMPORTS_AFFICHES);
+  // Suppression d'un import (23/10/2026)
+  const [aSupprimer, setASupprimer] = useState<Statement | null>(null);
 
   // Logos des banques : sans cette liste, les codes s'affichent seuls (pas de message d'erreur)
   useEffect(() => {
@@ -183,6 +195,33 @@ function Releves({ companyId }: { companyId: number }) {
     },
   ];
 
+  const actionsColumn: Column<Statement>[] = canImport
+    ? [
+        {
+          key: "supprimer",
+          header: "",
+          align: "right",
+          render: (row) =>
+            row.statut === "Annulé" ? (
+              <span className="rounded-full bg-simtis-neutral-bg px-2 py-0.5 text-xs font-medium text-simtis-neutral-fg">
+                Annulé
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setASupprimer(row)}
+                disabled={!!row.raison_non_supprimable}
+                title={row.raison_non_supprimable ?? "Supprimer cet import"}
+                aria-label={`Supprimer l'import ${row.fichier_nom}`}
+                className="rounded-[10px] p-2 text-simtis-danger-fg transition-colors duration-150 hover:bg-simtis-danger-bg disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </button>
+            ),
+        },
+      ]
+    : [];
+
   const importButton = canImport && !importing && (
     <Button icon={Plus} onClick={() => setImporting(true)}>
       Importer un relevé
@@ -226,6 +265,22 @@ function Releves({ companyId }: { companyId: number }) {
         />
       )}
 
+      {aSupprimer && (
+        <DeleteImportModal
+          fichier={aSupprimer.fichier_nom}
+          resume={`${aSupprimer.bank_code} · ${aSupprimer.devise} · ${aSupprimer.compte_numero} · ${period(aSupprimer.periode_debut, aSupprimer.periode_fin)} · ${aSupprimer.nb_lignes} opération${aSupprimer.nb_lignes > 1 ? "s" : ""}`}
+          onClose={() => setASupprimer(null)}
+          onConfirm={async (motif) => {
+            const { nb_lignes } = await supprimerReleve(aSupprimer.id, motif);
+            setASupprimer(null);
+            toast(
+              `Import supprimé : ${nb_lignes} opération${nb_lignes > 1 ? "s" : ""} retirée${nb_lignes > 1 ? "s" : ""}.`,
+            );
+            reload();
+          }}
+        />
+      )}
+
       <Card title="Journal des imports" icon={History}>
         {loadState === "loading" && <LoadingState rows={4} />}
         {loadState === "error" && (
@@ -241,9 +296,10 @@ function Releves({ companyId }: { companyId: number }) {
           ) : (
             <>
               <DataTable
-                columns={columns}
+                columns={[...columns, ...actionsColumn]}
                 rows={journal.rows}
                 getRowKey={(row) => String(row.id)}
+                isRowMuted={(row) => row.statut === "Annulé"}
               />
               {journal.hidden > 0 && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">

@@ -5,7 +5,7 @@ from typing import Annotated, Literal, TypeVar
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, require_any_permission, require_permission
@@ -21,7 +21,7 @@ from app.schemas.accounting import (
     LignesGardeesIn,
     MappingComptableIn,
 )
-from app.services import accounting_import_service, import_file
+from app.services import accounting_import_service, import_file, suppression_import_service
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
@@ -188,6 +188,40 @@ def get_entry(
         fichier_nom=batch.fichier_nom if batch else None,
         importe_le=batch.created_at if batch else None,
         importe_par=author,
+    )
+
+
+class SuppressionImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motif: str = Field(max_length=500)
+
+
+class SuppressionImportOut(BaseModel):
+    nb_lignes: int
+    nb_propositions_retirees: int
+
+
+@router.post("/imports/{batch_id}/supprimer", response_model=SuppressionImportOut)
+def supprimer_import(
+    batch_id: int,
+    body: SuppressionImportIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> SuppressionImportOut:
+    """Supprime toutes les écritures d'un export Sage importé (23/10/2026), sans écriture
+    rapprochée ; l'import reste au journal, « Annulé »."""
+    result = suppression_import_service.supprimer_import_comptable(
+        db,
+        batch_id,
+        motif=body.motif,
+        type_import=accounting_import_service.TYPE_IMPORT,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return SuppressionImportOut(
+        nb_lignes=result.nb_lignes, nb_propositions_retirees=result.nb_propositions_retirees
     )
 
 

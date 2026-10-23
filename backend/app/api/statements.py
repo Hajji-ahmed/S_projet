@@ -22,7 +22,7 @@ from app.schemas.statement import (
     TransactionOut,
     TransactionUpdateIn,
 )
-from app.services import import_file, import_service
+from app.services import import_file, import_service, suppression_import_service
 from app.services.auth_service import CurrentUser
 from app.services.normalization_service import parse_amount
 
@@ -105,6 +105,35 @@ def supprimer_en_cours(
     """Supprime des opérations en cours (toutes ou aucune), avant le relevé suivant (21/10/2026)."""
     nb = import_service.supprimer_en_cours(db, body.ids, acteur_id=user.id, ip=client_ip(request))
     return SuppressionEnCoursOut(nb=nb)
+
+
+class SuppressionImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motif: Annotated[str, PydField(max_length=500)]
+
+
+class SuppressionImportOut(BaseModel):
+    nb_lignes: int
+    nb_propositions_retirees: int
+
+
+@router.post("/{statement_id}/supprimer", response_model=SuppressionImportOut)
+def supprimer_releve(
+    statement_id: int,
+    body: SuppressionImportIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> SuppressionImportOut:
+    """Supprime tout ce qu'un relevé importé a apporté (23/10/2026) : le dernier du compte, sans
+    ligne rapprochée ; l'import reste au journal, « Annulé »."""
+    result = suppression_import_service.supprimer_releve(
+        db, statement_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    return SuppressionImportOut(
+        nb_lignes=result.nb_lignes, nb_propositions_retirees=result.nb_propositions_retirees
+    )
 
 
 @router.patch("/transactions/{transaction_id}", response_model=TransactionOut)

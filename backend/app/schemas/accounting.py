@@ -260,6 +260,8 @@ class ImportComptableOut(BaseModel):
     nb_ecritures: int
     total_debit: Decimal
     total_credit: Decimal
+    # « Confirmé » ou « Annulé » (import supprimé, 23/10/2026)
+    statut: str = "Confirmé"
 
     @classmethod
     def from_row(cls, row: tuple) -> "ImportComptableOut":
@@ -274,4 +276,5 @@ class ImportComptableOut(BaseModel):
             nb_ecritures=nb or 0,
             total_debit=debit if debit is not None else Decimal("0.00"),
             total_credit=credit if credit is not None else Decimal("0.00"),
+            statut=batch.statut,
         )

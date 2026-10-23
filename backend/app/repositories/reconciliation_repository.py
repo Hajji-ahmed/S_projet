@@ -859,3 +859,48 @@ def validated_matches(db: Session, ids_query: Select) -> list[ReconciliationMatc
 def count_rows(db: Session, query: Select) -> int:
     """Nombre de lignes d'une requête."""
     return db.scalar(select(func.count()).select_from(query.subquery())) or 0
+
+
+# --- Suppression d'un import (23/10/2026) --------------------------------------------------------
+
+
+def matches_touching(
+    db: Session, transaction_ids: list[int], entry_ids: list[int]
+) -> list[ReconciliationMatch]:
+    """Toutes les correspondances (quel que soit leur statut) qui citent ces lignes, verrouillées."""
+    conditions = []
+    if transaction_ids:
+        conditions.append(ReconciliationMatchItem.bank_transaction_id.in_(transaction_ids))
+    if entry_ids:
+        conditions.append(ReconciliationMatchItem.accounting_entry_id.in_(entry_ids))
+    if not conditions:
+        return []
+    from sqlalchemy import or_
+
+    ids = select(ReconciliationMatchItem.match_id).where(or_(*conditions))
+    return list(
+        db.scalars(
+            select(ReconciliationMatch)
+            .where(ReconciliationMatch.id.in_(ids))
+            .options(selectinload(ReconciliationMatch.items))
+            .with_for_update(of=ReconciliationMatch)
+        ).unique()
+    )
+
+
+def liberer_lignes(db: Session, transaction_ids: list[int], entry_ids: list[int]) -> None:
+    """Les autres lignes d'une proposition retirée redeviennent « Non rapprochée »."""
+    from sqlalchemy import update
+
+    if transaction_ids:
+        db.execute(
+            update(BankTransaction)
+            .where(BankTransaction.id.in_(transaction_ids), BankTransaction.statut == "À vérifier")
+            .values(statut="Non rapprochée")
+        )
+    if entry_ids:
+        db.execute(
+            update(AccountingEntry)
+            .where(AccountingEntry.id.in_(entry_ids), AccountingEntry.statut == "À vérifier")
+            .values(statut="Non rapprochée")
+        )

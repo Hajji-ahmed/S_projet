@@ -1043,7 +1043,11 @@ def test_history_lists_the_company_statements_newest_first(client, tresorerie, a
         "nb_doublons": 0,
         "controle_solde": None,
         "en_cours": False,
+        "statut": "Confirmé",
+        # Seul le dernier import du compte se supprime (23/10/2026)
+        "raison_non_supprimable": "Supprimez d'abord les imports plus récents de ce compte.",
     }
+    assert items[0]["raison_non_supprimable"] is None
     assert oldest["importe_par"] is not None
     assert oldest["controle_solde"]["statut"] == "Écart"
     assert items[0]["controle_solde"] is None
@@ -2423,3 +2427,135 @@ def test_a_bmce_pending_file_with_starred_amounts_adds_to_the_balance_until_dele
 
     soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
     assert soldes == {date(2026, 9, 24): Decimal("101000.00")}
+
+
+# --- Suppression d'un import (23/10/2026) --------------------------------------------------------
+
+
+def _supprimer(client, headers, statement_id, motif="Fichier erroné"):
+    return client.post(
+        f"/api/statements/{statement_id}/supprimer", json={"motif": motif}, headers=headers
+    )
+
+
+def _proposition(db, tx: BankTransaction, *, statut="Proposée"):
+    """Une correspondance sur `tx` et une écriture Sage du même compte."""
+    from datetime import UTC, datetime
+
+    from app.models import AccountingEntry, ReconciliationMatch, ReconciliationMatchItem, User
+    from tests.helpers import build_entry
+
+    account = db.get(BankAccount, tx.bank_account_id)
+    entry = save(
+        db,
+        build_entry(
+            account.company,
+            bank_account_id=account.id,
+            statut="À vérifier",
+            montant=-tx.montant,
+            debit=max(tx.montant, Decimal("0")),
+            credit=max(-tx.montant, Decimal("0")),
+        ),
+    )
+    tx.statut = "Rapprochée" if statut == "Validée" else "À vérifier"
+    user = db.scalar(select(User))
+    now = datetime.now(UTC)
+    decision = {} if statut == "Proposée" else {"decide_par_id": user.id, "decide_le": now}
+    if statut == "Validée":
+        decision |= {"valide_par_id": user.id, "valide_le": now, "code": "CIH-26-000042"}
+    match = save(
+        db,
+        ReconciliationMatch(company_id=account.company_id, type="1-1", statut=statut, **decision),
+    )
+    actif = statut in ("Proposée", "Validée")
+    save(
+        db,
+        ReconciliationMatchItem(
+            match_id=match.id,
+            bank_transaction_id=tx.id,
+            montant_affecte=abs(tx.montant),
+            actif=actif,
+        ),
+        ReconciliationMatchItem(
+            match_id=match.id,
+            accounting_entry_id=entry.id,
+            montant_affecte=abs(entry.montant),
+            actif=actif,
+        ),
+    )
+    return match, db.get(AccountingEntry, entry.id)
+
+
+def test_the_last_statement_is_deleted_and_the_balance_goes_back(client, tresorerie, account, db):
+    from app.models import AuditLog, ImportBatch
+    from app.services.position_banques_service import soldes_par_compte
+
+    first = confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+    rows = [HEADER, ["27/09/2026", None, "VIR RECU", None, 1000, 1038349.5]]
+    second = confirm(client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="oct.xlsx").json()
+
+    refus = _supprimer(client, tresorerie, first["statement_id"])
+    response = _supprimer(client, tresorerie, second["statement_id"])
+
+    assert refus.status_code == 409
+    assert "plus récents" in refus.json()["detail"]
+    assert response.status_code == 200, response.text
+    assert response.json() == {"nb_lignes": 1, "nb_propositions_retirees": 0}
+    assert db.get(ImportBatch, second["import_id"]).statut == "Annulé"
+    soldes = soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id]
+    assert soldes[-1] == (date(2026, 9, 26), Decimal("1037349.50"))
+    [entry] = db.scalars(select(AuditLog).filter_by(action="suppression_import")).all()
+    assert entry.nouvelle_valeur["motif"] == "Fichier erroné"
+    items = history(client, tresorerie, account.company_id).json()
+    assert [(i["statut"], i["raison_non_supprimable"]) for i in items] == [
+        ("Annulé", "Import déjà supprimé."),
+        ("Confirmé", None),
+    ]
+    # Le même fichier se réimporte
+    again = confirm(client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="oct.xlsx")
+    assert again.status_code == 201, again.text
+
+
+def test_a_reconciled_line_blocks_the_deletion(client, tresorerie, account, db):
+    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+    tx = transactions(db, account)[0]
+    _proposition(db, tx, statut="Validée")
+
+    response = _supprimer(client, tresorerie, body["statement_id"])
+
+    assert response.status_code == 409
+    assert "CIH-26-000042" in response.json()["detail"]
+    assert len(transactions(db, account)) == 3
+
+
+def test_a_pending_proposal_is_removed_and_frees_its_entry(client, tresorerie, account, db):
+    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+    tx = transactions(db, account)[0]
+    match, entry = _proposition(db, tx)
+    match_id = match.id
+    _proposition(db, transactions(db, account)[1], statut="Rejetée")
+
+    response = _supprimer(client, tresorerie, body["statement_id"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["nb_propositions_retirees"] == 1
+    db.expire_all()
+    assert db.get(type(match), match_id) is None
+    assert db.get(type(entry), entry.id).statut == "Non rapprochée"
+    assert transactions(db, account) == []
+
+
+def test_a_motif_is_required(client, tresorerie, account, db):
+    body = confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT))).json()
+
+    response = _supprimer(client, tresorerie, body["statement_id"], motif="  ")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Indiquez le motif de la suppression."}
+
+
+def test_deleting_a_statement_needs_the_import_permission(client, account, db, reference):
+    make_auth_user(reference, "DIRECTION", email="dir-suppr@example.com")
+    direction = bearer(login(client, "dir-suppr@example.com"))
+
+    assert _supprimer(client, direction, 1).status_code == 403

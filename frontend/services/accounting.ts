@@ -40,3 +40,15 @@ export function getEntry(id: number) {
 export function listAccountingImports(companyId: number) {
   return apiFetch<ImportComptable[]>(`/accounting/imports?company_id=${companyId}`);
 }
+
+/** Supprime toutes les écritures d'un export Sage importé (23/10/2026), avec un motif. */
+export function supprimerImportComptable(importId: number, motif: string) {
+  return apiFetch<{ nb_lignes: number; nb_propositions_retirees: number }>(
+    `/accounting/imports/${importId}/supprimer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motif }),
+    },
+  );
+}

@@ -339,6 +339,10 @@ class StatementOut(BaseModel):
     controle_solde: ControleSoldeOut | None
     # Fichier des opérations en cours (20/10/2026)
     en_cours: bool = False
+    # Suppression de l'import (23/10/2026) : « Confirmé » ou « Annulé » ; raison s'il ne peut pas
+    # être supprimé maintenant (null : il peut l'être)
+    statut: str = "Confirmé"
+    raison_non_supprimable: str | None = None
 
     @classmethod
     def from_row(cls, row: StatementRow) -> "StatementOut":
@@ -359,6 +363,8 @@ class StatementOut(BaseModel):
             solde_ouverture=statement.solde_ouverture,
             solde_cloture=statement.solde_cloture,
             en_cours=statement.en_cours,
+            statut=batch.statut,
+            raison_non_supprimable=row.raison_non_supprimable,
             nb_lignes=batch.nb_lignes,
             nb_erreurs=batch.nb_erreurs,
             nb_doublons=batch.nb_doublons,

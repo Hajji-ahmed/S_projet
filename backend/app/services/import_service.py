@@ -1562,6 +1562,8 @@ class StatementRow:
     account: BankAccount
     importe_par: str | None
     controle: BalanceCheck | None
+    # Suppression de l'import (23/10/2026) : None = possible, sinon la raison
+    raison_non_supprimable: str | None = None
 
 
 def list_statements(
@@ -1570,10 +1572,19 @@ def list_statements(
     """Relevés importés d'UNE société (jamais ceux de l'autre), du plus récent au plus ancien."""
     if account_repository.get_company(db, company_id) is None:
         raise NotFoundError("Société introuvable.")
+    from app.services import suppression_import_service
+
     rows = import_repository.list_statements(db, company_id, bank_account_id)
     checks = import_repository.balance_checks(db, [row[0].id for row in rows])
     return [
-        StatementRow(statement, batch, account, importe_par, checks.get(statement.id))
+        StatementRow(
+            statement,
+            batch,
+            account,
+            importe_par,
+            checks.get(statement.id),
+            suppression_import_service.raison_releve_non_supprimable(db, statement),
+        )
         for statement, batch, account, importe_par in rows
     ]
 

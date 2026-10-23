@@ -282,3 +282,38 @@ def delete_transactions(db: Session, ids: list[int]) -> None:
         .values(remplacee_par_id=None)
     )
     db.execute(delete(BankTransaction).where(BankTransaction.id.in_(ids)))
+
+
+# --- Suppression d'un import (23/10/2026) --------------------------------------------------------
+
+
+def dernier_releve(db: Session, bank_account_id: int) -> BankStatement | None:
+    """Le relevé le plus récemment importé du compte, hors imports supprimés et fichiers
+    d'opérations en cours."""
+    return db.scalar(
+        select(BankStatement)
+        .outerjoin(ImportBatch, ImportBatch.id == BankStatement.import_batch_id)
+        .where(
+            BankStatement.bank_account_id == bank_account_id,
+            BankStatement.en_cours.is_(False),
+            (ImportBatch.statut.is_(None)) | (ImportBatch.statut != "Annulé"),
+        )
+        .order_by(ImportBatch.created_at.desc().nulls_last(), BankStatement.id.desc())
+        .limit(1)
+    )
+
+
+def transaction_ids_of_statement(db: Session, statement_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(BankTransaction.id)
+            .where(BankTransaction.statement_id == statement_id)
+            .with_for_update()
+        )
+    )
+
+
+def delete_balance_checks(db: Session, statement_id: int) -> None:
+    from sqlalchemy import delete
+
+    db.execute(delete(BalanceCheck).where(BalanceCheck.bank_statement_id == statement_id))

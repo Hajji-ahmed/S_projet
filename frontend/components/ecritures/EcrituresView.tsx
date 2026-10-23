@@ -1,6 +1,15 @@
 "use client";
 
-import { ChevronDown, CircleCheck, FileSpreadsheet, History, Plus, Upload, X } from "lucide-react";
+import {
+  ChevronDown,
+  CircleCheck,
+  FileSpreadsheet,
+  History,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -8,6 +17,7 @@ import { BankLabel, logosByCode } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountingImportWizard } from "@/components/ecritures/AccountingImportWizard";
 import { EntriesCard } from "@/components/ecritures/EntriesCard";
+import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -20,7 +30,7 @@ import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { IMPORTS_AFFICHES, formatDateTime, showFirst } from "@/lib/statements";
-import { listAccountingImports } from "@/services/accounting";
+import { listAccountingImports, supprimerImportComptable } from "@/services/accounting";
 import { listAccounts } from "@/services/accounts";
 import { listBanks } from "@/services/banks";
 import type { Account } from "@/types/account";
@@ -49,6 +59,8 @@ function Ecritures({ companyId }: { companyId: number }) {
   const [importsState, setImportsState] = useState<"loading" | "error" | "ready">("loading");
   const [reloadKey, setReloadKey] = useState(0);
   const [shownImports, setShownImports] = useState(IMPORTS_AFFICHES);
+  // Suppression d'un import (23/10/2026)
+  const [aSupprimer, setASupprimer] = useState<ImportComptable | null>(null);
 
   // Logos et comptes : sans eux, les codes s'affichent seuls et le filtre par compte disparaît
   useEffect(() => {
@@ -135,6 +147,33 @@ function Ecritures({ companyId }: { companyId: number }) {
     },
   ];
 
+  const actionsColumn: Column<ImportComptable>[] = canImport
+    ? [
+        {
+          key: "supprimer",
+          header: "",
+          align: "right",
+          render: (row) =>
+            row.statut === "Annulé" ? (
+              <span className="rounded-full bg-simtis-neutral-bg px-2 py-0.5 text-xs font-medium text-simtis-neutral-fg">
+                Annulé
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setASupprimer(row)}
+                disabled={false}
+                title={"Supprimer cet import"}
+                aria-label={`Supprimer l'import ${row.fichier_nom}`}
+                className="rounded-[10px] p-2 text-simtis-danger-fg transition-colors duration-150 hover:bg-simtis-danger-bg disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </button>
+            ),
+        },
+      ]
+    : [];
+
   const importButton = canImport && !importing && (
     <Button icon={Plus} onClick={() => setImporting(true)}>
       Importer un export Sage
@@ -213,6 +252,22 @@ function Ecritures({ companyId }: { companyId: number }) {
 
       <EntriesCard companyId={companyId} accounts={accounts} logos={logos} reloadKey={reloadKey} />
 
+      {aSupprimer && (
+        <DeleteImportModal
+          fichier={aSupprimer.fichier_nom}
+          resume={`${aSupprimer.periode_debut ? `${formatDate(aSupprimer.periode_debut)} au ${formatDate(aSupprimer.periode_fin)}` : "-"} · ${aSupprimer.nb_ecritures} écriture${aSupprimer.nb_ecritures > 1 ? "s" : ""}`}
+          onClose={() => setASupprimer(null)}
+          onConfirm={async (motif) => {
+            const { nb_lignes } = await supprimerImportComptable(aSupprimer.id, motif);
+            setASupprimer(null);
+            toast(
+              `Import supprimé : ${nb_lignes} écriture${nb_lignes > 1 ? "s" : ""} retirée${nb_lignes > 1 ? "s" : ""}.`,
+            );
+            reload();
+          }}
+        />
+      )}
+
       <Card title="Journal des imports" icon={History}>
         {importsState === "loading" && <LoadingState rows={3} />}
         {importsState === "error" && (
@@ -228,9 +283,10 @@ function Ecritures({ companyId }: { companyId: number }) {
           ) : (
             <>
               <DataTable
-                columns={columns}
+                columns={[...columns, ...actionsColumn]}
                 rows={journal.rows}
                 getRowKey={(row) => String(row.id)}
+                isRowMuted={(row) => row.statut === "Annulé"}
               />
               {journal.hidden > 0 && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">

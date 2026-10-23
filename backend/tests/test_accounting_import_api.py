@@ -674,3 +674,45 @@ def test_a_currency_account_keeps_the_signed_currency_amount_and_needs_it(
         ("Valide", None),
     ]
     assert lignes[2]["motifs"] == ["Montant devise manquant (compte en EUR)."]
+
+
+# --- Suppression d'un import (23/10/2026) --------------------------------------------------------
+
+
+def test_a_sage_import_is_deleted_and_can_be_imported_again(client, comptable, db, journals):
+    from app.models import AuditLog
+
+    content = xlsx(EXPORT)
+    body = confirm(client, comptable, db, content).json()
+
+    response = client.post(
+        f"/api/accounting/imports/{body['import_id']}/supprimer",
+        json={"motif": "Mauvaise période"},
+        headers=comptable,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"nb_lignes": 2, "nb_propositions_retirees": 0}
+    assert db.scalars(select(AccountingEntry)).all() == []
+    assert db.get(ImportBatch, body["import_id"]).statut == "Annulé"
+    imports = client.get(
+        "/api/accounting/imports", params={"company_id": company(db).id}, headers=comptable
+    ).json()
+    assert [(i["statut"], i["nb_ecritures"]) for i in imports] == [("Annulé", 0)]
+    [entry] = db.scalars(select(AuditLog).filter_by(action="suppression_import")).all()
+    assert entry.ancienne_valeur["nb_ecritures"] == 2
+    assert confirm(client, comptable, db, content).status_code == 201
+    again = client.post(
+        f"/api/accounting/imports/{body['import_id']}/supprimer",
+        json={"motif": "Mauvaise période"},
+        headers=comptable,
+    )
+    assert again.status_code == 409
+
+
+def test_deleting_a_sage_import_needs_the_sage_permission(client, direction, db, journals):
+    response = client.post(
+        "/api/accounting/imports/1/supprimer", json={"motif": "test"}, headers=direction
+    )
+
+    assert response.status_code == 403

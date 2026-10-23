@@ -33,6 +33,7 @@ ACTIONS = {
     "creation_role": "Création de rôle",
     "modification_permissions": "Modification de rôle ou de permissions",
     "modification_permissions_utilisateur": "Modification des permissions d'un utilisateur",
+    "suppression_import": "Suppression d'un import",
     "suppression_role": "Suppression de rôle",
     "creation_banque": "Création de banque",
     "modification_banque": "Modification de banque",
