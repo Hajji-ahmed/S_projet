@@ -12,7 +12,9 @@ RUN rm -f vitest.config.mts tsconfig.tsbuildinfo && find app components lib serv
 ARG NEXT_PUBLIC_API_URL=/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# webpack plutôt que Turbopack (défaut de Next 16) : Turbopack a planté en interne sur le serveur le
+# 23/10/2026 (« internal panic … bug in turbo-tasks »), webpack est celui du mode développement
+RUN npx next build --webpack
 
 FROM node:22-slim
 WORKDIR /app

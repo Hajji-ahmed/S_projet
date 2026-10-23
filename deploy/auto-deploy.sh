@@ -44,7 +44,7 @@ elif all(r["conclusion"] in ("success", "skipped", "neutral") for r in runs):
     print("verte")
 else:
     print("rouge")
-') || { journal "$COURT : CI illisible (GitHub injoignable ?), nouvel essai dans 5 min"; exit 0; }
+' 2>/dev/null) || { journal "$COURT : CI illisible (GitHub injoignable ?), nouvel essai dans 5 min"; exit 0; }
 
 case "$ETAT" in
   attente) exit 0 ;;
