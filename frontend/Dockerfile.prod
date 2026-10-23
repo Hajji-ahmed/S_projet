@@ -1,0 +1,28 @@
+# Image de production des écrans (22/10/2026) : compilés une fois (next build), servis par le serveur
+# « standalone » de Next.js, utilisateur non-root. Utilisée par docker-compose.prod.yml, derrière Caddy.
+FROM node:22-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+# Les tests ne vont pas en production (vérifiés par la CI) : leur configuration ferait lire au contrôle de
+# types de next build les définitions des outils de test (rolldown), illisibles sur le serveur (22/10/2026)
+RUN rm -f vitest.config.mts tsconfig.tsbuildinfo && find app components lib services types -name "*.test.ts*" -delete
+# L'API est à la même adresse que les écrans (Caddy envoie /api au backend). Inscrit dans le code au build.
+ARG NEXT_PUBLIC_API_URL=/api
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/public ./public
+USER node
+EXPOSE 3000
+CMD ["node", "server.js"]

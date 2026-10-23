@@ -1,0 +1,30 @@
+# Caddy en HTTP seul (22/10/2026), en attendant un nom de domaine pour le HTTPS (deploy/Caddyfile).
+# Choisi par CADDYFILE=Caddyfile.http dans .env ; demande aussi APP_ENV=development (cookie de session
+# sans « Secure », sinon le navigateur ne le renvoie pas en HTTP).
+:80 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# L'API : imports jusqu'à 20 Mo de fichier et 60 Mo de lignes, rapprochement d'une année ~2 min
+	handle /api/* {
+		request_body {
+			max_size 100MB
+		}
+		reverse_proxy backend:8000 {
+			transport http {
+				read_timeout 10m
+				write_timeout 10m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

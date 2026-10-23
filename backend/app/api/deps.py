@@ -72,5 +72,6 @@ def require_any_permission(*codes: PermissionCode) -> Callable[..., CurrentUser]
 
 
 def client_ip(request: Request) -> str | None:
-    """Adresse IP du client. Derrière un reverse proxy (P19), il faudra lire l'en-tête du proxy."""
+    """Adresse IP du client. En production (derrière Caddy), uvicorn --proxy-headers la lit dans
+    l'en-tête X-Forwarded-For du proxy (Dockerfile.prod)."""
     return request.client.host if request.client else None

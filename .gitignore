@@ -30,3 +30,7 @@ Thumbs.db
 
 # Réglages locaux de Claude Code
 .claude/settings.local.json
+
+# Déploiement automatique (serveur) : dernier commit déployé / en échec
+.deploiement-ok
+.deploiement-echoue

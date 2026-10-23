@@ -79,6 +79,52 @@ de connexion du PC) ou un autre PC du même réseau :
 Pour revenir à « ce PC seulement » : `BIND_ADDRESS=127.0.0.1` (ou supprimer ces lignes), puis
 `docker compose up -d --wait`. La base de données n'est jamais ouverte au réseau.
 
+## Mise en production (HTTPS)
+
+Sur le serveur, `docker-compose.prod.yml` remplace `docker-compose.yml` : images compilées
+(`backend/Dockerfile.prod`, `frontend/Dockerfile.prod`), **Caddy** en HTTPS devant (`deploy/Caddyfile`),
+seuls les ports 80 et 443 ouverts. Même volume de base : les données sont conservées.
+
+1. `.env` du serveur : `POSTGRES_PASSWORD` et `JWT_SECRET` forts (`openssl rand -hex 48`),
+   `SITE_ADDRESS=10.77.77.11`, `CORS_ORIGINS=https://10.77.77.11`.
+2. Sauvegarder la base, puis basculer :
+   ```bash
+   docker compose down                                   # arrête le mode développement (jamais -v)
+   docker compose -f docker-compose.prod.yml up -d --build --wait
+   ```
+3. Certificat racine de Caddy, à installer **une fois sur chaque PC** (sinon « connexion non sécurisée ») :
+   ```bash
+   docker compose -f docker-compose.prod.yml cp caddy:/data/caddy/pki/authorities/local/root.crt simtis-ca.crt
+   ```
+   Windows : double-clic sur `simtis-ca.crt` › Installer le certificat › Ordinateur local ›
+   « Autorités de certification racines de confiance » (Edge et Chrome) ; ou par GPO. Le volume
+   `caddy_data` garde cette autorité : ne jamais le supprimer.
+   **HTTP seul en attendant un nom de domaine** (22/10/2026) : dans `.env`, `CADDYFILE=Caddyfile.http`,
+   `APP_ENV=development` (cookie de session sans « Secure ») et `CORS_ORIGINS=http://10.77.77.11` ;
+   adresse `http://10.77.77.11`, sans certificat à installer.
+4. Mise à jour : nouveau code, puis `docker compose -f docker-compose.prod.yml up -d --build --wait`.
+5. Retour au mode développement : `docker compose -f docker-compose.prod.yml down`, puis
+   `docker compose up -d --wait` (mêmes données).
+
+## Déploiement automatique
+
+Sur le serveur, `cron` lance `deploy/auto-deploy.sh` toutes les 5 minutes. Quand `hajji` a un nouveau
+commit **et que la CI GitHub de ce commit est verte**, il sauvegarde la base, met le code à jour
+(`git reset --hard`), reconstruit et redémarre (`docker-compose.prod.yml`), puis contrôle `/api/health`.
+Le serveur va chercher le code (dépôt public, aucun secret) : une pull request n'est jamais exécutée.
+
+```bash
+crontab -l                                   # */5 * * * * bash $HOME/simtis/deploy/auto-deploy.sh >> $HOME/backups/deploiement.log 2>&1
+tail -f ~/backups/deploiement.log            # suivre les déploiements
+bash ~/simtis/deploy/auto-deploy.sh          # lancer tout de suite
+```
+
+- Un commit dont la CI ou le déploiement échoue n'est pas retenté (`~/simtis/.deploiement-echoue`) ;
+  le suivant le sera. En cas d'échec de construction, l'ancienne version continue de tourner.
+- Délai : jusqu'à 5 minutes + la CI + la construction (2 à 5 minutes).
+- Désactiver : `crontab -e` et commenter la ligne. Ne jamais modifier le code directement sur le serveur :
+  il serait écrasé au déploiement suivant (`.env` et les sauvegardes, hors git, ne le sont pas).
+
 ## Commandes courantes
 
 ```bash

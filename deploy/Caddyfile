@@ -1,0 +1,42 @@
+# Caddy : HTTPS devant SIMTIS (22/10/2026). Adresse prise dans SITE_ADDRESS (.env).
+{
+	# Les navigateurs n'envoient pas de nom de serveur (SNI) quand on tape une IP
+	default_sni {$SITE_ADDRESS}
+}
+
+https://{$SITE_ADDRESS} {
+	# Certificat signé par l'autorité interne de Caddy : son certificat racine s'installe une fois
+	# sur chaque PC (voir README, « Mise en production »)
+	tls internal
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	# L'API : imports jusqu'à 20 Mo de fichier et 60 Mo de lignes, rapprochement d'une année ~2 min
+	handle /api/* {
+		request_body {
+			max_size 100MB
+		}
+		reverse_proxy backend:8000 {
+			transport http {
+				read_timeout 10m
+				write_timeout 10m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
+
+http://{$SITE_ADDRESS} {
+	redir https://{host}{uri} permanent
+}

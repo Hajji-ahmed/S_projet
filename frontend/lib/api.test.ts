@@ -203,4 +203,8 @@ describe("apiUrlFor", () => {
     );
     expect(apiUrlFor(undefined, undefined)).toBe("http://localhost:8000/api");
   });
+
+  it("garde une adresse relative en production : même origine que la page, derrière Caddy", () => {
+    expect(apiUrlFor("/api", { protocol: "https:", hostname: "10.77.77.11" })).toBe("/api");
+  });
 });
