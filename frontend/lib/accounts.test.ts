@@ -8,6 +8,7 @@ import {
   normalizePercentInput,
   validateAccountForm,
   type AccountFormValues,
+  finNumero,
 } from "./accounts";
 
 const valid: AccountFormValues = {
@@ -142,5 +143,13 @@ describe("comptabilisation des droits de timbre", () => {
     expect(
       validateAccountForm({ ...bp, compte_timbre: "6167-00" }, "create").compte_timbre,
     ).toBeDefined();
+  });
+});
+
+describe("finNumero", () => {
+  it("garde les 4 derniers caractères du numéro, sans les espaces", () => {
+    expect(finNumero("230 780 0001234567890123 45")).toBe("…2345");
+    expect(finNumero("RIB-USD-8830")).toBe("…8830");
+    expect(finNumero("123")).toBe("123");
   });
 });

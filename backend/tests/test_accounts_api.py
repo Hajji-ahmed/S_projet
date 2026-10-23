@@ -160,16 +160,21 @@ def test_create_is_audited_with_exact_amounts(client, tresorerie, db):
     assert entry.nouvelle_valeur["devise"] == "MAD"
 
 
-def test_second_active_account_in_the_same_slot_gives_409(client, tresorerie, db):
+def test_a_second_account_in_the_same_bank_and_currency_is_accepted(client, tresorerie, db):
+    """23/10/2026 : par exemple deux comptes CIH en MAD (ou deux BMCE en USD)."""
     add(db, "SIMTIS", "CIH", devise="MAD", type_compte="Courant")
 
     response = client.post(ACCOUNTS, json=payload(db), headers=tresorerie)
 
-    assert response.status_code == 409
-    assert response.json() == {
-        "detail": "CIH a déjà un compte courant en MAD actif pour Simtis. "
-        "Désactivez-le d'abord pour en ouvrir un autre."
-    }
+    assert response.status_code == 201, response.text
+
+
+def test_two_usd_accounts_in_the_same_bank_are_accepted(client, tresorerie, db):
+    usd = {"devise": "USD", "credit_autorise": "0", "taux_interet_pct": None}
+    first = client.post(ACCOUNTS, json=payload(db, numero="USD-0001", **usd), headers=tresorerie)
+    second = client.post(ACCOUNTS, json=payload(db, numero="USD-0002", **usd), headers=tresorerie)
+
+    assert (first.status_code, second.status_code) == (201, 201)
 
 
 def test_other_currency_in_the_same_bank_is_accepted(client, tresorerie, db):
@@ -323,7 +328,8 @@ def test_company_bank_and_currency_cannot_change(client, tresorerie, db, field):
     assert response.status_code == 422
 
 
-def test_changing_type_into_an_occupied_slot_gives_409(client, tresorerie, db):
+def test_changing_type_next_to_an_account_of_that_type_is_accepted(client, tresorerie, db):
+    """23/10/2026 : plusieurs comptes par banque, devise et type."""
     add(db, "SIMTIS", "CIH", devise="MAD", type_compte="DH convertible")
     courant = add(db, "SIMTIS", "CIH", devise="MAD", type_compte="Courant")
 
@@ -333,7 +339,7 @@ def test_changing_type_into_an_occupied_slot_gives_409(client, tresorerie, db):
         headers=tresorerie,
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 200, response.text
 
 
 def test_eur_account_cannot_become_dh_convertible(client, tresorerie, db):
@@ -363,13 +369,14 @@ def test_deactivate_and_reactivate(client, tresorerie, db):
     assert len(audit(db, "reactivation_compte")) == 1
 
 
-def test_reactivation_refused_when_a_new_account_took_the_slot(client, tresorerie, db):
+def test_reactivation_accepted_next_to_a_new_account(client, tresorerie, db):
+    """23/10/2026 : l'ancien compte et le nouveau peuvent être actifs ensemble."""
     old = add(db, "SIMTIS", "CIH", actif=False)
     add(db, "SIMTIS", "CIH")
 
     response = client.patch(f"{ACCOUNTS}/{old.id}/status", json={"actif": True}, headers=tresorerie)
 
-    assert response.status_code == 409
+    assert response.status_code == 200, response.text
 
 
 def test_reactivation_refused_when_the_bank_is_inactive(client, tresorerie, db):

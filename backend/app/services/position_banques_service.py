@@ -8,11 +8,16 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models import Bank, Company
+from app.models import Bank, BankAccount, Company
 from app.repositories import account_repository, position_repository
 from app.services import position_service
 from app.services.errors import NotFoundError
-from app.services.position_service import BanqueColonne, LigneDevise, TableauBanques
+from app.services.position_service import (
+    BanqueColonne,
+    CompteColonne,
+    LigneDevise,
+    TableauBanques,
+)
 
 
 def _company(db: Session, company_id: int) -> Company:
@@ -71,24 +76,35 @@ def banques_table(db: Session, company_id: int, jour: date | None) -> TableauBan
     company = _company(db, company_id)
     date_fin = _date_fin(jour)
 
-    accounts = {
-        account.bank_id: account
-        for account in position_repository.current_mad_accounts(db, company.id)
-    }
-    soldes = _soldes(db, [account.id for account in accounts.values()], date_fin)
+    # Plusieurs comptes courants MAD par banque possibles (23/10/2026) : la colonne en fait la somme
+    par_banque: dict[int, list[BankAccount]] = defaultdict(list)
+    for account in sorted(
+        position_repository.current_mad_accounts(db, company.id), key=lambda a: a.id
+    ):
+        par_banque[account.bank_id].append(account)
+    soldes = _soldes(db, [a.id for comptes in par_banque.values() for a in comptes], date_fin)
 
     colonnes = []
     for bank in position_repository.active_banks(db):
-        account = accounts.get(bank.id)
+        comptes = par_banque.get(bank.id, [])
+        taux = {account.taux_interet for account in comptes}
         colonnes.append(
             BanqueColonne(
                 bank_id=bank.id,
                 code=bank.code,
                 logo=bank.logo,
-                bank_account_id=account.id if account else None,
-                taux_interet=account.taux_interet if account else None,
-                ligne=account.credit_autorise if account else None,
-                soldes=soldes[account.id] if account else (),
+                bank_account_id=comptes[0].id if comptes else None,
+                # Un seul taux affiché : celui des comptes s'il est le même pour tous
+                taux_interet=taux.pop() if len(taux) == 1 else None,
+                ligne=sum((a.credit_autorise for a in comptes), Decimal("0.00"))
+                if comptes
+                else None,
+                soldes=position_service.somme_soldes([soldes[a.id] for a in comptes])
+                if comptes
+                else (),
+                comptes=tuple(
+                    CompteColonne(a.numero, soldes[a.id], a.credit_autorise) for a in comptes
+                ),
             )
         )
     return position_service.tableau_banques(colonnes, date_fin)
@@ -111,15 +127,25 @@ def devises_table(db: Session, company_id: int, jour: date | None) -> TableauDev
     devises = position_service.DEVISES_CALCULEES
 
     banks = tuple(position_repository.active_banks(db))
-    accounts = position_repository.currency_accounts(db, company.id, devises)
+    accounts = sorted(
+        position_repository.currency_accounts(db, company.id, devises), key=lambda a: a.id
+    )
     soldes = _soldes(db, [account.id for account in accounts], date_fin)
     lignes = []
     for devise in devises:
+        # Plusieurs comptes de la même banque dans cette devise : somme (23/10/2026)
+        comptes: dict[int, list[CompteColonne]] = defaultdict(list)
+        for account in accounts:
+            if account.devise == devise:
+                comptes[account.bank_id].append(CompteColonne(account.numero, soldes[account.id]))
         par_banque = {
-            account.bank_id: soldes[account.id] for account in accounts if account.devise == devise
+            bank_id: position_service.somme_soldes([c.soldes for c in liste])
+            for bank_id, liste in comptes.items()
         }
         lignes.append(
-            position_service.ligne_devise(devise, [bank.id for bank in banks], par_banque, date_fin)
+            position_service.ligne_devise(
+                devise, [bank.id for bank in banks], par_banque, date_fin, comptes
+            )
         )
     return TableauDevises(
         date_fin=date_fin,

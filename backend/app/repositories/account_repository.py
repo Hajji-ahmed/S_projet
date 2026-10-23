@@ -80,20 +80,6 @@ def get_by_numero(db: Session, numero: str) -> BankAccount | None:
     return db.scalar(select(BankAccount).where(BankAccount.numero == numero))
 
 
-def find_active_in_slot(
-    db: Session, *, company_id: int, bank_id: int, devise: str, type_compte: str
-) -> BankAccount | None:
-    """Le compte actif qui occupe déjà la place (société, banque, devise, type), s'il existe."""
-    query = select(BankAccount).where(
-        BankAccount.company_id == company_id,
-        BankAccount.bank_id == bank_id,
-        BankAccount.devise == devise,
-        BankAccount.type_compte == type_compte,
-        BankAccount.actif.is_(True),
-    )
-    return db.scalar(query)
-
-
 def find_active_by_journal(db: Session, *, company_id: int, journal: str) -> BankAccount | None:
     """Le compte actif de la société qui porte déjà ce journal Sage, s'il existe."""
     query = select(BankAccount).where(

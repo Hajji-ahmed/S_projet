@@ -16,6 +16,7 @@ import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { ApiError } from "@/lib/api";
 import { businessToday, currencySuffix, normalizeSignedAmountInput } from "@/lib/balances";
+import { finNumero } from "@/lib/accounts";
 import { cn } from "@/lib/cn";
 import {
   amountToInput,
@@ -285,7 +286,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
                 id: item.id,
                 bankCode: item.bank_code,
                 logo: item.bank_logo,
-                label: `${item.bank_code} · ${item.type_compte === "DH convertible" ? "DH convertible" : item.devise} · ${item.libelle}`,
+                label: `${item.bank_code} · ${item.type_compte === "DH convertible" ? "DH convertible" : item.devise} · ${item.libelle} · ${finNumero(item.numero)}`,
               }))}
             />
           </Field>

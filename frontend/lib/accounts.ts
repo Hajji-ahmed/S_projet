@@ -129,3 +129,12 @@ export function validateAccountForm(
   }
   return errors;
 }
+
+/**
+ * Fin du numéro d'un compte, « …4521 » (23/10/2026) : distingue deux comptes de la même banque et
+ * de la même devise (deux BMCE en USD). Les espaces du numéro sont ignorés.
+ */
+export function finNumero(numero: string, chiffres = 4): string {
+  const compact = numero.replace(/\s+/g, "");
+  return compact.length <= chiffres ? compact : `…${compact.slice(-chiffres)}`;
+}

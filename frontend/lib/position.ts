@@ -1,3 +1,4 @@
+import { finNumero } from "@/lib/accounts";
 /**
  * Affichage des tableaux Banques et Devises. Les montants restent en texte exact : rien n'est
  * recalculé ici.
@@ -19,14 +20,34 @@ export function formatTaux(pct: string | null): string {
  * Cellule EUR / USD du tableau Devises : le solde dans sa devise, jamais converti (décision du
  * 05/10/2026), avec la date d'un solde repris d'un jour précédent. Inconnu → « - », jamais 0.
  */
+export type CelluleNote = {
+  valeur: string | null;
+  date_solde: string | null;
+  reprise: boolean;
+  detail?: { numero: string; solde: string }[];
+};
+
+/**
+ * Infobulle d'une cellule : le solde de chaque compte quand la banque en a plusieurs dans la devise
+ * (23/10/2026), puis la date d'un dernier solde repris ; `null` s'il n'y a rien à dire.
+ */
+export function noteCellule(cellule: CelluleNote, devise?: string): string | null {
+  const parties: string[] = [];
+  if (cellule.detail && cellule.detail.length > 1) {
+    const comptes = cellule.detail
+      .map((compte) => `${finNumero(compte.numero)} : ${formatAmount(compte.solde, devise)}`)
+      .join(" ; ");
+    parties.push(`Somme de ${cellule.detail.length} comptes (soldes ${comptes})`);
+  }
+  if (cellule.reprise) parties.push(`dernier solde connu : ${formatDate(cellule.date_solde)}`);
+  return parties.length > 0 ? parties.join(" · ") : null;
+}
+
 export function currencyCell(
-  cellule: { bank_id?: number; valeur: string | null; date_solde: string | null; reprise: boolean },
+  cellule: { bank_id?: number } & CelluleNote,
   devise: string,
 ): { text: string; note: string | null } {
-  return {
-    text: formatAmount(cellule.valeur, devise),
-    note: cellule.reprise ? `dernier solde connu : ${formatDate(cellule.date_solde)}` : null,
-  };
+  return { text: formatAmount(cellule.valeur, devise), note: noteCellule(cellule, devise) };
 }
 
 /** « 2026-09-30 » → « 30/09/26 », comme les dates du classeur. */

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Bank
 from app.repositories import account_repository, bank_repository
-from app.services import audit_service, balance_service
+from app.services import audit_service, balance_service, position_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.position_service import AccountFigures
 
@@ -38,6 +38,8 @@ class OtherAccount:
     type_compte: str
     solde: Decimal | None
     date_maj: date | None
+    # Plusieurs comptes de la même banque et devise possibles (23/10/2026) : on les distingue
+    numero: str = ""
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,8 @@ class BankSummary:
     # Renseignés seulement quand une société est indiquée (société active de l'écran)
     figures: AccountFigures | None = None
     autres_comptes: tuple[OtherAccount, ...] = ()
+    # Nombre de comptes courants MAD additionnés dans `figures` (23/10/2026)
+    nb_principaux: int = 0
 
 
 def _snapshot(bank: Bank, fields: tuple[str, ...]) -> dict[str, Any]:
@@ -67,7 +71,9 @@ def _summary(db: Session, bank: Bank) -> BankSummary:
 def list_banks(db: Session, company_id: int | None = None) -> list[BankSummary]:
     """Avec `company_id` : comptes de cette société seulement, et chiffres de chaque banque.
 
-    Une société a au plus un compte actif par banque, devise et type : aucune somme n'est faite.
+    Depuis le 23/10/2026 une banque peut avoir plusieurs comptes courants MAD : la carte fait la
+    somme de leurs chiffres (même règle que le tableau Banques) ; les autres comptes sont listés à
+    part, chacun dans sa devise.
     """
     counts = bank_repository.active_account_counts(db, company_id)
     banks = bank_repository.list_banks(db)
@@ -79,20 +85,23 @@ def list_banks(db: Session, company_id: int | None = None) -> list[BankSummary]:
     summaries = []
     for bank in banks:
         own = [account for account in accounts if account.bank_id == bank.id]
-        main = next(
-            (a for a in own if a.devise == MAIN_CURRENCY and a.type_compte == MAIN_TYPE), None
-        )
+        principaux = [a for a in own if a.devise == MAIN_CURRENCY and a.type_compte == MAIN_TYPE]
         others = tuple(
-            OtherAccount(a.devise, a.type_compte, figures[a.id].solde, figures[a.id].date_maj)
-            for a in own
-            if a is not main
+            OtherAccount(
+                a.devise, a.type_compte, figures[a.id].solde, figures[a.id].date_maj, a.numero
+            )
+            for a in sorted(own, key=lambda a: a.id)
+            if a not in principaux
         )
         summaries.append(
             BankSummary(
                 bank,
                 counts.get(bank.id, 0),
-                figures=figures[main.id] if main else None,
+                figures=position_service.somme_figures([figures[a.id] for a in principaux])
+                if principaux
+                else None,
                 autres_comptes=others,
+                nb_principaux=len(principaux),
             )
         )
     return summaries

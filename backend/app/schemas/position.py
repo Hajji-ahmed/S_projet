@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.services.account_service import fraction_to_pct
 from app.services.position_banques_service import TableauDevises
-from app.services.position_service import BanqueColonne, LigneTableau, TableauBanques
+from app.services.position_service import BanqueColonne, Cellule, LigneTableau, TableauBanques
 
 
 class BanqueColonneOut(BaseModel):
@@ -31,11 +31,28 @@ class BanqueColonneOut(BaseModel):
         )
 
 
+class DetailCompteOut(BaseModel):
+    numero: str
+    solde: Decimal
+
+
 class CelluleOut(BaseModel):
     bank_id: int
     valeur: Decimal | None
     date_solde: dt.date | None
     reprise: bool
+    # Plusieurs comptes dans la cellule (23/10/2026) : solde de chacun ; vide sinon
+    detail: list[DetailCompteOut] = []
+
+    @classmethod
+    def of(cls, c: Cellule) -> "CelluleOut":
+        return cls(
+            bank_id=c.bank_id,
+            valeur=c.valeur,
+            date_solde=c.date_solde,
+            reprise=c.reprise,
+            detail=[DetailCompteOut(numero=n, solde=s) for n, s in c.detail],
+        )
 
 
 class LigneOut(BaseModel):
@@ -46,12 +63,7 @@ class LigneOut(BaseModel):
     @classmethod
     def from_ligne(cls, ligne: LigneTableau, **extra):
         return cls(
-            cellules=[
-                CelluleOut(
-                    bank_id=c.bank_id, valeur=c.valeur, date_solde=c.date_solde, reprise=c.reprise
-                )
-                for c in ligne.cellules
-            ],
+            cellules=[CelluleOut.of(c) for c in ligne.cellules],
             total=ligne.total,
             depassement=ligne.depassement,
             **extra,
@@ -118,15 +130,7 @@ class DevisesSoldesOut(BaseModel):
             lignes=[
                 LigneDeviseOut(
                     devise=ligne.devise,
-                    cellules=[
-                        CelluleOut(
-                            bank_id=c.bank_id,
-                            valeur=c.valeur,
-                            date_solde=c.date_solde,
-                            reprise=c.reprise,
-                        )
-                        for c in ligne.cellules
-                    ],
+                    cellules=[CelluleOut.of(c) for c in ligne.cellules],
                     total=ligne.total,
                 )
                 for ligne in table.lignes

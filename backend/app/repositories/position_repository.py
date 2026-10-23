@@ -18,7 +18,7 @@ def active_banks(db: Session) -> list[Bank]:
 
 
 def current_mad_accounts(db: Session, company_id: int) -> list[BankAccount]:
-    """Comptes courants MAD actifs de la société : au plus un par banque (index unique partiel)."""
+    """Comptes courants MAD actifs de la société, éventuellement plusieurs par banque (23/10/2026)."""
     query = select(BankAccount).where(
         BankAccount.company_id == company_id,
         BankAccount.type_compte == "Courant",
@@ -29,7 +29,8 @@ def current_mad_accounts(db: Session, company_id: int) -> list[BankAccount]:
 
 
 def currency_accounts(db: Session, company_id: int, devises: Sequence[str]) -> list[BankAccount]:
-    """Comptes courants actifs de la société dans ces devises (EUR, USD) : un par banque et devise."""
+    """Comptes courants actifs de la société dans ces devises (EUR, USD), plusieurs possibles par
+    banque et devise (23/10/2026)."""
     query = select(BankAccount).where(
         BankAccount.company_id == company_id,
         BankAccount.type_compte == "Courant",

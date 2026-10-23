@@ -784,11 +784,13 @@ def a_comptabiliser(db: Session, query: Select) -> tuple[int, Decimal]:
 
 
 def next_code_number(db: Session, bank_account_id: int, annee: int) -> int:
-    """Numéro suivant du compteur (compte, année), atomique : deux validations simultanées ne
-    reçoivent jamais le même numéro."""
+    """Numéro suivant du compteur (société et banque du compte, année), atomique : deux
+    validations simultanées ne reçoivent jamais le même numéro. Par banque et non par compte
+    (23/10/2026) : deux comptes de la même banque donnent des codes du même préfixe."""
     statement = text(
-        "INSERT INTO reconciliation_code_counters (bank_account_id, annee, dernier) "
-        "VALUES (:compte, :annee, 1) ON CONFLICT (bank_account_id, annee) "
+        "INSERT INTO reconciliation_code_counters (company_id, bank_id, annee, dernier) "
+        "SELECT company_id, bank_id, :annee, 1 FROM bank_accounts WHERE id = :compte "
+        "ON CONFLICT (company_id, bank_id, annee) "
         "DO UPDATE SET dernier = reconciliation_code_counters.dernier + 1 RETURNING dernier"
     )
     return db.execute(statement, {"compte": bank_account_id, "annee": annee}).scalar_one()

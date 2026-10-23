@@ -100,6 +100,7 @@ def test_validated_example_through_the_api(client, direction, db):
         "valeur": "300000.00",
         "date_solde": "2025-09-30",
         "reprise": False,
+        "detail": [],
     }
     assert cell(body, jour, "BMCE")["valeur"] == "400000.00"
     assert cell(body, jour, "BP")["valeur"] is None
@@ -159,6 +160,7 @@ def test_balance_row_without_solde_does_not_count(client, direction, db):
         "valeur": "1000.00",
         "date_solde": "2025-09-28",
         "reprise": True,
+        "detail": [],
     }
 
 
@@ -203,6 +205,7 @@ def test_last_operation_of_the_day_gives_the_balance(client, direction, db):
         "valeur": "120.00",
         "date_solde": "2025-09-30",
         "reprise": False,
+        "detail": [],
     }
     assert cell(body, body["disponible"], "AWB")["valeur"] == "20.00"
 
@@ -287,3 +290,39 @@ def test_requires_position_view(client, reference, db):
     headers = bearer(login(client, "sans-role@example.com"))
 
     assert get(client, headers, db).status_code == 403
+
+
+def test_two_mad_accounts_of_a_bank_are_added_up(client, direction, db):
+    """23/10/2026 : la colonne BP fait la somme des soldes et des LIGNES de ses deux comptes ; un
+    jour où un seul compte bouge reprend le dernier solde connu de l'autre."""
+    un = account(db, "BP", credit_autorise=Decimal("100000.00"), numero="BP-UN-0001")
+    deux = account(db, "BP", credit_autorise=Decimal("50000.00"), numero="BP-DEUX-0002")
+    balance(db, un, J28, "1000")
+    balance(db, deux, J29, "2000")
+    balance(db, un, J30, "1500")
+
+    body = get(client, direction, db).json()
+
+    bp = next(b for b in body["banques"] if b["code"] == "BP")
+    assert bp["ligne"] == "150000.00"
+    par_jour = {jour["date"]: cell(body, jour, "BP")["valeur"] for jour in body["jours"]}
+    assert par_jour == {
+        "2025-09-28": "101000.00",
+        "2025-09-29": "153000.00",
+        "2025-09-30": "153500.00",
+    }
+    dernier = cell(body, body["jours"][-1], "BP")
+    assert dernier["detail"] == [
+        {"numero": "BP-UN-0001", "solde": "1500.00"},
+        {"numero": "BP-DEUX-0002", "solde": "2000.00"},
+    ]
+    assert cell(body, body["disponible"], "BP")["valeur"] == "3500.00"
+
+
+def test_a_single_account_has_no_detail(client, direction, db):
+    awb = account(db, "AWB", credit_autorise=Decimal("0.00"))
+    balance(db, awb, J30, "10")
+
+    body = get(client, direction, db).json()
+
+    assert cell(body, body["jours"][-1], "AWB")["detail"] == []

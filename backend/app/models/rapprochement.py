@@ -205,11 +205,14 @@ class Discrepancy(TimestampMixin, Base):
 
 
 class ReconciliationCodeCounter(Base):
-    """Dernier numéro de code de rapprochement donné, par compte bancaire et par année (0023)."""
+    """Dernier numéro de code de rapprochement donné, par société, banque et année (0023 ; par banque
+    depuis 0036 : le code « BANQUE-AA-NNNNNN » est unique par société, deux comptes de la même banque
+    partagent donc le compteur)."""
 
     __tablename__ = "reconciliation_code_counters"
 
-    bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_accounts.id"), primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), primary_key=True)
+    bank_id: Mapped[int] = mapped_column(ForeignKey("banks.id"), primary_key=True)
     annee: Mapped[int] = mapped_column(Integer, primary_key=True)
     dernier: Mapped[int] = mapped_column(Integer)
 

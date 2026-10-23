@@ -75,6 +75,7 @@ def test_eur_and_usd_balances_without_conversion(client, direction, db):
         "valeur": "1500.50",
         "date_solde": "2025-09-30",
         "reprise": False,
+        "detail": [],
     }
     assert cell(body, "EUR", "CIH")["reprise"] is True
     assert cell(body, "EUR", "BP")["valeur"] is None
@@ -134,3 +135,21 @@ def test_requires_position_view(client, reference, db):
     headers = bearer(login(client, "sans-role@example.com"))
 
     assert get(client, headers, db).status_code == 403
+
+
+def test_two_usd_accounts_of_a_bank_are_added_up(client, direction, db):
+    """23/10/2026 : deux comptes BMCE en USD, la cellule fait leur somme, en USD."""
+    un = account(db, "BMCE", "USD", numero="USD-UN-0001")
+    deux = account(db, "BMCE", "USD", numero="USD-DEUX-0002")
+    balance(db, un, J29, "30000.00")
+    balance(db, deux, J30, "18299.91")
+
+    body = get(client, direction, db).json()
+
+    bmce = cell(body, "USD", "BMCE")
+    assert bmce["valeur"] == "48299.91"
+    assert bmce["detail"] == [
+        {"numero": "USD-UN-0001", "solde": "30000.00"},
+        {"numero": "USD-DEUX-0002", "solde": "18299.91"},
+    ]
+    assert line(body, "USD")["total"] == "48299.91"

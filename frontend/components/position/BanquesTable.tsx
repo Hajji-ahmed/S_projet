@@ -16,10 +16,16 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { JOURS_AFFICHES, formatJour, formatTaux, signTone, type Tone } from "@/lib/position";
+import {
+  JOURS_AFFICHES,
+  formatJour,
+  formatTaux,
+  noteCellule,
+  signTone,
+  type Tone,
+} from "@/lib/position";
 import { showLast } from "@/lib/statements";
 import { getBanquesTable } from "@/services/position";
 import type { BanquesTable as Table, CelluleBanque, LigneBanques } from "@/types/position";
@@ -237,12 +243,12 @@ function LineCells({ line, colored = false }: { line: LigneBanques; colored?: bo
 
 /** Montant d'une banque ; un solde repris d'un jour précédent est grisé et daté. */
 function AmountCell({ cellule, className }: { cellule: CelluleBanque; className: string }) {
-  if (!cellule.reprise) {
+  const note = noteCellule(cellule);
+  if (!note) {
     return <td className={cn(NUMBER, className)}>{formatAmount(cellule.valeur)}</td>;
   }
-  const note = `dernier solde connu : ${formatDate(cellule.date_solde)}`;
   return (
-    <td className={cn(NUMBER, "text-simtis-muted", className)} title={note}>
+    <td className={cn(NUMBER, cellule.reprise && "text-simtis-muted", className)} title={note}>
       {formatAmount(cellule.valeur)}
       <span className="sr-only"> ({note})</span>
     </td>

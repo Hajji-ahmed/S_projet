@@ -39,7 +39,6 @@ EDITABLE_FIELDS = (
     "compte_commission_effet",
     "compte_tva",
 )
-TYPE_LABELS = {"Courant": "courant", "DH convertible": "DH convertible"}
 
 
 def pct_to_fraction(pct: Decimal | None) -> Decimal | None:
@@ -109,26 +108,6 @@ def _check_numero_free(db: Session, numero: str, account_id: int | None = None) 
     existing = account_repository.get_by_numero(db, numero)
     if existing is not None and existing.id != account_id:
         raise ConflictError(f"Le numéro {numero} est déjà utilisé par un autre compte.")
-
-
-def _check_slot_free(
-    db: Session,
-    *,
-    company: Company,
-    bank_code: str,
-    bank_id: int,
-    devise: str,
-    type_compte: str,
-    account_id: int | None = None,
-) -> None:
-    occupant = account_repository.find_active_in_slot(
-        db, company_id=company.id, bank_id=bank_id, devise=devise, type_compte=type_compte
-    )
-    if occupant is not None and occupant.id != account_id:
-        raise ConflictError(
-            f"{bank_code} a déjà un compte {TYPE_LABELS[type_compte]} en {devise} actif pour "
-            f"{company.nom}. Désactivez-le d'abord pour en ouvrir un autre."
-        )
 
 
 def _check_journal_free(
@@ -210,14 +189,6 @@ def create_account(
 
     numero = normalize_numero(numero)
     _check_numero_free(db, numero)
-    _check_slot_free(
-        db,
-        company=company,
-        bank_code=bank.code,
-        bank_id=bank.id,
-        devise=devise,
-        type_compte=type_compte,
-    )
     _check_journal_free(db, company_id=company.id, journal=journal_sage)
     _check_journal_frais(journal_frais, journal_sage)
 
@@ -303,16 +274,6 @@ def update_account(
         _check_numero_free(db, new_values["numero"], account.id)
     if "type_compte" in changed:
         _check_dh_convertible(type_compte, account.devise)
-        if account.actif:
-            _check_slot_free(
-                db,
-                company=account.company,
-                bank_code=account.bank.code,
-                bank_id=account.bank_id,
-                devise=account.devise,
-                type_compte=type_compte,
-                account_id=account.id,
-            )
 
     if "journal_sage" in changed and account.actif:
         _check_journal_free(
@@ -351,15 +312,6 @@ def set_account_status(
             raise ConflictError(
                 f"La banque {account.bank.code} est inactive : réactivez-la avant ce compte."
             )
-        _check_slot_free(
-            db,
-            company=account.company,
-            bank_code=account.bank.code,
-            bank_id=account.bank_id,
-            devise=account.devise,
-            type_compte=account.type_compte,
-            account_id=account.id,
-        )
         _check_journal_free(
             db, company_id=account.company_id, journal=account.journal_sage, account_id=account.id
         )

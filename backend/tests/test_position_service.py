@@ -307,3 +307,38 @@ def test_devise_line_without_any_balance_has_no_total():
 
     assert [cellule.valeur for cellule in line.cellules] == [None, None]
     assert line.total is None
+
+
+# --- Plusieurs comptes par banque et devise (23/10/2026) -----------------------------------------
+
+
+def test_balances_of_several_accounts_are_added_with_their_last_known_value():
+    from app.services.position_service import somme_soldes
+
+    un = ((date(2026, 9, 1), Decimal("100")), (date(2026, 9, 3), Decimal("150")))
+    deux = ((date(2026, 9, 2), Decimal("20")),)
+
+    assert somme_soldes([un, deux]) == (
+        (date(2026, 9, 1), Decimal("100")),
+        (date(2026, 9, 2), Decimal("120")),
+        (date(2026, 9, 3), Decimal("170")),
+    )
+    assert somme_soldes([un]) == un
+
+
+def test_bank_figures_add_up_only_known_values():
+    from app.services.position_service import AccountFigures, somme_figures
+
+    un = AccountFigures(
+        Decimal("100"), Decimal("10"), Decimal("90"), Decimal("190"), date(2026, 9, 1)
+    )
+    deux = AccountFigures(Decimal("50"), None, None, None, date(2026, 9, 5))
+
+    total = somme_figures([un, deux])
+
+    assert (total.solde, total.credit_utilise, total.position_disponible, total.date_maj) == (
+        Decimal("150"),
+        Decimal("10"),
+        Decimal("190"),
+        date(2026, 9, 5),
+    )

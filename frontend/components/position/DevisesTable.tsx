@@ -172,7 +172,7 @@ export function DevisesTable({ companyId, jour, banks, canEdit }: DevisesTablePr
                       return (
                         <td
                           key={bank.id}
-                          className={cn(NUMBER, GRID_GREY, note && "text-simtis-muted")}
+                          className={cn(NUMBER, GRID_GREY, cellule?.reprise && "text-simtis-muted")}
                           title={note ?? undefined}
                         >
                           {text}

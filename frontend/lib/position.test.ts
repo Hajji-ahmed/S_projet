@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { currencyCell, evolutionPoints, formatJour, formatTaux, signTone } from "./position";
+import {
+  currencyCell,
+  evolutionPoints,
+  formatJour,
+  formatTaux,
+  noteCellule,
+  signTone,
+} from "./position";
 
 describe("currencyCell", () => {
   it("affiche le solde dans sa devise, sans conversion", () => {
@@ -114,5 +121,30 @@ describe("signTone", () => {
     expect(signTone("-0.00")).toBe("neutral");
     expect(signTone("0")).toBe("neutral");
     expect(signTone(null)).toBe("neutral");
+  });
+});
+
+describe("noteCellule (plusieurs comptes, 23/10/2026)", () => {
+  it("détaille les comptes d'une cellule qui en regroupe plusieurs", () => {
+    const note = noteCellule(
+      {
+        valeur: "48299.91",
+        date_solde: "2025-09-30",
+        reprise: false,
+        detail: [
+          { numero: "USD-UN-4521", solde: "30000.00" },
+          { numero: "USD-DEUX-8830", solde: "18299.91" },
+        ],
+      },
+      "USD",
+    );
+
+    expect(note?.replace(/\s/g, " ")).toBe(
+      "Somme de 2 comptes (soldes …4521 : 30 000 USD ; …8830 : 18 299,91 USD)",
+    );
+  });
+
+  it("ne dit rien pour un seul compte au solde du jour", () => {
+    expect(noteCellule({ valeur: "10.00", date_solde: "2025-09-30", reprise: false })).toBeNull();
   });
 });

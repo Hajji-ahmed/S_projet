@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { currencySuffix, formatDate } from "@/lib/balances";
+import { finNumero } from "@/lib/accounts";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import type { Bank } from "@/types/bank";
@@ -83,7 +84,12 @@ export function BankCard({ bank, canManage, onEdit, onToggleStatus }: BankCardPr
         // Seulement le solde (décision du 08/10/2026) : crédit et position disponibles restent sur la
         // page de la banque
         <dl className="mt-5 text-sm">
-          <dt className="text-simtis-muted">Solde</dt>
+          <dt className="text-simtis-muted">
+            Solde
+            {bank.nb_comptes_mad > 1 && (
+              <span className="text-xs"> · {bank.nb_comptes_mad} comptes MAD</span>
+            )}
+          </dt>
           <dd className="mt-0.5 text-[22px] leading-tight font-semibold">
             <Amount value={figures.solde} emphasis="primary" />
           </dd>
@@ -95,9 +101,10 @@ export function BankCard({ bank, canManage, onEdit, onToggleStatus }: BankCardPr
       {bank.autres_comptes.length > 0 && (
         <ul className="mt-4 space-y-1 border-t border-simtis-border pt-3 text-sm">
           {bank.autres_comptes.map((other) => (
-            <li key={`${other.devise}-${other.type_compte}`} className="flex justify-between gap-3">
+            <li key={other.numero} className="flex justify-between gap-3">
               <span className="text-simtis-muted">
-                {other.type_compte === "DH convertible" ? "DH convertible" : other.devise}
+                {other.type_compte === "DH convertible" ? "DH convertible" : other.devise}{" "}
+                <span className="text-xs tabular-nums">{finNumero(other.numero)}</span>
               </span>
               <span className="text-simtis-text tabular-nums">
                 {formatAmount(other.solde, currencySuffix(other.devise))}

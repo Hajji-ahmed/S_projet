@@ -33,6 +33,7 @@ class OtherAccountOut(BaseModel):
     type_compte: str
     solde: Decimal | None
     date_maj: date | None
+    numero: str
 
 
 class BankOut(BaseModel):
@@ -46,6 +47,8 @@ class BankOut(BaseModel):
     # Avec `company_id` : chiffres du compte courant MAD de la société, et ses autres comptes
     figures: FiguresOut | None = None
     autres_comptes: list[OtherAccountOut] = []
+    # Comptes courants MAD additionnés dans `figures` (23/10/2026)
+    nb_comptes_mad: int = 0
 
     @classmethod
     def from_summary(cls, summary: BankSummary) -> "BankOut":
@@ -65,9 +68,11 @@ class BankOut(BaseModel):
                     type_compte=other.type_compte,
                     solde=other.solde,
                     date_maj=other.date_maj,
+                    numero=other.numero,
                 )
                 for other in summary.autres_comptes
             ],
+            nb_comptes_mad=summary.nb_principaux,
         )
 
 

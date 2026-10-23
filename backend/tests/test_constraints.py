@@ -741,13 +741,29 @@ def test_deleting_a_user_deletes_their_sessions(db):
     assert db.query(UserSession).filter_by(token_hash="b" * 64).count() == 0
 
 
-# --- Un compte actif par société, banque, devise et type (migration 0003) ------------------------
+# --- Plusieurs comptes par banque, devise et type (migration 0036, 23/10/2026) -------------------
 
 
-def test_second_active_account_in_the_same_slot_is_rejected(db, world):
-    duplicate = build_account(world.company, world.bank, devise="MAD", type_compte="Courant")
+def test_two_active_accounts_in_the_same_bank_and_currency_are_accepted(db, world):
+    save(db, build_account(world.company, world.bank, devise="MAD", type_compte="Courant"))
 
-    assert_rejected(db, "uq_bank_accounts_compte_actif_par_banque", duplicate)
+
+def test_the_account_number_stays_unique(db, world):
+    duplicate = build_account(world.company, world.bank, numero=world.account.numero)
+
+    assert_rejected(db, "numero", duplicate)
+
+
+def test_the_code_counter_is_kept_per_company_bank_and_year(db, world):
+    """Deux comptes de la même banque partagent un compteur : un second compteur pour la même
+    société, banque et année est refusé (clé primaire)."""
+    sql = (
+        "INSERT INTO reconciliation_code_counters (company_id, bank_id, annee, dernier) "
+        f"VALUES ({world.company.id}, {world.bank.id}, 2026, 1), "
+        f"({world.company.id}, {world.bank.id}, 2026, 2)"
+    )
+
+    assert_rejected(db, "pk_reconciliation_code_counters", sql=sql)
 
 
 def test_inactive_account_frees_its_slot(db, world):

@@ -1690,3 +1690,20 @@ def test_withdrawals_finex_repayments_and_certified_cheques_are_not_fees(client,
 
     assert [op["id"] for op in page["operations"]] == [frais.id]
     assert all(tx.id not in {op["id"] for op in page["operations"]} for tx in pas_frais)
+
+
+def test_two_accounts_of_the_same_bank_never_get_the_same_code(client, comptable, db):
+    """23/10/2026 : le compteur est tenu par société, banque et année, plus par compte (deux comptes
+    AWB donnaient tous deux AWB-AA-000001, refusé par l'unicité du code)."""
+    un, deux = account(db), account(db)
+    operation(db, un, montant="1000", libelle="VIR A")
+    ecriture(db, un, montant="-1000", libelle="VIR A", tiers=None)
+    operation(db, deux, montant="2000", libelle="VIR B")
+    ecriture(db, deux, montant="-2000", libelle="VIR B", tiers=None)
+    run(client, comptable, db)
+    pending = proposals(client, comptable, db).json()["correspondances"]
+
+    codes = sorted(_valider(client, comptable, p["id"])["code"] for p in pending)
+
+    annee = business_today().year % 100
+    assert codes == [f"AWB-{annee:02d}-000001", f"AWB-{annee:02d}-000002"]

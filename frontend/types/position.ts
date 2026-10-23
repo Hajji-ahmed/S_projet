@@ -4,7 +4,8 @@ export type BanqueColonne = {
   bank_id: number;
   code: string;
   logo: string | null;
-  /** Compte courant MAD actif de la banque ; `null` sans compte (toute la colonne vaut « - »). */
+  /** Premier compte courant MAD actif de la banque ; `null` sans compte (colonne à « - »). Avec
+   * plusieurs comptes, la colonne fait leur somme (23/10/2026). */
   bank_account_id: number | null;
   taux_pct: string | null;
   ligne: string | null;
@@ -16,6 +17,8 @@ export type CelluleBanque = {
   /** Date du solde utilisé ; `reprise` quand ce n'est pas le jour de la ligne. */
   date_solde: string | null;
   reprise: boolean;
+  /** Plusieurs comptes dans la cellule (23/10/2026) : solde de chacun ; vide sinon. */
+  detail?: { numero: string; solde: string }[];
 };
 
 export type LigneBanques = {
