@@ -39,6 +39,7 @@ from app.models.securite import (
     Role,
     RolePermission,
     User,
+    UserPermission,
     UserRole,
     UserSession,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "SaisiePrevision",
     "SaisiePrevisionJour",
     "User",
+    "UserPermission",
     "UserRole",
     "UserSession",
 ]

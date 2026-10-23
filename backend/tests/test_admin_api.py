@@ -284,3 +284,109 @@ def test_administration_needs_its_permissions(client, reference):
 )
 def test_role_codes_are_derived_from_the_name(nom, code):
     assert code_role(nom) == code
+
+
+# --- Permissions par personne (23/10/2026) --------------------------------------------------------
+
+
+@pytest.fixture
+def comptable(client, reference):
+    user = make_auth_user(reference, "COMPTABLE", email="compta-perso@example.com")
+    return user, bearer(login(client, "compta-perso@example.com"))
+
+
+def _perms(client, headers, user_id):
+    return client.get(f"/api/admin/users/{user_id}/permissions", headers=headers)
+
+
+def _set(client, headers, user_id, ajouts=(), retraits=()):
+    return client.put(
+        f"/api/admin/users/{user_id}/permissions",
+        json={"ajouts": list(ajouts), "retraits": list(retraits)},
+        headers=headers,
+    )
+
+
+def test_a_permission_added_to_one_person_applies_at_once(client, admin, comptable, db):
+    _, headers = admin
+    user, compta = comptable
+    assert client.get("/api/audit", headers=compta).status_code == 403
+
+    response = _set(client, headers, user.id, ajouts=["audit.view"])
+
+    assert response.status_code == 200, response.text
+    audit_view = next(p for p in response.json() if p["code"] == "audit.view")
+    assert (audit_view["personnalisation"], audit_view["effective"]) == (True, True)
+    assert client.get("/api/audit", headers=compta).status_code == 200
+    assert "audit.view" in client.get("/api/auth/me", headers=compta).json()["permissions"]
+    [entry] = audits(db, "modification_permissions_utilisateur")
+    assert entry.nouvelle_valeur == {"ajouts": ["audit.view"], "retraits": []}
+
+
+def test_a_permission_removed_from_one_person_leaves_the_role_untouched(
+    client, admin, comptable, db
+):
+    from app.models import Company
+
+    _, headers = admin
+    user, compta = comptable
+    company_id = db.scalar(select(Company.id).where(Company.code == "SIMTIS"))
+    autre = make_auth_user(db, "COMPTABLE", email="autre-compta@example.com")
+    autre_headers = bearer(login(client, "autre-compta@example.com"))
+
+    assert _set(client, headers, user.id, retraits=["dashboard.view"]).status_code == 200
+
+    params = {"company_id": str(company_id)}
+    assert client.get("/api/dashboard", params=params, headers=compta).status_code == 403
+    assert client.get("/api/dashboard", params=params, headers=autre_headers).status_code == 200
+    detail = next(
+        p for p in _perms(client, headers, user.id).json() if p["code"] == "dashboard.view"
+    )
+    assert detail["par_roles"] == ["Comptable"]
+    assert (detail["personnalisation"], detail["effective"]) == (False, False)
+    [ligne] = [
+        u for u in client.get("/api/admin/users", headers=headers).json() if u["id"] == user.id
+    ]
+    assert (ligne["nb_ajouts"], ligne["nb_retraits"]) == (0, 1)
+    assert autre.id != user.id
+
+
+def test_useless_changes_are_not_stored(client, admin, comptable, db):
+    _, headers = admin
+    user, _ = comptable
+
+    # Déjà donnée par le rôle Comptable, et pas donnée par lui
+    response = _set(client, headers, user.id, ajouts=["accounting.import"], retraits=["audit.view"])
+
+    assert response.status_code == 200
+    assert all(p["personnalisation"] is None for p in response.json())
+    assert audits(db, "modification_permissions_utilisateur") == []
+
+
+def test_an_admin_keeps_user_and_role_administration(client, admin, db):
+    user, headers = admin
+
+    response = _set(client, headers, user.id, retraits=["admin.users"])
+
+    assert response.status_code == 409
+    assert "garde l'administration" in response.json()["detail"]
+    locked = {p["code"] for p in _perms(client, headers, user.id).json() if p["verrouillee"]}
+    assert locked == {"admin.users", "admin.roles"}
+
+
+def test_wrong_permission_changes_are_refused(client, admin, comptable):
+    _, headers = admin
+    user, _ = comptable
+
+    inconnue = _set(client, headers, user.id, ajouts=["inconnue.code"])
+    les_deux = _set(client, headers, user.id, ajouts=["audit.view"], retraits=["audit.view"])
+    personne = _set(client, headers, 999999, ajouts=["audit.view"])
+
+    assert (inconnue.status_code, les_deux.status_code, personne.status_code) == (409, 409, 404)
+
+
+def test_personal_permissions_need_user_administration(client, comptable):
+    user, compta = comptable
+
+    assert _perms(client, compta, user.id).status_code == 403
+    assert _set(client, compta, user.id, ajouts=["audit.view"]).status_code == 403

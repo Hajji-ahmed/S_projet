@@ -10,7 +10,11 @@ ROLE_ADMIN = "ADMIN"
 
 def list_users(db: Session) -> list[User]:
     return list(
-        db.scalars(select(User).options(selectinload(User.roles)).order_by(func.lower(User.nom)))
+        db.scalars(
+            select(User)
+            .options(selectinload(User.roles), selectinload(User.permissions_perso))
+            .order_by(func.lower(User.nom))
+        )
     )
 
 

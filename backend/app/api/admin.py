@@ -11,6 +11,8 @@ from app.core.permissions import PermissionCode
 from app.schemas.admin import (
     PasswordOut,
     PermissionOut,
+    PermissionPersonneOut,
+    PermissionsPersonneIn,
     RoleIn,
     RoleOut,
     UserIn,
@@ -75,6 +77,36 @@ def update_user(
             ip=client_ip(request),
         )
     )
+
+
+@router.get("/users/{user_id}/permissions", response_model=list[PermissionPersonneOut])
+def user_permissions(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_users),
+) -> list[PermissionPersonneOut]:
+    """Permissions de la personne : origine (rôles, ajout, retrait) et état final (23/10/2026)."""
+    return [PermissionPersonneOut.of(item) for item in admin_service.user_permissions(db, user_id)]
+
+
+@router.put("/users/{user_id}/permissions", response_model=list[PermissionPersonneOut])
+def set_user_permissions(
+    user_id: int,
+    body: PermissionsPersonneIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_users),
+) -> list[PermissionPersonneOut]:
+    """Remplace les ajouts et retraits de permissions de la personne, tout ou rien."""
+    items = admin_service.set_user_permissions(
+        db,
+        user_id,
+        ajouts=body.ajouts,
+        retraits=body.retraits,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return [PermissionPersonneOut.of(item) for item in items]
 
 
 @router.patch("/users/{user_id}/status", response_model=UserOut)

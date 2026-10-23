@@ -1,10 +1,11 @@
 "use client";
 
-import { KeyRound, Lock, Pencil, Plus, Power, UserRound } from "lucide-react";
+import { KeyRound, Lock, Pencil, Plus, Power, ShieldCheck, UserRound } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { PasswordModal } from "@/components/administration/PasswordModal";
 import { UserFormModal } from "@/components/administration/UserFormModal";
+import { UserPermissionsModal } from "@/components/administration/UserPermissionsModal";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -37,6 +38,8 @@ export function UsersTab() {
     user: AdminUser;
   } | null>(null);
   const [envoi, setEnvoi] = useState(false);
+  // Permissions propres à une personne (23/10/2026)
+  const [permissionsDe, setPermissionsDe] = useState<AdminUser | null>(null);
 
   const [version, setVersion] = useState(0);
   const charger = useCallback(() => setVersion((n) => n + 1), []);
@@ -112,6 +115,14 @@ export function UsersTab() {
               {role.nom}
             </span>
           ))}
+          {(u.nb_ajouts > 0 || u.nb_retraits > 0) && (
+            <span
+              className="rounded-full bg-simtis-warning-bg px-2 py-0.5 text-xs font-medium text-simtis-warning-fg tabular-nums"
+              title="Permissions ajoutées / retirées pour cette personne, en plus de son rôle"
+            >
+              +{u.nb_ajouts} / −{u.nb_retraits}
+            </span>
+          )}
         </span>
       ),
     },
@@ -146,6 +157,11 @@ export function UsersTab() {
       render: (u) => (
         <span className="flex justify-end gap-1">
           <IconAction label="Modifier" icon={Pencil} onClick={() => setFormulaire(u)} />
+          <IconAction
+            label="Permissions de cette personne"
+            icon={ShieldCheck}
+            onClick={() => setPermissionsDe(u)}
+          />
           <IconAction
             label="Réinitialiser le mot de passe"
             icon={KeyRound}
@@ -200,6 +216,17 @@ export function UsersTab() {
           onSaved={() => {
             setFormulaire(null);
             toast("Utilisateur enregistré.");
+            charger();
+          }}
+        />
+      )}
+
+      {permissionsDe && (
+        <UserPermissionsModal
+          user={permissionsDe}
+          onClose={() => setPermissionsDe(null)}
+          onSaved={() => {
+            setPermissionsDe(null);
             charger();
           }}
         />

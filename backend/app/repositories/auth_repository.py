@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.models import Permission, Role, RolePermission, User, UserRole, UserSession
+from app.models import Permission, Role, RolePermission, User, UserPermission, UserRole, UserSession
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -24,8 +24,8 @@ def get_role_names(db: Session, user_id: int) -> list[str]:
     return list(db.scalars(query))
 
 
-def get_permission_codes(db: Session, user_id: int) -> set[str]:
-    """Permissions effectives : l'union des permissions de tous les rôles de l'utilisateur."""
+def get_role_permission_codes(db: Session, user_id: int) -> set[str]:
+    """Permissions données par les rôles de l'utilisateur (union de tous ses rôles)."""
     query = (
         select(Permission.code)
         .join(RolePermission, RolePermission.permission_id == Permission.id)
@@ -34,6 +34,27 @@ def get_permission_codes(db: Session, user_id: int) -> set[str]:
         .distinct()
     )
     return set(db.scalars(query))
+
+
+def get_personal_permissions(db: Session, user_id: int) -> dict[str, bool]:
+    """Ajouts (vrai) et retraits (faux) propres à l'utilisateur, par code (23/10/2026)."""
+    rows = db.execute(
+        select(Permission.code, UserPermission.accordee)
+        .join(UserPermission, UserPermission.permission_id == Permission.id)
+        .where(UserPermission.user_id == user_id)
+    )
+    return {code: accordee for code, accordee in rows}
+
+
+def get_permission_codes(db: Session, user_id: int) -> set[str]:
+    """Permissions effectives : celles des rôles + les ajouts − les retraits de la personne."""
+    codes = get_role_permission_codes(db, user_id)
+    for code, accordee in get_personal_permissions(db, user_id).items():
+        if accordee:
+            codes.add(code)
+        else:
+            codes.discard(code)
+    return codes
 
 
 def get_roles_by_codes(db: Session, codes: list[str]) -> list[Role]:

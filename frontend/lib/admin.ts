@@ -1,9 +1,14 @@
 /** Administration (P16.1) : règles d'affichage pures. Les vraies règles sont vérifiées par l'API. */
-import type { AdminPermission, AdminRole } from "@/types/admin";
+import type {
+  AdminPermission,
+  AdminRole,
+  ChangementsPersonne,
+  PermissionPersonne,
+} from "@/types/admin";
 
 /** Permissions groupées par module, dans l'ordre reçu de l'API. */
-export function parModule(permissions: AdminPermission[]): [string, AdminPermission[]][] {
-  const groupes = new Map<string, AdminPermission[]>();
+export function parModule<T extends AdminPermission>(permissions: T[]): [string, T[]][] {
+  const groupes = new Map<string, T[]>();
   for (const permission of permissions) {
     const groupe = groupes.get(permission.module) ?? [];
     groupe.push(permission);
@@ -41,4 +46,23 @@ export const PERMISSIONS_ADMIN = ["admin.users", "admin.roles"] as const;
 
 export function caseVerrouillee(role: AdminRole, code: string): boolean {
   return role.code === "ADMIN" && (PERMISSIONS_ADMIN as readonly string[]).includes(code);
+}
+
+/**
+ * Ajouts et retraits à envoyer pour une personne (23/10/2026) : une case cochée que ses rôles ne
+ * donnent pas est un ajout ; une case décochée que ses rôles donnent est un retrait. Le reste suit
+ * les rôles et n'est pas envoyé (l'API recalcule de toute façon).
+ */
+export function changementsPersonne(
+  permissions: PermissionPersonne[],
+  cochees: ReadonlySet<string>,
+): ChangementsPersonne {
+  const ajouts: string[] = [];
+  const retraits: string[] = [];
+  for (const permission of permissions) {
+    const parRole = permission.par_roles.length > 0;
+    if (cochees.has(permission.code) && !parRole) ajouts.push(permission.code);
+    if (!cochees.has(permission.code) && parRole) retraits.push(permission.code);
+  }
+  return { ajouts: ajouts.sort(), retraits: retraits.sort() };
 }

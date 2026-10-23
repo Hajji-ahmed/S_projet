@@ -3,7 +3,9 @@ import type {
   AdminPermission,
   AdminRole,
   AdminUser,
+  ChangementsPersonne,
   PasswordResult,
+  PermissionPersonne,
   RoleInput,
   UserInput,
 } from "@/types/admin";
@@ -68,4 +70,18 @@ export function updateRole(id: number, data: RoleInput) {
 
 export function deleteRole(id: number) {
   return apiFetch<void>(`/admin/roles/${id}`, { method: "DELETE" });
+}
+
+/** Permissions d'une personne : origine et état final (23/10/2026). */
+export function getUserPermissions(id: number) {
+  return apiFetch<PermissionPersonne[]>(`/admin/users/${id}/permissions`);
+}
+
+/** Remplace les ajouts et retraits de permissions de la personne, tout ou rien. */
+export function setUserPermissions(id: number, changements: ChangementsPersonne) {
+  return apiFetch<PermissionPersonne[]>(`/admin/users/${id}/permissions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changements),
+  });
 }

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.permissions import PERMISSION_DESCRIPTIONS, PermissionCode
-from app.models import Permission, Role, User
+from app.models import Permission, Role, User, UserPermission
 from app.repositories import admin_repository, auth_repository
 from app.repositories.admin_repository import ROLE_ADMIN
 from app.services import audit_service
@@ -113,6 +113,109 @@ def _check_admins_left(db: Session, user: User) -> None:
     refuse s'il est le dernier. Le rôle ADMIN est verrouillé par l'appelant."""
     if _est_admin_actif(user) and admin_repository.count_active_admins(db) <= 1:
         raise ConflictError("Il doit rester au moins un administrateur actif.")
+
+
+# --- Permissions par personne (23/10/2026) --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PermissionPersonne:
+    code: str
+    description: str
+    module: str
+    # Rôles de la personne qui donnent cette permission (noms)
+    par_roles: tuple[str, ...]
+    # None : comme ses rôles ; True : ajoutée pour la personne ; False : retirée
+    personnalisation: bool | None
+    effective: bool
+    # Case verrouillée : un administrateur garde l'administration des utilisateurs et des rôles
+    verrouillee: bool
+
+
+def _est_admin(user: User) -> bool:
+    return any(role.code == ROLE_ADMIN for role in user.roles)
+
+
+def user_permissions(db: Session, user_id: int) -> list[PermissionPersonne]:
+    """Chaque permission connue pour cette personne : d'où elle vient et son état final."""
+    user = _user(db, user_id)
+    perso = auth_repository.get_personal_permissions(db, user.id)
+    roles_par_code: dict[str, list[str]] = {}
+    for role in sorted(user.roles, key=lambda r: r.nom):
+        for permission in role.permissions:
+            roles_par_code.setdefault(permission.code, []).append(role.nom)
+    admin = _est_admin(user)
+    resultat = []
+    for info in list_permissions(db):
+        par_roles = tuple(roles_par_code.get(info.code, ()))
+        personnalisation = perso.get(info.code)
+        effective = personnalisation if personnalisation is not None else bool(par_roles)
+        resultat.append(
+            PermissionPersonne(
+                code=info.code,
+                description=info.description,
+                module=info.module,
+                par_roles=par_roles,
+                personnalisation=personnalisation,
+                effective=effective,
+                verrouillee=admin and info.code in PERMISSIONS_ADMIN_OBLIGATOIRES,
+            )
+        )
+    return resultat
+
+
+def set_user_permissions(
+    db: Session,
+    user_id: int,
+    *,
+    ajouts: list[str],
+    retraits: list[str],
+    acteur_id: int,
+    ip: str | None,
+) -> list[PermissionPersonne]:
+    """Remplace les ajouts et retraits de la personne, tout ou rien. Un ajout déjà donné par ses
+    rôles, ou un retrait d'une permission qu'ils ne donnent pas, est ignoré (rien d'inutile n'est
+    enregistré). Un administrateur garde l'administration des utilisateurs et des rôles."""
+    user = _user(db, user_id)
+    if set(ajouts) & set(retraits):
+        raise ConflictError("Une permission ne peut pas être à la fois ajoutée et retirée.")
+    permissions = {p.code: p for p in _permissions(db, [*ajouts, *retraits])}
+    par_roles = auth_repository.get_role_permission_codes(db, user.id)
+    if _est_admin(user):
+        bloquees = sorted(set(retraits) & set(PERMISSIONS_ADMIN_OBLIGATOIRES))
+        if bloquees:
+            raise ConflictError(
+                "Un administrateur garde l'administration des utilisateurs et des rôles."
+            )
+    voulu = {code: True for code in ajouts if code not in par_roles}
+    voulu |= {code: False for code in retraits if code in par_roles}
+
+    avant = auth_repository.get_personal_permissions(db, user.id)
+    if voulu != avant:
+        user.permissions_perso = [
+            UserPermission(user_id=user.id, permission_id=permissions[code].id, accordee=accordee)
+            for code, accordee in sorted(voulu.items())
+        ]
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="modification_permissions_utilisateur",
+            entite="user",
+            entite_id=user.id,
+            avant=_etat_perso(avant),
+            apres=_etat_perso(voulu),
+            ip=ip,
+        )
+    db.commit()
+    db.refresh(user)
+    return user_permissions(db, user.id)
+
+
+def _etat_perso(perso: dict[str, bool]) -> dict:
+    return {
+        "ajouts": sorted(code for code, accordee in perso.items() if accordee),
+        "retraits": sorted(code for code, accordee in perso.items() if not accordee),
+    }
 
 
 # --- Utilisateurs ---------------------------------------------------------------------------------

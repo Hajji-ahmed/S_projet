@@ -39,6 +39,10 @@ class User(TimestampMixin, Base):
     verrouille_jusqu_a: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     roles: Mapped[list["Role"]] = relationship(secondary="user_roles", back_populates="users")
+    # Ajouts et retraits de permissions propres à la personne (23/10/2026, migration 0037)
+    permissions_perso: Mapped[list["UserPermission"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class UserSession(Base):
@@ -100,6 +104,23 @@ class UserRole(Base):
     role_id: Mapped[int] = mapped_column(
         ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class UserPermission(Base):
+    """Permission ajoutée (`accordee` vrai) ou retirée (faux) à une personne, en plus de ses rôles
+    (23/10/2026) : ses permissions = rôles + ajouts − retraits."""
+
+    __tablename__ = "user_permissions"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    permission_id: Mapped[int] = mapped_column(
+        ForeignKey("permissions.id", ondelete="CASCADE"), primary_key=True
+    )
+    accordee: Mapped[bool] = mapped_column(Boolean)
+
+    permission: Mapped["Permission"] = relationship()
 
 
 class RolePermission(Base):

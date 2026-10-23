@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import Role, User
-from app.services.admin_service import PermissionInfo
+from app.services.admin_service import PermissionInfo, PermissionPersonne
 
 
 class RoleRef(BaseModel):
@@ -23,6 +23,9 @@ class UserOut(BaseModel):
     dernier_login: datetime | None
     verrouille: bool
     created_at: datetime
+    # Permissions ajoutées / retirées pour la personne, en plus de ses rôles (23/10/2026)
+    nb_ajouts: int = 0
+    nb_retraits: int = 0
 
     @classmethod
     def of(cls, user: User, *, now: datetime) -> "UserOut":
@@ -38,7 +41,39 @@ class UserOut(BaseModel):
             dernier_login=user.dernier_login,
             verrouille=user.verrouille_jusqu_a is not None and user.verrouille_jusqu_a > now,
             created_at=user.created_at,
+            nb_ajouts=sum(1 for p in user.permissions_perso if p.accordee),
+            nb_retraits=sum(1 for p in user.permissions_perso if not p.accordee),
         )
+
+
+class PermissionPersonneOut(BaseModel):
+    code: str
+    description: str
+    module: str
+    par_roles: list[str]
+    # null : comme ses rôles ; true : ajoutée ; false : retirée
+    personnalisation: bool | None
+    effective: bool
+    verrouillee: bool
+
+    @classmethod
+    def of(cls, item: PermissionPersonne) -> "PermissionPersonneOut":
+        return cls(
+            code=item.code,
+            description=item.description,
+            module=item.module,
+            par_roles=list(item.par_roles),
+            personnalisation=item.personnalisation,
+            effective=item.effective,
+            verrouillee=item.verrouillee,
+        )
+
+
+class PermissionsPersonneIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ajouts: list[str] = Field(default_factory=list, max_length=100)
+    retraits: list[str] = Field(default_factory=list, max_length=100)
 
 
 class UserIn(BaseModel):

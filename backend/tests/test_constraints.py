@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select, text
 from sqlalchemy.exc import DataError
 
 from app.models import (
@@ -1173,3 +1174,36 @@ def test_only_a_pending_operation_can_be_replaced(db, world):
     normale = build_transaction(world.statement, remplacee_par_id=definitive.id)
 
     assert_rejected(db, "ck_bank_transactions_remplacee_si_en_cours", normale)
+
+
+# --- Permissions par personne (migration 0037) ----------------------------------------------------
+
+
+def test_one_personal_line_per_user_and_permission(db):
+    from app.models import Permission, UserPermission
+
+    user = save(db, build_user())
+    permission = db.scalar(select(Permission).where(Permission.code == "audit.view")) or save(
+        db, Permission(code="audit.view")
+    )
+    save(db, UserPermission(user_id=user.id, permission_id=permission.id, accordee=True))
+
+    sql = (
+        "INSERT INTO user_permissions (user_id, permission_id, accordee) "
+        f"VALUES ({user.id}, {permission.id}, false)"
+    )
+    assert_rejected(db, "pk_user_permissions", sql=sql)
+
+
+def test_personal_permissions_are_deleted_with_the_user(db):
+    from app.models import Permission, UserPermission
+
+    user = save(db, build_user())
+    permission = db.scalar(select(Permission).where(Permission.code == "audit.view")) or save(
+        db, Permission(code="audit.view")
+    )
+    save(db, UserPermission(user_id=user.id, permission_id=permission.id, accordee=True))
+
+    db.execute(text(f"DELETE FROM users WHERE id = {user.id}"))
+
+    assert db.scalar(select(UserPermission).filter_by(user_id=user.id)) is None
