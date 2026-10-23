@@ -4,6 +4,7 @@ import {
   basculer,
   caseVerrouillee,
   changementsPersonne,
+  permissionsVisibles,
   matriceDe,
   parModule,
   rolesModifies,
@@ -82,5 +83,17 @@ describe("changementsPersonne (23/10/2026)", () => {
     expect(
       changementsPersonne(permissions, new Set(["dashboard.view", "accounting.import"])),
     ).toEqual({ ajouts: [], retraits: [] });
+  });
+});
+
+describe("permissionsVisibles (23/10/2026)", () => {
+  const liste = [{ code: "reconciliation.view" }, { code: "discrepancies.manage" }];
+
+  it("masque le module Écarts tant que la fonction est mise de côté", () => {
+    expect(permissionsVisibles(liste).map((p) => p.code)).toEqual(["reconciliation.view"]);
+  });
+
+  it("montre tout quand aucun module n'est masqué", () => {
+    expect(permissionsVisibles(liste, [])).toEqual(liste);
   });
 });

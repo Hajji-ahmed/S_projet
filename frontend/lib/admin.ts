@@ -1,4 +1,5 @@
 /** Administration (P16.1) : règles d'affichage pures. Les vraies règles sont vérifiées par l'API. */
+import { ECARTS_ACTIFS } from "@/lib/features";
 import type {
   AdminPermission,
   AdminRole,
@@ -65,4 +66,19 @@ export function changementsPersonne(
     if (!cochees.has(permission.code) && parRole) retraits.push(permission.code);
   }
   return { ajouts: ajouts.sort(), retraits: retraits.sort() };
+}
+
+/** Modules des fonctions mises de côté (`lib/features.ts`) : leurs permissions ne s'affichent pas. */
+const PREFIXES_MASQUES: readonly string[] = ECARTS_ACTIFS ? [] : ["discrepancies."];
+
+/**
+ * Permissions affichées dans l'administration (23/10/2026) : sans le module Écarts tant que la
+ * fonction est mise de côté. Masquer ne retire rien : les rôles et les personnes gardent ces
+ * permissions en base, et les écrans renvoient leur état intact à l'enregistrement.
+ */
+export function permissionsVisibles<T extends { code: string }>(
+  permissions: T[],
+  masques: readonly string[] = PREFIXES_MASQUES,
+): T[] {
+  return permissions.filter((p) => !masques.some((prefixe) => p.code.startsWith(prefixe)));
 }
