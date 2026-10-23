@@ -100,7 +100,7 @@ export function AppSidebar({
         })}
       </nav>
 
-      <div className={cn("shrink-0 px-3 pb-2 max-lg:hidden", collapsed && "flex justify-center")}>
+      <div className={cn("shrink-0 px-3 pb-4 max-lg:hidden", collapsed && "flex justify-center")}>
         <button
           type="button"
           onClick={onToggleCollapsed}
@@ -118,24 +118,6 @@ export function AppSidebar({
           )}
           {!collapsed && <span>Réduire le menu</span>}
         </button>
-      </div>
-
-      <div
-        className={cn(
-          "mx-3 mb-4 flex shrink-0 items-center gap-3 rounded-card border border-white/10 bg-white/[0.04] px-3 py-3 text-xs text-white/60 md:hidden",
-          collapsed ? "lg:hidden" : "lg:flex",
-        )}
-      >
-        <span
-          aria-hidden
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-semibold text-white"
-        >
-          S
-        </span>
-        <span>
-          <span className="block text-sm font-medium text-white/85">SIMTIS Finance</span>
-          <span className="block">v1.0.0</span>
-        </span>
       </div>
     </aside>
   );

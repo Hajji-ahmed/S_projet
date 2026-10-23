@@ -111,7 +111,9 @@ seuls les ports 80 et 443 ouverts. Même volume de base : les données sont cons
 Sur le serveur, `cron` lance `deploy/auto-deploy.sh` toutes les 5 minutes. Quand `hajji` a un nouveau
 commit **et que la CI GitHub de ce commit est verte**, il sauvegarde la base, met le code à jour
 (`git reset --hard`), reconstruit et redémarre (`docker-compose.prod.yml`), puis contrôle `/api/health`.
-Le serveur va chercher le code (dépôt public, aucun secret) : une pull request n'est jamais exécutée.
+Le serveur va chercher le code : une pull request n'est jamais exécutée. Dépôt privé : le code arrive par une
+clé de déploiement en lecture seule (`~/.ssh/simtis_deploy`, remote `git@github.com:…`) et l'état de la CI
+par un jeton GitHub « Checks : Read-only » dans `~/.simtis-github-token` (chmod 600).
 
 ```bash
 crontab -l                                   # */5 * * * * bash $HOME/simtis/deploy/auto-deploy.sh >> $HOME/backups/deploiement.log 2>&1

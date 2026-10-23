@@ -3,8 +3,8 @@
 #   */5 * * * * $HOME/simtis/deploy/auto-deploy.sh >> $HOME/backups/deploiement.log 2>&1
 # Quand la branche suivie a un nouveau commit ET que la CI GitHub de ce commit est verte : sauvegarde
 # de la base, code mis à jour, application reconstruite et redémarrée, contrôle de santé. Le serveur va
-# chercher (dépôt public, sans secret) : rien n'entre depuis l'extérieur, une pull request n'est jamais
-# exécutée. Un commit dont la CI ou le déploiement a échoué n'est pas retenté (fichier .deploiement-echoue).
+# chercher (clé de déploiement en lecture seule) : rien n'entre depuis l'extérieur, une pull request n'est
+# jamais exécutée. Un commit dont la CI ou le déploiement a échoué n'est pas retenté (fichier .deploiement-echoue).
 set -euo pipefail
 
 DOSSIER="${SIMTIS_DOSSIER:-$HOME/simtis}"
@@ -26,8 +26,14 @@ DEPLOYE=$(cat .deploiement-ok 2>/dev/null || git rev-parse HEAD)
 [ "$DISTANT" = "$(cat .deploiement-echoue 2>/dev/null)" ] && exit 0
 COURT=${DISTANT:0:7}
 
-# État de la CI du commit (API publique de GitHub) : attente, verte ou rouge
-ETAT=$(curl -fsS -m 20 -H "Accept: application/vnd.github+json" \
+# État de la CI du commit (API GitHub) : attente, verte ou rouge. Dépôt privé : jeton en lecture seule
+# (« Checks : Read-only ») dans ~/.simtis-github-token (chmod 600) ; sans ce fichier, appel anonyme
+JETON_FICHIER="${SIMTIS_JETON:-$HOME/.simtis-github-token}"
+AUTH=()
+if [ -r "$JETON_FICHIER" ]; then
+  AUTH=(-H "Authorization: Bearer $(tr -d '[:space:]' < "$JETON_FICHIER")")
+fi
+ETAT=$(curl -fsS -m 20 -H "Accept: application/vnd.github+json" "${AUTH[@]}" \
   "https://api.github.com/repos/$DEPOT/commits/$DISTANT/check-runs?per_page=100" |
   python3 -c '
 import json, sys
