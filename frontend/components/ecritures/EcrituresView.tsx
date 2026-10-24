@@ -250,7 +250,13 @@ function Ecritures({ companyId }: { companyId: number }) {
         </section>
       )}
 
-      <EntriesCard companyId={companyId} accounts={accounts} logos={logos} reloadKey={reloadKey} />
+      <EntriesCard
+        companyId={companyId}
+        accounts={accounts}
+        logos={logos}
+        reloadKey={reloadKey}
+        canEdit={canImport}
+      />
 
       {aSupprimer && (
         <DeleteImportModal

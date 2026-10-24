@@ -2559,3 +2559,91 @@ def test_deleting_a_statement_needs_the_import_permission(client, account, db, r
     direction = bearer(login(client, "dir-suppr@example.com"))
 
     assert _supprimer(client, direction, 1).status_code == 403
+
+
+# --- Saisie et suppression manuelles (24/10/2026) ------------------------------------------------
+
+
+def _ajouter(client, headers, account_id, **over):
+    body = {
+        "date_operation": "2026-09-27",
+        "libelle": "VIR RECU",
+        "credit": "1000.00",
+        "motif": "Absente du relevé",
+        **over,
+    }
+    return client.post(
+        f"/api/statements/accounts/{account_id}/operations", json=body, headers=headers
+    )
+
+
+def test_a_manual_operation_follows_the_statement_and_moves_the_balance(
+    client, tresorerie, account, db
+):
+    from app.models import AuditLog
+    from app.services.position_banques_service import soldes_par_compte
+
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+
+    response = _ajouter(client, tresorerie, account.id)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert (body["origine"], body["solde"], body["statut"]) == (
+        "Manuelle",
+        "1038349.50",
+        "Non rapprochée",
+    )
+    soldes = soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id]
+    assert soldes[-1] == (date(2026, 9, 27), Decimal("1038349.50"))
+    [entry] = db.scalars(select(AuditLog).filter_by(action="saisie_manuelle_operation")).all()
+    assert entry.nouvelle_valeur["motif"] == "Absente du relevé"
+    # Une seconde opération identique est une autre opération (comme dans un fichier) : son solde
+    # suit la première
+    assert _ajouter(client, tresorerie, account.id).json()["solde"] == "1039349.50"
+
+
+def test_a_manual_operation_typed_like_the_bank_is_a_duplicate_at_import(
+    client, tresorerie, account, db
+):
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    _ajouter(client, tresorerie, account.id)
+    rows = [HEADER, ["27/09/2026", None, "VIR RECU", None, 1000, 1038349.5]]
+
+    apercu = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="oct.xlsx").json()
+
+    assert [ligne["statut"] for ligne in apercu["lignes"]] == ["Doublon"]
+
+
+def test_a_wrong_manual_operation_is_refused(client, tresorerie, account, db):
+    deux_cotes = _ajouter(client, tresorerie, account.id, debit="10.00")
+    sans_libelle = _ajouter(client, tresorerie, account.id, libelle="  ")
+    futur = _ajouter(client, tresorerie, account.id, date_operation="2999-01-01")
+    sans_motif = _ajouter(client, tresorerie, account.id, motif="")
+
+    assert [r.status_code for r in (deux_cotes, sans_libelle, futur, sans_motif)] == [409] * 4
+
+
+def test_one_operation_is_deleted_unless_reconciled(client, tresorerie, account, db):
+    from app.models import AuditLog
+
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    premiere, deuxieme = transactions(db, account)[:2]
+    _proposition(db, deuxieme, statut="Validée")
+
+    response = client.post(
+        f"/api/statements/transactions/{premiere.id}/supprimer",
+        json={"motif": "Ligne parasite"},
+        headers=tresorerie,
+    )
+    refus = client.post(
+        f"/api/statements/transactions/{deuxieme.id}/supprimer",
+        json={"motif": "Ligne parasite"},
+        headers=tresorerie,
+    )
+
+    assert response.status_code == 204, response.text
+    assert refus.status_code == 409
+    assert "CIH-26-000042" in refus.json()["detail"]
+    assert len(transactions(db, account)) == 2
+    assert db.scalars(select(AuditLog).filter_by(action="suppression_operation")).all()

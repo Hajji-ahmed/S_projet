@@ -190,7 +190,7 @@ export type Transaction = {
   montant: string;
   statut: string;
   /** « Corrigée » : modifiée dans l'aperçu avant l'enregistrement. */
-  origine: "Fichier" | "Corrigée";
+  origine: "Fichier" | "Corrigée" | "Manuelle";
   /** Type du Pointage, pour préremplir la fenêtre de modification. */
   pointage_type_id: number | null;
 };

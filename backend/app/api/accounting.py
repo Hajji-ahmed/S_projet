@@ -1,9 +1,10 @@
 """Import et lecture des écritures comptables Sage / SI (P10)."""
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated, Literal, TypeVar
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
@@ -21,7 +22,12 @@ from app.schemas.accounting import (
     LignesGardeesIn,
     MappingComptableIn,
 )
-from app.services import accounting_import_service, import_file, suppression_import_service
+from app.services import (
+    accounting_import_service,
+    import_file,
+    saisie_manuelle_service,
+    suppression_import_service,
+)
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/accounting", tags=["accounting"])
@@ -175,6 +181,65 @@ def list_entries(
         sens=sens,
     )
     return EcrituresPageOut.from_page(result)
+
+
+class EcritureManuelleIn(BaseModel):
+    """Écriture saisie à la main (24/10/2026) ; montants en texte exact (« 1250.50 »)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bank_account_id: int
+    journal: str = Field(max_length=20)
+    date_ecriture: date
+    libelle: str = Field(max_length=500)
+    debit: Decimal | None = None
+    credit: Decimal | None = None
+    numero_piece: str | None = Field(default=None, max_length=60)
+    reference: str | None = Field(default=None, max_length=60)
+    echeance: date | None = None
+    montant_devise: Decimal | None = None
+    motif: str = Field(max_length=500)
+
+
+@router.post("/entries", response_model=EcritureDetailOut, status_code=201)
+def ajouter_ecriture(
+    body: EcritureManuelleIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> EcritureDetailOut:
+    """Ajoute à la main une écriture oubliée par Sage (24/10/2026), avec un motif."""
+    saisie = saisie_manuelle_service.EcritureSaisie(**body.model_dump(exclude={"motif"}))
+    entry = saisie_manuelle_service.ajouter_ecriture(
+        db, saisie, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    return EcritureDetailOut(
+        **EcritureOut.fields_of(entry, entry.bank_account.bank.code),
+        fichier_nom=None,
+        importe_le=None,
+        importe_par=None,
+    )
+
+
+class MotifIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motif: str = Field(max_length=500)
+
+
+@router.post("/entries/{entry_id}/supprimer", status_code=204)
+def supprimer_ecriture(
+    entry_id: int,
+    body: MotifIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> Response:
+    """Supprime une écriture (importée ou manuelle) non rapprochée, avec un motif (24/10/2026)."""
+    saisie_manuelle_service.supprimer_ecriture(
+        db, entry_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    return Response(status_code=204)
 
 
 @router.get("/entries/{entry_id}", response_model=EcritureDetailOut)

@@ -73,7 +73,7 @@ def jours_dans_sage(
     rows = db.execute(
         select(AccountingEntry.bank_account_id, AccountingEntry.date_ecriture).where(
             AccountingEntry.company_id == company_id,
-            AccountingEntry.origine == "Sage",
+            AccountingEntry.origine != "SIMTIS",
             AccountingEntry.bank_account_id.in_(account_ids),
             AccountingEntry.date_ecriture.between(date_from, date_to),
             AccountingEntry.libelle.op("~*")(ecriture_sql),

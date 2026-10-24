@@ -17,11 +17,18 @@ export function DeleteImportModal({
   resume,
   onConfirm,
   onClose,
+  titre = "Supprimer cet import ?",
+  bouton = "Supprimer l'import",
+  avertissement = "Toutes les lignes de ce fichier seront supprimées. Le fichier reste au journal avec le statut « Annulé » et pourra être importé de nouveau. La suppression est tracée dans l'Historique.",
 }: {
   fichier: string;
   resume: ReactNode;
   onConfirm: (motif: string) => Promise<void>;
   onClose: () => void;
+  /** Réutilisée pour supprimer une seule ligne (24/10/2026). */
+  titre?: string;
+  bouton?: string;
+  avertissement?: string;
 }) {
   const [motif, setMotif] = useState("");
   const [envoi, setEnvoi] = useState(false);
@@ -42,7 +49,7 @@ export function DeleteImportModal({
   return (
     <Modal
       open
-      title="Supprimer cet import ?"
+      title={titre}
       onClose={() => !envoi && onClose()}
       footer={
         <>
@@ -50,18 +57,14 @@ export function DeleteImportModal({
             Annuler
           </Button>
           <Button variant="danger" icon={Trash2} onClick={confirmer} disabled={envoi || !valide}>
-            {envoi ? "Suppression..." : "Supprimer l'import"}
+            {envoi ? "Suppression..." : bouton}
           </Button>
         </>
       }
     >
       <p className="font-medium text-simtis-text">{fichier}</p>
       <div className="mt-1 text-sm text-simtis-muted">{resume}</div>
-      <p className="mt-3 text-sm text-simtis-muted">
-        Toutes les lignes de ce fichier seront supprimées. Le fichier reste au journal avec le
-        statut « Annulé » et pourra être importé de nouveau. La suppression est tracée dans
-        l&apos;Historique.
-      </p>
+      <p className="mt-3 text-sm text-simtis-muted">{avertissement}</p>
       <div className="mt-4">
         <Field label="Motif" htmlFor="motif-suppression" required error={erreur ?? undefined}>
           <TextInput

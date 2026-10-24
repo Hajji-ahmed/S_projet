@@ -503,7 +503,7 @@ def frais_inclus(
         for entry in reconciliation_repository.free_entries(
             db, company_id, account_ids, date_from - lecture, date_to + lecture
         )
-        if entry.origine == "Sage" and proche(entry)
+        if entry.origine != "SIMTIS" and proche(entry)
     ]
     if not ecritures:
         return {}

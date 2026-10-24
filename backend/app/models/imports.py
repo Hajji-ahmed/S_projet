@@ -219,7 +219,7 @@ class AccountingEntry(TimestampMixin, Base):
         String(20), default="Non rapprochée", server_default="Non rapprochée", index=True
     )
     # Sage (importée) ou SIMTIS (droits de timbre comptabilisés par SIMTIS, 13/10/2026)
-    origine: Mapped[str] = mapped_column(String(6), default="Sage", server_default="Sage")
+    origine: Mapped[str] = mapped_column(String(10), default="Sage", server_default="Sage")
     # Date de l'export pour Sage d'une écriture SIMTIS ; une écriture exportée ne se supprime plus
     exportee_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Famille d'une écriture SIMTIS : timbres, commissions ou manuelle (migration 0026)

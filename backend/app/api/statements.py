@@ -22,7 +22,12 @@ from app.schemas.statement import (
     TransactionOut,
     TransactionUpdateIn,
 )
-from app.services import import_file, import_service, suppression_import_service
+from app.services import (
+    import_file,
+    import_service,
+    saisie_manuelle_service,
+    suppression_import_service,
+)
 from app.services.auth_service import CurrentUser
 from app.services.normalization_service import parse_amount
 
@@ -134,6 +139,60 @@ def supprimer_releve(
     return SuppressionImportOut(
         nb_lignes=result.nb_lignes, nb_propositions_retirees=result.nb_propositions_retirees
     )
+
+
+class OperationManuelleIn(BaseModel):
+    """Opération saisie à la main (24/10/2026) ; montants en texte exact (« 1250.50 »)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_operation: date
+    date_valeur: date | None = None
+    libelle: Annotated[str, PydField(max_length=500)]
+    debit: Decimal | None = None
+    credit: Decimal | None = None
+    reference: Annotated[str | None, PydField(max_length=60)] = None
+    pointage_type_id: int | None = None
+    commentaire: Annotated[str | None, PydField(max_length=1000)] = None
+    motif: Annotated[str, PydField(max_length=500)]
+
+
+class MotifIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    motif: Annotated[str, PydField(max_length=500)]
+
+
+@router.post("/accounts/{account_id}/operations", response_model=TransactionOut, status_code=201)
+def ajouter_operation(
+    account_id: int,
+    body: OperationManuelleIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> TransactionOut:
+    """Ajoute à la main une opération absente du relevé (24/10/2026), avec un motif."""
+    saisie = saisie_manuelle_service.OperationSaisie(**body.model_dump(exclude={"motif"}))
+    tx = saisie_manuelle_service.ajouter_operation(
+        db, account_id, saisie, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    pointage = tx.pointage_type.libelle if tx.pointage_type else None
+    return TransactionOut.from_row(tx.statement.bank_account, tx, pointage)
+
+
+@router.post("/transactions/{transaction_id}/supprimer", status_code=204)
+def supprimer_operation(
+    transaction_id: int,
+    body: MotifIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> Response:
+    """Supprime une opération (importée ou manuelle) non rapprochée, avec un motif (24/10/2026)."""
+    saisie_manuelle_service.supprimer_operation(
+        db, transaction_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    return Response(status_code=204)
 
 
 @router.patch("/transactions/{transaction_id}", response_model=TransactionOut)

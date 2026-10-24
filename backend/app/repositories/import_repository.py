@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -296,7 +297,9 @@ def dernier_releve(db: Session, bank_account_id: int) -> BankStatement | None:
         .where(
             BankStatement.bank_account_id == bank_account_id,
             BankStatement.en_cours.is_(False),
-            (ImportBatch.statut.is_(None)) | (ImportBatch.statut != "Annulé"),
+            # Le relevé « Saisies manuelles » (sans lot d'import) n'est pas un import
+            BankStatement.import_batch_id.is_not(None),
+            ImportBatch.statut != "Annulé",
         )
         .order_by(ImportBatch.created_at.desc().nulls_last(), BankStatement.id.desc())
         .limit(1)
@@ -317,3 +320,60 @@ def delete_balance_checks(db: Session, statement_id: int) -> None:
     from sqlalchemy import delete
 
     db.execute(delete(BalanceCheck).where(BalanceCheck.bank_statement_id == statement_id))
+
+
+# --- Saisie manuelle (24/10/2026) ----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OperationPrecedente:
+    solde: Decimal | None
+    solde_calcule: bool
+
+
+def derniere_operation_au(db: Session, account_id: int, jour: date) -> OperationPrecedente | None:
+    """La dernière opération du compte à `jour` ou avant qui porte un solde, dans l'ordre du relevé
+    (hors opérations en cours)."""
+    row = db.execute(
+        select(BankTransaction.solde, BankTransaction.solde_calcule)
+        .where(
+            BankTransaction.bank_account_id == account_id,
+            BankTransaction.date_operation <= jour,
+            BankTransaction.solde.is_not(None),
+            BankTransaction.en_cours.is_(False),
+        )
+        .order_by(*ORDRE_ANTECHRONOLOGIQUE)
+        .limit(1)
+    ).first()
+    return OperationPrecedente(row[0], bool(row[1])) if row else None
+
+
+def releve_manuel(db: Session, account_id: int) -> BankStatement | None:
+    """Le relevé « Saisies manuelles » du compte : sans lot d'import, ni opération d'un fichier."""
+    from sqlalchemy import and_, exists
+
+    import_ = exists().where(
+        and_(
+            BankTransaction.statement_id == BankStatement.id, BankTransaction.origine != "Manuelle"
+        )
+    )
+    return db.scalar(
+        select(BankStatement)
+        .where(
+            BankStatement.bank_account_id == account_id,
+            BankStatement.import_batch_id.is_(None),
+            BankStatement.en_cours.is_(False),
+            ~import_,
+        )
+        .order_by(BankStatement.id)
+        .limit(1)
+    )
+
+
+def prochain_ordre(db: Session, statement_id: int) -> int:
+    from sqlalchemy import func
+
+    dernier = db.scalar(
+        select(func.max(BankTransaction.ordre)).where(BankTransaction.statement_id == statement_id)
+    )
+    return (dernier or 0) + 1

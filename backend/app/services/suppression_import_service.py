@@ -39,14 +39,14 @@ class Suppression:
     nb_propositions_retirees: int
 
 
-def _motif(motif: str) -> str:
+def motif_obligatoire(motif: str) -> str:
     motif = (motif or "").strip()
     if len(motif) < MOTIF_MIN:
         raise ConflictError("Indiquez le motif de la suppression.")
     return motif[:MOTIF_MAX]
 
 
-def _liberer(db: Session, tx_ids: list[int], entry_ids: list[int]) -> int:
+def liberer(db: Session, tx_ids: list[int], entry_ids: list[int]) -> int:
     """Refuse si une ligne est rapprochée ; sinon retire les correspondances qui citent ces lignes
     (propositions en attente, rejets, annulations) et libère leurs autres lignes. Retourne le
     nombre de propositions retirées."""
@@ -107,7 +107,7 @@ def supprimer_releve(
     statement = import_repository.get_statement(db, statement_id)
     if statement is None:
         raise NotFoundError("Relevé introuvable.")
-    motif = _motif(motif)
+    motif = motif_obligatoire(motif)
     reconciliation_repository.lock_company(db, statement.bank_account.company_id)
     batch = _batch(db, statement.import_batch_id)
     raison = raison_releve_non_supprimable(db, statement)
@@ -115,7 +115,7 @@ def supprimer_releve(
         raise ConflictError(raison)
 
     tx_ids = import_repository.transaction_ids_of_statement(db, statement.id)
-    propositions = _liberer(db, tx_ids, [])
+    propositions = liberer(db, tx_ids, [])
     import_repository.delete_transactions(db, tx_ids)
     import_repository.delete_balance_checks(db, statement.id)
     # Le solde du jour écrit par ce relevé (source « Relevé ») disparait avec lui
@@ -156,13 +156,13 @@ def supprimer_import_comptable(
     batch = db.get(ImportBatch, batch_id)
     if batch is None or batch.type != type_import:
         raise NotFoundError("Import introuvable.")
-    motif = _motif(motif)
+    motif = motif_obligatoire(motif)
     reconciliation_repository.lock_company(db, batch.company_id)
     batch = _batch(db, batch.id)
 
     entry_ids = accounting_repository.entry_ids_of_batch(db, batch.id)
     debut, fin = accounting_repository.periode_of_entries(db, entry_ids)
-    propositions = _liberer(db, [], entry_ids)
+    propositions = liberer(db, [], entry_ids)
     accounting_repository.delete_entries(db, entry_ids)
     batch.statut = STATUT_ANNULE
     audit_service.log(

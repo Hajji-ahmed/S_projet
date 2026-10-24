@@ -1,11 +1,13 @@
 "use client";
 
 import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
-import { ChevronUp, Download, ListOrdered, PenLine, Trash2, X } from "lucide-react";
+import { ChevronUp, Download, ListOrdered, PenLine, Plus, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
+import { ManualOperationModal } from "@/components/releves/ManualOperationModal";
 import { TransactionEditModal } from "@/components/releves/TransactionEditModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -35,6 +37,7 @@ import {
   getAccountStatement,
   updateTransaction,
   supprimerEnCours,
+  supprimerOperation,
 } from "@/services/statements";
 import type { AccountStatement, PointageType, Transaction } from "@/types/statement";
 import type { Status } from "@/types/status";
@@ -80,6 +83,9 @@ export function AccountStatementCard({
   const [exporting, setExporting] = useState(false);
   const [pointages, setPointages] = useState<PointageType[]>([]);
   const [editing, setEditing] = useState<Transaction | null>(null);
+  // Saisie et suppression manuelles (24/10/2026)
+  const [ajout, setAjout] = useState(false);
+  const [ligneASupprimer, setLigneASupprimer] = useState<Transaction | null>(null);
   // Nombre d'opérations affichées : les plus anciennes restent masquées jusqu'au clic
   const [shown, setShown] = useState(OPERATIONS_AFFICHEES);
   // Opérations en cours (21/10/2026) : filtre, sélection et suppression avant le relevé suivant
@@ -279,6 +285,11 @@ export function AccountStatementCard({
           {row.reference && (
             <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
           )}
+          {row.origine === "Manuelle" && (
+            <span className="block text-xs font-medium text-simtis-warning-fg">
+              Saisie manuelle
+            </span>
+          )}
           {row.origine === "Corrigée" && (
             <span className="block text-xs font-medium text-simtis-primary">
               corrigée avant l&apos;import
@@ -355,15 +366,31 @@ export function AccountStatementCard({
       header: "Actions",
       align: "right",
       render: (row) => (
-        <button
-          type="button"
-          onClick={() => setEditing(row)}
-          aria-label={`Modifier l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
-          title="Modifier Lettrage / Escompte (et Pointage, Commentaire)"
-          className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
-        >
-          <PenLine className="h-4 w-4" aria-hidden />
-        </button>
+        <span className="inline-flex gap-1">
+          <button
+            type="button"
+            onClick={() => setEditing(row)}
+            aria-label={`Modifier l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
+            title="Modifier Lettrage / Escompte (et Pointage, Commentaire)"
+            className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+          >
+            <PenLine className="h-4 w-4" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => setLigneASupprimer(row)}
+            disabled={row.statut === "Rapprochée"}
+            aria-label={`Supprimer l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
+            title={
+              row.statut === "Rapprochée"
+                ? "Opération rapprochée : annulez d'abord son rapprochement"
+                : "Supprimer cette opération"
+            }
+            className="rounded-lg p-2 text-simtis-danger-fg transition-colors hover:bg-simtis-danger-bg disabled:pointer-events-none disabled:opacity-40"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+          </button>
+        </span>
       ),
     });
   }
@@ -491,6 +518,11 @@ export function AccountStatementCard({
             </div>
           </dl>
           <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+            {canEdit && (
+              <Button variant="secondary" icon={Plus} onClick={() => setAjout(true)}>
+                Ajouter une opération
+              </Button>
+            )}
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -590,6 +622,40 @@ export function AccountStatementCard({
           définitives. La suppression est tracée dans l&apos;Historique.
         </p>
       </Modal>
+      {ajout && selectedId !== undefined && (
+        <ManualOperationModal
+          accountId={selectedId}
+          compte={(() => {
+            const compte = accounts.find((a) => a.bank_account_id === selectedId);
+            return compte ? `${compte.bank_code} · ${compte.devise} · ${compte.compte_numero}` : "";
+          })()}
+          pointages={pointages}
+          onClose={() => setAjout(false)}
+          onSaved={() => {
+            setAjout(false);
+            toast("Opération ajoutée au relevé.");
+            setState("loading");
+            setRetryKey((key) => key + 1);
+          }}
+        />
+      )}
+      {ligneASupprimer && (
+        <DeleteImportModal
+          titre="Supprimer cette opération ?"
+          bouton="Supprimer l'opération"
+          avertissement="Cette ligne sera supprimée (refusé si elle est rapprochée : annulez d'abord son rapprochement). Ses propositions en attente sont retirées. La suppression est tracée dans l'Historique."
+          fichier={ligneASupprimer.libelle}
+          resume={`${formatDate(ligneASupprimer.date_operation)} · ${formatAmount(ligneASupprimer.montant, suffix)}`}
+          onClose={() => setLigneASupprimer(null)}
+          onConfirm={async (motif) => {
+            await supprimerOperation(ligneASupprimer.id, motif);
+            setLigneASupprimer(null);
+            toast("Opération supprimée.");
+            setState("loading");
+            setRetryKey((key) => key + 1);
+          }}
+        />
+      )}
       {editing && (
         <TransactionEditModal
           transaction={editing}

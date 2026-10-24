@@ -29,7 +29,7 @@ TYPES_CORRESPONDANCE = ("1-1", "1-N", "N-1", "N-N")
 # « Frais » : écriture de frais bancaires comptabilisée par SIMTIS (13/10/2026)
 ORIGINES_CORRESPONDANCE = ("Automatique", "Manuelle", "Frais")
 # Origine d'une écriture comptable : importée de Sage, ou préparée par SIMTIS (13/10/2026)
-ORIGINES_ECRITURE = ("Sage", "SIMTIS")
+ORIGINES_ECRITURE = ("Sage", "SIMTIS", "Manuelle")  # Manuelle : saisie à la main (24/10/2026)
 STATUTS_CORRESPONDANCE = ("Proposée", "Validée", "Rejetée", "Annulée")
 
 # Imports (relevés bancaires et écritures comptables partagent le même circuit)
@@ -46,7 +46,7 @@ SENS = ("Entrée", "Sortie")
 SOURCES_SOLDE = ("Relevé", "Saisie")
 
 # Origine d'une opération bancaire : telle que le fichier, ou corrigée avant l'enregistrement
-ORIGINES_OPERATION = ("Fichier", "Corrigée")
+ORIGINES_OPERATION = ("Fichier", "Corrigée", "Manuelle")  # Manuelle : 24/10/2026
 
 # Tableau Devises saisi à la main (page Position bancaire) : ses lignes, et ses colonnes hors banques
 LIGNES_DEVISES = ("EUR", "USD", "Exp DH convertible")

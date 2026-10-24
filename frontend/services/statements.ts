@@ -74,3 +74,33 @@ export function supprimerReleve(statementId: number, motif: string) {
     },
   );
 }
+
+/** Opération saisie à la main (24/10/2026). */
+export type OperationManuelle = {
+  date_operation: string;
+  date_valeur: string | null;
+  libelle: string;
+  reference: string | null;
+  debit: string | null;
+  credit: string | null;
+  pointage_type_id: number | null;
+  commentaire: string | null;
+  motif: string;
+};
+
+export function ajouterOperation(accountId: number, operation: OperationManuelle) {
+  return apiFetch<Transaction>(`/statements/accounts/${accountId}/operations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(operation),
+  });
+}
+
+/** Supprime une opération (importée ou manuelle) non rapprochée, avec un motif. */
+export function supprimerOperation(transactionId: number, motif: string) {
+  return apiFetch<void>(`/statements/transactions/${transactionId}/supprimer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ motif }),
+  });
+}

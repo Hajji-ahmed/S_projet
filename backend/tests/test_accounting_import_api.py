@@ -716,3 +716,68 @@ def test_deleting_a_sage_import_needs_the_sage_permission(client, direction, db,
     )
 
     assert response.status_code == 403
+
+
+# --- Saisie et suppression manuelles (24/10/2026) ------------------------------------------------
+
+
+def _ecriture(client, headers, account_id, **over):
+    body = {
+        "bank_account_id": account_id,
+        "journal": "BQ1",
+        "date_ecriture": "2026-09-24",
+        "libelle": "REGLEMENT CLIENT X",
+        "debit": "38500.00",
+        "numero_piece": "P-001",
+        "motif": "Oubliée par Sage",
+        **over,
+    }
+    return client.post("/api/accounting/entries", json=body, headers=headers)
+
+
+def test_a_manual_entry_is_saved_like_a_sage_one(client, comptable, db, journals):
+    from app.models import AuditLog
+
+    awb, _ = journals
+
+    response = _ecriture(client, comptable, awb.id)
+
+    assert response.status_code == 201, response.text
+    entry = db.get(AccountingEntry, response.json()["id"])
+    assert (entry.origine, entry.montant, entry.journal, entry.statut) == (
+        "Manuelle",
+        Decimal("-38500.00"),
+        "BQ1",
+        "Non rapprochée",
+    )
+    assert db.scalars(select(AuditLog).filter_by(action="saisie_manuelle_ecriture")).all()
+    assert _ecriture(client, comptable, awb.id).status_code == 409
+    mauvais_journal = _ecriture(client, comptable, awb.id, journal="XX", numero_piece="P-2")
+    assert mauvais_journal.status_code == 409
+
+    supprimee = client.post(
+        f"/api/accounting/entries/{entry.id}/supprimer",
+        json={"motif": "Saisie en double"},
+        headers=comptable,
+    )
+    assert supprimee.status_code == 204
+    assert db.get(AccountingEntry, entry.id) is None
+
+
+def test_a_manual_entry_of_a_currency_account_needs_its_currency_amount(
+    client, comptable, db, reference
+):
+    usd = account(db, "AWB", journal="BQU", devise="USD")
+
+    sans = _ecriture(client, comptable, usd.id, journal="BQU")
+    avec = _ecriture(client, comptable, usd.id, journal="BQU", montant_devise="3500.00")
+
+    assert sans.status_code == 409
+    assert avec.status_code == 201, avec.text
+    assert db.get(AccountingEntry, avec.json()["id"]).montant_devise == Decimal("-3500.00")
+
+
+def test_manual_entries_need_the_sage_permission(client, direction, db, journals):
+    awb, _ = journals
+
+    assert _ecriture(client, direction, awb.id).status_code == 403

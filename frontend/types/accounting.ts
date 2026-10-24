@@ -117,6 +117,8 @@ export type Ecriture = {
   statut: StatutRapprochement;
   /** Code du rapprochement validé de l'écriture (13/10/2026). */
   code_rapprochement?: string | null;
+  /** « Sage », « SIMTIS » (frais) ou « Manuelle » (saisie à la main, 24/10/2026). */
+  origine?: string;
 };
 
 /** Une page de 50 écritures ; total et totaux portent sur tout le filtre. */

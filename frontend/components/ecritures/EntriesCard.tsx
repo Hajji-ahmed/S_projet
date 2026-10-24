@@ -1,12 +1,15 @@
 "use client";
 
-import { BookText, ChevronLeft, ChevronRight, Eye, Search, X } from "lucide-react";
+import { BookText, ChevronLeft, ChevronRight, Eye, Plus, Search, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { EntryDetailModal } from "@/components/ecritures/EntryDetailModal";
+import { ManualEntryModal } from "@/components/ecritures/ManualEntryModal";
+import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
+import { useToast } from "@/components/ui/Toast";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -19,7 +22,7 @@ import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import { unite } from "@/lib/reconciliation";
-import { listEntries } from "@/services/accounting";
+import { listEntries, supprimerEcriture } from "@/services/accounting";
 import type { Account } from "@/types/account";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
 import type { Status } from "@/types/status";
@@ -31,13 +34,24 @@ type EntriesCardProps = {
   logos: Map<string, string | null>;
   /** Incrémenté après un import : la liste est rechargée. */
   reloadKey: number;
+  /** Permission « Import Sage » : saisie et suppression d'une écriture (24/10/2026). */
+  canEdit?: boolean;
 };
 
 /**
  * Écritures importées de Sage, en lecture seule : filtres (compte, période, statut, recherche),
  * 50 par page de la plus récente à la plus ancienne (pagination par l'API), détail d'une écriture.
  */
-export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCardProps) {
+export function EntriesCard({
+  companyId,
+  accounts,
+  logos,
+  reloadKey,
+  canEdit = false,
+}: EntriesCardProps) {
+  const { toast } = useToast();
+  const [ajout, setAjout] = useState(false);
+  const [aSupprimer, setASupprimer] = useState<Ecriture | null>(null);
   const [filter, setFilter] = useState<EntriesFilter>({ page: 1 });
   const [search, setSearch] = useState("");
   const [data, setData] = useState<EcrituresPage | null>(null);
@@ -103,6 +117,11 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
           {row.reference && (
             <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
           )}
+          {row.origine === "Manuelle" && (
+            <span className="block text-xs font-medium text-simtis-warning-fg">
+              Saisie manuelle
+            </span>
+          )}
         </span>
       ),
     },
@@ -147,20 +166,73 @@ export function EntriesCard({ companyId, accounts, logos, reloadKey }: EntriesCa
       header: "Détail",
       align: "right",
       render: (row) => (
-        <button
-          type="button"
-          onClick={() => setDetail(row)}
-          aria-label={`Voir l'écriture du ${formatDate(row.date_ecriture)} ${row.libelle}`}
-          className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
-        >
-          <Eye className="h-4 w-4" aria-hidden />
-        </button>
+        <span className="inline-flex gap-1">
+          <button
+            type="button"
+            onClick={() => setDetail(row)}
+            aria-label={`Voir l'écriture du ${formatDate(row.date_ecriture)} ${row.libelle}`}
+            className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+          >
+            <Eye className="h-4 w-4" aria-hidden />
+          </button>
+          {canEdit && row.origine !== "SIMTIS" && (
+            <button
+              type="button"
+              onClick={() => setASupprimer(row)}
+              disabled={row.statut === "Rapprochée"}
+              aria-label={`Supprimer l'écriture du ${formatDate(row.date_ecriture)} ${row.libelle}`}
+              title={
+                row.statut === "Rapprochée"
+                  ? "Écriture rapprochée : annulez d'abord son rapprochement"
+                  : "Supprimer cette écriture"
+              }
+              className="rounded-lg p-2 text-simtis-danger-fg transition-colors hover:bg-simtis-danger-bg disabled:pointer-events-none disabled:opacity-40"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden />
+            </button>
+          )}
+        </span>
       ),
     },
   ];
 
   return (
     <Card title="Écritures" icon={BookText}>
+      {canEdit && accounts.length > 0 && (
+        <div className="mb-3 flex justify-end">
+          <Button variant="secondary" icon={Plus} onClick={() => setAjout(true)}>
+            Ajouter une écriture
+          </Button>
+        </div>
+      )}
+      {ajout && (
+        <ManualEntryModal
+          accounts={accounts}
+          compteInitial={filter.bankAccountId}
+          onClose={() => setAjout(false)}
+          onSaved={() => {
+            setAjout(false);
+            toast("Écriture ajoutée.");
+            setRetryKey((key) => key + 1);
+          }}
+        />
+      )}
+      {aSupprimer && (
+        <DeleteImportModal
+          titre="Supprimer cette écriture ?"
+          bouton="Supprimer l'écriture"
+          avertissement="Cette ligne sera supprimée (refusé si elle est rapprochée : annulez d'abord son rapprochement). Ses propositions en attente sont retirées. La suppression est tracée dans l'Historique."
+          fichier={aSupprimer.libelle}
+          resume={`${formatDate(aSupprimer.date_ecriture)} · ${aSupprimer.journal ?? "-"} · ${formatAmount(aSupprimer.montant, "DH")}`}
+          onClose={() => setASupprimer(null)}
+          onConfirm={async (motif) => {
+            await supprimerEcriture(aSupprimer.id, motif);
+            setASupprimer(null);
+            toast("Écriture supprimée.");
+            setRetryKey((key) => key + 1);
+          }}
+        />
+      )}
       {/* Compte bancaire : une seule ligne qui défile sur mobile */}
       <div
         className="mb-4 flex gap-2 overflow-x-auto pb-1"
