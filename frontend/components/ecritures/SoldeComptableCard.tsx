@@ -1,7 +1,7 @@
 "use client";
 
-import { PenLine, Scale } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronDown, PenLine, Scale } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { Button } from "@/components/ui/Button";
@@ -22,10 +22,14 @@ import {
 } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
+import { repli } from "@/lib/repli";
 import { listSoldesComptables, setSoldeOuverture } from "@/services/accounting";
 import type { SoldeComptable } from "@/types/accounting";
 
 type Ligne = SoldeComptable & Record<string, unknown>;
+
+// Carte réduite par défaut ; le dernier choix est gardé dans le navigateur (26/10/2026)
+const OUVERTURE = repli("simtis.ecritures.solde-comptable", false);
 
 /**
  * Solde comptable (Sage) de chaque compte à une date (26/10/2026) : solde d'ouverture saisi + débits
@@ -48,8 +52,12 @@ export function SoldeComptableCard({
   const [erreur, setErreur] = useState(false);
   const [version, setVersion] = useState(0);
   const [edition, setEdition] = useState<SoldeComptable | null>(null);
+  const ouverte = useSyncExternalStore(OUVERTURE.subscribe, OUVERTURE.lire, () => false);
+  const basculer = () => OUVERTURE.ecrire(!ouverte);
 
   useEffect(() => {
+    // Réduite : rien n'est demandé au serveur
+    if (!ouverte) return;
     let annule = false;
     listSoldesComptables(companyId, jour).then(
       (items) => {
@@ -64,7 +72,7 @@ export function SoldeComptableCard({
     return () => {
       annule = true;
     };
-  }, [companyId, jour, reloadKey, version]);
+  }, [companyId, jour, reloadKey, version, ouverte]);
 
   const unite = (l: SoldeComptable) => currencySuffix(l.devise);
   const colonnes: Column<Ligne>[] = [
@@ -183,37 +191,57 @@ export function SoldeComptableCard({
   ];
 
   return (
-    <Card title="Solde comptable" icon={Scale}>
-      <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="w-full max-w-[180px]">
-          <Field label="À la date du" htmlFor="solde-compta-date">
-            <DateInput
-              id="solde-compta-date"
-              value={jour}
-              max={businessToday()}
-              onChange={(e) => e.target.value && setJour(e.target.value)}
+    <Card>
+      <button
+        type="button"
+        onClick={basculer}
+        aria-expanded={ouverte}
+        className="flex w-full items-center gap-3 rounded-[10px] text-left"
+      >
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-simtis-light text-simtis-primary">
+          <Scale className="h-5 w-5" aria-hidden />
+        </span>
+        <span className="flex-1 text-base font-semibold tracking-tight text-simtis-text">
+          Solde comptable
+        </span>
+        <ChevronDown
+          className={cn(
+            "h-5 w-5 text-simtis-muted transition-transform duration-200",
+            ouverte && "rotate-180",
+          )}
+          aria-hidden
+        />
+      </button>
+      {ouverte && (
+        <div className="mt-4">
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <div className="w-full max-w-[180px]">
+              <Field label="À la date du" htmlFor="solde-compta-date">
+                <DateInput
+                  id="solde-compta-date"
+                  value={jour}
+                  max={businessToday()}
+                  onChange={(e) => e.target.value && setJour(e.target.value)}
+                />
+              </Field>
+            </div>
+          </div>
+          {erreur ? (
+            <ErrorState
+              message="Impossible de calculer les soldes comptables."
+              onRetry={() => setVersion((v) => v + 1)}
             />
-          </Field>
+          ) : lignes === null ? (
+            <LoadingState rows={2} />
+          ) : (
+            <DataTable
+              columns={colonnes}
+              rows={lignes as Ligne[]}
+              getRowKey={(l) => String(l.bank_account_id)}
+              emptyMessage="Aucun compte avec un journal Sage."
+            />
+          )}
         </div>
-        <p className="text-sm text-simtis-muted">
-          Solde d&apos;ouverture + débits − crédits des écritures après lui (sens Sage : débiteur =
-          positif). Écart = solde bancaire − solde comptable.
-        </p>
-      </div>
-      {erreur ? (
-        <ErrorState
-          message="Impossible de calculer les soldes comptables."
-          onRetry={() => setVersion((v) => v + 1)}
-        />
-      ) : lignes === null ? (
-        <LoadingState rows={2} />
-      ) : (
-        <DataTable
-          columns={colonnes}
-          rows={lignes as Ligne[]}
-          getRowKey={(l) => String(l.bank_account_id)}
-          emptyMessage="Aucun compte avec un journal Sage."
-        />
       )}
       {edition && (
         <OuvertureModal
