@@ -272,7 +272,7 @@ function MappingsCard() {
                 onClick={() => setSuppression(m)}
                 title="Supprimer"
                 aria-label={`Supprimer le modèle ${m.nom}`}
-                className="rounded-[10px] p-2 text-simtis-muted transition-colors hover:bg-simtis-danger-bg hover:text-simtis-danger-fg"
+                className="rounded-[10px] p-2 text-simtis-danger-fg transition-colors hover:bg-simtis-danger-bg"
               >
                 <Trash2 className="h-4 w-4" aria-hidden />
               </button>

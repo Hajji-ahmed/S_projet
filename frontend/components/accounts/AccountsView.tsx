@@ -53,10 +53,13 @@ function IconAction({
   label,
   icon: Icon,
   onClick,
+  danger = false,
 }: {
   label: string;
   icon: typeof Pencil;
   onClick: () => void;
+  /** Action destructrice (suppression, désactivation) : icône rouge */
+  danger?: boolean;
 }) {
   return (
     <button
@@ -64,7 +67,11 @@ function IconAction({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+      className={
+        danger
+          ? "rounded-lg p-2 text-simtis-danger-fg transition-colors hover:bg-simtis-danger-bg"
+          : "rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+      }
     >
       <Icon className="h-4 w-4" aria-hidden />
     </button>
@@ -249,12 +256,14 @@ export function AccountsView() {
             <IconAction
               label={`Désactiver le compte ${row.bank_code} ${row.devise}`}
               icon={PowerOff}
+              danger
               onClick={() => setToDeactivate(row)}
             />
           ) : (
             <IconAction
               label={`Supprimer le compte ${row.bank_code} ${row.devise}`}
               icon={Trash2}
+              danger
               onClick={() => setToDelete(row)}
             />
           )}
