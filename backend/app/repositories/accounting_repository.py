@@ -253,3 +253,37 @@ def delete_entries(db: Session, entry_ids: list[int]) -> None:
 
     db.execute(delete(Discrepancy).where(Discrepancy.accounting_entry_id.in_(entry_ids)))
     db.execute(delete(AccountingEntry).where(AccountingEntry.id.in_(entry_ids)))
+
+
+# --- Solde comptable (26/10/2026) ----------------------------------------------------------------
+
+
+def mouvements_comptables(db: Session, account_id: int, *, apres: date | None, jusqu_au: date):
+    """Débits, crédits et montant devise des écritures du compte après `apres` (exclu, toutes si
+    None) jusqu'au `jusqu_au` inclus, avec le nombre d'écritures SIMTIS pas encore exportées."""
+    from app.services.solde_comptable_service import Mouvements
+
+    conditions = [
+        AccountingEntry.bank_account_id == account_id,
+        AccountingEntry.date_ecriture <= jusqu_au,
+    ]
+    if apres is not None:
+        conditions.append(AccountingEntry.date_ecriture > apres)
+    row = db.execute(
+        select(
+            func.coalesce(func.sum(AccountingEntry.debit), 0),
+            func.coalesce(func.sum(AccountingEntry.credit), 0),
+            func.sum(AccountingEntry.montant_devise),
+            func.count(),
+            func.count().filter(
+                AccountingEntry.origine == "SIMTIS", AccountingEntry.exportee_le.is_(None)
+            ),
+        ).where(*conditions)
+    ).one()
+    return Mouvements(
+        debit=Decimal(row[0]).quantize(Decimal("0.01")),
+        credit=Decimal(row[1]).quantize(Decimal("0.01")),
+        devise=None if row[2] is None else Decimal(row[2]),
+        nb_ecritures=row[3],
+        nb_non_exportees=row[4],
+    )

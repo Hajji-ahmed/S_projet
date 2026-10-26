@@ -38,6 +38,7 @@ ACTIONS = {
     "saisie_manuelle_ecriture": "Saisie manuelle d'une écriture",
     "suppression_operation": "Suppression d'une opération",
     "suppression_ecriture": "Suppression d'une écriture",
+    "solde_comptable_ouverture": "Solde comptable d'ouverture",
     "suppression_role": "Suppression de rôle",
     "creation_banque": "Création de banque",
     "modification_banque": "Modification de banque",

@@ -278,3 +278,51 @@ class ImportComptableOut(BaseModel):
             total_credit=credit if credit is not None else Decimal("0.00"),
             statut=batch.statut,
         )
+
+
+class SoldeComptableOut(BaseModel):
+    """Solde comptable (Sage) d'un compte à une date (26/10/2026). Débiteur = positif."""
+
+    bank_account_id: int
+    bank_code: str
+    devise: str
+    libelle: str
+    numero: str
+    jour: date
+    date_ouverture: date | None
+    ouverture: Decimal | None
+    debit: Decimal
+    credit: Decimal
+    # null : solde d'ouverture à saisir
+    solde: Decimal | None
+    ouverture_devise: Decimal | None
+    solde_devise: Decimal | None
+    solde_bancaire: Decimal | None
+    date_solde_bancaire: date | None
+    ecart: Decimal | None
+    nb_ecritures: int
+    nb_non_exportees: int
+
+    @classmethod
+    def of(cls, item) -> "SoldeComptableOut":
+        account = item.account
+        return cls(
+            bank_account_id=account.id,
+            bank_code=account.bank.code,
+            devise=account.devise,
+            libelle=account.libelle,
+            numero=account.numero,
+            jour=item.jour,
+            date_ouverture=item.date_ouverture,
+            ouverture=item.ouverture,
+            debit=item.debit,
+            credit=item.credit,
+            solde=item.solde,
+            ouverture_devise=item.ouverture_devise,
+            solde_devise=item.solde_devise,
+            solde_bancaire=item.solde_bancaire,
+            date_solde_bancaire=item.date_solde_bancaire,
+            ecart=item.ecart,
+            nb_ecritures=item.nb_ecritures,
+            nb_non_exportees=item.nb_non_exportees,
+        )

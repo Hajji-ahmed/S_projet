@@ -150,3 +150,27 @@ export type ImportComptable = {
   /** « Confirmé » ou « Annulé » (import supprimé, 23/10/2026). */
   statut?: string;
 };
+
+/** Solde comptable (Sage) d'un compte à une date (26/10/2026). Débiteur = positif. */
+export type SoldeComptable = {
+  bank_account_id: number;
+  bank_code: string;
+  devise: string;
+  libelle: string;
+  numero: string;
+  jour: string;
+  date_ouverture: string | null;
+  ouverture: string | null;
+  debit: string;
+  credit: string;
+  /** null : solde d'ouverture à saisir. */
+  solde: string | null;
+  ouverture_devise: string | null;
+  solde_devise: string | null;
+  solde_bancaire: string | null;
+  date_solde_bancaire: string | null;
+  /** Solde bancaire − solde comptable, dans la devise du compte. */
+  ecart: string | null;
+  nb_ecritures: number;
+  nb_non_exportees: number;
+};

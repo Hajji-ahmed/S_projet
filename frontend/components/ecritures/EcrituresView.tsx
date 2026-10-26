@@ -17,6 +17,7 @@ import { BankLabel, logosByCode } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountingImportWizard } from "@/components/ecritures/AccountingImportWizard";
 import { EntriesCard } from "@/components/ecritures/EntriesCard";
+import { SoldeComptableCard } from "@/components/ecritures/SoldeComptableCard";
 import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -249,6 +250,13 @@ function Ecritures({ companyId }: { companyId: number }) {
           </div>
         </section>
       )}
+
+      <SoldeComptableCard
+        companyId={companyId}
+        logos={logos}
+        canEdit={canImport}
+        reloadKey={reloadKey}
+      />
 
       <EntriesCard
         companyId={companyId}

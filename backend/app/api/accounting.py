@@ -21,11 +21,13 @@ from app.schemas.accounting import (
     ImportComptableOut,
     LignesGardeesIn,
     MappingComptableIn,
+    SoldeComptableOut,
 )
 from app.services import (
     accounting_import_service,
     import_file,
     saisie_manuelle_service,
+    solde_comptable_service,
     suppression_import_service,
 )
 from app.services.auth_service import CurrentUser
@@ -240,6 +242,51 @@ def supprimer_ecriture(
         db, entry_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
     )
     return Response(status_code=204)
+
+
+@router.get("/soldes", response_model=list[SoldeComptableOut])
+def soldes_comptables(
+    company_id: Annotated[int, Query(description="Société")],
+    date_solde: Annotated[date | None, Query(alias="date")] = None,
+    bank_account_id: int | None = None,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_read),
+) -> list[SoldeComptableOut]:
+    """Solde comptable (Sage) de chaque compte à la date choisie (26/10/2026)."""
+    items = solde_comptable_service.soldes(db, company_id, date_solde, bank_account_id)
+    return [SoldeComptableOut.of(item) for item in items]
+
+
+class OuvertureIn(BaseModel):
+    """Solde comptable d'ouverture ; tout à null pour l'effacer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_ouverture: date | None
+    solde: Decimal | None
+    solde_devise: Decimal | None = None
+
+
+@router.put("/soldes/{account_id}/ouverture", response_model=SoldeComptableOut | None)
+def set_ouverture(
+    account_id: int,
+    body: OuvertureIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> SoldeComptableOut | None:
+    """Saisit le solde comptable d'ouverture d'un compte, avec sa date (26/10/2026)."""
+    account = solde_comptable_service.set_ouverture(
+        db,
+        account_id,
+        date_ouverture=body.date_ouverture,
+        solde=body.solde,
+        solde_devise=body.solde_devise,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    items = solde_comptable_service.soldes(db, account.company_id, None, account.id)
+    return SoldeComptableOut.of(items[0]) if items else None
 
 
 @router.get("/entries/{entry_id}", response_model=EcritureDetailOut)

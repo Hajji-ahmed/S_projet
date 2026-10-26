@@ -1207,3 +1207,12 @@ def test_personal_permissions_are_deleted_with_the_user(db):
     db.execute(text(f"DELETE FROM users WHERE id = {user.id}"))
 
     assert db.scalar(select(UserPermission).filter_by(user_id=user.id)) is None
+
+
+# --- Solde comptable d'ouverture (migration 0039) -------------------------------------------------
+
+
+def test_an_accounting_opening_balance_needs_its_date(db, world):
+    sql = f"UPDATE bank_accounts SET solde_comptable_ouverture = 10 WHERE id = {world.account.id}"
+
+    assert_rejected(db, "ck_bank_accounts_solde_comptable_date", sql=sql)

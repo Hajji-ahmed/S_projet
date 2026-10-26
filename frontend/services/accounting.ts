@@ -11,6 +11,7 @@ import type {
   EcritureDetail,
   EcrituresPage,
   ImportComptable,
+  SoldeComptable,
 } from "@/types/accounting";
 
 /** Analyse un export Sage pour une société : rien n'est enregistré. */
@@ -82,5 +83,22 @@ export function supprimerEcriture(entryId: number, motif: string) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ motif }),
+  });
+}
+
+/** Solde comptable de chaque compte à une date (26/10/2026). */
+export function listSoldesComptables(companyId: number, jour: string) {
+  return apiFetch<SoldeComptable[]>(`/accounting/soldes?company_id=${companyId}&date=${jour}`);
+}
+
+/** Saisit (ou efface, tout à null) le solde comptable d'ouverture d'un compte. */
+export function setSoldeOuverture(
+  accountId: number,
+  body: { date_ouverture: string | null; solde: string | null; solde_devise: string | null },
+) {
+  return apiFetch<SoldeComptable | null>(`/accounting/soldes/${accountId}/ouverture`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }

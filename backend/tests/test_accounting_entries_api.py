@@ -217,3 +217,96 @@ def test_requires_a_reading_permission(client, reference, db):
     headers = bearer(login(client, "sans-role@example.com"))
 
     assert get(client, headers, db).status_code == 403
+
+
+# --- Solde comptable (26/10/2026) ----------------------------------------------------------------
+
+SOLDES = "/api/accounting/soldes"
+
+
+@pytest.fixture
+def comptable(client, reference) -> dict[str, str]:
+    make_auth_user(reference, "COMPTABLE", email="compta-solde@example.com")
+    return bearer(login(client, "compta-solde@example.com"))
+
+
+def _compte_sage(db, devise: str = "MAD") -> BankAccount:
+    compte = account(db)
+    compte.journal_sage, compte.devise = "BQ1", devise
+    db.flush()
+    return compte
+
+
+def _soldes(client, headers, db, jour="2026-09-30"):
+    params = {"company_id": str(company(db).id), "date": jour}
+    return client.get(SOLDES, params=params, headers=headers)
+
+
+def _ouverture(client, headers, compte, **body):
+    body = {"date_ouverture": "2026-08-31", "solde": "100000.00", **body}
+    return client.put(f"{SOLDES}/{compte.id}/ouverture", json=body, headers=headers)
+
+
+def test_the_accounting_balance_adds_debits_and_removes_credits_after_the_opening(
+    client, comptable, db
+):
+    from app.models import AuditLog
+
+    compte = _compte_sage(db)
+    entry(
+        db, compte, date(2026, 8, 31), debit="999", credit="0"
+    )  # le jour d'ouverture : déjà dedans
+    entry(db, compte, date(2026, 9, 10), debit="5000", credit="0")
+    entry(db, compte, date(2026, 9, 20), debit="0", credit="1200.50")
+    entry(db, compte, date(2026, 10, 2), debit="7", credit="0")  # après la date demandée
+
+    saisie = _ouverture(client, comptable, compte)
+    [ligne] = _soldes(client, comptable, db).json()
+
+    assert saisie.status_code == 200, saisie.text
+    assert (ligne["ouverture"], ligne["debit"], ligne["credit"], ligne["solde"]) == (
+        "100000.00",
+        "5000.00",
+        "1200.50",
+        "103799.50",
+    )
+    assert ligne["nb_ecritures"] == 2
+    assert db.scalar(select(AuditLog).filter_by(action="solde_comptable_ouverture"))
+
+
+def test_without_opening_only_the_movements_are_given(client, comptable, db):
+    compte = _compte_sage(db)
+    entry(db, compte, date(2026, 9, 10), debit="5000", credit="0")
+
+    [ligne] = _soldes(client, comptable, db).json()
+
+    assert (ligne["solde"], ligne["debit"], ligne["ecart"]) == (None, "5000.00", None)
+
+
+def test_a_currency_account_has_its_balance_in_its_currency(client, comptable, db):
+    compte = _compte_sage(db, devise="USD")
+    entry(db, compte, date(2026, 9, 10), debit="10850", credit="0", montant_devise=Decimal("-1000"))
+
+    sans_devise = _ouverture(client, comptable, compte)
+    avec = _ouverture(client, comptable, compte, solde_devise="500.00")
+    [ligne] = _soldes(client, comptable, db).json()
+
+    assert sans_devise.status_code == 409
+    assert avec.status_code == 200
+    assert (ligne["solde"], ligne["solde_devise"]) == ("110850.00", "1500.00")
+
+
+def test_a_simtis_entry_not_yet_exported_is_counted_apart(client, comptable, db):
+    compte = _compte_sage(db)
+    entry(db, compte, date(2026, 9, 10), origine="SIMTIS", famille_frais="timbres")
+
+    [ligne] = _soldes(client, comptable, db).json()
+
+    assert ligne["nb_non_exportees"] == 1
+
+
+def test_opening_balance_needs_the_sage_permission(client, direction, db):
+    compte = _compte_sage(db)
+
+    assert _ouverture(client, direction, compte).status_code == 403
+    assert _soldes(client, direction, db).status_code == 200

@@ -79,6 +79,10 @@ class BankAccount(TimestampMixin, Base):
         ),
         # Plusieurs comptes actifs par banque, devise et type depuis le 23/10/2026 (migration 0036,
         # index `uq_bank_accounts_compte_actif_par_banque` supprimé) : les tableaux en font la somme
+        CheckConstraint(
+            "(date_solde_comptable IS NULL) = (solde_comptable_ouverture IS NULL)",
+            name="solde_comptable_date",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -107,6 +111,11 @@ class BankAccount(TimestampMixin, Base):
     credit_autorise: Mapped[Montant] = mapped_column(default=Decimal("0"), server_default="0")
     taux_interet: Mapped[Taux | None]
     actif: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Solde comptable (Sage) d'ouverture et sa date (26/10/2026, migration 0039) : départ du
+    # solde comptable ; en devise aussi pour un compte EUR / USD. Débiteur = positif
+    date_solde_comptable: Mapped[date | None] = mapped_column(Date)
+    solde_comptable_ouverture: Mapped[Montant | None]
+    solde_comptable_ouverture_devise: Mapped[Montant | None]
 
     company: Mapped[Company] = relationship()
     bank: Mapped[Bank] = relationship()
