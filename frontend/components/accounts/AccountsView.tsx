@@ -256,7 +256,6 @@ export function AccountsView() {
             <IconAction
               label={`Désactiver le compte ${row.bank_code} ${row.devise}`}
               icon={PowerOff}
-              danger
               onClick={() => setToDeactivate(row)}
             />
           ) : (
