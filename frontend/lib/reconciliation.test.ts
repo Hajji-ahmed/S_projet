@@ -14,6 +14,8 @@ import {
   STATUTS_VOLET,
   trierCandidats,
   absolute,
+  aRejeter,
+  aValider,
   defaultPeriod,
   defaultSelection,
   ecartManuel,
@@ -21,6 +23,7 @@ import {
   formatScore,
   rapprochable,
   reconciliationQuery,
+  rejetable,
   selectionSummary,
   datesEcriture,
   periodeAStocker,
@@ -173,6 +176,19 @@ describe("propositions en attente", () => {
     expect(validable(strong)).toBe(true);
     expect(validable(unequal)).toBe(false);
     expect(validable({ ...weak, statut: "Validée" })).toBe(false);
+  });
+
+  it("rejette aussi une proposition aux montants différents, jamais une décidée", () => {
+    expect(rejetable(unequal)).toBe(true);
+    expect(rejetable({ ...weak, statut: "Rejetée" })).toBe(false);
+  });
+
+  it("ne valide que les cochées validables, ne rejette que les cochées affichées", () => {
+    const coches = new Set([1, 2, 3]);
+    // La 3 (montants différents) ne part jamais à la validation
+    expect(aValider(items, coches).map((p) => p.id)).toEqual([2, 1]);
+    // Filtre « Fortes » : la faible (2), cochée mais cachée, n'est pas rejetée
+    expect(aRejeter(filterProposals(items, "fortes"), coches).map((p) => p.id)).toEqual([1, 3]);
   });
 
   it("coche d'office les seules fortes validables", () => {

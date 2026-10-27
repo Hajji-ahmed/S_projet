@@ -23,6 +23,7 @@ import {
   operationsDe,
   sensBanque,
   sensSage,
+  rejetable,
   validable,
 } from "@/lib/reconciliation";
 import type { Correspondance } from "@/types/reconciliation";
@@ -83,7 +84,8 @@ export function ProposalCard({
               id={checkboxId}
               type="checkbox"
               checked={checked}
-              disabled={!ok || busy}
+              // Montants différents : cochable pour un rejet en lot, jamais validé (27/10/2026)
+              disabled={!rejetable(item) || busy}
               onChange={onToggle}
               aria-label={`Sélectionner la proposition ${item.operation.libelle}`}
               className="h-5 w-5 cursor-pointer accent-simtis-primary disabled:cursor-not-allowed"

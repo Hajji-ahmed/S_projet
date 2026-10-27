@@ -18,6 +18,8 @@ import { Pagination } from "@/components/ui/Pagination";
 import { ApiError } from "@/lib/api";
 import { formatAmount } from "@/lib/format";
 import {
+  aRejeter,
+  aValider,
   TYPES_OPERATION,
   defaultSelection,
   filterProposals,
@@ -202,6 +204,8 @@ export function ProposalsTab({
   const [lot, setLot] = useState<{
     type: "propositions" | "operations" | "ecritures";
     ids: number[];
+    /** Rejet de propositions : combien sont fortes, rappelé dans la confirmation. */
+    fortes?: number;
   } | null>(null);
   const [comment, setComment] = useState("");
   const [signaling, setSignaling] = useState<LignesEcart | null>(null);
@@ -227,7 +231,10 @@ export function ProposalsTab({
   }
 
   const shown = filterProposals(items, filtre);
-  const summary = selectionSummary(items, selected);
+  // Seules les validables cochées partent à la validation (27/10/2026 : une proposition aux
+  // montants différents se coche pour être rejetée)
+  const valides = aValider(items, selected);
+  const summary = selectionSummary(items, new Set(valides.map((item) => item.id)));
   // Jamais de somme entre devises (14/10/2026) : une sélection mêlant EUR et DH n'a pas de total
   const unites = new Set(
     (items ?? [])
@@ -247,9 +254,9 @@ export function ProposalsTab({
   );
   const opsCochees = selOps.source === ambiguous ? selOps.ids : new Set<number>();
   const ecrCochees = selEcr.source === ecrituresAmbigues.ecritures ? selEcr.ids : new Set<number>();
-  // Rejet en lot : seulement les propositions « À vérifier » cochées et affichées
-  const aRejeter =
-    filtre === "a_verifier" ? shown.filter((item) => selected.has(item.id)).map((i) => i.id) : [];
+  // Rejet en lot (27/10/2026) : les propositions cochées ET affichées par le filtre en cours
+  const rejets = aRejeter(shown, selected);
+  const rejetsForts = rejets.filter((item) => item.forte).length;
   const shownEcritures = (
     filtre === "toutes" || filtre === "ecritures_ambigues" ? ecrituresAmbigues.ecritures : []
   ).filter((item) => !ecrMasquees.has(item.ecriture.id));
@@ -598,19 +605,21 @@ export function ProposalsTab({
                 >
                   Tout désélectionner
                 </Button>
-                {filtre === "a_verifier" && (
-                  <Button
-                    variant="danger"
-                    icon={X}
-                    disabled={busy || aRejeter.length === 0 || aRejeter.length > LOT_MAX}
-                    onClick={() => {
-                      setComment("");
-                      setLot({ type: "propositions", ids: aRejeter });
-                    }}
-                  >
-                    Rejeter la sélection ({aRejeter.length})
-                  </Button>
-                )}
+                <Button
+                  variant="danger"
+                  icon={X}
+                  disabled={busy || rejets.length === 0 || rejets.length > LOT_MAX}
+                  onClick={() => {
+                    setComment("");
+                    setLot({
+                      type: "propositions",
+                      ids: rejets.map((item) => item.id),
+                      fortes: rejetsForts,
+                    });
+                  }}
+                >
+                  Rejeter la sélection ({rejets.length})
+                </Button>
                 <Button
                   icon={CheckCheck}
                   disabled={busy || summary.nb === 0 || summary.nb > LOT_MAX}
@@ -637,7 +646,7 @@ export function ProposalsTab({
               disabled={busy}
               onClick={() =>
                 act(
-                  () => validateMatches([...selected]),
+                  () => validateMatches(valides.map((item) => item.id)),
                   `${plural(summary.nb, "rapprochement")} validé${summary.nb > 1 ? "s" : ""}.`,
                 )
               }
@@ -829,6 +838,11 @@ export function ProposalsTab({
             {lot.type === "propositions"
               ? `${plural(lot.ids.length, "proposition")} seront rejetées : ces paires ne seront plus jamais proposées et leurs lignes repassent « Non rapprochée ».`
               : `Pour ${plural(lot.ids.length, lot.type === "operations" ? "opération" : "écriture")}, toutes les candidates seront écartées (plus jamais proposées) et la ligne repasse « Non rapprochée ».`}
+          </p>
+        )}
+        {lot?.type === "propositions" && !!lot.fortes && (
+          <p role="alert" className="-mt-2 mb-4 text-sm font-medium text-simtis-warning-fg">
+            Dont {plural(lot.fortes, "forte correspondance")} (score d&apos;au moins {seuil}).
           </p>
         )}
         <Field label="Commentaire (facultatif)" htmlFor="lot-commentaire">

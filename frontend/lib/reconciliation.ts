@@ -188,6 +188,28 @@ export function validable(item: Correspondance): boolean {
   );
 }
 
+/** Une proposition encore en attente se rejette, même si ses montants diffèrent (27/10/2026). */
+export function rejetable(item: Correspondance): boolean {
+  return item.statut === "Proposée";
+}
+
+/** Propositions cochées que « Valider la sélection » envoie : les validables seulement. */
+export function aValider(
+  items: readonly Correspondance[],
+  selected: ReadonlySet<number>,
+): Correspondance[] {
+  return items.filter((item) => selected.has(item.id) && validable(item));
+}
+
+/** Propositions que « Rejeter la sélection » envoie (27/10/2026) : cochées ET affichées par le
+ *  filtre en cours ; une proposition cochée mais cachée par le filtre n'est jamais rejetée. */
+export function aRejeter(
+  shown: readonly Correspondance[],
+  selected: ReadonlySet<number>,
+): Correspondance[] {
+  return shown.filter((item) => selected.has(item.id) && rejetable(item));
+}
+
 /** Sélection proposée à l'ouverture : seules les fortes validables sans concurrente proche sont
  *  cochées d'office (08/10/2026) ; les autres se cochent après contrôle. */
 export function defaultSelection(items: readonly Correspondance[]): Set<number> {
