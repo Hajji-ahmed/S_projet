@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
+import { saveFile } from "@/lib/statements";
 import { listBanks } from "@/services/banks";
 import { exportPositionPdf } from "@/services/rapports";
 import type { Bank } from "@/types/bank";
@@ -47,7 +48,11 @@ export function PositionView() {
     setExportEnCours(true);
     setErreurExport(null);
     try {
-      await exportPositionPdf(companyId, jour);
+      // apiDownload rend le fichier : c'est à l'écran de le faire enregistrer
+      saveFile(
+        await exportPositionPdf(companyId, jour),
+        `position-${jour.replaceAll("-", "")}.pdf`,
+      );
     } catch (error) {
       setErreurExport(error instanceof ApiError ? error.message : "Export PDF impossible.");
     } finally {
