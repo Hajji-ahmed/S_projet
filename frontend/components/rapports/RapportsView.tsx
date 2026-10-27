@@ -7,9 +7,7 @@ import {
   GitCompareArrows,
   Landmark,
   Link2,
-  LineChart,
   Receipt,
-  TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,7 +21,6 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
-import { cn } from "@/lib/cn";
 import { moisEnCours } from "@/lib/dashboard";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { saveFile } from "@/lib/statements";
@@ -65,18 +62,6 @@ export function RapportsView() {
               />
             </Link>
           </Rapport>
-          <Rapport
-            titre="Écarts ouverts"
-            icon={TriangleAlert}
-            description="La fonction Écarts est mise de côté (décision du 07/10/2026) : ce rapport reviendra avec elle."
-            indisponible
-          />
-          <Rapport
-            titre="Prévisions"
-            icon={LineChart}
-            description="Disponible avec la phase Prévisions : position prévisionnelle jour par jour."
-            indisponible
-          />
         </div>
       )}
     </div>
@@ -87,41 +72,22 @@ function Rapport({
   titre,
   icon: Icon,
   description,
-  indisponible = false,
   children,
 }: {
   titre: string;
   icon: LucideIcon;
   description: string;
-  indisponible?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <section
-      className={cn(
-        "flex flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6",
-        indisponible && "opacity-70",
-      )}
-    >
+    <section className="flex flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6">
       <header className="flex items-start gap-3">
-        <span
-          className={cn(
-            "grid h-10 w-10 shrink-0 place-items-center rounded-[12px]",
-            indisponible
-              ? "bg-simtis-neutral-bg text-simtis-neutral-fg"
-              : "bg-simtis-light text-simtis-primary",
-          )}
-        >
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px] bg-simtis-light text-simtis-primary">
           <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden />
         </span>
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight text-simtis-text">
             {titre}
-            {indisponible && (
-              <span className="rounded-full bg-simtis-neutral-bg px-2 py-0.5 text-[11px] font-medium text-simtis-neutral-fg">
-                Indisponible
-              </span>
-            )}
           </h2>
           <p className="mt-1 text-sm text-simtis-muted">{description}</p>
         </div>
