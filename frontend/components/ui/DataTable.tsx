@@ -31,6 +31,8 @@ type DataTableProps<T> = {
   isRowMuted?: (row: T) => boolean;
   /** Ligne d'en-tête toujours visible quand le tableau défile dans un conteneur de hauteur fixe. */
   stickyHeader?: boolean;
+  /** Lignes serrées (volets du rapprochement, 27/10/2026) : environ deux fois plus de lignes visibles. */
+  dense?: boolean;
 };
 
 // Cellule figée à droite : fond opaque, sinon les colonnes défilent à travers
@@ -53,10 +55,12 @@ export function DataTable<T extends Record<string, unknown>>({
   rowLabel,
   isRowMuted,
   stickyHeader = false,
+  dense = false,
 }: DataTableProps<T>) {
+  const espacement = dense ? "px-3 py-1.5" : "px-4 py-3";
   const cellClass = (column: Column<T>) =>
     cn(
-      "px-4 py-3",
+      espacement,
       column.align === "right" && "text-right whitespace-nowrap tabular-nums",
       column.sticky && STICKY_CELL,
     );
@@ -68,7 +72,12 @@ export function DataTable<T extends Record<string, unknown>>({
         className,
       )}
     >
-      <table className="w-full border-collapse text-[13.5px] text-simtis-text">
+      <table
+        className={cn(
+          "w-full border-collapse text-simtis-text",
+          dense ? "text-[13px]" : "text-[13.5px]",
+        )}
+      >
         <thead>
           <tr
             className={cn(
@@ -82,7 +91,8 @@ export function DataTable<T extends Record<string, unknown>>({
                 key={column.key}
                 scope="col"
                 className={cn(
-                  "px-4 py-3 whitespace-nowrap",
+                  espacement,
+                  "whitespace-nowrap",
                   column.align === "right" ? "text-right" : "text-left",
                   column.sticky && cn(STICKY_CELL, "bg-simtis-light"),
                 )}

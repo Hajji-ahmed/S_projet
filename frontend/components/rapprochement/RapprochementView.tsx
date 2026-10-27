@@ -7,10 +7,13 @@ import {
   History,
   Layers,
   ListChecks,
+  Maximize2,
+  Minimize2,
+  PanelRightClose,
   Play,
   Search,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
@@ -42,6 +45,7 @@ import {
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
+import { estPleinEcran, setPleinEcran, subscribe as subscribePleinEcran } from "@/lib/pleinEcran";
 import { saveFile } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
 import { exporterFrais, exporterJustificatif } from "@/services/frais";
@@ -104,6 +108,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [entry, setEntry] = useState<Ecriture | null>(null);
   // Rapprochement manuel de plusieurs lignes (P13, 15/10/2026) : lignes cochées dans les volets
   const [plusieurs, setPlusieurs] = useState(false);
+  // Panneau central (27/10/2026) : une fine bande tant que rien n'est choisi, ouvert à la
+  // sélection ; « reduit » le referme sans perdre la sélection, « ouvert » le force ouvert
+  const [centre, setCentre] = useState<"auto" | "ouvert" | "reduit">("auto");
+  const pleinEcran = useSyncExternalStore(subscribePleinEcran, estPleinEcran, () => false);
   const [panierOps, setPanierOps] = useState<Operation[]>([]);
   const [panierEcr, setPanierEcr] = useState<Ecriture[]>([]);
   const [parStatut, setParStatut] = useState<Record<StatutRapprochement, number> | null>(null);
@@ -227,6 +235,32 @@ function Rapprochement({ companyId }: { companyId: number }) {
     );
   }, []);
 
+  const centreOuvert =
+    plusieurs || centre === "ouvert" || (centre === "auto" && !!(operation || entry));
+
+  // Le plein écran se quitte avec Échap (sauf dans une fenêtre ouverte) et en quittant la page
+  useEffect(() => {
+    if (!pleinEcran) return;
+    const quitter = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.querySelector('[role="dialog"]')) {
+        setPleinEcran(false);
+      }
+    };
+    window.addEventListener("keydown", quitter);
+    return () => window.removeEventListener("keydown", quitter);
+  }, [pleinEcran]);
+  useEffect(() => () => setPleinEcran(false), []);
+
+  function choisirOperation(row: Operation) {
+    setOperation(row);
+    setCentre("auto");
+  }
+
+  function choisirEcriture(row: Ecriture) {
+    setEntry(row);
+    setCentre("auto");
+  }
+
   function changeFilter(next: Partial<ReconciliationFilter>) {
     setOperation(null);
     setEntry(null);
@@ -294,22 +328,36 @@ function Rapprochement({ companyId }: { companyId: number }) {
         title="Rapprochement"
         description="Rapprochement des transactions bancaires et des écritures comptables"
         actions={
-          canValidate && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                icon={Search}
-                disabled={running || !!periodError}
-                onClick={runElargie}
-                title="Lignes encore libres : même n° et même montant, jusqu'à 1 an d'écart"
-              >
-                Recherche élargie (1 an)
-              </Button>
-              <Button icon={Play} disabled={running || !!periodError} onClick={run}>
-                {running ? "Rapprochement en cours…" : "Lancer le rapprochement"}
-              </Button>
-            </div>
-          )
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              icon={pleinEcran ? Minimize2 : Maximize2}
+              onClick={() => setPleinEcran(!pleinEcran)}
+              title={
+                pleinEcran
+                  ? "Revenir à l'affichage normal (Échap)"
+                  : "Masquer le menu, l'en-tête et les compteurs pour voir plus de lignes"
+              }
+            >
+              {pleinEcran ? "Quitter le plein écran" : "Plein écran"}
+            </Button>
+            {canValidate && (
+              <>
+                <Button
+                  variant="secondary"
+                  icon={Search}
+                  disabled={running || !!periodError}
+                  onClick={runElargie}
+                  title="Lignes encore libres : même n° et même montant, jusqu'à 1 an d'écart"
+                >
+                  Recherche élargie (1 an)
+                </Button>
+                <Button icon={Play} disabled={running || !!periodError} onClick={run}>
+                  {running ? "Rapprochement en cours…" : "Lancer le rapprochement"}
+                </Button>
+              </>
+            )}
+          </div>
         }
       />
 
@@ -363,7 +411,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
             )}
           </div>
 
-          {!periodError && (
+          {!periodError && !pleinEcran && (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
               <div
                 className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5"
@@ -556,7 +604,14 @@ function Rapprochement({ companyId }: { companyId: number }) {
       )}
 
       {!periodError && tab === "rapprochement" && (
-        <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]">
+        <div
+          className={cn(
+            "grid grid-cols-[minmax(0,1fr)] items-start gap-5",
+            centreOuvert
+              ? "xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]"
+              : "xl:grid-cols-[minmax(0,1fr)_56px_minmax(0,1fr)]",
+          )}
+        >
           <TransactionsPane
             key={`tx-${filterKey}`}
             companyId={companyId}
@@ -573,12 +628,40 @@ function Rapprochement({ companyId }: { companyId: number }) {
                   }
                 : undefined
             }
-            onSelect={setOperation}
+            onSelect={choisirOperation}
             onLoaded={handleOperations}
             statut={statut}
             onStatutChange={setStatut}
           />
-          <div className="xl:sticky xl:top-4">
+          {/* Bande étroite (grand écran seulement) : un clic ouvre le panneau */}
+          <button
+            type="button"
+            onClick={() => setCentre("ouvert")}
+            className={cn(
+              "hidden h-[calc(100dvh-7rem)] min-h-[480px] w-full flex-col items-center gap-3 rounded-card border border-simtis-border bg-simtis-card py-5 text-simtis-primary-dark shadow-simtis transition-colors duration-150 hover:bg-simtis-light/40 xl:sticky xl:top-4",
+              !centreOuvert && "xl:flex",
+            )}
+            aria-label="Ouvrir le panneau Correspondance"
+            title="Ouvrir le panneau Correspondance"
+          >
+            <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-simtis-light text-simtis-primary">
+              <GitCompareArrows className="h-5 w-5" aria-hidden />
+            </span>
+            <span className="text-sm font-semibold [writing-mode:vertical-rl]">Correspondance</span>
+          </button>
+          <div className={cn("xl:sticky xl:top-4", !centreOuvert && "xl:hidden")}>
+            {!plusieurs && (
+              <div className="mb-2 hidden justify-end xl:flex">
+                <Button
+                  variant="ghost"
+                  icon={PanelRightClose}
+                  onClick={() => setCentre("reduit")}
+                  title="Réduire le panneau pour élargir les volets ; la sélection est gardée"
+                >
+                  Réduire
+                </Button>
+              </div>
+            )}
             {plusieurs ? (
               <PanierPanel
                 operations={panierOps}
@@ -621,7 +704,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
                   }
                 : undefined
             }
-            onSelect={setEntry}
+            onSelect={choisirEcriture}
             onLoaded={handleEntries}
           />
         </div>

@@ -133,9 +133,15 @@ export function EntriesPane({
       key: "libelle",
       header: "Libellé",
       render: (row) => (
-        <span className="block min-w-[160px]">
-          <span className="block">{row.libelle}</span>
-          {row.tiers && <span className="block text-xs text-simtis-muted">{row.tiers}</span>}
+        // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, tiers à la suite
+        <span
+          className="flex max-w-[360px] min-w-[160px] items-baseline gap-2"
+          title={row.tiers ? `${row.libelle} · ${row.tiers}` : row.libelle}
+        >
+          <span className="truncate">{row.libelle}</span>
+          {row.tiers && (
+            <span className="shrink-0 truncate text-xs text-simtis-muted">{row.tiers}</span>
+          )}
         </span>
       ),
     },
@@ -330,6 +336,7 @@ export function EntriesPane({
             // Nouvelle page : le tableau repart en haut
             key={data.page}
             stickyHeader
+            dense
             className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             columns={columns}
             rows={data.ecritures}

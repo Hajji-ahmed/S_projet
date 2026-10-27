@@ -150,10 +150,14 @@ export function TransactionsPane({
       key: "libelle",
       header: "Libellé",
       render: (row) => (
-        <span className="block min-w-[160px]">
-          <span className="block">{row.libelle}</span>
+        // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, Réf. à la suite
+        <span
+          className="flex max-w-[360px] min-w-[160px] items-baseline gap-2"
+          title={row.reference ? `${row.libelle} · Réf. ${row.reference}` : row.libelle}
+        >
+          <span className="truncate">{row.libelle}</span>
           {row.reference && (
-            <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
+            <span className="shrink-0 text-xs text-simtis-muted">Réf. {row.reference}</span>
           )}
           {row.en_cours && <EnCoursBadge />}
         </span>
@@ -336,6 +340,7 @@ export function TransactionsPane({
             // Nouvelle page : le tableau repart en haut
             key={data.page}
             stickyHeader
+            dense
             className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             columns={columns}
             rows={data.operations}
