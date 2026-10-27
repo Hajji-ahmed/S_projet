@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { BankPicker } from "@/components/banks/BankPicker";
 import { ComptesCard } from "@/components/dashboard/ComptesCard";
 import { EvolutionCard } from "@/components/dashboard/EvolutionCard";
 import { FraisParBanque } from "@/components/dashboard/FraisParBanque";
@@ -103,25 +104,15 @@ function DashboardSociete({ companyId }: { companyId: number }) {
         description="Vue d'ensemble de la position bancaire, du rapprochement et des prévisions"
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <label className="sr-only" htmlFor="dashboard-banque">
-              Banque
-            </label>
-            <select
+            <BankPicker
               id="dashboard-banque"
-              value={banque ?? ""}
-              onChange={(event) => {
+              banques={data?.banques_societe ?? []}
+              value={banque}
+              onChange={(id) => {
                 setState("loading");
-                adresse({ banque: event.target.value || undefined });
+                adresse({ banque: id === undefined ? undefined : String(id) });
               }}
-              className="h-11 rounded-[12px] border border-simtis-border bg-simtis-card px-3 text-sm font-medium text-simtis-text shadow-simtis"
-            >
-              <option value="">Toutes les banques</option>
-              {(data?.banques_societe ?? []).map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.code}
-                </option>
-              ))}
-            </select>
+            />
             <PeriodePicker periode={periode} onChange={changer} />
           </div>
         }
