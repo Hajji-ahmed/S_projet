@@ -22,6 +22,9 @@ import {
   rapprochable,
   reconciliationQuery,
   selectionSummary,
+  periodeAStocker,
+  periodeMemorisee,
+  periodeRapprochement,
   sensBanque,
   sensSage,
   statutsVolet,
@@ -34,6 +37,40 @@ describe("defaultPeriod", () => {
   it("part du 1er du mois précédent", () => {
     expect(defaultPeriod("2026-10-06")).toEqual({ from: "2026-09-01", to: "2026-10-06" });
     expect(defaultPeriod("2026-01-15")).toEqual({ from: "2025-12-01", to: "2026-01-15" });
+  });
+});
+
+describe("periodeRapprochement", () => {
+  it("part du 1er janvier de l'année en cours", () => {
+    expect(periodeRapprochement("2026-10-27")).toEqual({ from: "2026-01-01", to: "2026-10-27" });
+    expect(periodeRapprochement("2027-01-01")).toEqual({ from: "2027-01-01", to: "2027-01-01" });
+  });
+});
+
+describe("periodeMemorisee", () => {
+  const today = "2026-10-27";
+
+  it("reprend la période choisie, le « Au » du jour même avance à aujourd'hui", () => {
+    const hier = periodeAStocker({ from: "2026-03-01", to: "2026-10-26" }, "2026-10-26");
+    expect(periodeMemorisee(hier, today)).toEqual({ from: "2026-03-01", to: today });
+  });
+
+  it("garde un « Au » choisi dans le passé", () => {
+    const stockee = periodeAStocker({ from: "2026-03-01", to: "2026-06-30" }, "2026-10-26");
+    expect(periodeMemorisee(stockee, today)).toEqual({ from: "2026-03-01", to: "2026-06-30" });
+  });
+
+  it.each([
+    ["absente", null],
+    ["illisible", "{pas du json"],
+    ["incomplète", JSON.stringify({ from: "2026-03-01" })],
+    ["inversée", JSON.stringify({ from: "2026-09-01", to: "2026-03-01", jour: "2026-10-20" })],
+    [
+      "de plus de 5 ans",
+      JSON.stringify({ from: "2020-01-01", to: "2026-03-01", jour: "2026-10-20" }),
+    ],
+  ])("revient au 1er janvier quand elle est %s", (_cas, brut) => {
+    expect(periodeMemorisee(brut, today)).toEqual({ from: "2026-01-01", to: today });
   });
 });
 

@@ -39,6 +39,48 @@ export function defaultPeriod(today: string): { from: string; to: string } {
   return { from: `${previous.y}-${String(previous.m).padStart(2, "0")}-01`, to: today };
 }
 
+/** Période du rapprochement à l'ouverture (27/10/2026) : du 1er janvier de l'année en cours à
+ * aujourd'hui. */
+export function periodeRapprochement(today: string): { from: string; to: string } {
+  return { from: `${today.slice(0, 4)}-01-01`, to: today };
+}
+
+/** Clé du navigateur où le rapprochement garde la dernière période choisie (27/10/2026). */
+export const CLE_PERIODE = "simtis.rapprochement.periode";
+const JOUR_ISO = /^\d{4}-\d{2}-\d{2}$/;
+const PERIODE_MAX_JOURS = 1827; // comme l'API : 5 ans au plus
+
+/** Ce que le navigateur garde : la période et le jour où elle a été choisie. */
+export function periodeAStocker(periode: { from: string; to: string }, today: string): string {
+  return JSON.stringify({ from: periode.from, to: periode.to, jour: today });
+}
+
+/**
+ * Période reprise du navigateur, sinon celle de `periodeRapprochement`. Un « Au » qui était le jour
+ * même du choix avance à aujourd'hui (sinon une période choisie « jusqu'à aujourd'hui » cacherait
+ * les opérations des jours suivants) ; un « Au » choisi dans le passé reste tel quel. Une valeur
+ * abîmée, inversée ou de plus de 5 ans est ignorée.
+ */
+export function periodeMemorisee(brut: string | null, today: string): { from: string; to: string } {
+  const defaut = periodeRapprochement(today);
+  if (!brut) return defaut;
+  let lu: unknown;
+  try {
+    lu = JSON.parse(brut);
+  } catch {
+    return defaut;
+  }
+  if (typeof lu !== "object" || lu === null) return defaut;
+  const { from, to, jour } = lu as Record<string, unknown>;
+  if (![from, to, jour].every((v) => typeof v === "string" && JOUR_ISO.test(v))) return defaut;
+  const fin = to === jour ? today : (to as string);
+  const debut = from as string;
+  if (debut > fin) return defaut;
+  const jours = (Date.parse(`${fin}T00:00:00Z`) - Date.parse(`${debut}T00:00:00Z`)) / 86_400_000;
+  if (!Number.isFinite(jours) || jours >= PERIODE_MAX_JOURS) return defaut;
+  return { from: debut, to: fin };
+}
+
 /** « ?company_id=…&… » : seuls les filtres renseignés ; `page` seulement si demandée. */
 /** Filtre du volet : frais bancaires non rapprochés, à passer dans Sage (12/10/2026). */
 export const A_COMPTABILISER = "À comptabiliser";

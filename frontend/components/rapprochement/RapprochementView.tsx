@@ -38,8 +38,11 @@ import { cn } from "@/lib/cn";
 import { ECARTS_ACTIFS } from "@/lib/features";
 import {
   basculerLigne,
-  defaultPeriod,
+  CLE_PERIODE,
   operationOf,
+  periodeAStocker,
+  periodeMemorisee,
+  periodeRapprochement,
   toggleStatut,
   A_COMPTABILISER,
   type ReconciliationFilter,
@@ -101,7 +104,12 @@ function Rapprochement({ companyId }: { companyId: number }) {
     !!user &&
     hasAnyPermission(user.permissions, [PERMISSIONS.DISCREPANCIES_MANAGE]);
 
-  const [filter, setFilter] = useState<ReconciliationFilter>(() => defaultPeriod(businessToday()));
+  // Du 1er janvier à aujourd'hui, ou la dernière période choisie sur ce poste (27/10/2026)
+  const [filter, setFilter] = useState<ReconciliationFilter>(() =>
+    periodeRapprochement(businessToday()),
+  );
+  // La période gardée par le navigateur est lue avant le premier chargement des volets
+  const [periodeLue, setPeriodeLue] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const [operation, setOperation] = useState<Operation | null>(null);
@@ -173,6 +181,19 @@ function Rapprochement({ companyId }: { companyId: number }) {
       : !filter.from || !filter.to
         ? "Choisissez une période."
         : null;
+
+  useEffect(() => {
+    let brut: string | null = null;
+    try {
+      brut = window.localStorage.getItem(CLE_PERIODE);
+    } catch {
+      // Stockage indisponible : période par défaut
+    }
+    const periode = periodeMemorisee(brut, businessToday());
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- lecture unique du navigateur
+    setFilter((current) => ({ ...current, ...periode }));
+    setPeriodeLue(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -264,7 +285,17 @@ function Rapprochement({ companyId }: { companyId: number }) {
   function changeFilter(next: Partial<ReconciliationFilter>) {
     setOperation(null);
     setEntry(null);
-    setFilter((current) => ({ ...current, ...next }));
+    setFilter((current) => {
+      const suivant = { ...current, ...next };
+      if ("from" in next || "to" in next) {
+        try {
+          window.localStorage.setItem(CLE_PERIODE, periodeAStocker(suivant, businessToday()));
+        } catch {
+          // Stockage indisponible : le choix vaut pour la visite en cours
+        }
+      }
+      return suivant;
+    });
   }
 
   function reload(message: string) {
@@ -411,7 +442,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
             )}
           </div>
 
-          {!periodError && !pleinEcran && (
+          {periodeLue && !periodError && !pleinEcran && (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
               <div
                 className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5"
@@ -465,7 +496,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </div>
       </Card>
 
-      {!periodError && (
+      {periodeLue && !periodError && (
         <div
           className="flex gap-2 border-b border-simtis-border"
           role="tablist"
@@ -502,7 +533,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </div>
       )}
 
-      {!periodError && tab === "propositions" && (
+      {periodeLue && !periodError && tab === "propositions" && (
         <ProposalsTab
           companyId={companyId}
           pending={pending}
@@ -532,7 +563,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         />
       )}
 
-      {!periodError && tab === "historique" && (
+      {periodeLue && !periodError && tab === "historique" && (
         <HistoryTab
           key={`hist-${filterKey}`}
           companyId={companyId}
@@ -543,7 +574,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         />
       )}
 
-      {!periodError && tab === "rapprochement" && statut === A_COMPTABILISER && (
+      {periodeLue && !periodError && tab === "rapprochement" && statut === A_COMPTABILISER && (
         <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-end gap-3">
             <Button
@@ -582,7 +613,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </div>
       )}
 
-      {!periodError && tab === "rapprochement" && canValidate && (
+      {periodeLue && !periodError && tab === "rapprochement" && canValidate && (
         <div className="flex flex-wrap items-center justify-end gap-3">
           {plusieurs && (
             <span className="text-sm text-simtis-muted">
@@ -603,7 +634,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </div>
       )}
 
-      {!periodError && tab === "rapprochement" && (
+      {periodeLue && !periodError && tab === "rapprochement" && (
         <div
           className={cn(
             "grid grid-cols-[minmax(0,1fr)] items-start gap-5",
