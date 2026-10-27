@@ -839,9 +839,9 @@ def analyse_statement(
         raise ConflictError(
             f"Le compte {account.bank.code} {account.devise} est inactif : réactivez-le d'abord."
         )
-    import_file.check_file(fichier_nom, content)
+    import_file.check_file(fichier_nom, content, pdf=True)
 
-    feuilles, feuille, rows = import_file.read_sheet(content, feuille, unite="relevé")
+    feuilles, feuille, rows = import_file.read_sheet(content, feuille, unite="relevé", pdf=True)
     header_index = import_file.detect_header(rows, STATEMENT_FIELDS)
     data = rows[header_index + 1 :]
     if len(data) > import_file.MAX_ROWS:

@@ -1,5 +1,10 @@
 """Lecture d'un classeur d'import, commune aux relevés bancaires et aux exports comptables.
 
+Depuis le 27/10/2026 un relevé bancaire peut aussi être un PDF **généré par la banque** (texte, pas
+une image scannée) : ses tableaux, page après page, deviennent les lignes d'une feuille unique
+« PDF », puis tout se passe comme pour un Excel (en-tête, colonnes, aperçu, contrôles). Les en-têtes
+répétés en haut de chaque page sont retirés. Les exports Sage restent en Excel.
+
 Fichiers Excel `.xlsx` ou `.xls` (l'ancien format, accepté depuis le 08/10/2026), 20 Mo et
 50 000 lignes au plus (limites relevées le 08/10/2026, 5 Mo et 5 000 lignes avant). Le format est reconnu au contenu du fichier, pas seulement à son nom ; les deux
 donnent les mêmes valeurs (dates en `datetime`, nombres, textes, cellule vide = None). La ligne d'en-tête
@@ -14,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
 
+import pdfplumber
 import xlrd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -53,13 +59,19 @@ class Column:
 
 EXTENSIONS = (".xlsx", ".xls")
 FORMATS_ACCEPTES = "Seuls les fichiers Excel .xlsx ou .xls sont acceptés."
+FORMATS_ACCEPTES_PDF = "Seuls les fichiers Excel .xlsx ou .xls, ou PDF, sont acceptés."
 # Signature d'un .xls (document OLE2 / BIFF) ; tout le reste est lu comme un .xlsx (archive zip)
 _OLE2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_PDF = b"%PDF"
+FEUILLE_PDF = "PDF"
+MAX_PAGES_PDF = 500
 
 
-def check_file(fichier_nom: str, content: bytes) -> None:
-    if not fichier_nom.lower().endswith(EXTENSIONS):
-        raise ConflictError(FORMATS_ACCEPTES)
+def check_file(fichier_nom: str, content: bytes, *, pdf: bool = False) -> None:
+    """`pdf` : le fichier peut aussi être un PDF (relevés bancaires seulement, 27/10/2026)."""
+    extensions = (*EXTENSIONS, ".pdf") if pdf else EXTENSIONS
+    if not fichier_nom.lower().endswith(extensions):
+        raise ConflictError(FORMATS_ACCEPTES_PDF if pdf else FORMATS_ACCEPTES)
     if not content:
         raise ConflictError("Le fichier est vide.")
     if len(content) > MAX_FILE_BYTES:
@@ -67,11 +79,16 @@ def check_file(fichier_nom: str, content: bytes) -> None:
 
 
 def read_sheet(
-    content: bytes, feuille: str | None, unite: str = "fichier"
+    content: bytes, feuille: str | None, unite: str = "fichier", *, pdf: bool = False
 ) -> tuple[list[str], str, list[tuple]]:
     """Feuilles du classeur, feuille lue et ses lignes (sans les lignes vides de la fin).
-    `unite` nomme ce qu'est le fichier dans le message de taille (« relevé », « fichier »)."""
-    if content.startswith(_OLE2):
+    `unite` nomme ce qu'est le fichier dans le message de taille (« relevé », « fichier »).
+    `pdf` : un PDF est lu comme une feuille unique « PDF » ; sinon il est refusé."""
+    if content.startswith(_PDF):
+        if not pdf:
+            raise ConflictError(FORMATS_ACCEPTES)
+        names, name, rows = _read_pdf(content, feuille, unite)
+    elif content.startswith(_OLE2):
         names, name, rows = _read_xls(content, feuille, unite)
     else:
         names, name, rows = _read_xlsx(content, feuille, unite)
@@ -112,6 +129,178 @@ def _read_xlsx(content: bytes, feuille: str | None, unite: str) -> tuple[list[st
     finally:
         workbook.close()
     return names, name, rows
+
+
+def _cellule_pdf(valeur: str | None) -> str | None:
+    """Texte d'une cellule de tableau PDF : retours à la ligne et espaces multiples réduits."""
+    if valeur is None:
+        return None
+    texte = " ".join(valeur.split())
+    return texte or None
+
+
+def _tableaux_page(page) -> list[list[tuple]]:
+    """Lignes des tableaux tracés (avec des traits) d'une page."""
+    return [
+        tuple(_cellule_pdf(cellule) for cellule in brute)
+        for tableau in page.extract_tables()
+        if tableau and len(tableau[0]) > 1
+        for brute in tableau
+    ]
+
+
+@dataclass(frozen=True)
+class MotPdf:
+    """Un mot d'une page PDF et sa position (points, origine en haut à gauche)."""
+
+    x0: float
+    x1: float
+    top: float
+    bottom: float
+    texte: str
+
+
+# Deux mots sont sur la même ligne si leurs hauts diffèrent de 3 points au plus ; ils sont dans la
+# même cellule si l'écart qui les sépare est inférieur à la moitié de leur hauteur (une espace
+# fait environ le quart de la hauteur, l'écart entre deux colonnes bien plus).
+TOLERANCE_LIGNE = 3.0
+ECART_CELLULE = 0.5
+# Une ligne de moins de 3 cellules (titre, « Compte : … », pied de page) ne sert pas à placer
+# les colonnes.
+CELLULES_MIN_COLONNES = 3
+
+_Cellule = tuple[float, float, str]
+
+
+def _cellules_des_lignes(mots: Sequence[MotPdf]) -> list[list[_Cellule]]:
+    """Mots d'une page → lignes de haut en bas, chacune en cellules (x0, x1, texte)."""
+    lignes: list[list[MotPdf]] = []
+    for mot in sorted(mots, key=lambda m: (m.top, m.x0)):
+        if lignes and abs(mot.top - lignes[-1][0].top) <= TOLERANCE_LIGNE:
+            lignes[-1].append(mot)
+        else:
+            lignes.append([mot])
+    resultat = []
+    for ligne in lignes:
+        cellules: list[list] = []
+        for mot in sorted(ligne, key=lambda m: m.x0):
+            ecart_max = max(2.0, ECART_CELLULE * (mot.bottom - mot.top))
+            if cellules and mot.x0 - cellules[-1][1] <= ecart_max:
+                cellules[-1][1] = max(cellules[-1][1], mot.x1)
+                cellules[-1][2] += " " + mot.texte
+            else:
+                cellules.append([mot.x0, mot.x1, mot.texte])
+        resultat.append([(c[0], c[1], c[2]) for c in cellules])
+    return resultat
+
+
+def _colonnes(lignes: Sequence[Sequence[_Cellule]]) -> list[tuple[float, float]]:
+    """Colonnes communes à tout le document : les cellules qui se chevauchent horizontalement
+    appartiennent à la même colonne."""
+    intervalles = sorted(
+        (x0, x1) for ligne in lignes if len(ligne) >= CELLULES_MIN_COLONNES for x0, x1, _ in ligne
+    )
+    colonnes: list[list[float]] = []
+    for x0, x1 in intervalles:
+        if colonnes and x0 <= colonnes[-1][1]:
+            colonnes[-1][1] = max(colonnes[-1][1], x1)
+        else:
+            colonnes.append([x0, x1])
+    return [(c[0], c[1]) for c in colonnes]
+
+
+def _colonne_de(cellule: _Cellule, colonnes: Sequence[tuple[float, float]]) -> int:
+    """Première colonne que la cellule recouvre (un titre qui déborde reste dans la colonne où il
+    commence), sinon la colonne la plus proche de son milieu."""
+    x0, x1, _ = cellule
+    for index, (c0, c1) in enumerate(colonnes):
+        if min(x1, c1) > max(x0, c0):
+            return index
+    milieu = (x0 + x1) / 2
+    return min(range(len(colonnes)), key=lambda i: abs(sum(colonnes[i]) / 2 - milieu))
+
+
+def lignes_par_mots(pages: Sequence[Sequence[MotPdf]]) -> list[tuple]:
+    """Lignes d'un relevé PDF sans traits de tableau, à partir de la position des mots (fonction
+    pure) : mêmes colonnes pour toutes les pages, une cellule vide reste vide (None)."""
+    par_page = [_cellules_des_lignes(mots) for mots in pages]
+    colonnes = _colonnes([ligne for page in par_page for ligne in page])
+    if not colonnes:
+        return []
+    pages_lignes = []
+    for page in par_page:
+        lignes = []
+        for ligne in page:
+            valeurs: list[str | None] = [None] * len(colonnes)
+            for cellule in ligne:
+                index = _colonne_de(cellule, colonnes)
+                valeurs[index] = f"{valeurs[index]} {cellule[2]}" if valeurs[index] else cellule[2]
+            lignes.append(tuple(valeurs))
+        pages_lignes.append(lignes)
+    return _sans_entetes_repetes(pages_lignes)
+
+
+def lignes_pdf(pages: Sequence[Sequence[Sequence[str | None]]]) -> list[tuple]:
+    """Lignes de la feuille « PDF » à partir des lignes des tableaux tracés de chaque page."""
+    return _sans_entetes_repetes(
+        [[tuple(_cellule_pdf(c) for c in ligne) for ligne in page] for page in pages]
+    )
+
+
+def _sans_entetes_repetes(pages: Sequence[Sequence[tuple]]) -> list[tuple]:
+    """Pages mises bout à bout, sans lignes vides ; une ligne d'une page suivante identique à une
+    ligne de la première page qui ne contient aucun chiffre (l'en-tête répété en haut de page) est
+    retirée."""
+    lignes: list[tuple] = []
+    entetes: set[tuple] = set()
+    for numero, page in enumerate(pages):
+        for ligne in page:
+            if all(cellule is None for cellule in ligne):
+                continue
+            cle = tuple(normalize_header(c) if c else "" for c in ligne)
+            sans_chiffre = not any(ch.isdigit() for c in ligne if c for ch in c)
+            if numero == 0:
+                if sans_chiffre:
+                    entetes.add(cle)
+            elif cle in entetes:
+                continue
+            lignes.append(ligne)
+    return lignes
+
+
+def _mots(page) -> list[MotPdf]:
+    return [
+        MotPdf(m["x0"], m["x1"], m["top"], m["bottom"], m["text"])
+        for m in page.extract_words(keep_blank_chars=False, use_text_flow=False)
+    ]
+
+
+def _read_pdf(content: bytes, feuille: str | None, unite: str) -> tuple[list[str], str, list]:
+    """Tableaux tracés s'il y en a, sinon les colonnes déduites de la position des mots (beaucoup
+    de relevés n'ont pas de traits verticaux)."""
+    if feuille not in (None, FEUILLE_PDF):
+        raise ConflictError(f"Feuille introuvable dans le fichier : « {feuille} ».")
+    try:
+        document = pdfplumber.open(BytesIO(content))
+        with document:
+            if len(document.pages) > MAX_PAGES_PDF:
+                raise ConflictError(f"PDF trop long : {MAX_PAGES_PDF} pages au plus par {unite}.")
+            mots = [_mots(page) for page in document.pages]
+            tableaux = [_tableaux_page(page) for page in document.pages]
+    except ConflictError:
+        raise
+    except Exception as error:  # pdfminer lève des erreurs variées sur un PDF abîmé
+        raise ConflictError("Fichier illisible : ce n'est pas un PDF valide.") from error
+    if not any(mots):
+        raise ConflictError(
+            "PDF sans texte (document scanné) : SIMTIS ne lit que les PDF générés par la banque. "
+            "Demandez le relevé en Excel ou en PDF d'origine."
+        )
+    rows = lignes_pdf(tableaux) if any(tableaux) else lignes_par_mots(mots)
+    if not any(sum(cellule is not None for cellule in row) > 1 for row in rows):
+        raise ConflictError("Aucun tableau trouvé dans le PDF : demandez le relevé en Excel.")
+    _too_long(rows, unite)
+    return [FEUILLE_PDF], FEUILLE_PDF, rows
 
 
 def _xls_value(cell: xlrd.sheet.Cell, datemode: int) -> object:

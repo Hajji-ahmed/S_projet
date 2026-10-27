@@ -95,7 +95,7 @@ class BankAccount(TimestampMixin, Base):
         String(20), default="Courant", server_default="Courant"
     )
     # Compte du plan comptable Sage lié à ce compte bancaire (ex. 5141), utilisé en P10
-    compte_comptable: Mapped[str | None] = mapped_column(String(20))
+    compte_comptable: Mapped[str | None] = mapped_column(String(200))
     # Journaux de banque dans Sage, séparés par des virgules (« 5243,5543 », 12/10/2026) : rattachent
     # les écritures importées (P10). Un journal ne sert qu'à un compte actif par société : déclencheur
     # `bank_accounts_journaux_uniques` (migration 0022)

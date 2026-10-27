@@ -128,6 +128,19 @@ describe("validateAccountForm", () => {
     ).toBeDefined();
   });
 
+  it("accepte plusieurs comptes comptables, jusqu'à 9", () => {
+    expect(
+      validateAccountForm({ ...valid, compte_comptable: "51410000, 51410100" }, "create"),
+    ).toEqual({});
+    expect(
+      validateAccountForm({ ...valid, compte_comptable: "5141, 51-42" }, "create").compte_comptable,
+    ).toBeDefined();
+    const dix = Array.from({ length: 10 }, (_, i) => `514${i}`).join(", ");
+    expect(
+      validateAccountForm({ ...valid, compte_comptable: dix }, "create").compte_comptable,
+    ).toBeDefined();
+  });
+
   it("accepte un taux vide et un compte comptable vide", () => {
     expect(validateAccountForm({ ...valid, taux: "", compte_comptable: "" }, "create")).toEqual({});
   });

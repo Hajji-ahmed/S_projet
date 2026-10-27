@@ -199,7 +199,8 @@ def _ignored_reason(cells: dict[str, object], journals: dict[str, BankAccount]) 
         )
     return (
         f"Compte {_code(cells.get('compte')) or '(vide)'} : contrepartie, pas la ligne banque "
-        f"({account.compte_comptable}…) du journal {journal}"
+        f"({'…, '.join(account_service.comptes_comptables(account.compte_comptable))}…) "
+        f"du journal {journal}"
     )
 
 
@@ -211,7 +212,8 @@ def _bank_account_of(
     if account is None:
         return None
     compte = _code(cells.get("compte"))
-    if account.compte_comptable and not compte.startswith(account.compte_comptable):
+    comptes = account_service.comptes_comptables(account.compte_comptable)
+    if comptes and not compte.startswith(tuple(comptes)):
         return None  # contrepartie (411, 441, 6147...)
     return account
 

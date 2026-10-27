@@ -248,17 +248,17 @@ export function AccountFormModal({
           />
         </Field>
         <Field
-          label="Compte comptable"
+          label="Comptes comptables"
           htmlFor="account-compte"
           error={errors.compte_comptable}
-          hint="Compte Sage, ex. 5141."
+          hint="Comptes Sage séparés par des virgules (ex. 51410000, 51410100) ; le premier reçoit les frais."
         >
           <TextInput
             id="account-compte"
             value={values.compte_comptable}
             onChange={(event) => set("compte_comptable")(event.target.value)}
             disabled={submitting}
-            maxLength={20}
+            maxLength={200}
             autoComplete="off"
             invalid={!!errors.compte_comptable}
           />

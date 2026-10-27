@@ -47,7 +47,7 @@ from app.models import (
 )
 from app.repositories import frais_repository, reconciliation_repository
 from app.services import audit_service, reconciliation_service
-from app.services.account_service import journal_des_frais
+from app.services.account_service import compte_principal, journal_des_frais
 from app.services.errors import ConflictError, NotFoundError
 from app.services.normalization_service import line_hash
 from app.services.position_service import business_today
@@ -612,7 +612,7 @@ def _retenus(
                 "comptabiliser ce jour-là. Rien n'a été comptabilisé, rechargez la liste."
             )
         journal = journal_des_frais(account)
-        if journal is None or not account.compte_comptable:
+        if journal is None or not compte_principal(account):
             raise ConflictError(
                 f"Compte {account.bank.code} {account.devise} : renseignez son compte comptable et "
                 "son journal des frais (écran Comptes). Rien n'a été comptabilisé."
@@ -744,7 +744,7 @@ def valider(
             company_id=company_id,
             bank_account_id=account.id,
             journal=journal,
-            compte=account.compte_comptable,
+            compte=compte_principal(account),
             date_ecriture=date_ecriture,
             libelle=libelle,
             debit=ZERO,
@@ -1401,7 +1401,7 @@ def comptabiliser_manuellement(
         )
     account = accounts[comptes.pop()]
     journal = journal_des_frais(account)
-    if journal is None or not account.compte_comptable:
+    if journal is None or not compte_principal(account):
         raise ConflictError(
             f"Compte {account.bank.code} {account.devise} : renseignez son compte comptable et "
             "son journal des frais (écran Comptes)."
@@ -1428,7 +1428,7 @@ def comptabiliser_manuellement(
         company_id=company_id,
         bank_account_id=account.id,
         journal=journal,
-        compte=account.compte_comptable,
+        compte=compte_principal(account),
         date_ecriture=date_ecriture,
         libelle=texte,
         debit=total if montant < 0 else ZERO,

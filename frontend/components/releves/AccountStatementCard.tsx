@@ -278,13 +278,10 @@ export function AccountStatementCard({
     {
       key: "libelle",
       header: "Libellé",
-      // Largeur minimale : avec les 12 colonnes du format standard, le libellé serait écrasé
+      // Largeur minimale : avec les 13 colonnes du relevé, le libellé serait écrasé
       render: (row) => (
         <span className="block min-w-[300px] break-words">
           <span className="block">{row.libelle}</span>
-          {row.reference && (
-            <span className="block text-xs text-simtis-muted">Réf. {row.reference}</span>
-          )}
           {row.origine === "Manuelle" && (
             <span className="block text-xs font-medium text-simtis-warning-fg">
               Saisie manuelle
@@ -298,6 +295,12 @@ export function AccountStatementCard({
           {row.en_cours && <EnCoursBadge remplacee={row.remplacee} />}
         </span>
       ),
+    },
+    {
+      // Colonne Référence (27/10/2026) : avant, en petit sous le libellé
+      key: "reference",
+      header: "Référence",
+      render: (row) => <span className="whitespace-nowrap">{row.reference ?? ""}</span>,
     },
     {
       key: "debit",

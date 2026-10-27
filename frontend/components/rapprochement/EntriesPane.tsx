@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -178,129 +179,134 @@ export function EntriesPane({
       icon={BookText}
       className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
     >
-      <form
-        className="mb-4 flex flex-wrap items-end gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setState("loading");
-          setPage(1);
-          setQ(search.trim());
-        }}
+      <FiltresRepliables
+        volet="ecritures"
+        actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
       >
-        <div className="w-full max-w-[170px]">
-          <Field label="Statut" htmlFor="rapprochement-ec-statut">
-            <Select
-              id="rapprochement-ec-statut"
-              value={statut}
-              placeholder="Tous les statuts"
-              options={STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item }))}
-              onChange={(event) => {
-                setState("loading");
-                setPage(1);
-                setStatut(event.target.value);
-              }}
-            />
-          </Field>
-        </div>
-        <div className="w-full max-w-[150px]">
-          <Field label="Type" htmlFor="rapprochement-ec-type">
-            <Select
-              id="rapprochement-ec-type"
-              value={typeOperation}
-              placeholder="Tous les types"
-              options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
-              onChange={(event) => {
-                setState("loading");
-                setPage(1);
-                setTypeOperation(event.target.value);
-              }}
-            />
-          </Field>
-        </div>
-        <div className="w-full max-w-[120px]">
-          <Field label="Sens" htmlFor="rapprochement-ec-sens">
-            <Select
-              id="rapprochement-ec-sens"
-              value={sens}
-              placeholder="Tous"
-              options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
-              onChange={(event) => {
-                setState("loading");
-                setPage(1);
-                setSens(event.target.value);
-              }}
-            />
-          </Field>
-        </div>
-        <div className="w-full max-w-[160px]">
-          <Field label="Du" htmlFor="rapprochement-ec-du">
-            <DateInput
-              id="rapprochement-ec-du"
-              value={du}
-              min={filter.from}
-              max={filter.to}
-              onChange={(event) => {
-                setState("loading");
-                setPage(1);
-                setDu(event.target.value);
-              }}
-            />
-          </Field>
-        </div>
-        <div className="w-full max-w-[160px]">
-          <Field label="Au" htmlFor="rapprochement-ec-au">
-            <DateInput
-              id="rapprochement-ec-au"
-              value={au}
-              min={filter.from}
-              max={filter.to}
-              onChange={(event) => {
-                setState("loading");
-                setPage(1);
-                setAu(event.target.value);
-              }}
-            />
-          </Field>
-        </div>
-        <div className="w-full max-w-[200px]">
-          <Field label="Recherche" htmlFor="rapprochement-ec-recherche">
-            <TextInput
-              id="rapprochement-ec-recherche"
-              value={search}
-              maxLength={100}
-              placeholder="Libellé, pièce, tiers, code"
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </Field>
-        </div>
-        <Button
-          type="submit"
-          variant="secondary"
-          icon={Search}
-          aria-label="Rechercher les écritures"
-        >
-          Rechercher
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          icon={X}
-          disabled={!filtresActifs}
-          onClick={() => {
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
             setState("loading");
             setPage(1);
-            setStatut("");
-            setTypeOperation("");
-            setSens("");
-            setDu("");
-            setAu("");
-            setSearch("");
-            setQ("");
+            setQ(search.trim());
           }}
         >
-          Effacer les filtres
-        </Button>
-      </form>
+          <div className="w-full max-w-[170px]">
+            <Field label="Statut" htmlFor="rapprochement-ec-statut">
+              <Select
+                id="rapprochement-ec-statut"
+                value={statut}
+                placeholder="Tous les statuts"
+                options={STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item }))}
+                onChange={(event) => {
+                  setState("loading");
+                  setPage(1);
+                  setStatut(event.target.value);
+                }}
+              />
+            </Field>
+          </div>
+          <div className="w-full max-w-[150px]">
+            <Field label="Type" htmlFor="rapprochement-ec-type">
+              <Select
+                id="rapprochement-ec-type"
+                value={typeOperation}
+                placeholder="Tous les types"
+                options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
+                onChange={(event) => {
+                  setState("loading");
+                  setPage(1);
+                  setTypeOperation(event.target.value);
+                }}
+              />
+            </Field>
+          </div>
+          <div className="w-full max-w-[120px]">
+            <Field label="Sens" htmlFor="rapprochement-ec-sens">
+              <Select
+                id="rapprochement-ec-sens"
+                value={sens}
+                placeholder="Tous"
+                options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
+                onChange={(event) => {
+                  setState("loading");
+                  setPage(1);
+                  setSens(event.target.value);
+                }}
+              />
+            </Field>
+          </div>
+          <div className="w-full max-w-[160px]">
+            <Field label="Du" htmlFor="rapprochement-ec-du">
+              <DateInput
+                id="rapprochement-ec-du"
+                value={du}
+                min={filter.from}
+                max={filter.to}
+                onChange={(event) => {
+                  setState("loading");
+                  setPage(1);
+                  setDu(event.target.value);
+                }}
+              />
+            </Field>
+          </div>
+          <div className="w-full max-w-[160px]">
+            <Field label="Au" htmlFor="rapprochement-ec-au">
+              <DateInput
+                id="rapprochement-ec-au"
+                value={au}
+                min={filter.from}
+                max={filter.to}
+                onChange={(event) => {
+                  setState("loading");
+                  setPage(1);
+                  setAu(event.target.value);
+                }}
+              />
+            </Field>
+          </div>
+          <div className="w-full max-w-[200px]">
+            <Field label="Recherche" htmlFor="rapprochement-ec-recherche">
+              <TextInput
+                id="rapprochement-ec-recherche"
+                value={search}
+                maxLength={100}
+                placeholder="Libellé, pièce, tiers, code"
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </Field>
+          </div>
+          <Button
+            type="submit"
+            variant="secondary"
+            icon={Search}
+            aria-label="Rechercher les écritures"
+          >
+            Rechercher
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            icon={X}
+            disabled={!filtresActifs}
+            onClick={() => {
+              setState("loading");
+              setPage(1);
+              setStatut("");
+              setTypeOperation("");
+              setSens("");
+              setDu("");
+              setAu("");
+              setSearch("");
+              setQ("");
+            }}
+          >
+            Effacer les filtres
+          </Button>
+        </form>
+      </FiltresRepliables>
       {periode.ajustee && (
         <p className="-mt-2 mb-3 text-xs text-simtis-warning-fg">
           Dates ramenées à la période de l&apos;écran ({formatDate(filter.from)} au{" "}

@@ -63,6 +63,14 @@ describe("fileProblem", () => {
     expect(fileProblem({ name: "releve.xlsx", size: 20 * 1024 * 1024 })).toBeNull();
     expect(fileProblem({ name: "releve.xlsx", size: 20 * 1024 * 1024 + 1 })).toMatch(/20 Mo/);
   });
+
+  it("accepte un PDF pour un relevé seulement (27/10/2026)", () => {
+    expect(fileProblem({ name: "Releve AWB.PDF", size: 2048 }, { pdf: true })).toBeNull();
+    expect(fileProblem({ name: "export_sage.pdf", size: 2048 })).toBe(
+      "Seuls les fichiers Excel .xlsx ou .xls sont acceptés.",
+    );
+    expect(fileProblem({ name: "releve.csv", size: 10 }, { pdf: true })).toMatch(/ou PDF/);
+  });
 });
 
 describe("correspondance des colonnes", () => {

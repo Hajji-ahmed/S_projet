@@ -212,6 +212,40 @@ def xls(*sheets: tuple[str, list[list]]) -> bytes:
     return buffer.getvalue()
 
 
+# --- Relevés PDF (27/10/2026) ---------------------------------------------------------------------
+
+
+def pdf(*pages: list[list], quadrille: bool = True, texte_seul: bool = False) -> bytes:
+    """PDF d'un tableau par page, comme un relevé généré par la banque. `quadrille` trace les
+    traits du tableau (sinon seul l'alignement du texte le décrit) ; `texte_seul` écrit un
+    paragraphe sans tableau."""
+    from io import BytesIO
+
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, TableStyle
+
+    buffer = BytesIO()
+    elements = []
+    for numero, rows in enumerate(pages):
+        if numero:
+            elements.append(PageBreak())
+        if texte_seul:
+            elements.append(Paragraph(" ".join(map(str, rows)), getSampleStyleSheet()["Normal"]))
+            continue
+        largeurs = [58, 58, 175, 70, 70, 80] if len(rows[0]) == 6 else None
+        table = Table([["" if v is None else str(v) for v in row] for row in rows], largeurs)
+        # Comme un relevé : petite police, montants alignés à droite
+        style = [("FONTSIZE", (0, 0), (-1, -1), 8), ("ALIGN", (3, 0), (-1, -1), "RIGHT")]
+        if quadrille:
+            style.append(("GRID", (0, 0), (-1, -1), 0.5, colors.black))
+        table.setStyle(TableStyle(style))
+        elements.append(table)
+    SimpleDocTemplate(buffer, pagesize=A4, leftMargin=36, rightMargin=36).build(elements)
+    return buffer.getvalue()
+
+
 def big_xlsx(header: list, rows: int, make_row) -> bytes:
     """Classeur .xlsx d'un en-tête et de `rows` lignes, écrit en flux (rapide pour 50 000 lignes)."""
     from io import BytesIO

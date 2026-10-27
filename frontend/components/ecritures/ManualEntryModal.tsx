@@ -33,6 +33,9 @@ export function ManualEntryModal({
   const compte = accounts.find((a) => String(a.id) === accountId);
   const journaux = journauxDuCompte(compte?.journal_sage);
   const [journal, setJournal] = useState(journaux[0] ?? "");
+  // Plusieurs comptes comptables possibles par compte bancaire (27/10/2026)
+  const comptes = journauxDuCompte(compte?.compte_comptable);
+  const [compteComptable, setCompteComptable] = useState(comptes[0] ?? "");
   const [dateEcriture, setDateEcriture] = useState(businessToday());
   const [libelle, setLibelle] = useState("");
   const [piece, setPiece] = useState("");
@@ -51,6 +54,7 @@ export function ManualEntryModal({
   const pret =
     !!compte &&
     journaux.includes(journal) &&
+    (comptes.length === 0 || comptes.includes(compteComptable)) &&
     !!dateEcriture &&
     libelle.trim() !== "" &&
     montants !== null &&
@@ -61,6 +65,7 @@ export function ManualEntryModal({
     setAccountId(id);
     const suivant = accounts.find((a) => String(a.id) === id);
     setJournal(journauxDuCompte(suivant?.journal_sage)[0] ?? "");
+    setCompteComptable(journauxDuCompte(suivant?.compte_comptable)[0] ?? "");
   }
 
   async function enregistrer() {
@@ -78,6 +83,7 @@ export function ManualEntryModal({
         echeance: echeance || null,
         ...montants,
         montant_devise: enDevise ? devise : null,
+        compte: compteComptable || null,
         motif: motif.trim(),
       });
       onSaved();
@@ -127,6 +133,16 @@ export function ManualEntryModal({
             options={journaux.map((j) => ({ value: j, label: j }))}
           />
         </Field>
+        {comptes.length > 1 && (
+          <Field label="Compte comptable" htmlFor="ec-compte-comptable" required>
+            <Select
+              id="ec-compte-comptable"
+              value={compteComptable}
+              onChange={(e) => setCompteComptable(e.target.value)}
+              options={comptes.map((c) => ({ value: c, label: c }))}
+            />
+          </Field>
+        )}
         <Field label="Date" htmlFor="ec-date" required>
           <DateInput
             id="ec-date"

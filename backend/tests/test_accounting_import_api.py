@@ -635,6 +635,26 @@ def test_lines_of_every_journal_of_the_account_are_imported(client, comptable, d
     assert "Journal « 9000 »" in ignoree["raison"]
 
 
+def test_lines_of_every_accounting_account_of_the_account_are_kept(
+    client, comptable, db, reference
+):
+    """27/10/2026 : un compte bancaire peut porter plusieurs comptes comptables."""
+    bp = account(db, "BP", "5243", compte_comptable="55410003,55410100")
+    rows = [
+        HEADER,
+        [date(2026, 1, 2), "5243", "55410003", "P1", "EAR1° AXK 173813", 1000, None, None, None],
+        [date(2026, 1, 2), "5243", "55410100", "P2", "VIREMENT RECU", 200, None, None, None],
+        [date(2026, 1, 2), "5243", "4411", "P3", "FACTURE", None, 1200, None, None],
+    ]
+
+    body = analyse(client, comptable, db, xlsx(rows)).json()
+
+    assert [line["compte"] for line in body["lignes"]] == ["55410003", "55410100"]
+    assert {line["bank_account_id"] for line in body["lignes"]} == {bp.id}
+    [ignoree] = body["lignes_ignorees"]
+    assert "55410003…, 55410100…" in ignoree["raison"]
+
+
 def test_an_ech_header_gives_the_due_date(client, comptable, db, journals):
     """12/10/2026 : l'export Sage de Simtis titre l'échéance « ECH »."""
     rows = [
@@ -781,3 +801,28 @@ def test_manual_entries_need_the_sage_permission(client, direction, db, journals
     awb, _ = journals
 
     assert _ecriture(client, direction, awb.id).status_code == 403
+
+
+def test_a_manual_entry_takes_one_of_the_accounting_accounts(client, comptable, db, reference):
+    """27/10/2026 : avec plusieurs comptes comptables, l'écriture manuelle en choisit un."""
+    awb = account(db, "AWB", "BQ1", compte_comptable="5141,5142")
+
+    sans = _ecriture(client, comptable, awb.id)
+    autre = _ecriture(client, comptable, awb.id, compte="5143")
+    choisi = _ecriture(client, comptable, awb.id, compte="5142")
+
+    assert sans.status_code == 409
+    assert "5141, 5142" in sans.json()["detail"]
+    assert autre.status_code == 409
+    assert choisi.status_code == 201, choisi.text
+    assert db.get(AccountingEntry, choisi.json()["id"]).compte == "5142"
+
+
+def test_a_sage_export_in_pdf_is_refused(client, comptable, db, journals):
+    """27/10/2026 : seuls les relevés bancaires peuvent être des PDF."""
+    from tests.helpers import pdf
+
+    response = analyse(client, comptable, db, pdf([HEADER]), nom="grand_livre.pdf")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Seuls les fichiers Excel .xlsx ou .xls sont acceptés."

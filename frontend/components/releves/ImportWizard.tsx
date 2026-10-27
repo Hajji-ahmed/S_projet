@@ -175,7 +175,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   }
 
   function chooseFile(chosen: File) {
-    const problem = fileProblem(chosen);
+    const problem = fileProblem(chosen, { pdf: true });
     setFileError(problem);
     setFile(problem ? null : chosen);
     setAnalysis(null);
@@ -319,7 +319,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         </div>
         <div>
           {fileError && <Alert tone="danger">{fileError}</Alert>}
-          <FileDropzone file={file} onFile={chooseFile} disabled={busy} />
+          <FileDropzone file={file} onFile={chooseFile} disabled={busy} pdf />
           {busy && (
             <p role="status" className="mt-3 text-sm text-simtis-muted">
               Analyse du fichier en cours...

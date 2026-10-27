@@ -117,3 +117,52 @@ def test_reports_check_the_period_and_their_permissions(client, reference, db):
         ).status_code
         == 403
     )
+
+
+# --- Position bancaire en PDF (27/10/2026) --------------------------------------------------------
+
+
+def test_the_daily_position_is_also_given_as_a_pdf(client, responsable, db):
+    awb = account(db)
+    awb.credit_autorise = Decimal("500000.00")
+    db.flush()
+    operation(db, awb, montant="-200000", jour=date(2026, 9, 1), solde=Decimal("-200000"))
+
+    response = client.get(
+        "/api/rapports/position/pdf",
+        params={"company_id": str(company(db).id), "date": "2026-09-02"},
+        headers=responsable,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF")
+    assert 'filename="position-simtis-20260902.pdf"' in response.headers["content-disposition"]
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_rapport"))
+    assert audit.nouvelle_valeur["rapport"] == "position_du_jour_pdf"
+
+
+def test_the_pdf_position_needs_the_position_permission(client, reference, db):
+    make_auth_user(reference, email="sansrole@example.com")
+    aucun = bearer(login(client, "sansrole@example.com"))
+
+    response = client.get(
+        "/api/rapports/position/pdf", params={"company_id": str(company(db).id)}, headers=aucun
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("valeur", "texte"),
+    [
+        (Decimal("-1234567.8"), "-1 234 567,80"),
+        (Decimal("0"), "0,00"),
+        (Decimal("950.5"), "950,50"),
+        (None, ""),
+    ],
+)
+def test_pdf_amounts_are_written_the_french_way(valeur, texte):
+    from app.services.rapports_service import montant_pdf
+
+    assert montant_pdf(valeur) == texte

@@ -200,6 +200,8 @@ class EcritureManuelleIn(BaseModel):
     reference: str | None = Field(default=None, max_length=60)
     echeance: date | None = None
     montant_devise: Decimal | None = None
+    # Compte comptable parmi ceux du compte bancaire ; facultatif s'il n'y en a qu'un (27/10/2026)
+    compte: str | None = Field(default=None, max_length=20)
     motif: str = Field(max_length=500)
 
 

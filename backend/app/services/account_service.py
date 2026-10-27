@@ -149,6 +149,17 @@ def journaux_sage(valeur: str | None) -> list[str]:
     return [item for item in (valeur or "").split(",") if item]
 
 
+def comptes_comptables(valeur: str | None) -> list[str]:
+    """Comptes comptables d'un compte bancaire (27/10/2026) : « 51410000,51410100 » → liste."""
+    return [item for item in (valeur or "").split(",") if item]
+
+
+def compte_principal(account: BankAccount) -> str | None:
+    """Premier compte comptable : celui des écritures que SIMTIS crée seul (frais)."""
+    comptes = comptes_comptables(account.compte_comptable)
+    return comptes[0] if comptes else None
+
+
 def _check_dh_convertible(type_compte: str, devise: str) -> None:
     if type_compte == "DH convertible" and devise != "MAD":
         raise ConflictError("Un compte DH convertible doit être en MAD.")

@@ -60,6 +60,7 @@ class EcritureSaisie:
     reference: str | None = None
     echeance: date | None = None
     montant_devise: Decimal | None = None
+    compte: str | None = None
 
 
 def _texte(valeur: str | None, longueur: int) -> str | None:
@@ -223,6 +224,24 @@ def supprimer_operation(
 # --- Écritures comptables --------------------------------------------------------------------------
 
 
+def _compte_comptable(account: BankAccount, choisi: str | None) -> str | None:
+    """Compte de l'écriture : celui choisi parmi les comptes comptables du compte bancaire, ou le
+    seul qu'il a (27/10/2026)."""
+    comptes = account_service.comptes_comptables(account.compte_comptable)
+    choisi = (choisi or "").strip().upper()
+    if not choisi:
+        if len(comptes) > 1:
+            raise ConflictError(f"Choisissez un compte comptable : {', '.join(comptes)}.")
+        return comptes[0] if comptes else None
+    if choisi not in comptes:
+        raise ConflictError(
+            f"Choisissez un compte comptable du compte : {', '.join(comptes)}."
+            if comptes
+            else f"Le compte {account.bank.code} {account.devise} n'a pas de compte comptable."
+        )
+    return choisi
+
+
 def ajouter_ecriture(
     db: Session, saisie: EcritureSaisie, *, motif: str, acteur_id: int, ip: str | None
 ) -> AccountingEntry:
@@ -251,7 +270,7 @@ def ajouter_ecriture(
         montant_devise = abs(saisie.montant_devise).quantize(CENTIME) * (1 if montant > 0 else -1)
     piece = _texte(saisie.numero_piece, 60)
     reference = _texte(saisie.reference, 60)
-    compte = account.compte_comptable
+    compte = _compte_comptable(account, saisie.compte)
     cle = (jour, journal, compte, libelle, debit, credit, piece, reference)
     empreinte = line_hash(account.company_id, cle, 1)
     if accounting_repository.existing_entry_hashes(db, account.company_id, [empreinte]):

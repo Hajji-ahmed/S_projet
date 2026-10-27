@@ -13,11 +13,20 @@ export const EXTENSIONS = [".xlsx", ".xls"] as const;
 export const ACCEPT_EXCEL =
   ".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
 
+/** Relevés bancaires : aussi en PDF généré par la banque, depuis le 27/10/2026 (pas les exports Sage). */
+export const ACCEPT_RELEVE = `${ACCEPT_EXCEL},.pdf,application/pdf`;
+
 /** Vérification faite avant l'envoi ; l'API refait toujours la sienne. */
-export function fileProblem(file: { name: string; size: number }): string | null {
+export function fileProblem(
+  file: { name: string; size: number },
+  { pdf = false }: { pdf?: boolean } = {},
+): string | null {
   const name = file.name.toLowerCase();
-  if (!EXTENSIONS.some((extension) => name.endsWith(extension)))
-    return "Seuls les fichiers Excel .xlsx ou .xls sont acceptés.";
+  const extensions: readonly string[] = pdf ? [...EXTENSIONS, ".pdf"] : EXTENSIONS;
+  if (!extensions.some((extension) => name.endsWith(extension)))
+    return pdf
+      ? "Seuls les fichiers Excel .xlsx ou .xls, ou PDF, sont acceptés."
+      : "Seuls les fichiers Excel .xlsx ou .xls sont acceptés.";
   if (file.size === 0) return "Le fichier est vide.";
   if (file.size > MAX_FILE_BYTES) return "Fichier trop volumineux : 20 Mo au plus.";
   return null;

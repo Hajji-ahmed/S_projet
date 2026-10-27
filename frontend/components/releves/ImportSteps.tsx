@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { ACCEPT_EXCEL } from "@/lib/statements";
+import { ACCEPT_EXCEL, ACCEPT_RELEVE } from "@/lib/statements";
 
 // Deux étapes : le mapping des colonnes ne s'affiche qu'en secours, dans l'étape Fichier
 export const STEPS = ["Fichier", "Validation"] as const;
@@ -58,10 +58,12 @@ type FileDropzoneProps = {
   file: File | null;
   onFile: (file: File) => void;
   disabled?: boolean;
+  /** Accepte aussi un PDF (relevés bancaires, 27/10/2026). */
+  pdf?: boolean;
 };
 
 /** Zone de dépôt du relevé : glisser-déposer, ou bouton « Choisir un fichier ». */
-export function FileDropzone({ file, onFile, disabled }: FileDropzoneProps) {
+export function FileDropzone({ file, onFile, disabled, pdf = false }: FileDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
 
@@ -95,7 +97,9 @@ export function FileDropzone({ file, onFile, disabled }: FileDropzoneProps) {
           </span>
         </p>
       ) : (
-        <p className="text-sm text-simtis-text">Glissez votre fichier Excel ici</p>
+        <p className="text-sm text-simtis-text">
+          Glissez votre fichier {pdf ? "Excel ou PDF" : "Excel"} ici
+        </p>
       )}
       <p className="text-xs text-simtis-muted">{file ? "ou remplacez-le" : "ou"}</p>
       <Button
@@ -109,7 +113,7 @@ export function FileDropzone({ file, onFile, disabled }: FileDropzoneProps) {
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPT_EXCEL}
+        accept={pdf ? ACCEPT_RELEVE : ACCEPT_EXCEL}
         className="hidden"
         data-testid="releve-fichier"
         onChange={(event) => {
@@ -118,7 +122,9 @@ export function FileDropzone({ file, onFile, disabled }: FileDropzoneProps) {
           event.target.value = ""; // permet de rechoisir le même fichier
         }}
       />
-      <p className="text-xs text-simtis-muted">Excel .xlsx ou .xls, 20 Mo au plus</p>
+      <p className="text-xs text-simtis-muted">
+        {pdf ? "Excel .xlsx ou .xls, ou PDF de la banque" : "Excel .xlsx ou .xls"}, 20 Mo au plus
+      </p>
     </div>
   );
 }

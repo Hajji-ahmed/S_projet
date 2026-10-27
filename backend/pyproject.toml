@@ -20,6 +20,10 @@ dependencies = [
     "python-multipart>=0.0.9",
     # Rapprochement (15/10/2026) : difflib compilé, mêmes résultats, environ 4 fois plus rapide
     "cydifflib>=1.2",
+    # Position bancaire en PDF (27/10/2026), dans la structure imposée du tableau Banques
+    "reportlab>=4.2",
+    # Relevés bancaires en PDF généré par la banque (27/10/2026) : lecture des tableaux
+    "pdfplumber>=0.11",
 ]
 
 [project.optional-dependencies]

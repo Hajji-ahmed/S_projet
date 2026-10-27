@@ -618,7 +618,11 @@ def test_sheet_can_be_chosen(client, tresorerie, account):
 @pytest.mark.parametrize(
     ("nom", "content", "detail"),
     [
-        ("releve.csv", b"Date;Libelle", "Seuls les fichiers Excel .xlsx ou .xls sont acceptés."),
+        (
+            "releve.csv",
+            b"Date;Libelle",
+            "Seuls les fichiers Excel .xlsx ou .xls, ou PDF, sont acceptés.",
+        ),
         ("releve.xlsx", b"", "Le fichier est vide."),
         (
             "releve.xlsx",
@@ -1796,6 +1800,119 @@ def test_xls_statement_is_analysed_like_the_xlsx(client, tresorerie, account):
     assert body["mapping"] == as_xlsx["mapping"]
     assert [(line["statut"], line["debit"], line["credit"]) for line in body["lignes"]] == [
         (line["statut"], line["debit"], line["credit"]) for line in as_xlsx["lignes"]
+    ]
+
+
+# --- Relevés PDF générés par la banque (27/10/2026) -----------------------------------------------
+
+PDF_PAGE_1 = [
+    HEADER,
+    ["24/09/2026", "24/09/2026", "VIR RECU CLIENT ABC", "", "50 000,00", "1 050 000,00"],
+    ["25/09/2026", "25/09/2026", "CHQ N 1234567 FOURNISSEUR X", "12 500,50", "", "1 037 499,50"],
+]
+# L'en-tête est répété en haut de la page suivante, comme sur un vrai relevé
+PDF_PAGE_2 = [
+    HEADER,
+    ["26/09/2026", "", "FRAIS TENUE DE COMPTE", "150,00", "", "1 037 349,50"],
+]
+
+
+@pytest.mark.parametrize("quadrille", [True, False])
+def test_pdf_statement_is_analysed_page_after_page(client, tresorerie, account, quadrille):
+    from tests.helpers import pdf
+
+    contenu = pdf(PDF_PAGE_1, PDF_PAGE_2, quadrille=quadrille)
+
+    response = analyse(client, tresorerie, account.id, contenu, nom="RELEVE_CIH.PDF")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["feuilles"] == ["PDF"]
+    assert [
+        (line["statut"], line["libelle"], line["debit"], line["credit"]) for line in body["lignes"]
+    ] == [
+        ("Valide", "VIR RECU CLIENT ABC", "0.00", "50000.00"),
+        ("Valide", "CHQ N 1234567 FOURNISSEUR X", "12500.50", "0.00"),
+        ("Valide", "FRAIS TENUE DE COMPTE", "150.00", "0.00"),
+    ]
+
+
+def test_scanned_pdf_without_text_is_refused(client, tresorerie, account):
+    from reportlab.pdfgen import canvas
+
+    buffer = BytesIO()
+    page = canvas.Canvas(buffer)
+    page.rect(100, 100, 200, 200, fill=1)  # une « image » : aucun texte
+    page.save()
+
+    response = analyse(client, tresorerie, account.id, buffer.getvalue(), nom="scan.pdf")
+
+    assert response.status_code == 409
+    assert "PDF sans texte" in response.json()["detail"]
+
+
+def test_pdf_without_table_is_refused(client, tresorerie, account):
+    from tests.helpers import pdf
+
+    contenu = pdf(["Bonjour, voici votre relevé."], texte_seul=True)
+
+    response = analyse(client, tresorerie, account.id, contenu, nom="lettre.pdf")
+
+    assert response.status_code == 409
+
+
+def test_a_broken_pdf_is_refused(client, tresorerie, account):
+    response = analyse(client, tresorerie, account.id, b"%PDF-1.4 abime", nom="releve.pdf")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Fichier illisible : ce n'est pas un PDF valide."
+
+
+def test_repeated_page_headers_are_removed_but_not_operations():
+    from app.services.import_file import lignes_pdf
+
+    entete = ["Date", "Libellé", "Montant"]
+    operation = ["01/09/2026", "VIR", "100,00"]
+
+    lignes = lignes_pdf([[entete, operation], [entete, operation, [None, None, None]]])
+
+    # La 2e opération, identique, reste : c'est une vraie opération (elle contient des chiffres)
+    assert lignes == [tuple(entete), tuple(operation), tuple(operation)]
+
+
+def test_columns_without_lines_are_found_from_the_words_positions():
+    from app.services.import_file import MotPdf, lignes_par_mots
+
+    def mot(x0, x1, top, texte):
+        return MotPdf(x0, x1, top, top + 8, texte)
+
+    page = [
+        mot(40, 200, 10, "RELEVE DE COMPTE"),  # titre : une seule cellule, ne place aucune colonne
+        *(
+            mot(x0, x1, 30, t)
+            for x0, x1, t in [
+                (40, 60, "Date"),
+                (100, 130, "Libellé"),
+                (300, 325, "Débit"),
+                (380, 410, "Crédit"),
+            ]
+        ),
+        # « 50 000,00 » : trois mots séparés d'une espace forment une seule cellule
+        mot(40, 80, 50, "24/09/2026"),
+        mot(100, 120, 50, "VIR"),
+        mot(122, 150, 50, "RECU"),
+        mot(380, 388, 50, "50"),
+        mot(390, 402, 50, "000,00"),
+        mot(40, 80, 70, "25/09/2026"),
+        mot(100, 120, 70, "CHQ"),
+        mot(300, 330, 70, "150,00"),
+    ]
+
+    assert lignes_par_mots([page]) == [
+        ("RELEVE DE COMPTE", None, None, None),
+        ("Date", "Libellé", "Débit", "Crédit"),
+        ("24/09/2026", "VIR RECU", None, "50 000,00"),
+        ("25/09/2026", "CHQ", "150,00", None),
     ]
 
 

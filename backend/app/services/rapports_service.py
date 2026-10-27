@@ -1,4 +1,5 @@
-"""Rapports Excel (P16.4, 14/10/2026). Excel seulement (décision du 14/10/2026 : pas de PDF).
+"""Rapports Excel (P16.4, 14/10/2026). Excel seulement (décision du 14/10/2026), sauf la position
+bancaire, aussi en PDF depuis le 27/10/2026 (`position_pdf`, même tableau que l'Excel).
 
 Aucun chiffre n'est recalculé ici :
 - « Position du jour » reprend le tableau Banques tel que l'écran le calcule
@@ -20,11 +21,17 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
 from app.models import BankAccount
 from app.repositories import account_repository, rapports_repository, reconciliation_repository
 from app.services import audit_service, position_banques_service
+from app.services.account_service import fraction_to_pct
 from app.services.errors import ConflictError, NotFoundError
 from app.services.position_service import LigneTableau, business_today
 
@@ -139,6 +146,149 @@ def position_du_jour(
 
 
 # --- État de rapprochement ------------------------------------------------------------------------
+
+
+# --- Position du jour en PDF (27/10/2026) ---------------------------------------------------------
+
+# Couleurs du thème SIMTIS (frontend/app/globals.css)
+PDF_PRIMAIRE = colors.HexColor("#004F54")
+PDF_EN_TETE = colors.HexColor("#E7F6F4")
+PDF_GRILLE = colors.HexColor("#D5E3E6")
+PDF_REPRISE = colors.HexColor("#71839B")
+PDF_POSITIF = colors.HexColor("#15803D")
+PDF_NEGATIF = colors.HexColor("#B91C1C")
+
+
+def montant_pdf(valeur: Decimal | None) -> str:
+    """« -1234567.8 » → « -1 234 567,80 » ; vide pour une valeur inconnue, jamais 0."""
+    if valeur is None:
+        return ""
+    texte = f"{abs(valeur):,.2f}".replace(",", " ").replace(".", ",")
+    return f"-{texte}" if valeur < 0 else texte
+
+
+def _taux_pdf(taux: Decimal | None) -> str:
+    pct = fraction_to_pct(taux)
+    if pct is None:
+        return "-"
+    entier, _, decimales = format(pct, "f").partition(".")
+    return f"{entier},{decimales.ljust(2, '0')} %"
+
+
+def position_pdf(
+    db: Session, company_id: int, jour: date | None, *, acteur_id: int, ip: str | None
+) -> tuple[str, bytes]:
+    """Tableau Banques de l'écran Position bancaire en PDF A4 paysage, dans sa structure imposée :
+    Taux, LIGNE, une ligne « facilité de caisse » par jour, Disponible Fc reel ; une colonne par
+    banque, TOTAL, DEPASSEMENT. Un dernier solde connu repris d'un jour précédent est en italique
+    gris, comme à l'écran ; l'en-tête des colonnes se répète sur chaque page."""
+    company = _company(db, company_id)
+    tableau = position_banques_service.banques_table(db, company.id, jour)
+    banques = tableau.banques
+    nb = len(banques)
+
+    lignes: list[list[str]] = [["", *(banque.code for banque in banques), "TOTAL", "DEPASSEMENT"]]
+    styles: list[tuple] = []
+    lignes.append(["Taux", *(_taux_pdf(banque.taux_interet) for banque in banques), "", ""])
+    lignes.append(
+        [
+            "LIGNE",
+            *(montant_pdf(banque.ligne) for banque in banques),
+            montant_pdf(tableau.ligne_total),
+            "",
+        ]
+    )
+
+    def ajouter(libelle: str, contenu: LigneTableau) -> None:
+        rang = len(lignes)
+        lignes.append(
+            [
+                libelle,
+                *(montant_pdf(cellule.valeur) for cellule in contenu.cellules),
+                montant_pdf(contenu.total),
+                montant_pdf(contenu.depassement),
+            ]
+        )
+        for index, cellule in enumerate(contenu.cellules, start=1):
+            if cellule.reprise:
+                styles.append(("TEXTCOLOR", (index, rang), (index, rang), PDF_REPRISE))
+                styles.append(("FONTNAME", (index, rang), (index, rang), "Helvetica-Oblique"))
+
+    for jour_tableau in tableau.jours:
+        ajouter(f"facilité de caisse {jour_tableau.date:%d/%m/%y}", jour_tableau.ligne)
+    rang_disponible = len(lignes)
+    ajouter("Disponible Fc reel", tableau.disponible)
+    disponibles = [*(c.valeur for c in tableau.disponible.cellules), tableau.disponible.total]
+    for index, valeur in enumerate(disponibles, start=1):
+        if valeur:
+            couleur = PDF_POSITIF if valeur > 0 else PDF_NEGATIF
+            styles.append(
+                ("TEXTCOLOR", (index, rang_disponible), (index, rang_disponible), couleur)
+            )
+
+    largeur_libelle = 48 * mm
+    largeur_montant = min(32 * mm, (landscape(A4)[0] - 20 * mm - largeur_libelle) / (nb + 2))
+    table = Table(
+        lignes, colWidths=[largeur_libelle, *([largeur_montant] * (nb + 2))], repeatRows=1
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("BACKGROUND", (0, 0), (-1, 0), PDF_EN_TETE),
+                ("TEXTCOLOR", (0, 0), (-1, 0), PDF_PRIMAIRE),
+                ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME", (0, rang_disponible), (-1, rang_disponible), "Helvetica-Bold"),
+                ("BACKGROUND", (0, rang_disponible), (-1, rang_disponible), PDF_EN_TETE),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("GRID", (0, 0), (-1, -1), 0.4, PDF_GRILLE),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                *styles,
+            ]
+        )
+    )
+
+    feuille = getSampleStyleSheet()
+    titre = feuille["Title"].clone("titre", textColor=PDF_PRIMAIRE, fontSize=14, alignment=0)
+    note = feuille["Normal"].clone("note", fontSize=7.5, textColor=PDF_REPRISE)
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=10 * mm,
+        rightMargin=10 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
+        title=f"Position bancaire {company.nom} au {tableau.date_fin:%d/%m/%Y}",
+        author="SIMTIS Finance",
+    )
+    document.build(
+        [
+            Paragraph(f"Position bancaire — {company.nom} — au {tableau.date_fin:%d/%m/%Y}", titre),
+            Paragraph(
+                f"Édité le {business_today():%d/%m/%Y}. Montants en DH, comptes courants MAD. "
+                "En italique gris : dernier solde connu repris d'un jour précédent.",
+                note,
+            ),
+            Spacer(1, 4 * mm),
+            table,
+        ]
+    )
+
+    _audit(
+        db,
+        rapport="position_du_jour_pdf",
+        company_id=company.id,
+        acteur_id=acteur_id,
+        ip=ip,
+        date=tableau.date_fin,
+        jours=len(tableau.jours),
+    )
+    return f"position-{company.code}-{tableau.date_fin:%Y%m%d}.pdf".lower(), buffer.getvalue()
 
 
 def _periode(date_from: date | None, date_to: date | None) -> tuple[date, date]:

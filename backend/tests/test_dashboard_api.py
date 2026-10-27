@@ -200,7 +200,11 @@ def test_the_dashboard_needs_a_login_and_a_valid_period(client, comptable, db):
         lire(client, comptable, db, **{"from": "2026-09-30", "to": "2026-09-01"}).status_code == 409
     )
     assert (
-        lire(client, comptable, db, **{"from": "2025-01-01", "to": "2026-09-30"}).status_code == 409
+        lire(client, comptable, db, **{"from": "2021-09-01", "to": "2026-09-30"}).status_code == 409
+    )
+    # Cinq ans au plus depuis le 27/10/2026 (un an avant)
+    assert (
+        lire(client, comptable, db, **{"from": "2022-01-01", "to": "2026-09-30"}).status_code == 200
     )
 
 

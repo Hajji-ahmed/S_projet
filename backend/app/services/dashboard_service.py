@@ -29,7 +29,9 @@ from app.services.position_service import business_today
 from app.services.reconciliation_service import _ecritures_a_egalite, grille
 
 ZERO = Decimal("0.00")
-PERIODE_MAX_JOURS = 366
+# Cinq ans au plus (27/10/2026, un an avant), comme le rapprochement : garde-fou contre une année
+# mal tapée
+PERIODE_MAX_JOURS = 1827
 NB_DERNIERES = 5
 # Frais en hausse : alerte au-delà de +10 % par rapport à la période précédente
 SEUIL_HAUSSE_FRAIS = Decimal("10")
@@ -262,7 +264,7 @@ def _periode(date_from: date | None, date_to: date | None) -> tuple[date, date]:
     if date_from > date_to:
         raise ConflictError("La date de début doit précéder la date de fin.")
     if (date_to - date_from).days >= PERIODE_MAX_JOURS:
-        raise ConflictError("La période du dashboard ne peut pas dépasser un an.")
+        raise ConflictError("La période du dashboard ne peut pas dépasser cinq ans.")
     return date_from, date_to
 
 

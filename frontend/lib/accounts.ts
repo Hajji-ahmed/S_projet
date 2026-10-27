@@ -91,9 +91,16 @@ export function validateAccountForm(
   if (!/^[A-Z0-9-]{5,40}$/.test(normalizeNumero(values.numero))) {
     errors.numero = "5 à 40 lettres, chiffres ou tirets (les espaces sont ignorés).";
   }
-  const compte = values.compte_comptable.trim().toUpperCase();
-  if (compte && !/^[A-Z0-9]{1,20}$/.test(compte)) {
-    errors.compte_comptable = "1 à 20 lettres ou chiffres (ex. 5141).";
+  // Un ou plusieurs comptes séparés par des virgules (« 51410000, 51410100 », 27/10/2026)
+  const comptes = values.compte_comptable
+    .trim()
+    .toUpperCase()
+    .split(/[,;\s]+/)
+    .filter(Boolean);
+  if (comptes.some((compte) => !/^[A-Z0-9]{1,20}$/.test(compte))) {
+    errors.compte_comptable = "1 à 20 lettres ou chiffres par compte, séparés par des virgules.";
+  } else if (new Set(comptes).size > 9) {
+    errors.compte_comptable = "9 comptes comptables au plus.";
   }
   // Un ou plusieurs journaux séparés par des virgules (« 5243, 5543 », 12/10/2026)
   const journaux = values.journal_sage

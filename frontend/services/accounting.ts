@@ -66,6 +66,8 @@ export type EcritureManuelle = {
   debit: string | null;
   credit: string | null;
   montant_devise: string | null;
+  /** Compte comptable choisi parmi ceux du compte bancaire (27/10/2026). */
+  compte: string | null;
   motif: string;
 };
 

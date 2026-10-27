@@ -16,12 +16,13 @@ from app.services.auth_service import CurrentUser
 router = APIRouter(prefix="/rapports", tags=["rapports"])
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PDF = "application/pdf"
 
 
-def _fichier(nom: str, contenu: bytes) -> Response:
+def _fichier(nom: str, contenu: bytes, media_type: str = XLSX) -> Response:
     return Response(
         content=contenu,
-        media_type=XLSX,
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{nom}"'},
     )
 
@@ -40,6 +41,21 @@ def position_du_jour(
             db, company_id, jour, acteur_id=user.id, ip=client_ip(request)
         )
     )
+
+
+@router.get("/position/pdf", response_class=Response, responses={200: {"content": {PDF: {}}}})
+def position_pdf(
+    request: Request,
+    company_id: Annotated[int, Query(description="Société")],
+    jour: Annotated[date | None, Query(alias="date")] = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_permission(PermissionCode.POSITION_VIEW)),
+) -> Response:
+    """Même tableau Banques en PDF A4 paysage (27/10/2026)."""
+    nom, contenu = rapports_service.position_pdf(
+        db, company_id, jour, acteur_id=user.id, ip=client_ip(request)
+    )
+    return _fichier(nom, contenu, PDF)
 
 
 @router.get("/rapprochement", response_class=Response, responses={200: {"content": {XLSX: {}}}})

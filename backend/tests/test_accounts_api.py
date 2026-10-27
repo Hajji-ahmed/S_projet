@@ -251,6 +251,7 @@ def test_unknown_currency_gives_409(client, tresorerie, db):
         {"numero": "AB"},
         {"numero": "RIB/123456"},
         {"compte_comptable": "51-41"},
+        {"compte_comptable": "5141, 51-42"},
         {"devise": "EURO"},
         {"couleur": "bleu"},
     ],
@@ -559,6 +560,26 @@ def test_several_sage_journals_are_saved_as_a_list(client, tresorerie, db):
 
     assert response.status_code == 201, response.text
     assert response.json()["journal_sage"] == "5243,5543"
+
+
+def test_several_accounting_accounts_are_saved_in_one_field(client, tresorerie, db):
+    """27/10/2026 : « 51410000; 51410100 51410000 » → « 51410000,51410100 »."""
+    response = client.post(
+        ACCOUNTS,
+        json=payload(db, compte_comptable="51410000; 51410100 51410000"),
+        headers=tresorerie,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["compte_comptable"] == "51410000,51410100"
+
+
+def test_more_than_nine_accounting_accounts_are_refused(client, tresorerie, db):
+    comptes = ", ".join(f"514{i}" for i in range(10))
+
+    response = client.post(ACCOUNTS, json=payload(db, compte_comptable=comptes), headers=tresorerie)
+
+    assert response.status_code == 422
 
 
 def test_a_journal_of_the_list_used_elsewhere_is_refused(client, tresorerie, db):

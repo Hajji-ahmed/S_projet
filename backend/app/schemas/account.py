@@ -11,6 +11,7 @@ from app.services.position_service import AccountFigures
 
 NUMERO_PATTERN = re.compile(r"^[A-Z0-9-]{5,40}$")
 COMPTE_COMPTABLE_PATTERN = re.compile(r"^[A-Z0-9]{1,20}$")
+COMPTES_COMPTABLES_MAX = 9  # 9 × 20 + 8 virgules = 188 ≤ 200 caractères en base
 JOURNAL_SAGE_PATTERN = re.compile(r"^[A-Z0-9]{1,10}$")
 
 TypeCompte = Literal["Courant", "DH convertible"]
@@ -107,12 +108,25 @@ def _clean_numero(value: str) -> str:
 
 
 def _clean_compte_comptable(value: str | None) -> str | None:
+    """Un ou plusieurs comptes, séparés par des virgules, des points-virgules ou des espaces
+    (« 51410000, 51410100 » → « 51410000,51410100 », 27/10/2026). Chacun : 1 à 20 lettres ou
+    chiffres ; un compte répété n'est gardé qu'une fois."""
     if value is None or not value.strip():
         return None
-    value = value.strip().upper()
-    if not COMPTE_COMPTABLE_PATTERN.match(value):
-        raise ValueError("Le compte comptable contient 1 à 20 lettres ou chiffres (ex. 5141).")
-    return value
+    comptes: list[str] = []
+    for item in re.split(r"[,;\s]+", value.strip().upper()):
+        if not item:
+            continue
+        if not COMPTE_COMPTABLE_PATTERN.match(item):
+            raise ValueError(
+                "Chaque compte comptable contient 1 à 20 lettres ou chiffres, séparés par des "
+                "virgules (ex. 51410000, 51410100)."
+            )
+        if item not in comptes:
+            comptes.append(item)
+    if len(comptes) > COMPTES_COMPTABLES_MAX:
+        raise ValueError(f"{COMPTES_COMPTABLES_MAX} comptes comptables au plus.")
+    return ",".join(comptes) or None
 
 
 def _clean_journal_sage(value: str | None) -> str | None:
