@@ -498,3 +498,59 @@ def test_the_wide_search_needs_a_number_one_candidate_and_the_window():
     ]
     assert proposer_elargi([banque], double) == []
     assert proposer_elargi([banque], [double[0]], paires_rejetees={(1, 20)}) == []
+
+
+# --- Espèces : ± 2 jours de l'échéance Sage (27/10/2026) -------------------------------------------
+
+
+def test_especes_are_never_proposed_beyond_two_days_of_the_due_date():
+    versement = op(montant="5000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
+
+    def especes(ecart_jours_echeance: int) -> Ecriture:
+        return ec(
+            montant="-5000",
+            jour=JOUR,
+            echeance=JOUR + timedelta(days=ecart_jours_echeance),
+            libelle="ESP TT26273B6Z6S",
+        )
+
+    assert comparable(versement, especes(2), GRILLE_PAR_DEFAUT)
+    assert proposer([versement], [especes(-2)]).propositions
+    assert not comparable(versement, especes(3), GRILLE_PAR_DEFAUT)
+    assert not proposer([versement], [especes(3)]).propositions
+
+
+def test_the_cash_window_applies_when_only_the_sage_side_is_known():
+    """Un versement BP au libellé collé (type non reconnu) face à une écriture « ESP »."""
+    colle = op(montant="5000", libelle="VERSEMENTDEPLACEPARIMANEELBAZCD760324")
+    especes = ec(montant="-5000", echeance=JOUR + timedelta(days=4), libelle="ESP TT26251KM24D")
+
+    assert type_operation(colle.libelle) is None
+    assert not comparable(colle, especes, GRILLE_PAR_DEFAUT)
+
+
+def test_other_types_keep_their_ten_day_window():
+    cheque = op(montant="5000", libelle="ENCAISSEMENT CHEQUE N 1234567")
+    ecriture = ec(montant="-5000", jour=JOUR + timedelta(days=5), libelle="EAR1° AXK 1234567")
+
+    assert comparable(cheque, ecriture, GRILLE_PAR_DEFAUT)
+
+
+def test_the_cash_window_follows_the_setting():
+    versement = op(montant="5000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
+    especes = ec(montant="-5000", echeance=JOUR + timedelta(days=4), libelle="ESP TT26251KM24D")
+
+    assert comparable(versement, especes, Grille(fenetre_especes_jours=5))
+    assert not comparable(versement, especes, Grille(fenetre_especes_jours=0))
+
+
+def test_the_wide_search_never_proposes_cash():
+    versement = op(montant="5000", libelle="VERSEMENT DEPLACE 2600123", reference="2600123")
+    loin = ec(
+        montant="-5000",
+        jour=JOUR - timedelta(days=40),
+        libelle="ESP 2600123 CLIENT",
+        piece="2600123",
+    )
+
+    assert proposer_elargi([versement], [loin]) == []

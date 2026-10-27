@@ -60,6 +60,8 @@ class Grille:
     fenetre_numero_jours: int = 180
     # Recherche élargie (bouton à part, 20/10/2026) : même n° et même montant jusqu'à ± 365 jours
     fenetre_elargie_jours: int = 365
+    # Espèces (27/10/2026) : au-delà de ± 2 jours d'écart avec l'échéance Sage, jamais proposé
+    fenetre_especes_jours: int = 2
     # En dessous : aucune proposition
     seuil_proposition: Decimal = Decimal("50")
     # À partir de : « Forte correspondance », validable en lot (toujours par un humain) ; 80 depuis
@@ -337,6 +339,21 @@ def _mots_prepares(operation: _Cote, ecriture: _Cote) -> Decimal:
 TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement"})
 
 
+ESPECES = "Espèces"
+
+
+def fenetre_du_type(type_op: str | None, type_sage: str | None, grille: Grille) -> int:
+    """Écart maximal d'une paire : celui des espèces dès qu'un des deux côtés en est (27/10/2026,
+    une écriture « ESP » face à un versement au libellé non reconnu compte), sinon `fenetre_jours`."""
+    if ESPECES in (type_op, type_sage):
+        return min(grille.fenetre_jours, grille.fenetre_especes_jours)
+    return grille.fenetre_jours
+
+
+def est_especes(operation: Operation, ecriture: Ecriture) -> bool:
+    return ESPECES in (type_operation(operation.libelle), type_ecriture(ecriture.libelle))
+
+
 def date_comparee(ecriture: Ecriture) -> date:
     """Date Sage comparée : l'échéance pour des espèces ou un virement qui en ont une, sinon la date
     de l'écriture."""
@@ -409,6 +426,9 @@ def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grill
     if not types_compatibles(operation, ecriture):
         return None
     ecart = ecart_jours(operation, ecriture)
+    # Espèces (27/10/2026) : ± `fenetre_especes_jours` seulement, jamais au-delà
+    if est_especes(operation, ecriture):
+        return ecart if ecart <= min(grille.fenetre_jours, grille.fenetre_especes_jours) else None
     if ecart <= grille.fenetre_jours:
         return ecart
     # Au-delà : seulement un chèque ou un effet au même n° et au même montant (12/10/2026)
@@ -734,6 +754,9 @@ def proposer_elargi(
             if (operation.id, ecriture.id) in paires_rejetees:
                 continue
             if not types_compatibles(operation, ecriture):
+                continue
+            # Espèces (27/10/2026) : jamais au-delà de leur fenêtre de 2 jours
+            if est_especes(operation, ecriture):
                 continue
             if not numeros_op & _numeros_ecriture(ecriture):
                 continue

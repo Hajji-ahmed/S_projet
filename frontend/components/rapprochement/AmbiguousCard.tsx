@@ -9,6 +9,7 @@ import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
+  datesEcriture,
   montantEcriture,
   unite,
   uniteEcriture,
@@ -143,7 +144,7 @@ export function AmbiguousCard({
                   </p>
                   <p>{candidat.ecriture.libelle}</p>
                   <p className="text-xs text-simtis-muted">
-                    {formatDate(candidat.ecriture.date_ecriture)}
+                    {datesEcriture(candidat.ecriture)}
                     {candidat.ecriture.numero_piece && ` · Pièce ${candidat.ecriture.numero_piece}`}
                     {candidat.ecriture.tiers && ` · ${candidat.ecriture.tiers}`}
                   </p>

@@ -103,6 +103,9 @@ def grille(db: Session) -> Grille:
             case "FENETRE_ELARGIE":
                 if rule.tolerance is not None:
                     valeurs["fenetre_elargie_jours"] = int(rule.tolerance)
+            case "FENETRE_ESPECES":
+                if rule.tolerance is not None:
+                    valeurs["fenetre_especes_jours"] = int(rule.tolerance)
             case "SEUIL_PROPOSITION" | "SEUIL_FORT" | "ECART_AMBIGUITE":
                 valeurs[rule.code.lower()] = rule.poids
     return Grille(**{**GRILLE_PAR_DEFAUT.__dict__, **valeurs})

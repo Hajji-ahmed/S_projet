@@ -22,6 +22,7 @@ import {
   rapprochable,
   reconciliationQuery,
   selectionSummary,
+  datesEcriture,
   periodeAStocker,
   periodeMemorisee,
   periodeRapprochement,
@@ -37,6 +38,17 @@ describe("defaultPeriod", () => {
   it("part du 1er du mois précédent", () => {
     expect(defaultPeriod("2026-10-06")).toEqual({ from: "2026-09-01", to: "2026-10-06" });
     expect(defaultPeriod("2026-01-15")).toEqual({ from: "2025-12-01", to: "2026-01-15" });
+  });
+});
+
+describe("datesEcriture", () => {
+  it("montre la date et l'échéance, un tiret sans échéance", () => {
+    expect(datesEcriture({ date_ecriture: "2026-08-03", echeance: "2026-08-05" })).toBe(
+      "Date 03/08/2026 · Échéance 05/08/2026",
+    );
+    expect(datesEcriture({ date_ecriture: "2026-08-03", echeance: null })).toBe(
+      "Date 03/08/2026 · Échéance —",
+    );
   });
 });
 

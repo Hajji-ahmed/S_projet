@@ -79,6 +79,15 @@ RECONCILIATION_RULES = [
         "365",
         True,
     ),
+    # Espèces (27/10/2026) : jamais proposées au-delà de 2 jours d'écart avec l'échéance Sage
+    (
+        "FENETRE_ESPECES",
+        "Espèces : écart maximal avec l'échéance Sage (jours)",
+        "fenetre",
+        "0",
+        "2",
+        True,
+    ),
     ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None, True),
     ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "80", None, True),
     (

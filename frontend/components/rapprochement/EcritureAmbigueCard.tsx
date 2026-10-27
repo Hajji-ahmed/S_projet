@@ -10,6 +10,7 @@ import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
+  datesEcriture,
   absolute,
   etatPanier,
   montantEcriture,
@@ -93,7 +94,7 @@ export function EcritureAmbigueCard({
           </p>
           <p className="font-medium">{ecriture.libelle}</p>
           <p className="flex flex-wrap items-center gap-x-3 text-xs text-simtis-muted">
-            <span>{formatDate(ecriture.date_ecriture)}</span>
+            <span>{datesEcriture(ecriture)}</span>
             {ecriture.journal && <span>Journal {ecriture.journal}</span>}
             {ecriture.numero_piece && <span>Pièce {ecriture.numero_piece}</span>}
           </p>

@@ -73,6 +73,7 @@ def test_an_unchanged_value_writes_no_audit(client, admin, db):
         ({"code": "DATE", "poids": "30", "tolerance": "2.5"}, "nombre entier de jours"),
         ({"code": "FENETRE", "poids": "0", "tolerance": "0"}, "entre 1 et 60"),
         ({"code": "FENETRE_ELARGIE", "poids": "0", "tolerance": "400"}, "entre 31 et 366"),
+        ({"code": "FENETRE_ESPECES", "poids": "0", "tolerance": "11"}, "entre 0 et 10"),
         ({"code": "SEUIL_FORT", "poids": "40"}, "ne peut pas être inférieur"),
         ({"code": "MONTANT", "poids": "50", "actif": False}, "Montant doit rester actif"),
         ({"code": "MONTANT", "poids": "0"}, "Montant doit rester actif"),

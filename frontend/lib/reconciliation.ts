@@ -1,4 +1,5 @@
 /** Rapprochement 1→1 (P11) : règles pures de l'écran. Montants en texte exact, jamais en float. */
+import { formatDate } from "@/lib/balances";
 import { ECARTS_ACTIFS } from "@/lib/features";
 import { fromCents, toCents } from "@/lib/statementLines";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
@@ -37,6 +38,17 @@ export function defaultPeriod(today: string): { from: string; to: string } {
   const [year, month] = today.split("-").map(Number);
   const previous = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
   return { from: `${previous.y}-${String(previous.m).padStart(2, "0")}-01`, to: today };
+}
+
+/** Les deux dates d'une écriture sur les cartes des propositions (27/10/2026) : les espèces et
+ * les virements se rapprochent par l'échéance. « Date 03/08/2026 · Échéance 05/08/2026 ». */
+export function datesEcriture(ecriture: {
+  date_ecriture: string;
+  echeance: string | null;
+}): string {
+  return `Date ${formatDate(ecriture.date_ecriture)} · Échéance ${
+    ecriture.echeance ? formatDate(ecriture.echeance) : "—"
+  }`;
 }
 
 /** Période du rapprochement à l'ouverture (27/10/2026) : du 1er janvier de l'année en cours à

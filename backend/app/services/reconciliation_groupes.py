@@ -30,6 +30,7 @@ from app.services.reconciliation_scoring import (
     _points,
     date_comparee,
     ecart_jours,
+    fenetre_du_type,
     numeros,
     ratio_date,
     ratio_libelle,
@@ -242,7 +243,6 @@ def _groupes_possibles(
     reconnues comme frais par la règle de « À comptabiliser »."""
     cible = -ecriture.montant
     compte = ecriture.bank_account_id
-    fenetre = grille.fenetre_jours if grille is not None else None
     type_sage = type_ecriture(ecriture.libelle)
     trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
     for principale in candidats:
@@ -259,7 +259,8 @@ def _groupes_possibles(
             continue
         for commission, tva in paires.get(cible - principale.montant, ()):
             ops = (principale, commission, tva)
-            if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+            limite = fenetre_du_type(type_op, type_sage, grille) if grille is not None else None
+            if limite is not None and max(ecart_jours(op, ecriture) for op in ops) > limite:
                 continue
             trouves.setdefault(frozenset(op.id for op in ops), ops)
     return list(trouves.values())
@@ -417,9 +418,10 @@ def operations_couvertes(
                     type_op = _principale_possible(principale.libelle)[1]
                     if type_op is not None and type_sage is not None and type_op != type_sage:
                         continue
+                    limite = fenetre_du_type(type_op, type_sage, grille)
                     for commission, tva in paires:
                         ops = (principale, commission, tva)
-                        if max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+                        if max(ecart_jours(op, ecriture) for op in ops) > limite:
                             continue
                         if any((op.id, ecriture.id) in paires_rejetees for op in ops):
                             continue

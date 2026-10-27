@@ -10,6 +10,7 @@ import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
+  datesEcriture,
   montantEcriture,
   unite,
   uniteEcriture,
@@ -204,7 +205,7 @@ export function ProposalCard({
                 )}
               </p>
               <p className="flex flex-wrap gap-x-2 text-xs text-simtis-muted">
-                <span>{formatDate(ecriture.date_ecriture)}</span>
+                <span>{datesEcriture(ecriture)}</span>
                 {ecriture.journal && <span>Journal {ecriture.journal}</span>}
                 {ecriture.numero_piece && <span>Pièce {ecriture.numero_piece}</span>}
                 {ecriture.tiers && <span>{ecriture.tiers}</span>}
