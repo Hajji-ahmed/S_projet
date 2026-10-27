@@ -260,6 +260,16 @@ export function ecrituresDe(item: Correspondance): Ecriture[] {
   return item.ecritures?.length ? item.ecritures : [item.ecriture];
 }
 
+/** Nombre d'opérations et d'écritures d'une correspondance, y compris celles que l'API ne renvoie
+ * pas (au plus 20 par côté, 27/10/2026 : une reprise en compte des milliers). */
+export function nbOperations(item: Correspondance): number {
+  return Math.max(item.nb_operations ?? 0, operationsDe(item).length);
+}
+
+export function nbEcritures(item: Correspondance): number {
+  return Math.max(item.nb_ecritures ?? 0, ecrituresDe(item).length);
+}
+
 /** Montant côté Sage : le total des écritures quand il y en a plusieurs, sinon celui de l'écriture
  * (en devise pour un compte EUR / USD). */
 export function montantSage(item: Correspondance): string {

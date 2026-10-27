@@ -38,6 +38,8 @@ import {
   ecartManuel,
   ecrituresDe,
   montantSage,
+  nbEcritures,
+  nbOperations,
   rapprochable,
   sensBanque,
   sensSage,
@@ -296,6 +298,11 @@ export function MatchPanel({
                   </p>
                 </div>
               ))}
+              {nbEcritures(match) > ecrituresDe(match).length && (
+                <p className="text-xs text-simtis-muted">
+                  … et {nbEcritures(match) - ecrituresDe(match).length} autres écritures
+                </p>
+              )}
             </Side>
             <div>
               <p className="mb-2 text-xs font-semibold tracking-wide text-simtis-muted uppercase">
@@ -305,6 +312,12 @@ export function MatchPanel({
             </div>
             {match.origine === "Manuelle" && (
               <p className="text-xs text-simtis-muted">Rapprochement manuel.</p>
+            )}
+            {match.origine === "Reprise" && (
+              <p className="text-xs text-simtis-muted">
+                {match.explication ??
+                  `Reprise de l'état de rapprochement : ${nbOperations(match)} opérations, ${nbEcritures(match)} écritures.`}
+              </p>
             )}
             {validated && match.valide_le && (
               <p className="text-xs text-simtis-muted">

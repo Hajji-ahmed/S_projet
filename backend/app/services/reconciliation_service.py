@@ -1264,6 +1264,12 @@ class MatchView:
     transactions: list[tuple[BankTransaction, str]] = field(default_factory=list)
     # Toutes les écritures (plusieurs en 1 → N et N → N, P13), la plus grosse en tête
     entries: list[tuple[AccountingEntry, str | None]] = field(default_factory=list)
+    # Nombres et totaux de TOUTES les lignes : `transactions` et `entries` n'en gardent que
+    # `LIGNES_AFFICHEES` (une reprise en compte des milliers, 27/10/2026)
+    nb_operations: int = 1
+    nb_ecritures: int = 1
+    total_operations: Decimal | None = None
+    total_ecritures: Decimal | None = None
 
 
 @dataclass
@@ -1356,6 +1362,10 @@ def list_transactions(
     )
 
 
+# Lignes envoyées par côté pour un rapprochement : une reprise en compte des milliers (27/10/2026)
+LIGNES_AFFICHEES = 20
+
+
 def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> list[MatchView]:
     tx_ids = {i.bank_transaction_id for m in matches for i in m.items if i.bank_transaction_id}
     entry_ids = {i.accounting_entry_id for m in matches for i in m.items if i.accounting_entry_id}
@@ -1380,8 +1390,12 @@ def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> l
             MatchView(
                 match=match,
                 transaction=tx,
-                transactions=lignes,
-                entries=ecritures,
+                transactions=lignes[:LIGNES_AFFICHEES],
+                entries=ecritures[:LIGNES_AFFICHEES],
+                nb_operations=len(lignes),
+                nb_ecritures=len(ecritures),
+                total_operations=sum((t.montant for t, _ in lignes), Decimal("0")),
+                total_ecritures=sum((montant_rapprochement(e) for e, _ in ecritures), Decimal("0")),
                 bank_code=code,
                 entry=entry,
                 entry_bank_code=entry_code,

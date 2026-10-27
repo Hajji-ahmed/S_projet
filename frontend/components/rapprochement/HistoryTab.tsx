@@ -25,8 +25,8 @@ import {
   lettrageFilename,
   absolute,
   montantBanque,
-  ecrituresDe,
-  operationsDe,
+  nbEcritures,
+  nbOperations,
   toggleStatut,
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
@@ -167,7 +167,7 @@ export function HistoryTab({
           <span className="block">{row.operation.libelle}</span>
           <span className="block text-xs text-simtis-muted">
             {formatDate(row.operation.date_operation)} · {row.operation.bank_code}
-            {operationsDe(row).length > 1 && ` · groupe de ${operationsDe(row).length} opérations`}
+            {nbOperations(row) > 1 && ` · groupe de ${nbOperations(row)} opérations`}
           </span>
         </span>
       ),
@@ -181,7 +181,7 @@ export function HistoryTab({
           <span className="block text-xs text-simtis-muted">
             {formatDate(row.ecriture.date_ecriture)}
             {row.ecriture.numero_piece && ` · Pièce ${row.ecriture.numero_piece}`}
-            {ecrituresDe(row).length > 1 && ` · ${ecrituresDe(row).length} écritures`}
+            {nbEcritures(row) > 1 && ` · ${nbEcritures(row)} écritures`}
           </span>
         </span>
       ),

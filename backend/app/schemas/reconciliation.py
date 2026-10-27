@@ -74,7 +74,7 @@ class CorrespondanceResumeOut(BaseModel):
 
     id: int
     statut: StatutCorrespondance
-    origine: Literal["Automatique", "Manuelle", "Frais"]
+    origine: Literal["Automatique", "Manuelle", "Frais", "Reprise"]
     score: Decimal | None
     ecriture_id: int | None
     # Code du rapprochement validé (« BP-26-000123 », 13/10/2026)
@@ -178,7 +178,7 @@ class CorrespondanceOut(BaseModel):
     code: str | None = None
     type: str
     statut: StatutCorrespondance
-    origine: Literal["Automatique", "Manuelle", "Frais"]
+    origine: Literal["Automatique", "Manuelle", "Frais", "Reprise"]
     score: Decimal | None
     forte: bool = Field(description="Score au moins égal au seuil de forte correspondance")
     score_second: Decimal | None = Field(
@@ -211,15 +211,24 @@ class CorrespondanceOut(BaseModel):
     # Plusieurs écritures (1 → N, N → N, P13 du 15/10/2026) : toutes, la plus grosse en tête
     ecritures: list[EcritureOut] = Field(default_factory=list)
     total_ecritures: Decimal = Decimal("0")
+    # Nombre de toutes les lignes : `operations` et `ecritures` en gardent au plus 20 (27/10/2026)
+    nb_operations: int = 1
+    nb_ecritures: int = 1
 
     @classmethod
     def from_view(cls, view: MatchView) -> "CorrespondanceOut":
         match = view.match
         lignes = view.transactions or [(view.transaction, view.bank_code)]
-        total = sum((tx.montant for tx, _ in lignes), Decimal("0"))
+        total = view.total_operations
+        if total is None:
+            total = sum((tx.montant for tx, _ in lignes), Decimal("0"))
         ecritures = view.entries or [(view.entry, view.entry_bank_code)]
-        total_sage = sum((montant_rapprochement(e) for e, _ in ecritures), Decimal("0"))
+        total_sage = view.total_ecritures
+        if total_sage is None:
+            total_sage = sum((montant_rapprochement(e) for e, _ in ecritures), Decimal("0"))
         return cls(
+            nb_operations=max(view.nb_operations, len(lignes)),
+            nb_ecritures=max(view.nb_ecritures, len(ecritures)),
             code=match.code,
             operations=[OperationOut.of(tx, code) for tx, code in lignes],
             total_operations=total,

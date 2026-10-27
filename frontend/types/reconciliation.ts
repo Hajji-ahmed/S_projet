@@ -2,8 +2,9 @@
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
 
 export type StatutCorrespondance = "Proposée" | "Validée" | "Rejetée" | "Annulée";
-/** « Frais » : droits de timbre comptabilisés par SIMTIS (13/10/2026). */
-export type OrigineCorrespondance = "Automatique" | "Manuelle" | "Frais";
+/** « Frais » : droits de timbre comptabilisés par SIMTIS (13/10/2026) ; « Reprise » : état de
+ * rapprochement repris d'Excel, tout le reste rapproché d'un coup (27/10/2026). */
+export type OrigineCorrespondance = "Automatique" | "Manuelle" | "Frais" | "Reprise";
 
 export type Critere = {
   code: "reference" | "montant" | "date" | "libelle" | "tiers";
@@ -91,6 +92,9 @@ export type Correspondance = {
   /** Toutes les écritures (1 → N, N → N, P13 du 15/10/2026), la plus grosse en tête. */
   ecritures?: Ecriture[];
   total_ecritures?: string;
+  /** Nombre de toutes les lignes : `operations` et `ecritures` en gardent au plus 20 (27/10/2026). */
+  nb_operations?: number;
+  nb_ecritures?: number;
 };
 
 export type Correspondances = {

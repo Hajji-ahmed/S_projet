@@ -1042,6 +1042,8 @@ def test_a_match_origin_includes_fees(db, world):
     from app.models import ReconciliationMatch
 
     save(db, ReconciliationMatch(company_id=world.company.id, type="N-1", origine="Frais"))
+    # Reprise d'un état de rapprochement tenu sous Excel (migration 0040)
+    save(db, ReconciliationMatch(company_id=world.company.id, type="N-N", origine="Reprise"))
 
     assert_rejected(
         db,

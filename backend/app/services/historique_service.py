@@ -64,6 +64,7 @@ ACTIONS = {
     "rejet_rapprochement": "Rejet de rapprochement",
     "annulation_rapprochement": "Annulation de rapprochement",
     "rapprochement_manuel": "Rapprochement manuel",
+    "reprise_rapprochement": "Reprise de l'état de rapprochement",
     "rejet_ambiguite": "Aucune écriture ne correspond",
     "rejet_ambiguite_ecriture": "Aucune opération ne correspond",
     "export_lettrage": "Export du lettrage",

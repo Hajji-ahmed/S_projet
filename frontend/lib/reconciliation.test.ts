@@ -7,6 +7,8 @@ import {
   uniteEcriture,
   lettrageFilename,
   montantBanque,
+  nbEcritures,
+  nbOperations,
   operationsDe,
   A_COMPTABILISER,
   STATUTS_VOLET,
@@ -291,5 +293,34 @@ describe("propositions éloignées (20/10/2026)", () => {
 
     expect([...defaultSelection([eloignee, normale])]).toEqual([2]);
     expect(filterProposals([eloignee, normale], "eloignees").map((item) => item.id)).toEqual([1]);
+  });
+});
+
+describe("rapprochement de reprise (27/10/2026)", () => {
+  it("compte toutes les lignes, même celles que l'API ne renvoie pas", () => {
+    const reprise = {
+      id: 9,
+      statut: "Validée",
+      origine: "Reprise",
+      operation: { montant: "500.00" },
+      operations: [{ montant: "500.00" }, { montant: "-20.00" }],
+      total_operations: "10363118.52",
+      nb_operations: 10190,
+      ecriture: { montant: "-500.00" },
+      ecritures: [{ montant: "-500.00" }],
+      total_ecritures: "-10363118.52",
+      nb_ecritures: 10114,
+    } as unknown as Correspondance;
+
+    expect(nbOperations(reprise)).toBe(10190);
+    expect(nbEcritures(reprise)).toBe(10114);
+    expect(montantBanque(reprise)).toBe("10363118.52");
+  });
+
+  it("sans nombre envoyé, compte les lignes reçues", () => {
+    const simple = { operation: { montant: "1.00" }, ecriture: { montant: "-1.00" } };
+
+    expect(nbOperations(simple as unknown as Correspondance)).toBe(1);
+    expect(nbEcritures(simple as unknown as Correspondance)).toBe(1);
   });
 });
