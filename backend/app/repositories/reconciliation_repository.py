@@ -3,7 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, and_, delete, func, or_, select, text, update
+from sqlalchemy import Select, and_, case, delete, func, or_, select, text, update
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.models import (
@@ -24,6 +24,12 @@ from app.services.reconciliation_scoring import AUTRE, TYPES_BANQUE, TYPES_SAGE,
 STATUTS_ACTIFS = ("Proposée", "Validée")
 # Lignes qu'un nouveau passage du moteur ne touche jamais
 STATUTS_FIGES = ("Rapprochée", "Écart")
+
+
+def statuts_du_filtre(statut: str) -> tuple[str, ...]:
+    """Statuts lus par le filtre Statut des volets (28/10/2026) : une ligne en proposition
+    (« À vérifier ») reste « Non rapprochée » tant que le rapprochement n'est pas validé."""
+    return ("Non rapprochée", "À vérifier") if statut == "Non rapprochée" else (statut,)
 
 
 def lock_company(db: Session, company_id: int, *, nowait: bool = False) -> Company | None:
@@ -104,8 +110,18 @@ def free_entries(
     return list(db.scalars(query))
 
 
+# Marque d'un rejet levé par « Lancer le rapprochement » (28/10/2026), dans `detail_score`
+REJET_LEVE = "rejet_leve"
+
+
+def _rejet_en_vigueur():
+    """Rejet pas encore levé : `detail_score` sans la marque (NULL SQL ou JSON compris)."""
+    return func.coalesce(ReconciliationMatch.detail_score.has_key(REJET_LEVE), False).is_(False)
+
+
 def rejected_pairs(db: Session, company_id: int) -> set[tuple[int, int]]:
-    """Paires (opération, écriture) déjà rejetées par un utilisateur : jamais reproposées."""
+    """Paires (opération, écriture) rejetées par un utilisateur et pas encore levées : elles ne sont
+    pas reproposées avant le prochain « Lancer le rapprochement » (décision du 28/10/2026)."""
     tx_item = aliased(ReconciliationMatchItem)
     entry_item = aliased(ReconciliationMatchItem)
     query = (
@@ -115,11 +131,35 @@ def rejected_pairs(db: Session, company_id: int) -> set[tuple[int, int]]:
         .where(
             ReconciliationMatch.company_id == company_id,
             ReconciliationMatch.statut == "Rejetée",
+            _rejet_en_vigueur(),
             tx_item.bank_transaction_id.is_not(None),
             entry_item.accounting_entry_id.is_not(None),
         )
     )
     return {(row[0], row[1]) for row in db.execute(query)}
+
+
+def lever_rejets(db: Session, company_id: int) -> int:
+    """Lève les rejets en vigueur de la société : le statut « Rejetée » reste (historique), seule la
+    marque `rejet_leve` est ajoutée à `detail_score`. Retourne le nombre de rejets levés."""
+    marque = func.jsonb_build_object(REJET_LEVE, True)
+    detail = ReconciliationMatch.detail_score
+    result = db.execute(
+        update(ReconciliationMatch)
+        .where(
+            ReconciliationMatch.company_id == company_id,
+            ReconciliationMatch.statut == "Rejetée",
+            _rejet_en_vigueur(),
+        )
+        .values(
+            detail_score=case(
+                (func.jsonb_typeof(detail) == "object", detail.op("||")(marque)),
+                else_=marque,
+            )
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount
 
 
 def automatic_proposals_of_period(
@@ -492,7 +532,7 @@ def page_of_transactions(
 ) -> tuple[int, list[tuple[BankTransaction, str]]]:
     """Nombre d'opérations du filtre et une page, des plus récentes aux plus anciennes."""
     if statut is not None:
-        query = query.where(BankTransaction.statut == statut)
+        query = query.where(BankTransaction.statut.in_(statuts_du_filtre(statut)))
     filtered = query.subquery()
     total = db.scalar(select(func.count()).select_from(filtered)) or 0
     rows = db.execute(

@@ -38,6 +38,7 @@ import {
   sensSage,
   statutsVolet,
   toggleStatut,
+  compteurStatut,
   validable,
 } from "./reconciliation";
 import type { Candidat, Correspondance } from "@/types/reconciliation";
@@ -151,6 +152,16 @@ describe("toggleStatut", () => {
     expect(toggleStatut("", "À vérifier")).toBe("À vérifier");
     expect(toggleStatut("Rapprochée", "À vérifier")).toBe("À vérifier");
     expect(toggleStatut("À vérifier", "À vérifier")).toBe("");
+  });
+});
+
+describe("compteurStatut", () => {
+  it("compte les opérations en proposition parmi les non rapprochées (28/10/2026)", () => {
+    const parStatut = { "Non rapprochée": 10, "À vérifier": 4, Rapprochée: 7 };
+    expect(compteurStatut(parStatut, "Non rapprochée")).toBe(14);
+    expect(compteurStatut(parStatut, "Rapprochée")).toBe(7);
+    expect(compteurStatut({ Rapprochée: 2 }, "Non rapprochée")).toBe(0);
+    expect(compteurStatut(null, "Non rapprochée")).toBeUndefined();
   });
 });
 

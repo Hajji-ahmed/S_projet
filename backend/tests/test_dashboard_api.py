@@ -265,7 +265,12 @@ def test_the_tasks_count_strong_and_weak_proposals(client, comptable, db):
     # Montant avec centimes (60 points, 28/10/2026) : faible mais proposée
     operation(db, compte, montant="700.50", jour=date(2026, 9, 10), libelle="VIR XYZ")
     ecriture(
-        db, compte, montant="-700.50", jour=date(2026, 9, 14), libelle="Divers", numero_piece="Z"
+        db,
+        compte,
+        montant="-700.50",
+        jour=date(2026, 9, 14),
+        libelle="VIR divers",
+        numero_piece="Z",
     )
     assert run(client, comptable, db).status_code == 200
 

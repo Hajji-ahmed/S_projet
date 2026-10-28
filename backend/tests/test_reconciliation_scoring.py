@@ -42,7 +42,7 @@ def op(id=1, montant="50000", jour=JOUR, libelle="VIR ABC", reference=None, vale
     )
 
 
-def ec(id=1, montant="-50000", jour=JOUR, libelle="Règlement ABC", piece="REG458", **over):
+def ec(id=1, montant="-50000", jour=JOUR, libelle="Virement ABC", piece="REG458", **over):
     return Ecriture(
         **{
             "id": id,
@@ -110,7 +110,7 @@ def test_same_reference_on_both_sides_gives_the_reference_points():
 
 def test_an_entry_of_another_bank_account_is_not_compared():
     awb = Operation(1, JOUR, None, "VIR ABC", None, Decimal("100"), bank_account_id=1)
-    bp = Ecriture(1, JOUR, "Règlement ABC", None, None, "ABC", Decimal("-100"), bank_account_id=2)
+    bp = Ecriture(1, JOUR, "Virement ABC", None, None, "ABC", Decimal("-100"), bank_account_id=2)
 
     assert not comparable(awb, bp, Grille())
     assert proposer([awb], [bp]).propositions == []
@@ -353,7 +353,7 @@ def test_the_prefilter_gives_the_same_result_as_scoring_every_pair():
     ]  # fmt: skip
     ecritures = [
         ec(id=i, montant=str(-(1000 + (i % 7) * 10)), jour=date(2026, 9, 1 + (i * 3) % 20),
-           libelle=f"Règlement client {i % 5} cheque N 0{100000 + i % 9}", piece=None)
+           libelle=f"Virement client {i % 5} cheque N 0{100000 + i % 9}", piece=None)
         for i in range(1, 60)
     ]  # fmt: skip
     attendus = {
@@ -381,6 +381,9 @@ def test_types_are_read_from_the_labels_of_each_side():
     assert type_ecriture("EAR° 3308407 LAHNINE") == "Effet"
     assert type_ecriture("ESP N 1234") == "Espèces"
     assert type_ecriture("REGLEMENT FOURNISSEUR ATLAS") is None
+    # « LCN … » côté Sage : un effet (28/10/2026) ; « IMP LCN … » reste un impayé
+    assert type_ecriture("LCN 2600083 TIRE SUR BP") == "Effet"
+    assert type_ecriture("IMP LCN 2600083") == "Impayé"
     assert type_operation("ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW") == "Chèque"
     assert type_operation("ENCAISSEMENT EFFET N 3100821") == "Effet"
     assert type_operation("REMISE D'EFFETS N 5812970") == "Effet"
@@ -394,10 +397,16 @@ def test_different_types_are_never_compared():
     autre = op(libelle="FRAIS RECUPERES PAR LA BANQUE")
     ecriture_cheque = ec(libelle="EAR1° AXK 173813")
 
+    ecriture_autre = ec(libelle="REGLEMENT FOURNISSEUR ATLAS")
+
     assert comparable(cheque, ecriture_cheque, GRILLE_PAR_DEFAUT)
     assert not comparable(especes, ecriture_cheque, GRILLE_PAR_DEFAUT)
-    assert comparable(autre, ecriture_cheque, GRILLE_PAR_DEFAUT)  # autre : comparable
+    # 28/10/2026 : un type inconnu (autre) ne se compare qu'à un autre type inconnu
+    assert not comparable(autre, ecriture_cheque, GRILLE_PAR_DEFAUT)
+    assert not comparable(cheque, ecriture_autre, GRILLE_PAR_DEFAUT)
+    assert comparable(autre, ecriture_autre, GRILLE_PAR_DEFAUT)
     assert proposer([especes], [ecriture_cheque]).propositions == []
+    assert proposer([autre], [ecriture_cheque]).propositions == []
 
 
 def test_especes_are_compared_at_their_due_date():

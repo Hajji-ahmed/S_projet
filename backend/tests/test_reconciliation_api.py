@@ -74,7 +74,7 @@ def operation(db, compte: BankAccount, montant="50000", jour=JOUR, libelle="VIR 
 
 
 def ecriture(
-    db, compte: BankAccount, montant="-50000", jour=JOUR, libelle="Règlement ABC", **over
+    db, compte: BankAccount, montant="-50000", jour=JOUR, libelle="Virement ABC", **over
 ) -> AccountingEntry:
     """Au sens de Sage : un montant négatif est un crédit du compte banque (argent qui sort)."""
     montant = Decimal(montant)
@@ -206,7 +206,7 @@ def test_running_again_replaces_pending_proposals_and_keeps_decisions(client, co
     operation(db, compte, jour=date(2026, 9, 10))
     ecriture(db, compte, jour=date(2026, 9, 10))
     kept_tx = operation(db, compte, montant="700", libelle="VIR XYZ")
-    ecriture(db, compte, montant="-700", libelle="Règlement XYZ", tiers="XYZ", numero_piece="P7")
+    ecriture(db, compte, montant="-700", libelle="Virement XYZ", tiers="XYZ", numero_piece="P7")
     run(client, comptable, db)
     pending = proposals(client, comptable, db).json()["correspondances"]
     to_keep = next(p for p in pending if p["operation"]["id"] == kept_tx.id)
@@ -220,12 +220,22 @@ def test_running_again_replaces_pending_proposals_and_keeps_decisions(client, co
     assert [p["id"] for p in validated] == [to_keep["id"]]
 
 
-def test_rejected_pair_is_not_proposed_again(client, comptable, db):
+def test_rejected_pair_comes_back_only_at_the_next_run(client, comptable, db):
+    """28/10/2026 : un rejet tient jusqu'au prochain « Lancer le rapprochement », qui le lève ;
+    ni la relance d'un rapprochement manuel ni la recherche élargie ne le lèvent."""
+    from app.repositories import reconciliation_repository
+
     compte = account(db)
     tx = operation(db, compte)
     entry = ecriture(db, compte)
+    autre_tx = operation(db, compte, montant="700", libelle="VIR XYZ")
+    autre_ec = ecriture(db, compte, montant="-700", libelle="Virement XYZ", numero_piece="P7")
     run(client, comptable, db)
-    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+    proposal = next(
+        p
+        for p in proposals(client, comptable, db).json()["correspondances"]
+        if p["operation"]["id"] == tx.id
+    )
 
     rejected = client.post(
         f"/api/reconciliation/matches/{proposal['id']}/reject",
@@ -236,8 +246,35 @@ def test_rejected_pair_is_not_proposed_again(client, comptable, db):
     assert rejected.status_code == 200, rejected.text
     assert rejected.json()["statut"] == "Rejetée"
     assert statuses(db, tx, entry) == ["Non rapprochée", "Non rapprochée"]
-    assert run(client, comptable, db).json()["nb_propositions"] == 0
+
+    # Le rapprochement manuel relance le moteur autour de ses lignes : le rejet tient
+    assert manual(client, comptable, autre_tx, autre_ec).status_code == 201
     assert statuses(db, tx) == ["Non rapprochée"]
+    # La recherche élargie ne lève pas les rejets
+    body = {"company_id": company(db).id, **PERIODE}
+    assert client.post("/api/reconciliation/run-elargie", json=body, headers=comptable).is_success
+    assert (tx.id, entry.id) in reconciliation_repository.rejected_pairs(db, compte.company_id)
+
+    again = run(client, comptable, db).json()
+
+    assert again["nb_propositions"] == 1
+    assert statuses(db, tx, entry) == ["À vérifier", "À vérifier"]
+    rejet = db.get(ReconciliationMatch, proposal["id"])
+    db.refresh(rejet)
+    # Le rejet reste dans l'historique, marqué levé
+    assert rejet.statut == "Rejetée"
+    assert rejet.detail_score["rejet_leve"] is True
+    assert rejet.detail_score["montant"] == "40.00"
+    lancement = db.scalar(
+        select(AuditLog)
+        .where(AuditLog.action == "rapprochement_lance")
+        .order_by(AuditLog.id.desc())
+    )
+    # Le rejet de l'utilisateur et la proposition que le rapprochement manuel a rejetée
+    assert lancement.nouvelle_valeur["rejets_leves"] == 2
+    # Déjà levé : un nouveau lancement n'en compte plus
+    run(client, comptable, db)
+    assert reconciliation_repository.lever_rejets(db, compte.company_id) == 0
 
 
 def test_run_checks_period_and_account(client, comptable, db):
@@ -318,7 +355,7 @@ def _strong_and_weak(client, comptable, db):
         compte,
         montant="-700",
         jour=date(2026, 9, 12),
-        libelle="Paiement divers",
+        libelle="VIR divers",
         tiers=None,
         numero_piece="P7",
     )
@@ -489,7 +526,7 @@ def test_candidates_are_sorted_by_score(client, comptable, db):
     compte = account(db)
     tx = operation(db, compte)
     best = ecriture(db, compte)
-    other = ecriture(db, compte, jour=date(2026, 9, 27), libelle="Divers", tiers=None)
+    other = ecriture(db, compte, jour=date(2026, 9, 27), libelle="VIR divers", tiers=None)
     ecriture(db, compte, montant="50000")  # même sens : jamais candidate
 
     response = client.get(
@@ -981,14 +1018,15 @@ def test_a_group_is_proposed_shown_validated_and_cancelled(client, comptable, db
     assert "annulation_rapprochement" in actions
 
 
-def test_a_rejected_group_is_not_proposed_again(client, comptable, db):
+def test_a_rejected_group_comes_back_at_the_next_run(client, comptable, db):
+    """28/10/2026 : comme une paire, un groupe rejeté revient au prochain lancement."""
     _groupe(client, comptable, db)
     [proposal] = proposals(client, comptable, db).json()["correspondances"]
 
     client.post(f"/api/reconciliation/matches/{proposal['id']}/reject", headers=comptable)
     again = run(client, comptable, db).json()
 
-    assert again["nb_groupes"] == 0
+    assert again["nb_groupes"] == 1
 
 
 def test_one_to_one_comes_before_groups(client, comptable, db):
@@ -1302,10 +1340,18 @@ def test_no_entry_matches_an_ambiguous_operation(client, comptable, direction, d
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "rejet_ambiguite"))
     assert audit.nouvelle_valeur["commentaire"] == "Chèque d'un autre client"
 
-    # Le moteur ne repropose jamais ces écritures ; une nouvelle écriture reste comparée
+    # 28/10/2026 : le prochain lancement lève ces rejets, l'opération redevient ambiguë
     run(client, comptable, db)
-    assert statuses(db, tx) == ["Non rapprochée"]
-    nouvelle = ecriture(db, compte, libelle="VIR ABC", numero_piece="NEW1")
+    assert statuses(db, tx) == ["À vérifier"]
+    ambigues = client.get(
+        "/api/reconciliation/ambiguous", params={"company_id": company(db).id}, headers=direction
+    ).json()
+    assert [a["operation"]["id"] for a in ambigues["ambigues"]] == [tx.id]
+
+    # Une proposition en attente sur l'opération : à traiter d'abord
+    nouvelle = ecriture(db, compte, montant="-50000.50", libelle="VIR ABC", numero_piece="NEW1")
+    tx.montant, tx.credit = Decimal("50000.50"), Decimal("50000.50")
+    db.flush()
     run(client, comptable, db)
     proposees = client.get(
         "/api/reconciliation/proposals",
@@ -1315,8 +1361,6 @@ def test_no_entry_matches_an_ambiguous_operation(client, comptable, direction, d
     assert [(p["operation"]["id"], p["ecriture"]["id"]) for p in proposees] == [
         (tx.id, nouvelle.id)
     ]
-
-    # L'opération a maintenant une proposition (la nouvelle écriture) : à traiter d'abord
     assert client.post(url, json={}, headers=comptable).status_code == 409
 
 
@@ -1398,9 +1442,9 @@ def test_proposals_are_rejected_in_a_batch_all_or_nothing(client, comptable, dir
     """15/10/2026 : « Rejeter la sélection » des propositions à vérifier."""
     compte = account(db)
     tx1 = operation(db, compte, montant="100", jour=date(2026, 9, 1), libelle="VIR UN")
-    ec1 = ecriture(db, compte, montant="-100", jour=date(2026, 9, 1), libelle="Client un")
+    ec1 = ecriture(db, compte, montant="-100", jour=date(2026, 9, 1), libelle="VIR client un")
     tx2 = operation(db, compte, montant="200", jour=date(2026, 9, 5), libelle="VIR DEUX")
-    ec2 = ecriture(db, compte, montant="-200", jour=date(2026, 9, 5), libelle="Client deux")
+    ec2 = ecriture(db, compte, montant="-200", jour=date(2026, 9, 5), libelle="VIR client deux")
     run(client, comptable, db)
     par_operation = {
         p["operation"]["id"]: p["id"]
@@ -1431,8 +1475,9 @@ def test_proposals_are_rejected_in_a_batch_all_or_nothing(client, comptable, dir
         .order_by(AuditLog.id.desc())
     )
     assert rejet.nouvelle_valeur["en_lot"] is True
+    # 28/10/2026 : le prochain lancement lève le rejet, la paire revient
     run(client, comptable, db)
-    assert statuses(db, tx2, ec2) == ["Non rapprochée", "Non rapprochée"]
+    assert statuses(db, tx2, ec2) == ["À vérifier", "À vérifier"]
 
 
 def test_ambiguous_operations_and_entries_are_discarded_in_a_batch(client, comptable, db):
@@ -1544,7 +1589,7 @@ def test_a_targeted_match_settles_only_the_competing_lines(client, comptable, db
     tx1, tx2 = operation(db, compte), operation(db, compte)
     ec1, ec2 = ecriture(db, compte), ecriture(db, compte)
     autre_tx = operation(db, compte, "700", date(2026, 9, 20), "VIR XYZ")
-    autre_ec = ecriture(db, compte, "-700", date(2026, 9, 20), "Règlement XYZ", numero_piece="X1")
+    autre_ec = ecriture(db, compte, "-700", date(2026, 9, 20), "Virement XYZ", numero_piece="X1")
     run(client, comptable, db)
     assert statuses(db, tx1, tx2, ec1, ec2) == ["À vérifier"] * 4
     ailleurs = db.scalar(
@@ -1709,3 +1754,21 @@ def test_two_accounts_of_the_same_bank_never_get_the_same_code(client, comptable
 
     annee = business_today().year % 100
     assert codes == [f"AWB-{annee:02d}-000001", f"AWB-{annee:02d}-000002"]
+
+
+def test_a_line_in_proposal_stays_listed_as_not_reconciled(client, comptable, direction, db):
+    """28/10/2026 : une ligne en proposition (« À vérifier ») reste listée par le filtre « Non
+    rapprochée » des deux volets, jusqu'à la validation."""
+    compte = account(db)
+    tx = operation(db, compte)
+    entry = ecriture(db, compte)
+    run(client, comptable, db)
+    assert statuses(db, tx, entry) == ["À vérifier", "À vérifier"]
+    params = {"company_id": company(db).id, "statut": "Non rapprochée"}
+
+    operations = client.get("/api/reconciliation/transactions", params=params, headers=direction)
+    ecritures = client.get("/api/accounting/entries", params=params, headers=direction)
+
+    assert [op["id"] for op in operations.json()["operations"]] == [tx.id]
+    assert [ec["id"] for ec in ecritures.json()["ecritures"]] == [entry.id]
+    assert operations.json()["par_statut"]["À vérifier"] == 1

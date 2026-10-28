@@ -211,6 +211,7 @@ TYPES_SAGE: tuple[tuple[str, str], ...] = (
     ("IMP", "Impayé"),
     ("EAR1", "Chèque"),  # « EAR1° … »
     ("EAR", "Effet"),  # « EAR° … »
+    ("LCN", "Effet"),  # « LCN … » (28/10/2026)
     ("ESP", "Espèces"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
     ("VIREMENT", "Virement"),
@@ -254,9 +255,10 @@ def type_ecriture(libelle: str | None) -> str | None:
 
 
 def types_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
-    """Deux types connus et différents ne se rapprochent jamais ; un type inconnu (autre) passe."""
-    a, b = type_operation(operation.libelle), type_ecriture(ecriture.libelle)
-    return a is None or b is None or a == b
+    """Le moteur ne compare que deux lignes du même type (28/10/2026) : chèque avec chèque,
+    espèces avec espèces…, et un type inconnu (autre) seulement avec un autre type inconnu. Le
+    rapprochement manuel garde sa propre règle (deux types connus différents refusés)."""
+    return type_operation(operation.libelle) == type_ecriture(ecriture.libelle)
 
 
 def numeros(*textes: str | None) -> set[str]:
@@ -516,7 +518,7 @@ def proposer(
     """Propositions 1→1, prudentes : une paire n'est proposée que si elle est, sans ambiguïté, le
     meilleur candidat de son opération ET de son écriture.
 
-    - Une paire déjà rejetée par un utilisateur n'est jamais reproposée.
+    - Une paire rejetée par un utilisateur (rejet en vigueur) n'est pas reproposée.
     - Une paire sous le seuil de proposition n'est pas un candidat.
     - Si les deux meilleurs candidats d'une opération (ou d'une écriture) ont le même score,
       aucune proposition pour elle (décision du 08/10/2026 : avant, à moins de 10 points). Sinon le

@@ -6,7 +6,7 @@ rejette ou annule une correspondance, et chaque décision est tracée dans `audi
 Statuts des opérations et des écritures :
 - proposée ou ambiguë → « À vérifier » ;
 - validée par un utilisateur (ou rapprochée à la main) → « Rapprochée » ;
-- rejetée ou annulée → « Non rapprochée ». Une paire rejetée n'est jamais reproposée.
+- rejetée ou annulée → « Non rapprochée ». Une paire rejetée n'est reproposée qu'au prochain « Lancer le rapprochement ».
 « Écart » est réservé aux écarts (P12) : le moteur n'y touche pas.
 """
 
@@ -225,7 +225,9 @@ def run(
     """Propose des correspondances pour les opérations de la période.
 
     Les propositions automatiques encore en attente de la période sont remplacées ; les
-    correspondances validées, rejetées ou manuelles ne sont jamais modifiées.
+    correspondances validées ou manuelles ne sont jamais modifiées. Les rejets en vigueur de la
+    société sont d'abord levés (28/10/2026) : une paire rejetée peut être reproposée, mais
+    seulement à ce lancement, jamais par une relance après un rapprochement manuel.
     """
     _check_period(date_from, date_to)
     if (date_to - date_from).days >= PERIODE_MAX_JOURS:
@@ -235,6 +237,7 @@ def run(
     if bank_account_id is not None and not accounts:
         raise NotFoundError("Compte bancaire introuvable pour cette société.")
     account_ids = [account.id for account in accounts]
+    rejets_leves = repo.lever_rejets(db, company.id)
     regles = grille(db)
     moteur = _engine(db, company, account_ids, date_from, date_to, regles)
     result = RunResult(
@@ -259,6 +262,7 @@ def run(
             "du": date_from,
             "au": date_to,
             "propositions_remplacees": moteur.nb_remplacees,
+            "rejets_leves": rejets_leves,
             **result.__dict__,
         },
         ip=ip,
@@ -915,7 +919,7 @@ def validate_batch(
 def reject(
     db: Session, match_id: int, *, commentaire: str | None, acteur_id: int, ip: str | None
 ) -> ReconciliationMatch:
-    """Un utilisateur refuse une proposition : la paire ne sera plus jamais proposée."""
+    """Un utilisateur refuse une proposition : la paire ne sera plus proposée avant le prochain lancement du rapprochement."""
     match = _locked_match(db, match_id)
     if match.statut != "Proposée":
         raise ConflictError(
@@ -946,7 +950,7 @@ def reject_batch(
     ip: str | None,
 ) -> int:
     """Rejette en une fois les propositions choisies (15/10/2026), toutes ou aucune : chacune doit
-    être encore « Proposée ». Comme un rejet un par un, la paire n'est plus jamais proposée et ses
+    être encore « Proposée ». Comme un rejet un par un, la paire n'est plus proposée avant le prochain lancement et ses
     lignes repassent « Non rapprochée »."""
     texte = _clean_comment(commentaire)
     ids = sorted(set(match_ids))
@@ -1633,7 +1637,7 @@ def _paire_rejetee(
     acteur_id: int,
 ) -> ReconciliationMatch:
     """Paire écartée par l'utilisateur : une correspondance « Rejetée » (éléments inactifs), le
-    mécanisme des rejets ; la paire n'est jamais reproposée."""
+    mécanisme des rejets ; la paire n'est reproposée qu'au prochain lancement."""
     match = ReconciliationMatch(
         company_id=company_id,
         type="1-1",
@@ -1792,7 +1796,7 @@ def rejeter_ambiguite(
 ) -> list[int]:
     """« Aucune écriture ne correspond » (15/10/2026) : toutes les écritures candidates d'une
     opération ambiguë sont écartées d'un coup. Chaque paire est enregistrée comme rejetée (le
-    mécanisme des rejets : jamais reproposée), l'opération repasse « Non rapprochée ». Une
+    mécanisme des rejets : reproposée au prochain lancement seulement), l'opération repasse « Non rapprochée ». Une
     écriture importée plus tard reste comparée normalement. Retourne les écritures écartées."""
     texte = _clean_comment(commentaire)
     company, [tx] = _operations_d_une_societe(db, [transaction_id])
@@ -2104,7 +2108,7 @@ def rejeter_ambiguite_ecriture(
     ip: str | None,
 ) -> list[int]:
     """« Aucune opération ne correspond » : le symétrique de `rejeter_ambiguite`. Les opérations
-    candidates sont écartées (paires rejetées, jamais reproposées), l'écriture repasse « Non
+    candidates sont écartées (paires rejetées jusqu'au prochain lancement), l'écriture repasse « Non
     rapprochée ». Retourne les opérations écartées."""
     texte = _clean_comment(commentaire)
     company, [entry] = _ecritures_d_une_societe(db, [entry_id])

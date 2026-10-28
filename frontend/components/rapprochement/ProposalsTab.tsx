@@ -697,7 +697,8 @@ export function ProposalsTab({
         }
       >
         <p className="mb-4 text-simtis-muted">
-          Cette écriture ne sera plus proposée pour cette opération.
+          Cette écriture ne sera plus proposée pour cette opération avant le prochain lancement du
+          rapprochement.
         </p>
         <Field label="Commentaire (facultatif)" htmlFor="proposition-rejet">
           <TextInput
@@ -738,9 +739,9 @@ export function ProposalsTab({
         {aucune && (
           <p className="mb-4 text-simtis-muted">
             Les {aucune.candidats.length} écritures proposées seront écartées pour l&apos;opération
-            « {aucune.operation.libelle} » : elles ne lui seront plus jamais proposées, et
-            l&apos;opération repasse « Non rapprochée ». Une écriture importée plus tard sera
-            comparée normalement.
+            « {aucune.operation.libelle} » : elles ne lui seront plus proposées avant le prochain
+            lancement du rapprochement, et l&apos;opération repasse « Non rapprochée ». Une écriture
+            importée plus tard sera comparée normalement.
           </p>
         )}
         <Field label="Commentaire (facultatif)" htmlFor="aucune-ecriture">
@@ -782,8 +783,9 @@ export function ProposalsTab({
         {aucuneOp && (
           <p className="mb-4 text-simtis-muted">
             Les {aucuneOp.candidats.length} opérations proposées seront écartées pour
-            l&apos;écriture « {aucuneOp.ecriture.libelle} » : elles ne lui seront plus jamais
-            proposées, et l&apos;écriture repasse « Non rapprochée ».
+            l&apos;écriture « {aucuneOp.ecriture.libelle} » : elles ne lui seront plus proposées
+            avant le prochain lancement du rapprochement, et l&apos;écriture repasse « Non
+            rapprochée ».
           </p>
         )}
         <Field label="Commentaire (facultatif)" htmlFor="aucune-operation">
@@ -836,8 +838,8 @@ export function ProposalsTab({
         {lot && (
           <p className="mb-4 text-simtis-muted">
             {lot.type === "propositions"
-              ? `${plural(lot.ids.length, "proposition")} seront rejetées : ces paires ne seront plus jamais proposées et leurs lignes repassent « Non rapprochée ».`
-              : `Pour ${plural(lot.ids.length, lot.type === "operations" ? "opération" : "écriture")}, toutes les candidates seront écartées (plus jamais proposées) et la ligne repasse « Non rapprochée ».`}
+              ? `${plural(lot.ids.length, "proposition")} seront rejetées : ces paires ne seront plus proposées avant le prochain lancement du rapprochement et leurs lignes repassent « Non rapprochée ».`
+              : `Pour ${plural(lot.ids.length, lot.type === "operations" ? "opération" : "écriture")}, toutes les candidates seront écartées (plus proposées avant le prochain lancement du rapprochement) et la ligne repasse « Non rapprochée ».`}
           </p>
         )}
         {lot?.type === "propositions" && !!lot.fortes && (

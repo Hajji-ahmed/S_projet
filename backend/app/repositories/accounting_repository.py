@@ -87,7 +87,9 @@ def entries_query(
     if date_to is not None:
         query = query.where(AccountingEntry.date_ecriture <= date_to)
     if statut is not None:
-        query = query.where(AccountingEntry.statut == statut)
+        query = query.where(
+            AccountingEntry.statut.in_(reconciliation_repository.statuts_du_filtre(statut))
+        )
     # Débit / Crédit de l'écriture, comme dans Sage (19/10/2026)
     if sens == "Débit":
         query = query.where(AccountingEntry.debit > 0)

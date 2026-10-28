@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/Card";
 import { BoutonFiltres, FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { PropositionBadge } from "@/components/rapprochement/PropositionBadge";
 import { PiedDefilement } from "@/components/rapprochement/PiedDefilement";
 import { useDefilement } from "@/components/rapprochement/useDefilement";
 import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
@@ -78,7 +79,6 @@ export function TransactionsPane({
     q,
     typeOperation: typeOperation || undefined,
     sens: sens || undefined,
-    sansAVerifier: true,
   };
   // Un filtre changé (ici ou par les compteurs de la vue) repart du haut
   const { etat, lu, suite, reste, chargerPlus } = useDefilement(
@@ -131,6 +131,7 @@ export function TransactionsPane({
             <span className="shrink-0 text-[11px] text-simtis-muted">Réf. {row.reference}</span>
           )}
           {row.en_cours && <EnCoursBadge />}
+          {row.statut === "À vérifier" && <PropositionBadge />}
         </span>
       ),
     },

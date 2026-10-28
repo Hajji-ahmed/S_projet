@@ -182,6 +182,19 @@ export function toggleStatut(current: string, clicked: string): string {
   return current === clicked ? "" : clicked;
 }
 
+/**
+ * Valeur d'un compteur du rapprochement (28/10/2026) : une opération en proposition (« À vérifier »)
+ * reste comptée « Non rapprochée » tant que le rapprochement n'est pas validé.
+ */
+export function compteurStatut(
+  parStatut: Partial<Record<string, number>> | null | undefined,
+  statut: string,
+): number | undefined {
+  if (!parStatut) return undefined;
+  const valeur = parStatut[statut] ?? 0;
+  return statut === "Non rapprochée" ? valeur + (parStatut["À vérifier"] ?? 0) : valeur;
+}
+
 /** Une proposition validable : en attente et équilibrée (même montant, sens opposé). */
 export function validable(item: Correspondance): boolean {
   return (

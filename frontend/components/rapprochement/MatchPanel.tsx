@@ -454,7 +454,8 @@ export function MatchPanel({
           }
         >
           <p className="mb-4 text-simtis-muted">
-            Cette écriture ne sera plus proposée pour cette opération.
+            Cette écriture ne sera plus proposée pour cette opération avant le prochain lancement du
+            rapprochement.
           </p>
           <Field label="Commentaire (facultatif)" htmlFor="rejet-commentaire">
             <TextInput

@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/Card";
 import { BoutonFiltres, FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { PropositionBadge } from "@/components/rapprochement/PropositionBadge";
 import { PiedDefilement } from "@/components/rapprochement/PiedDefilement";
 import { useDefilement } from "@/components/rapprochement/useDefilement";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -145,6 +146,7 @@ export function EntriesPane({
           {row.tiers && (
             <span className="shrink truncate text-[11px] text-simtis-muted">{row.tiers}</span>
           )}
+          {row.statut === "À vérifier" && <PropositionBadge />}
         </span>
       ),
     },

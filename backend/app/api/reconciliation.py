@@ -217,7 +217,7 @@ def aucune_operation(
     user: CurrentUser = Depends(can_validate),
 ) -> AucuneOperationOut:
     """Écriture ambiguë : aucune opération candidate ne correspond ; elles sont toutes écartées
-    (paires rejetées, jamais reproposées) et l'écriture repasse « Non rapprochée »."""
+    (paires rejetées jusqu'au prochain lancement) et l'écriture repasse « Non rapprochée »."""
     ids = reconciliation_service.rejeter_ambiguite_ecriture(
         db, entry_id, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
     )
@@ -416,7 +416,7 @@ def reject(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_validate),
 ) -> CorrespondanceOut:
-    """Refuse une proposition ; la même paire ne sera plus proposée."""
+    """Refuse une proposition ; la même paire ne sera plus proposée avant le prochain lancement."""
     reconciliation_service.reject(
         db,
         match_id,
@@ -457,7 +457,7 @@ def aucune_ecriture(
     user: CurrentUser = Depends(can_validate),
 ) -> AucuneEcritureOut:
     """Opération ambiguë : aucune écriture candidate ne correspond ; elles sont toutes écartées
-    (paires rejetées, jamais reproposées) et l'opération repasse « Non rapprochée »."""
+    (paires rejetées jusqu'au prochain lancement) et l'opération repasse « Non rapprochée »."""
     ids = reconciliation_service.rejeter_ambiguite(
         db,
         transaction_id,

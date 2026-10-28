@@ -253,12 +253,8 @@ def _groupes_possibles(
         if not paires:
             continue
         frais, type_op = _principale_possible(principale.libelle)
-        # `types_compatibles` sans appel par opération : deux types connus doivent être égaux
-        if (
-            frais
-            or principale.id in frais_ids
-            or (type_op is not None and type_sage is not None and type_op != type_sage)
-        ):
+        # `types_compatibles` sans appel par opération : le même type (autre avec autre)
+        if frais or principale.id in frais_ids or type_op != type_sage:
             continue
         for commission, tva in paires.get(cible - principale.montant, ()):
             ops = (principale, commission, tva)
@@ -418,7 +414,7 @@ def operations_couvertes(
             for somme, paires in table.items():
                 for principale in principales.get((compte, jour, cible - somme), ()):
                     type_op = _principale_possible(principale.libelle)[1]
-                    if type_op is not None and type_sage is not None and type_op != type_sage:
+                    if type_op != type_sage:
                         continue
                     for commission, tva in paires:
                         ops = (principale, commission, tva)

@@ -38,6 +38,7 @@ import { ECARTS_ACTIFS } from "@/lib/features";
 import {
   basculerLigne,
   CLE_PERIODE,
+  compteurStatut,
   operationOf,
   periodeAStocker,
   periodeMemorisee,
@@ -79,8 +80,8 @@ export function RapprochementView() {
   return company ? <Rapprochement key={company.id} companyId={company.id} /> : null;
 }
 
-// Compteurs qui filtrent le volet « Transactions bancaires ». « À vérifier » n'en fait pas partie :
-// ces opérations se traitent dans l'onglet Propositions (décision du 07/10/2026).
+// Compteurs qui filtrent le volet « Transactions bancaires ». Une opération en proposition
+// (« À vérifier ») reste comptée « Non rapprochée » jusqu'à la validation (28/10/2026).
 const COMPTEURS: { statut: StatutRapprochement; label: string }[] = [
   { statut: "Rapprochée", label: "Rapprochées" },
   { statut: "Non rapprochée", label: "Non rapprochées" },
@@ -443,7 +444,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
                   <StatButton
                     key={value}
                     label={label}
-                    value={parStatut?.[value]}
+                    value={compteurStatut(parStatut, value)}
                     active={tab === "rapprochement" && statut === value}
                     description={`Afficher les transactions « ${value} »`}
                     onClick={() => {
