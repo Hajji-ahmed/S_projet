@@ -1,29 +1,37 @@
 "use client";
 
-import { Landmark, Search, X } from "lucide-react";
+import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { BoutonFiltres, FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import {
+  ChoixFiltre,
+  EffacerFiltres,
+  FiltreColonne,
+  FiltreDates,
+  FiltreLibelle,
+  FiltreSens,
+} from "@/components/rapprochement/FiltreColonne";
 import { PropositionBadge } from "@/components/rapprochement/PropositionBadge";
 import { PiedDefilement } from "@/components/rapprochement/PiedDefilement";
 import { useDefilement } from "@/components/rapprochement/useDefilement";
 import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { StatusDot } from "@/components/ui/StatusBadge";
 import { formatDate } from "@/lib/balances";
+import { cn } from "@/lib/cn";
 import {
   bornerPeriode,
+  colonnesFiltrees,
   dateCourte,
+  FILTRES_VIDES,
+  filtresActifs,
   montantVolet,
-  SENS_VOLET,
-  TYPES_OPERATION,
   STATUTS_VOLET,
+  type FiltresVolet,
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { listTransactions } from "@/services/reconciliation";
@@ -48,7 +56,7 @@ type TransactionsPaneProps = {
 };
 
 /** Volet « Transactions bancaires » : opérations de la période, chargées 50 par 50 au défilement,
- * cochées au clic. */
+ * cochées au clic, filtrées depuis les en-têtes de colonnes (28/10/2026). */
 export function TransactionsPane({
   companyId,
   filter,
@@ -60,28 +68,25 @@ export function TransactionsPane({
   statut,
   onStatutChange,
 }: TransactionsPaneProps) {
-  const [search, setSearch] = useState("");
-  const [q, setQ] = useState("");
-  const [typeOperation, setTypeOperation] = useState("");
-  // Sens et dates propres au volet (19/10/2026)
-  const [sens, setSens] = useState("");
-  const [du, setDu] = useState("");
-  const [au, setAu] = useState("");
+  // Dates, libellé, type et sens propres au volet ; le statut vient de la vue (compteurs)
+  const [autres, setAutres] = useState<FiltresVolet>(FILTRES_VIDES);
   const [retryKey, setRetryKey] = useState(0);
+  const filtres: FiltresVolet = { ...autres, statut };
+  const allumees = colonnesFiltrees(filtres);
+  const changer = (modif: Partial<FiltresVolet>) => setAutres((avant) => ({ ...avant, ...modif }));
 
-  const periode = bornerPeriode(filter, du, au);
-  const filtresActifs = !!(statut || typeOperation || sens || du || au || q || search);
+  const periode = bornerPeriode(filter, filtres.du, filtres.au);
   const requete = {
     ...filter,
     from: periode.from,
     to: periode.to,
     statut: statut || undefined,
-    q,
-    typeOperation: typeOperation || undefined,
-    sens: sens || undefined,
+    q: filtres.q,
+    typeOperation: filtres.typeOperation || undefined,
+    sens: filtres.sens || undefined,
   };
   // Un filtre changé (ici ou par les compteurs de la vue) repart du haut
-  const { etat, lu, suite, reste, chargerPlus } = useDefilement(
+  const { etat, lu, affiche, suite, reste, chargerPlus } = useDefilement(
     JSON.stringify([companyId, requete]),
     `${reloadKey}|${retryKey}`,
     (page) => listTransactions(companyId, { ...requete, page }),
@@ -111,6 +116,23 @@ export function TransactionsPane({
     {
       key: "date_operation",
       header: "Date",
+      filtre: (
+        <FiltreColonne colonne="Date" actif={allumees.date}>
+          {(fermer) => (
+            <FiltreDates
+              id="rapprochement-tx-dates"
+              du={filtres.du}
+              au={filtres.au}
+              min={filter.from}
+              max={filter.to}
+              onAppliquer={(du, au) => {
+                changer({ du, au });
+                fermer();
+              }}
+            />
+          )}
+        </FiltreColonne>
+      ),
       render: (row) => (
         <span className="whitespace-nowrap tabular-nums" title={formatDate(row.date_operation)}>
           {dateCourte(row.date_operation)}
@@ -120,6 +142,18 @@ export function TransactionsPane({
     {
       key: "libelle",
       header: "Libellé",
+      filtre: (
+        <FiltreColonne colonne="Libellé" actif={allumees.libelle}>
+          {() => (
+            <FiltreLibelle
+              id="rapprochement-tx-libelle"
+              filtres={filtres}
+              placeholder="Libellé, référence, code"
+              onChanger={changer}
+            />
+          )}
+        </FiltreColonne>
+      ),
       render: (row) => (
         // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, Réf. à la suite
         <span
@@ -139,15 +173,53 @@ export function TransactionsPane({
       key: "debit",
       header: "Débit (DH)",
       align: "right",
+      filtre: (
+        <FiltreSens
+          colonne="Débit"
+          actif={allumees.debit}
+          sens={filtres.sens}
+          onChanger={changer}
+        />
+      ),
       render: (row) => montantVolet(row.debit, row.devise),
     },
     {
       key: "credit",
       header: "Crédit (DH)",
       align: "right",
+      filtre: (
+        <FiltreSens
+          colonne="Crédit"
+          actif={allumees.credit}
+          sens={filtres.sens}
+          onChanger={changer}
+        />
+      ),
       render: (row) => montantVolet(row.credit, row.devise),
     },
-    { key: "statut", header: "St.", render: (row) => <StatusDot status={row.statut} /> },
+    {
+      key: "statut",
+      header: "St.",
+      filtre: (
+        <FiltreColonne colonne="Statut" actif={allumees.statut}>
+          {(fermer) => (
+            <ChoixFiltre
+              titre="Statut"
+              options={[
+                { value: "", label: "Tous les statuts" },
+                ...STATUTS_VOLET.map((item) => ({ value: item, label: item })),
+              ]}
+              valeur={statut}
+              onChoisir={(valeur) => {
+                onStatutChange(valeur);
+                fermer();
+              }}
+            />
+          )}
+        </FiltreColonne>
+      ),
+      render: (row) => <StatusDot status={row.statut} />,
+    },
     {
       key: "code",
       header: "Code",
@@ -165,144 +237,41 @@ export function TransactionsPane({
       icon={Landmark}
       compact
       headerExtra={
-        <BoutonFiltres
-          volet="operations"
-          actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
+        <EffacerFiltres
+          visible={filtresActifs(filtres)}
+          onEffacer={() => {
+            onStatutChange("");
+            setAutres(FILTRES_VIDES);
+          }}
         />
       }
       className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
     >
-      <FiltresRepliables volet="operations">
-        <form
-          className="flex flex-wrap items-end gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setQ(search.trim());
-          }}
-        >
-          <div className="w-full max-w-[170px]">
-            <Field label="Statut" htmlFor="rapprochement-tx-statut">
-              <Select
-                id="rapprochement-tx-statut"
-                value={statut}
-                placeholder="Tous les statuts"
-                options={STATUTS_VOLET.map((item) => ({ value: item, label: item }))}
-                onChange={(event) => onStatutChange(event.target.value)}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[150px]">
-            <Field label="Type" htmlFor="rapprochement-tx-type">
-              <Select
-                id="rapprochement-tx-type"
-                value={typeOperation}
-                placeholder="Tous les types"
-                options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
-                onChange={(event) => {
-                  setTypeOperation(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[120px]">
-            <Field label="Sens" htmlFor="rapprochement-tx-sens">
-              <Select
-                id="rapprochement-tx-sens"
-                value={sens}
-                placeholder="Tous"
-                options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
-                onChange={(event) => {
-                  setSens(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[160px]">
-            <Field label="Du" htmlFor="rapprochement-tx-du">
-              <DateInput
-                id="rapprochement-tx-du"
-                value={du}
-                min={filter.from}
-                max={filter.to}
-                onChange={(event) => {
-                  setDu(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[160px]">
-            <Field label="Au" htmlFor="rapprochement-tx-au">
-              <DateInput
-                id="rapprochement-tx-au"
-                value={au}
-                min={filter.from}
-                max={filter.to}
-                onChange={(event) => {
-                  setAu(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[200px]">
-            <Field label="Recherche" htmlFor="rapprochement-tx-recherche">
-              <TextInput
-                id="rapprochement-tx-recherche"
-                value={search}
-                maxLength={100}
-                placeholder="Libellé, référence, code"
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </Field>
-          </div>
-          <Button
-            type="submit"
-            variant="secondary"
-            icon={Search}
-            aria-label="Rechercher les opérations"
-          >
-            Rechercher
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            icon={X}
-            disabled={!filtresActifs}
-            onClick={() => {
-              onStatutChange("");
-              setTypeOperation("");
-              setSens("");
-              setDu("");
-              setAu("");
-              setSearch("");
-              setQ("");
-            }}
-          >
-            Effacer les filtres
-          </Button>
-        </form>
-      </FiltresRepliables>
       {periode.ajustee && (
-        <p className="-mt-2 mb-3 text-xs text-simtis-warning-fg">
+        <p className="mb-2 text-xs text-simtis-warning-fg">
           Dates ramenées à la période de l&apos;écran ({formatDate(filter.from)} au{" "}
           {formatDate(filter.to)}).
         </p>
       )}
 
-      {etat === "loading" && <LoadingState rows={5} />}
-      {etat === "error" && (
+      {etat === "error" ? (
         <ErrorState
           message="Impossible de charger les opérations."
           onRetry={() => setRetryKey((key) => key + 1)}
         />
-      )}
-      {etat === "ready" && lu && (
+      ) : affiche ? (
+        // Le tableau reste affiché (grisé) pendant qu'un filtre se charge : ses en-têtes portent
+        // les filtres
         <>
           <DataTable
             stickyHeader
             dense
-            className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
+            className={cn(
+              "transition-opacity xl:min-h-0 xl:flex-1 xl:overflow-y-auto",
+              etat === "loading" && "opacity-60",
+            )}
             columns={columns}
-            rows={lu.lignes}
+            rows={affiche.lignes}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune opération sur ces critères."
             onRowClick={(row) =>
@@ -315,14 +284,16 @@ export function TransactionsPane({
             onScrollEnd={chargerPlus}
           />
           <PiedDefilement
-            chargees={lu.lignes.length}
-            total={lu.total}
+            chargees={affiche.lignes.length}
+            total={affiche.total}
             nom="opération"
             suite={suite}
             reste={reste}
             onChargerPlus={chargerPlus}
           />
         </>
+      ) : (
+        <LoadingState rows={5} />
       )}
     </Card>
   );

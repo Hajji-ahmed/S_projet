@@ -489,3 +489,39 @@ export function basculerLigne<T extends { id: number }>(lignes: readonly T[], li
     ? lignes.filter((l) => l.id !== ligne.id)
     : [...lignes, ligne];
 }
+
+/** Filtres d'un volet, saisis dans les en-têtes de colonnes comme dans Excel (28/10/2026). */
+export type FiltresVolet = {
+  statut: string;
+  typeOperation: string;
+  sens: string;
+  du: string;
+  au: string;
+  q: string;
+};
+
+export const FILTRES_VIDES: FiltresVolet = {
+  statut: "",
+  typeOperation: "",
+  sens: "",
+  du: "",
+  au: "",
+  q: "",
+};
+
+/** Colonnes dont l'entonnoir est allumé : Date (Du / Au), Libellé (recherche et type), Débit ou
+ * Crédit (sens), St. (statut). */
+export function colonnesFiltrees(filtres: FiltresVolet) {
+  return {
+    date: !!(filtres.du || filtres.au),
+    libelle: !!(filtres.q || filtres.typeOperation),
+    debit: filtres.sens === "Débit",
+    credit: filtres.sens === "Crédit",
+    statut: !!filtres.statut,
+  };
+}
+
+/** Au moins un filtre en cours : « Effacer les filtres » apparaît sur la ligne du titre. */
+export function filtresActifs(filtres: FiltresVolet): boolean {
+  return Object.values(colonnesFiltrees(filtres)).some(Boolean);
+}

@@ -1,32 +1,40 @@
 "use client";
 
-import { BookText, Search, X } from "lucide-react";
+import { BookText } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { BoutonFiltres, FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import {
+  ChoixFiltre,
+  EffacerFiltres,
+  FiltreColonne,
+  FiltreDates,
+  FiltreLibelle,
+  FiltreSens,
+} from "@/components/rapprochement/FiltreColonne";
 import { PropositionBadge } from "@/components/rapprochement/PropositionBadge";
 import { PiedDefilement } from "@/components/rapprochement/PiedDefilement";
 import { useDefilement } from "@/components/rapprochement/useDefilement";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { StatusDot } from "@/components/ui/StatusBadge";
 import { STATUTS_RAPPROCHEMENT } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
+import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import type { ReconciliationFilter } from "@/lib/reconciliation";
 import {
   avecDevise,
   bornerPeriode,
+  colonnesFiltrees,
   dateCourte,
+  FILTRES_VIDES,
+  filtresActifs,
   montantVolet,
-  SENS_VOLET,
-  TYPES_OPERATION,
   unite,
+  type FiltresVolet,
+  type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { listEntries } from "@/services/accounting";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
@@ -47,7 +55,7 @@ type EntriesPaneProps = {
 
 /**
  * Volet « Écritures comptables » : écritures Sage de la période (même compte), chargées 50 par 50
- * au défilement.
+ * au défilement, filtrées depuis les en-têtes de colonnes (28/10/2026).
  * Débit et crédit au sens de Sage : un débit du compte banque correspond à un crédit en banque.
  */
 export function EntriesPane({
@@ -59,29 +67,23 @@ export function EntriesPane({
   onSelect,
   onLoaded,
 }: EntriesPaneProps) {
-  const [statut, setStatut] = useState("");
-  const [search, setSearch] = useState("");
-  const [q, setQ] = useState("");
-  const [typeOperation, setTypeOperation] = useState("");
-  // Sens et dates propres au volet (19/10/2026)
-  const [sens, setSens] = useState("");
-  const [du, setDu] = useState("");
-  const [au, setAu] = useState("");
+  const [filtres, setFiltres] = useState<FiltresVolet>(FILTRES_VIDES);
   const [retryKey, setRetryKey] = useState(0);
+  const allumees = colonnesFiltrees(filtres);
+  const changer = (modif: Partial<FiltresVolet>) => setFiltres((avant) => ({ ...avant, ...modif }));
 
-  const periode = bornerPeriode(filter, du, au);
-  const filtresActifs = !!(statut || typeOperation || sens || du || au || q || search);
+  const periode = bornerPeriode(filter, filtres.du, filtres.au);
   const requete = {
     ...filter,
     from: periode.from,
     to: periode.to,
-    statut: statut || undefined,
-    q: q || undefined,
-    typeOperation: typeOperation || undefined,
-    sens: sens || undefined,
+    statut: filtres.statut || undefined,
+    q: filtres.q || undefined,
+    typeOperation: filtres.typeOperation || undefined,
+    sens: filtres.sens || undefined,
   };
   // Un filtre changé repart du haut
-  const { etat, lu, suite, reste, chargerPlus } = useDefilement(
+  const { etat, lu, affiche, suite, reste, chargerPlus } = useDefilement(
     JSON.stringify([companyId, requete]),
     `${reloadKey}|${retryKey}`,
     (page) => listEntries(companyId, { ...requete, page }),
@@ -111,6 +113,23 @@ export function EntriesPane({
     {
       key: "date_ecriture",
       header: "Date",
+      filtre: (
+        <FiltreColonne colonne="Date" actif={allumees.date}>
+          {(fermer) => (
+            <FiltreDates
+              id="rapprochement-ec-dates"
+              du={filtres.du}
+              au={filtres.au}
+              min={filter.from}
+              max={filter.to}
+              onAppliquer={(du, au) => {
+                changer({ du, au });
+                fermer();
+              }}
+            />
+          )}
+        </FiltreColonne>
+      ),
       // Échéance au survol de la date (28/10/2026)
       render: (row) => (
         <span
@@ -128,6 +147,18 @@ export function EntriesPane({
     {
       key: "libelle",
       header: "Libellé",
+      filtre: (
+        <FiltreColonne colonne="Libellé" actif={allumees.libelle}>
+          {() => (
+            <FiltreLibelle
+              id="rapprochement-ec-libelle"
+              filtres={filtres}
+              placeholder="Libellé, pièce, tiers, code"
+              onChanger={changer}
+            />
+          )}
+        </FiltreColonne>
+      ),
       render: (row) => (
         // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, N° pièce (28/10/2026)
         // puis tiers à la suite
@@ -154,12 +185,28 @@ export function EntriesPane({
       key: "debit",
       header: "Débit (DH)",
       align: "right",
+      filtre: (
+        <FiltreSens
+          colonne="Débit"
+          actif={allumees.debit}
+          sens={filtres.sens}
+          onChanger={changer}
+        />
+      ),
       render: (row) => montantVolet(row.debit),
     },
     {
       key: "credit",
       header: "Crédit (DH)",
       align: "right",
+      filtre: (
+        <FiltreSens
+          colonne="Crédit"
+          actif={allumees.credit}
+          sens={filtres.sens}
+          onChanger={changer}
+        />
+      ),
       render: (row) => montantVolet(row.credit),
     },
   ];
@@ -176,8 +223,30 @@ export function EntriesPane({
   ];
   const columns: Column<Ecriture>[] = [
     ...colonnesBase,
-    ...(lu && avecDevise(lu.lignes) ? colonneDevise : []),
-    { key: "statut", header: "St.", render: (row) => <StatusDot status={row.statut} /> },
+    ...(affiche && avecDevise(affiche.lignes) ? colonneDevise : []),
+    {
+      key: "statut",
+      header: "St.",
+      filtre: (
+        <FiltreColonne colonne="Statut" actif={allumees.statut}>
+          {(fermer) => (
+            <ChoixFiltre
+              titre="Statut"
+              options={[
+                { value: "", label: "Tous les statuts" },
+                ...STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item })),
+              ]}
+              valeur={filtres.statut}
+              onChoisir={(statut) => {
+                changer({ statut });
+                fermer();
+              }}
+            />
+          )}
+        </FiltreColonne>
+      ),
+      render: (row) => <StatusDot status={row.statut} />,
+    },
     { key: "code", header: "Code", render: (row) => <CodeBadge code={row.code_rapprochement} /> },
   ];
 
@@ -187,146 +256,38 @@ export function EntriesPane({
       icon={BookText}
       compact
       headerExtra={
-        <BoutonFiltres
-          volet="ecritures"
-          actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
+        <EffacerFiltres
+          visible={filtresActifs(filtres)}
+          onEffacer={() => setFiltres(FILTRES_VIDES)}
         />
       }
       className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
     >
-      <FiltresRepliables volet="ecritures">
-        <form
-          className="flex flex-wrap items-end gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setQ(search.trim());
-          }}
-        >
-          <div className="w-full max-w-[170px]">
-            <Field label="Statut" htmlFor="rapprochement-ec-statut">
-              <Select
-                id="rapprochement-ec-statut"
-                value={statut}
-                placeholder="Tous les statuts"
-                options={STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item }))}
-                onChange={(event) => {
-                  setStatut(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[150px]">
-            <Field label="Type" htmlFor="rapprochement-ec-type">
-              <Select
-                id="rapprochement-ec-type"
-                value={typeOperation}
-                placeholder="Tous les types"
-                options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
-                onChange={(event) => {
-                  setTypeOperation(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[120px]">
-            <Field label="Sens" htmlFor="rapprochement-ec-sens">
-              <Select
-                id="rapprochement-ec-sens"
-                value={sens}
-                placeholder="Tous"
-                options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
-                onChange={(event) => {
-                  setSens(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[160px]">
-            <Field label="Du" htmlFor="rapprochement-ec-du">
-              <DateInput
-                id="rapprochement-ec-du"
-                value={du}
-                min={filter.from}
-                max={filter.to}
-                onChange={(event) => {
-                  setDu(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[160px]">
-            <Field label="Au" htmlFor="rapprochement-ec-au">
-              <DateInput
-                id="rapprochement-ec-au"
-                value={au}
-                min={filter.from}
-                max={filter.to}
-                onChange={(event) => {
-                  setAu(event.target.value);
-                }}
-              />
-            </Field>
-          </div>
-          <div className="w-full max-w-[200px]">
-            <Field label="Recherche" htmlFor="rapprochement-ec-recherche">
-              <TextInput
-                id="rapprochement-ec-recherche"
-                value={search}
-                maxLength={100}
-                placeholder="Libellé, pièce, tiers, code"
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </Field>
-          </div>
-          <Button
-            type="submit"
-            variant="secondary"
-            icon={Search}
-            aria-label="Rechercher les écritures"
-          >
-            Rechercher
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            icon={X}
-            disabled={!filtresActifs}
-            onClick={() => {
-              setStatut("");
-              setTypeOperation("");
-              setSens("");
-              setDu("");
-              setAu("");
-              setSearch("");
-              setQ("");
-            }}
-          >
-            Effacer les filtres
-          </Button>
-        </form>
-      </FiltresRepliables>
       {periode.ajustee && (
-        <p className="-mt-2 mb-3 text-xs text-simtis-warning-fg">
+        <p className="mb-2 text-xs text-simtis-warning-fg">
           Dates ramenées à la période de l&apos;écran ({formatDate(filter.from)} au{" "}
           {formatDate(filter.to)}).
         </p>
       )}
 
-      {etat === "loading" && <LoadingState rows={5} />}
-      {etat === "error" && (
+      {etat === "error" ? (
         <ErrorState
           message="Impossible de charger les écritures."
           onRetry={() => setRetryKey((key) => key + 1)}
         />
-      )}
-      {etat === "ready" && lu && (
+      ) : affiche ? (
+        // Le tableau reste affiché (grisé) pendant qu'un filtre se charge : ses en-têtes portent
+        // les filtres
         <>
           <DataTable
             stickyHeader
             dense
-            className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
+            className={cn(
+              "transition-opacity xl:min-h-0 xl:flex-1 xl:overflow-y-auto",
+              etat === "loading" && "opacity-60",
+            )}
             columns={columns}
-            rows={lu.lignes}
+            rows={affiche.lignes}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune écriture sur ces critères."
             onRowClick={(row) =>
@@ -339,14 +300,16 @@ export function EntriesPane({
             onScrollEnd={chargerPlus}
           />
           <PiedDefilement
-            chargees={lu.lignes.length}
-            total={lu.total}
+            chargees={affiche.lignes.length}
+            total={affiche.total}
             nom="écriture"
             suite={suite}
             reste={reste}
             onChargerPlus={chargerPlus}
           />
         </>
+      ) : (
+        <LoadingState rows={5} />
       )}
     </Card>
   );

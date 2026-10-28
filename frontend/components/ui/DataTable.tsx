@@ -11,6 +11,9 @@ export type Column<T> = {
   render?: (row: T) => ReactNode;
   /** Colonne figée à droite quand le tableau défile (Actions, 21/10/2026). */
   sticky?: boolean;
+  /** Filtre placé dans l'en-tête, à côté du titre, comme dans Excel (volets du rapprochement,
+   * 28/10/2026). */
+  filtre?: ReactNode;
 };
 
 type DataTableProps<T> = {
@@ -110,7 +113,19 @@ export function DataTable<T extends Record<string, unknown>>({
                   column.sticky && cn(STICKY_CELL, "bg-simtis-light"),
                 )}
               >
-                {column.header}
+                {column.filtre ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1",
+                      column.align === "right" && "flex-row-reverse",
+                    )}
+                  >
+                    {column.header}
+                    {column.filtre}
+                  </span>
+                ) : (
+                  column.header
+                )}
               </th>
             ))}
           </tr>

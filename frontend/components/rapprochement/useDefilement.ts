@@ -99,6 +99,9 @@ export function useDefilement<P, T extends { id: number }>(
   return {
     etat,
     lu: pret ? lu : null,
+    /** Dernières lignes lues, même d'un ancien filtre : le tableau (et ses filtres d'en-tête) reste
+     * affiché, grisé, pendant qu'un nouveau filtre se charge (28/10/2026). */
+    affiche: lu,
     suite,
     reste: pret ? resteALire(lu.lignes.length, lu.total) : false,
     chargerPlus,
