@@ -291,6 +291,12 @@ def grille_de_la_paire(grille: Grille, operation: Operation, ecriture: Ecriture)
     return _grille_sans_reference(grille) if sans_reference(operation, ecriture) else grille
 
 
+def meme_montant(operation: Operation, ecriture: Ecriture) -> bool:
+    """Montants exactement opposés (un crédit en banque est un débit Sage). Depuis le 28/10/2026,
+    le moteur ne propose jamais une paire aux montants différents, quel que soit son score."""
+    return operation.montant == -ecriture.montant
+
+
 def types_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
     """Le moteur ne compare que deux lignes du même type (28/10/2026) : chèque avec chèque,
     espèces avec espèces…, et un type inconnu (autre) seulement avec un autre type inconnu. Le
@@ -682,6 +688,9 @@ def _candidat(
     lui manque `manque` points. Trois majorants du libellé décident d'abord, du moins coûteux au
     plus coûteux (mots communs ; longueurs, comme `real_quick_ratio` ; `quick_ratio`) ; le vrai
     ratio n'est calculé que s'il le faut."""
+    # Montant différent : jamais proposé, même au-dessus du seuil (28/10/2026)
+    if not meme_montant(operation, ecriture):
+        return None
     cote_op = cote_op or _cote_operation(operation)
     cote_ec = cote_ec or _cote_ecriture(ecriture)
     # Grille de la paire pour le pré-filtre ; `_score` l'applique lui-même (une seule fois)

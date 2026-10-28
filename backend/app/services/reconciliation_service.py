@@ -51,6 +51,7 @@ from app.services.reconciliation_scoring import (
     _candidat,
     _ecart_si_comparable,
     comparable,
+    meme_montant,
     proposer,
     proposer_elargi,
     score,
@@ -573,7 +574,7 @@ def _voisins(
     for tx_id in sorted(tx_ids):
         _, _, items, seuil, _ = candidates(db, tx_id, regles=regles, rejetees=rejetees)
         for item in items:
-            if item.score.total >= seuil and not item.rejetee:
+            if eligible(item, seuil):
                 voisins.ecritures[item.entry.id] = item.entry
     for entry_id in sorted(entry_ids):
         _, items, seuil = candidates_of_entry(db, entry_id, regles=regles, rejetees=rejetees)
@@ -1305,6 +1306,14 @@ class Candidate:
     rejetee: bool
     proposee_ailleurs: bool
     actifs: tuple[str, ...] = ()
+    # Montant exactement opposé : seule une telle candidate peut être proposée (28/10/2026)
+    meme_montant: bool = True
+
+
+def eligible(item: "Candidate | CandidateOperation", seuil: Decimal) -> bool:
+    """Candidate que le moteur pourrait proposer : au-dessus du seuil, non rejetée et au même
+    montant (28/10/2026 : un montant différent n'est jamais proposé ni rendu ambigu)."""
+    return item.score.total >= seuil and not item.rejetee and item.meme_montant
 
 
 def list_transactions(
@@ -1553,6 +1562,7 @@ def candidates(
                 rejetee=(tx.id, entry.id) in rejetees,
                 proposee_ailleurs=active is not None and tx.id not in _members(active)[0],
                 actifs=regles.criteres_actifs,
+                meme_montant=meme_montant(operation, ecriture),
             )
         )
     scored.sort(key=lambda item: (-item.score.total, item.entry.date_ecriture, item.entry.id))
@@ -1564,7 +1574,7 @@ def a_egalite(items: list, seuil: Decimal) -> list:
     """Candidates d'une ligne ambiguë (16/10/2026) : celles au même meilleur score, au-dessus du
     seuil et non rejetées. Une ligne n'est ambiguë que par cette égalité ; « Aucune
     correspondance » n'écarte qu'elles."""
-    eligibles = [item for item in items if item.score.total >= seuil and not item.rejetee]
+    eligibles = [item for item in items if eligible(item, seuil)]
     if not eligibles:
         return []
     meilleur = max(item.score.total for item in eligibles)
@@ -1695,7 +1705,7 @@ def _liberer_ecritures_sans_candidate(db: Session, entry_ids: set[int]) -> list[
         if rejetees is None:
             rejetees = repo.rejected_pairs(db, entry.company_id)
         _, items, seuil = candidates_of_entry(db, entry.id, regles=regles, rejetees=rejetees)
-        if not any(item.score.total >= seuil and not item.rejetee for item in items):
+        if not any(eligible(item, seuil) for item in items):
             liberees.append(entry.id)
     repo.set_entry_status(db, set(liberees), "Non rapprochée")
     return liberees
@@ -1719,7 +1729,7 @@ def _liberer_operations_sans_candidate(db: Session, transaction_ids: set[int]) -
         if rejetees is None:
             rejetees = repo.rejected_pairs(db, account.company_id)
         _, _, items, seuil, _ = candidates(db, tx.id, regles=regles, rejetees=rejetees)
-        if not any(item.score.total >= seuil and not item.rejetee for item in items):
+        if not any(eligible(item, seuil) for item in items):
             liberees.append(tx.id)
     repo.set_transaction_status(db, set(liberees), "Non rapprochée")
     return liberees
@@ -1839,6 +1849,8 @@ class CandidateOperation:
     rejetee: bool
     proposee_ailleurs: bool
     actifs: tuple[str, ...] = ()
+    # Toujours vrai : `candidates_of_entry` ne garde que les candidates de `_candidat`
+    meme_montant: bool = True
 
 
 @dataclass

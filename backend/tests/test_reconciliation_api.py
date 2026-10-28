@@ -402,12 +402,57 @@ def test_batch_validation_is_all_or_nothing(client, comptable, db):
     assert statuses(db, strong_tx) == ["À vérifier"]
 
 
+def _ancienne_proposition(db, tx, entry) -> ReconciliationMatch:
+    """Proposition aux montants différents, comme le moteur en faisait avant le 28/10/2026."""
+    match = save(
+        db,
+        ReconciliationMatch(
+            company_id=entry.company_id,
+            type="1-1",
+            score=Decimal("70"),
+            statut="Proposée",
+            origine="Automatique",
+            detail_score={"montant": "0.00", "date": "40.00", "libelle": "30.00"},
+        ),
+    )
+    for item in (
+        ReconciliationMatchItem(
+            match_id=match.id,
+            bank_transaction_id=tx.id,
+            montant_affecte=abs(tx.montant),
+            actif=True,
+        ),
+        ReconciliationMatchItem(
+            match_id=match.id,
+            accounting_entry_id=entry.id,
+            montant_affecte=abs(entry.montant),
+            actif=True,
+        ),
+    ):
+        save(db, item)
+    tx.statut = entry.statut = "À vérifier"
+    db.flush()
+    return match
+
+
+def test_different_amounts_are_never_proposed_even_above_the_threshold(client, comptable, db):
+    """28/10/2026 : même jour, même libellé (score ≥ 50), mais montant différent : rien n'est
+    proposé ni rendu ambigu."""
+    compte = account(db)
+    tx = operation(db, compte, libelle="VIR REG458 ABC")
+    entry = ecriture(db, compte, montant="-49000", libelle="VIR REG458 ABC")
+
+    body = run(client, comptable, db).json()
+
+    assert (body["nb_propositions"], body["nb_operations_ambigues"]) == (0, 0)
+    assert statuses(db, tx, entry) == ["Non rapprochée", "Non rapprochée"]
+
+
 def test_batch_validation_refuses_different_amounts(client, comptable, db):
     compte = account(db)
     tx = operation(db, compte, libelle="VIR REG458 ABC")
-    ecriture(db, compte, montant="-49000")
-    run(client, comptable, db)
-    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+    entry = ecriture(db, compte, montant="-49000")
+    proposal = {"id": _ancienne_proposition(db, tx, entry).id}
 
     refused = client.post(BATCH, json={"ids": [proposal["id"]]}, headers=comptable)
 
@@ -573,10 +618,11 @@ def test_one_match_can_be_read_with_its_score_detail(client, direction, comptabl
 
 
 def test_a_proposal_with_different_amounts_cannot_be_validated(client, comptable, db):
+    """Une ancienne proposition aux montants différents (avant le 28/10/2026) reste refusée."""
     compte = account(db)
     tx = operation(db, compte, libelle="VIR REG458 ABC")
     entry = ecriture(db, compte, montant="-49000")
-    run(client, comptable, db)
+    _ancienne_proposition(db, tx, entry)
     [proposal] = proposals(client, comptable, db).json()["correspondances"]
 
     response = client.post(

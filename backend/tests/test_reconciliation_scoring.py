@@ -337,16 +337,25 @@ def test_the_right_cheque_wins_even_four_days_apart():
 # --- Pré-filtre du moteur (08/10/2026) : il ne change jamais le résultat ---------------------------
 
 
-def test_the_prefilter_never_drops_a_pair_that_reaches_the_threshold():
-    """Montant différent, même jour, même libellé : 30 + 20 = 50, juste au seuil : candidat."""
+def test_a_different_amount_is_never_proposed_even_at_the_threshold():
+    """Montant différent, même jour, même libellé : 30 + 20 = 50, juste au seuil ; depuis le
+    28/10/2026, jamais proposé ni ambigu (le score reste affiché à titre indicatif)."""
     banque = op(montant="50000", libelle="ENCAISSEMENT CHEQUE ATLAS SARL")
     entry = ec(
         montant="-49000", libelle="EAR1° ENCAISSEMENT CHEQUE ATLAS SARL", piece=None, tiers=None
     )
+    meme_montant = ec(
+        id=2, montant="-50000", jour=JOUR + timedelta(days=3), piece=None, tiers=None,
+        libelle="EAR1° AUTRE CLIENT",
+    )  # fmt: skip
 
     assert score(banque, entry).total == Decimal("50.00")
     assert _peut_atteindre(banque, entry, GRILLE_PAR_DEFAUT)
-    assert proposer([banque], [entry]).propositions != []
+    assert proposer([banque], [entry]).propositions == []
+    assert proposer([banque], [entry]).operations_ambigues == set()
+    # Seule la candidate au même montant compte, même avec un score plus bas
+    [proposition] = proposer([banque], [entry, meme_montant]).propositions
+    assert proposition.ecriture_id == 2
 
 
 def test_the_prefilter_skips_pairs_that_cannot_reach_the_threshold():
