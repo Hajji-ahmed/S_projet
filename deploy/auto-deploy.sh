@@ -58,7 +58,10 @@ journal "$COURT : CI verte, déploiement…"
 "$HOME/sauvegarde-simtis.sh" || { journal "$COURT : sauvegarde impossible, déploiement annulé"; exit 1; }
 git reset -q --hard "$DISTANT"
 
-if "${COMPOSE[@]}" up -d --build --wait >/tmp/simtis-auto-deploy-build.log 2>&1 \
+# Images construites d'abord, conteneurs intacts (28/10/2026) : un build qui échoue ne coupe pas le site,
+# et la coupure se limite au redémarrage (Caddy sert alors la page « Mise à jour en cours »)
+if "${COMPOSE[@]}" build >/tmp/simtis-auto-deploy-build.log 2>&1 \
+  && "${COMPOSE[@]}" up -d --wait >>/tmp/simtis-auto-deploy-build.log 2>&1 \
   && curl -fsS -m 20 http://localhost/api/health | grep -q '"status":"ok"'; then
   echo "$DISTANT" > .deploiement-ok
   rm -f .deploiement-echoue

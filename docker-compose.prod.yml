@@ -86,9 +86,11 @@ services:
       # Autorité de certification interne et certificats : à garder (sinon nouveau certificat racine)
       - caddy_data:/data
       - caddy_config:/config
-    depends_on:
-      frontend:
-        condition: service_healthy
+      # Page « Mise à jour en cours » servie pendant un redémarrage (28/10/2026)
+      - ./deploy/maintenance.html:/srv/maintenance/maintenance.html:ro
+    # Pas de depends_on (28/10/2026) : Caddy attendait que le frontend soit en bonne santé, donc Docker
+    # l'arrêtait à chaque déploiement et les ports 80 / 3000 refusaient la connexion. Il reste en marche
+    # et sert la page de maintenance tant que le frontend ou l'API redémarrent.
 
 volumes:
   db_data:

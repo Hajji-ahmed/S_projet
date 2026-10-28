@@ -27,4 +27,24 @@
 	handle {
 		reverse_proxy frontend:3000
 	}
+
+	# Application en cours de redémarrage (déploiement, 28/10/2026) : l'API répond un message lisible
+	# par l'écran, les pages une page « Mise à jour en cours » qui se recharge seule
+	handle_errors 502 503 504 {
+		header Cache-Control "no-store"
+		header Retry-After "30"
+		header -Server
+		@api path /api/*
+		handle @api {
+			header Content-Type "application/json; charset=utf-8"
+			respond `{"detail":"SIMTIS est en cours de mise à jour, réessayez dans une minute."}` 503
+		}
+		handle {
+			root * /srv/maintenance
+			rewrite * /maintenance.html
+			file_server {
+				status 503
+			}
+		}
+	}
 }
