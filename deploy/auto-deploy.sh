@@ -60,7 +60,8 @@ git reset -q --hard "$DISTANT"
 
 # Images construites d'abord, conteneurs intacts (28/10/2026) : un build qui échoue ne coupe pas le site,
 # et la coupure se limite au redémarrage (Caddy sert alors la page « Mise à jour en cours »)
-if "${COMPOSE[@]}" build >/tmp/simtis-auto-deploy-build.log 2>&1 \
+CONSTRUIT=non
+if "${COMPOSE[@]}" build >/tmp/simtis-auto-deploy-build.log 2>&1 && CONSTRUIT=oui \
   && "${COMPOSE[@]}" up -d --wait >>/tmp/simtis-auto-deploy-build.log 2>&1 \
   && curl -fsS -m 20 http://localhost/api/health | grep -q '"status":"ok"'; then
   echo "$DISTANT" > .deploiement-ok
@@ -72,5 +73,19 @@ else
   echo "$DISTANT" > .deploiement-echoue
   journal "$COURT : ÉCHEC du déploiement, voir /tmp/simtis-auto-deploy-build.log"
   tail -20 /tmp/simtis-auto-deploy-build.log
+  # Le site ne doit pas rester coupé (28/10/2026 : Docker a planté pendant l'arrêt de l'API et a laissé
+  # les conteneurs arrêtés 34 minutes). Docker peut mettre quelques secondes à revenir : trois essais.
+  # Un build en échec n'a touché à aucun conteneur : rien à relancer (et une image à moitié construite
+  # mélangerait deux versions)
+  [ "$CONSTRUIT" = oui ] || exit 1
+  for essai in 1 2 3; do
+    sleep 20
+    if "${COMPOSE[@]}" up -d --wait >>/tmp/simtis-auto-deploy-build.log 2>&1 \
+      && curl -fsS -m 20 http://localhost/api/health | grep -q '"status":"ok"'; then
+      journal "$COURT : application relancée après l'échec (essai $essai)"
+      exit 1
+    fi
+  done
+  journal "$COURT : application NON relancée, intervention nécessaire (docker compose -f docker-compose.prod.yml up -d)"
   exit 1
 fi
