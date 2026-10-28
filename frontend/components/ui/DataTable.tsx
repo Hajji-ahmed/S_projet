@@ -31,8 +31,11 @@ type DataTableProps<T> = {
   isRowMuted?: (row: T) => boolean;
   /** Ligne d'en-tête toujours visible quand le tableau défile dans un conteneur de hauteur fixe. */
   stickyHeader?: boolean;
-  /** Lignes serrées (volets du rapprochement, 27/10/2026) : environ deux fois plus de lignes visibles. */
+  /** Lignes serrées (volets du rapprochement, 27/10/2026, resserrées le 28/10/2026) : environ 28 px
+   * par ligne, texte en 12 px. */
   dense?: boolean;
+  /** Le tableau défile dans son cadre et arrive près du bas : charger la suite (28/10/2026). */
+  onScrollEnd?: () => void;
 };
 
 // Cellule figée à droite : fond opaque, sinon les colonnes défilent à travers
@@ -56,8 +59,9 @@ export function DataTable<T extends Record<string, unknown>>({
   isRowMuted,
   stickyHeader = false,
   dense = false,
+  onScrollEnd,
 }: DataTableProps<T>) {
-  const espacement = dense ? "px-3 py-1.5" : "px-4 py-3";
+  const espacement = dense ? "px-2 py-1" : "px-4 py-3";
   const cellClass = (column: Column<T>) =>
     cn(
       espacement,
@@ -71,17 +75,26 @@ export function DataTable<T extends Record<string, unknown>>({
         "overflow-x-auto rounded-card border border-simtis-border bg-simtis-card",
         className,
       )}
+      onScroll={
+        onScrollEnd
+          ? (event) => {
+              const cadre = event.currentTarget;
+              if (cadre.scrollHeight - cadre.scrollTop - cadre.clientHeight < 300) onScrollEnd();
+            }
+          : undefined
+      }
     >
       <table
         className={cn(
           "w-full border-collapse text-simtis-text",
-          dense ? "text-[13px]" : "text-[13.5px]",
+          dense ? "text-xs" : "text-[13.5px]",
         )}
       >
         <thead>
           <tr
             className={cn(
-              "text-[13px] font-semibold text-simtis-primary-dark",
+              "font-semibold text-simtis-primary-dark",
+              dense ? "text-xs" : "text-[13px]",
               // En-tête collant : fond opaque, sinon les lignes défilent à travers
               stickyHeader ? "sticky top-0 z-10 bg-simtis-light" : "bg-simtis-light/60",
             )}

@@ -1,6 +1,7 @@
 /** Rapprochement 1→1 (P11) : règles pures de l'écran. Montants en texte exact, jamais en float. */
 import { formatDate } from "@/lib/balances";
 import { ECARTS_ACTIFS } from "@/lib/features";
+import { formatAmount } from "@/lib/format";
 import { fromCents, toCents } from "@/lib/statementLines";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
 import type { Candidat, Correspondance, Operation } from "@/types/reconciliation";
@@ -362,6 +363,42 @@ export function lettrageFilename(filter: ReconciliationFilter): string {
 /** Unité affichée d'un montant : « DH » pour le MAD, sinon le code de la devise (14/10/2026). */
 export function unite(devise?: string | null): string {
   return !devise || devise === "MAD" ? "DH" : devise;
+}
+
+/** Date courte des volets (28/10/2026) : « 20/10/26 », la date complète reste au survol. */
+export function dateCourte(iso: string | null): string {
+  if (!iso) return "-";
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year.slice(-2)}`;
+}
+
+/**
+ * Montant d'un volet (28/10/2026) : sans « DH », rappelé dans l'en-tête de la colonne ; un compte
+ * en devise garde son unité dans la cellule. Zéro = tiret.
+ */
+export function montantVolet(value: string | null | undefined, devise?: string | null): string {
+  const suffixe = unite(devise);
+  return formatAmount(value, suffixe === "DH" ? undefined : suffixe, { dashForZero: true });
+}
+
+/** Ajoute une page chargée au défilement (28/10/2026) : une ligne déjà présente n'est pas doublée
+ * (une ligne peut glisser d'une page à l'autre si les données changent entre deux lectures). */
+export function fusionnerLignes<T extends { id: number }>(
+  lignes: readonly T[],
+  nouvelles: readonly T[],
+): T[] {
+  const vues = new Set(lignes.map((ligne) => ligne.id));
+  return [...lignes, ...nouvelles.filter((ligne) => !vues.has(ligne.id))];
+}
+
+/** Reste-t-il des lignes à charger en bas du volet ? */
+export function resteALire(chargees: number, total: number): boolean {
+  return chargees < total;
+}
+
+/** La page d'écritures contient-elle un compte en devise ? Sinon la colonne « Devise » est cachée. */
+export function avecDevise(ecritures: readonly { montant_devise?: string | null }[]): boolean {
+  return ecritures.some((ecriture) => ecriture.montant_devise != null);
 }
 
 /** Montant d'une écriture face au relevé : en devise pour un compte EUR / USD (colonne « Devise »

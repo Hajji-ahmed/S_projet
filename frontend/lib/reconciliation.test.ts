@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  avecDevise,
+  fusionnerLignes,
+  resteALire,
   bornerPeriode,
+  dateCourte,
+  montantVolet,
   montantEcriture,
   unite,
   uniteEcriture,
@@ -387,5 +392,42 @@ describe("rapprochement de reprise (27/10/2026)", () => {
 
     expect(nbOperations(simple as unknown as Correspondance)).toBe(1);
     expect(nbEcritures(simple as unknown as Correspondance)).toBe(1);
+  });
+});
+
+describe("volets compacts (28/10/2026)", () => {
+  it("raccourcit l'année de la date", () => {
+    expect(dateCourte("2026-10-20")).toBe("20/10/26");
+    expect(dateCourte(null)).toBe("-");
+  });
+
+  it("retire « DH » des montants MAD et garde l'unité d'une devise", () => {
+    expect(montantVolet("65638.18", "MAD")).toBe("65 638,18");
+    expect(montantVolet("1000000.00")).toBe("1 000 000");
+    expect(montantVolet("2891.83", "USD")).toBe("2 891,83 USD");
+    expect(montantVolet("0.00", "MAD")).toBe("-");
+  });
+
+  it("ne montre la colonne Devise que si une écriture a un montant en devise", () => {
+    expect(avecDevise([{ montant_devise: null }, {}])).toBe(false);
+    expect(avecDevise([{ montant_devise: null }, { montant_devise: "-950.00" }])).toBe(true);
+  });
+});
+
+describe("chargement au défilement (28/10/2026)", () => {
+  it("ajoute les lignes de la page suivante sans doublon, dans l'ordre", () => {
+    const deja = [{ id: 1 }, { id: 2 }];
+    expect(fusionnerLignes(deja, [{ id: 2 }, { id: 3 }])).toEqual([
+      { id: 1 },
+      { id: 2 },
+      { id: 3 },
+    ]);
+    expect(fusionnerLignes([], [{ id: 5 }])).toEqual([{ id: 5 }]);
+  });
+
+  it("s'arrête quand toutes les lignes sont chargées", () => {
+    expect(resteALire(50, 8487)).toBe(true);
+    expect(resteALire(8487, 8487)).toBe(false);
+    expect(resteALire(0, 0)).toBe(false);
   });
 });

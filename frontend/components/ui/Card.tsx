@@ -9,28 +9,59 @@ type CardProps = {
   icon?: LucideIcon;
   /** Lien « Voir tout → » en haut à droite. */
   action?: { label: string; href: string };
+  /** Contenu ajouté à droite du titre, sur la même ligne (bouton « Filtres » des volets). */
+  headerExtra?: ReactNode;
+  /** Marges et en-tête réduits (volets du rapprochement, 28/10/2026). */
+  compact?: boolean;
   className?: string;
   children: ReactNode;
 };
 
 /** Carte de base : sert aussi de conteneur aux tableaux et aux graphiques. */
-export function Card({ title, icon: Icon, action, className, children }: CardProps) {
+export function Card({
+  title,
+  icon: Icon,
+  action,
+  headerExtra,
+  compact = false,
+  className,
+  children,
+}: CardProps) {
   return (
     <section
       className={cn(
-        "rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6",
+        "rounded-card border border-simtis-border bg-simtis-card shadow-simtis",
+        compact ? "p-3" : "p-5 lg:p-6",
         className,
       )}
     >
       {title && (
-        <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <header
+          className={cn(
+            "flex flex-wrap items-center justify-between",
+            compact ? "mb-2 gap-2" : "mb-4 gap-3",
+          )}
+        >
+          <div className={cn("flex items-center", compact ? "gap-2" : "gap-3")}>
             {Icon && (
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-simtis-light text-simtis-primary">
-                <Icon className="h-5 w-5" aria-hidden />
+              <span
+                className={cn(
+                  "grid shrink-0 place-items-center bg-simtis-light text-simtis-primary",
+                  compact ? "h-7 w-7 rounded-lg" : "h-9 w-9 rounded-[10px]",
+                )}
+              >
+                <Icon className={compact ? "h-4 w-4" : "h-5 w-5"} aria-hidden />
               </span>
             )}
-            <h2 className="text-base font-semibold tracking-tight text-simtis-text">{title}</h2>
+            <h2
+              className={cn(
+                "font-semibold tracking-tight text-simtis-text",
+                compact ? "text-[15px]" : "text-base",
+              )}
+            >
+              {title}
+            </h2>
+            {headerExtra}
           </div>
           {action && (
             <Link

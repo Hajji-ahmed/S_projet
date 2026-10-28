@@ -5,11 +5,9 @@ import {
   FileSpreadsheet,
   GitCompareArrows,
   History,
-  Layers,
   ListChecks,
   Maximize2,
   Minimize2,
-  PanelRightClose,
   Play,
   Search,
 } from "lucide-react";
@@ -30,6 +28,7 @@ import { TransactionsPane } from "@/components/rapprochement/TransactionsPane";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DateInput, Field } from "@/components/ui/Field";
+import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
@@ -114,11 +113,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [operation, setOperation] = useState<Operation | null>(null);
   const [entry, setEntry] = useState<Ecriture | null>(null);
-  // Rapprochement manuel de plusieurs lignes (P13, 15/10/2026) : lignes cochées dans les volets
-  const [plusieurs, setPlusieurs] = useState(false);
-  // Panneau central (27/10/2026) : une fine bande tant que rien n'est choisi, ouvert à la
-  // sélection ; « reduit » le referme sans perdre la sélection, « ouvert » le force ouvert
-  const [centre, setCentre] = useState<"auto" | "ouvert" | "reduit">("auto");
   const pleinEcran = useSyncExternalStore(subscribePleinEcran, estPleinEcran, () => false);
   const [panierOps, setPanierOps] = useState<Operation[]>([]);
   const [panierEcr, setPanierEcr] = useState<Ecriture[]>([]);
@@ -256,14 +250,11 @@ function Rapprochement({ companyId }: { companyId: number }) {
     );
   }, []);
 
-  const centreOuvert =
-    plusieurs || centre === "ouvert" || (centre === "auto" && !!(operation || entry));
-
   // Le plein écran se quitte avec Échap (sauf dans une fenêtre ouverte) et en quittant la page
   useEffect(() => {
     if (!pleinEcran) return;
     const quitter = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !document.querySelector('[role="dialog"]')) {
+      if (event.key === "Escape" && !document.querySelector('dialog[open], [role="dialog"]')) {
         setPleinEcran(false);
       }
     };
@@ -272,14 +263,11 @@ function Rapprochement({ companyId }: { companyId: number }) {
   }, [pleinEcran]);
   useEffect(() => () => setPleinEcran(false), []);
 
-  function choisirOperation(row: Operation) {
-    setOperation(row);
-    setCentre("auto");
-  }
-
-  function choisirEcriture(row: Ecriture) {
-    setEntry(row);
-    setCentre("auto");
+  // Détail d'une ligne rapprochée ou d'une proposition ouverte depuis l'onglet Propositions : le
+  // panneau Correspondance dans une fenêtre (28/10/2026), les lignes libres se cochent
+  function fermerDetail() {
+    setOperation(null);
+    setEntry(null);
   }
 
   function changeFilter(next: Partial<ReconciliationFilter>) {
@@ -355,42 +343,44 @@ function Rapprochement({ companyId }: { companyId: number }) {
 
   return (
     <>
-      <PageHeader
-        title="Rapprochement"
-        description="Rapprochement des transactions bancaires et des écritures comptables"
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              icon={pleinEcran ? Minimize2 : Maximize2}
-              onClick={() => setPleinEcran(!pleinEcran)}
-              title={
-                pleinEcran
-                  ? "Revenir à l'affichage normal (Échap)"
-                  : "Masquer le menu, l'en-tête et les compteurs pour voir plus de lignes"
-              }
-            >
-              {pleinEcran ? "Quitter le plein écran" : "Plein écran"}
-            </Button>
-            {canValidate && (
-              <>
-                <Button
-                  variant="secondary"
-                  icon={Search}
-                  disabled={running || !!periodError}
-                  onClick={runElargie}
-                  title="Lignes encore libres : même n° et même montant, jusqu'à 1 an d'écart"
-                >
-                  Recherche élargie (1 an)
-                </Button>
-                <Button icon={Play} disabled={running || !!periodError} onClick={run}>
-                  {running ? "Rapprochement en cours…" : "Lancer le rapprochement"}
-                </Button>
-              </>
-            )}
-          </div>
-        }
-      />
+      {!pleinEcran && (
+        <PageHeader
+          title="Rapprochement"
+          description="Rapprochement des transactions bancaires et des écritures comptables"
+          actions={
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                icon={pleinEcran ? Minimize2 : Maximize2}
+                onClick={() => setPleinEcran(!pleinEcran)}
+                title={
+                  pleinEcran
+                    ? "Revenir à l'affichage normal (Échap)"
+                    : "Masquer le menu, l'en-tête et les compteurs pour voir plus de lignes"
+                }
+              >
+                {pleinEcran ? "Quitter le plein écran" : "Plein écran"}
+              </Button>
+              {canValidate && (
+                <>
+                  <Button
+                    variant="secondary"
+                    icon={Search}
+                    disabled={running || !!periodError}
+                    onClick={runElargie}
+                    title="Lignes encore libres : même n° et même montant, jusqu'à 1 an d'écart"
+                  >
+                    Recherche élargie (1 an)
+                  </Button>
+                  <Button icon={Play} disabled={running || !!periodError} onClick={run}>
+                    {running ? "Rapprochement en cours…" : "Lancer le rapprochement"}
+                  </Button>
+                </>
+              )}
+            </div>
+          }
+        />
+      )}
 
       <Card>
         <div className="space-y-4">
@@ -497,39 +487,48 @@ function Rapprochement({ companyId }: { companyId: number }) {
       </Card>
 
       {periodeLue && !periodError && (
-        <div
-          className="flex gap-2 border-b border-simtis-border"
-          role="tablist"
-          aria-label="Vue du rapprochement"
-        >
-          {(
-            [
-              ["rapprochement", "Rapprochement", GitCompareArrows],
+        <div className="flex flex-wrap items-end justify-between gap-2 border-b border-simtis-border">
+          <div className="flex gap-2" role="tablist" aria-label="Vue du rapprochement">
+            {(
               [
-                "propositions",
-                `Propositions${aVerifier !== null ? ` (${aVerifier})` : ""}`,
-                ListChecks,
-              ],
-              ["historique", "Historique", History],
-            ] as const
-          ).map(([value, label, Icon]) => (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              aria-selected={tab === value}
-              onClick={() => setTab(value)}
-              className={cn(
-                "-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-200",
-                tab === value
-                  ? "border-simtis-primary text-simtis-primary-dark"
-                  : "border-transparent text-simtis-muted hover:text-simtis-primary",
-              )}
+                ["rapprochement", "Rapprochement", GitCompareArrows],
+                [
+                  "propositions",
+                  `Propositions${aVerifier !== null ? ` (${aVerifier})` : ""}`,
+                  ListChecks,
+                ],
+                ["historique", "Historique", History],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={tab === value}
+                onClick={() => setTab(value)}
+                className={cn(
+                  "-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-200",
+                  tab === value
+                    ? "border-simtis-primary text-simtis-primary-dark"
+                    : "border-transparent text-simtis-muted hover:text-simtis-primary",
+                )}
+              >
+                <Icon className="h-4 w-4" aria-hidden />
+                {label}
+              </button>
+            ))}
+          </div>
+          {pleinEcran && (
+            <Button
+              variant="ghost"
+              icon={Minimize2}
+              onClick={() => setPleinEcran(false)}
+              className="mb-1 h-8 px-3"
+              title="Revenir à l'affichage normal (Échap)"
             >
-              <Icon className="h-4 w-4" aria-hidden />
-              {label}
-            </button>
-          ))}
+              Quitter le plein écran
+            </Button>
+          )}
         </div>
       )}
 
@@ -613,133 +612,75 @@ function Rapprochement({ companyId }: { companyId: number }) {
         </div>
       )}
 
-      {periodeLue && !periodError && tab === "rapprochement" && canValidate && (
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          {plusieurs && (
-            <span className="text-sm text-simtis-muted">
-              Cliquez sur les lignes pour les cocher ; les lignes déjà rapprochées sont ignorées.
-            </span>
-          )}
-          <Button
-            variant={plusieurs ? "primary" : "secondary"}
-            icon={Layers}
-            aria-pressed={plusieurs}
-            onClick={() => {
-              setPlusieurs((actif) => !actif);
-              viderPanier();
-            }}
+      {periodeLue && !periodError && tab === "rapprochement" && (
+        <div className="space-y-3">
+          {/* Bandeau de correspondance (28/10/2026) : montants cochés et écart, visible au défilement */}
+          <div
+            className={cn(
+              "sticky z-10",
+              pleinEcran ? "top-0" : "top-[var(--simtis-header-height)]",
+            )}
           >
-            {plusieurs ? "Quitter la sélection multiple" : "Rapprocher plusieurs lignes"}
-          </Button>
+            <PanierPanel
+              operations={panierOps}
+              ecritures={panierEcr}
+              canValidate={canValidate}
+              onRetirerOperation={(op) => setPanierOps((l) => basculerLigne(l, op))}
+              onRetirerEcriture={(e) => setPanierEcr((l) => basculerLigne(l, e))}
+              onVider={viderPanier}
+              onDone={(message) => {
+                viderPanier();
+                reload(message);
+              }}
+            />
+          </div>
+          <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-3 xl:grid-cols-2">
+            <TransactionsPane
+              key={`tx-${filterKey}`}
+              companyId={companyId}
+              filter={filter}
+              reloadKey={reloadKey}
+              selectedId={operation?.id ?? null}
+              coches={{
+                ids: panierOps.map((op) => op.id),
+                onToggle: (row) => setPanierOps((l) => basculerLigne(l, row)),
+              }}
+              onSelect={setOperation}
+              onLoaded={handleOperations}
+              statut={statut}
+              onStatutChange={setStatut}
+            />
+            <EntriesPane
+              key={`ec-${filterKey}`}
+              companyId={companyId}
+              filter={filter}
+              reloadKey={reloadKey}
+              selectedId={entry?.id ?? null}
+              coches={{
+                ids: panierEcr.map((e) => e.id),
+                onToggle: (row) => setPanierEcr((l) => basculerLigne(l, row)),
+              }}
+              onSelect={setEntry}
+              onLoaded={handleEntries}
+            />
+          </div>
         </div>
       )}
 
-      {periodeLue && !periodError && tab === "rapprochement" && (
-        <div
-          className={cn(
-            "grid grid-cols-[minmax(0,1fr)] items-start gap-5",
-            centreOuvert
-              ? "xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)_minmax(0,1fr)]"
-              : "xl:grid-cols-[minmax(0,1fr)_56px_minmax(0,1fr)]",
-          )}
-        >
-          <TransactionsPane
-            key={`tx-${filterKey}`}
+      <Modal open={!!(operation || entry)} onClose={fermerDetail} title="Détail du rapprochement">
+        {(operation || entry) && (
+          <MatchPanel
+            key={operation?.id ?? `e${entry?.id ?? ""}`}
             companyId={companyId}
-            filter={filter}
+            operation={operation}
+            entry={entry}
+            canValidate={canValidate}
+            canManageDiscrepancies={canManageDiscrepancies}
             reloadKey={reloadKey}
-            selectedId={operation?.id ?? null}
-            multi={
-              plusieurs
-                ? {
-                    ids: panierOps.map((op) => op.id),
-                    onToggle: (row) => {
-                      if (row.statut !== "Rapprochée") setPanierOps((l) => basculerLigne(l, row));
-                    },
-                  }
-                : undefined
-            }
-            onSelect={choisirOperation}
-            onLoaded={handleOperations}
-            statut={statut}
-            onStatutChange={setStatut}
+            onChanged={reload}
           />
-          {/* Bande étroite (grand écran seulement) : un clic ouvre le panneau */}
-          <button
-            type="button"
-            onClick={() => setCentre("ouvert")}
-            className={cn(
-              "hidden h-[calc(100dvh-7rem)] min-h-[480px] w-full flex-col items-center gap-3 rounded-card border border-simtis-border bg-simtis-card py-5 text-simtis-primary-dark shadow-simtis transition-colors duration-150 hover:bg-simtis-light/40 xl:sticky xl:top-4",
-              !centreOuvert && "xl:flex",
-            )}
-            aria-label="Ouvrir le panneau Correspondance"
-            title="Ouvrir le panneau Correspondance"
-          >
-            <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-simtis-light text-simtis-primary">
-              <GitCompareArrows className="h-5 w-5" aria-hidden />
-            </span>
-            <span className="text-sm font-semibold [writing-mode:vertical-rl]">Correspondance</span>
-          </button>
-          <div className={cn("xl:sticky xl:top-4", !centreOuvert && "xl:hidden")}>
-            {!plusieurs && (
-              <div className="mb-2 hidden justify-end xl:flex">
-                <Button
-                  variant="ghost"
-                  icon={PanelRightClose}
-                  onClick={() => setCentre("reduit")}
-                  title="Réduire le panneau pour élargir les volets ; la sélection est gardée"
-                >
-                  Réduire
-                </Button>
-              </div>
-            )}
-            {plusieurs ? (
-              <PanierPanel
-                operations={panierOps}
-                ecritures={panierEcr}
-                canValidate={canValidate}
-                onRetirerOperation={(op) => setPanierOps((l) => basculerLigne(l, op))}
-                onRetirerEcriture={(e) => setPanierEcr((l) => basculerLigne(l, e))}
-                onVider={viderPanier}
-                onDone={(message) => {
-                  viderPanier();
-                  reload(message);
-                }}
-              />
-            ) : (
-              <MatchPanel
-                key={operation?.id ?? "aucune"}
-                companyId={companyId}
-                operation={operation}
-                entry={entry}
-                canValidate={canValidate}
-                canManageDiscrepancies={canManageDiscrepancies}
-                reloadKey={reloadKey}
-                onChanged={reload}
-              />
-            )}
-          </div>
-          <EntriesPane
-            key={`ec-${filterKey}`}
-            companyId={companyId}
-            filter={filter}
-            reloadKey={reloadKey}
-            selectedId={entry?.id ?? null}
-            multi={
-              plusieurs
-                ? {
-                    ids: panierEcr.map((e) => e.id),
-                    onToggle: (row) => {
-                      if (row.statut !== "Rapprochée") setPanierEcr((l) => basculerLigne(l, row));
-                    },
-                  }
-                : undefined
-            }
-            onSelect={choisirEcriture}
-            onLoaded={handleEntries}
-          />
-        </div>
-      )}
+        )}
+      </Modal>
     </>
   );
 }

@@ -5,21 +5,21 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
+import { BoutonFiltres, FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { PiedDefilement } from "@/components/rapprochement/PiedDefilement";
+import { useDefilement } from "@/components/rapprochement/useDefilement";
 import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { Pagination } from "@/components/ui/Pagination";
-import { StatusBadge } from "@/components/ui/StatusBadge";
-import { pageCount } from "@/lib/accounting";
+import { StatusDot } from "@/components/ui/StatusBadge";
 import { formatDate } from "@/lib/balances";
-import { formatAmount } from "@/lib/format";
 import {
   bornerPeriode,
-  unite,
+  dateCourte,
+  montantVolet,
   SENS_VOLET,
   TYPES_OPERATION,
   STATUTS_VOLET,
@@ -32,31 +32,33 @@ type TransactionsPaneProps = {
   companyId: number;
   filter: ReconciliationFilter;
   reloadKey: number;
+  /** Ligne dont le détail est ouvert. */
   selectedId: number | null;
-  /** Sélection multiple (P13, 15/10/2026) : une case par ligne, le clic coche ou décoche. */
-  multi?: { ids: readonly number[]; onToggle: (row: Operation) => void };
+  /** Lignes cochées (toujours, depuis le 28/10/2026) : le clic coche ou décoche. */
+  coches: { ids: readonly number[]; onToggle: (row: Operation) => void };
+  /** Clic sur une ligne rapprochée (non cochable) : son détail. */
   onSelect: (operation: Operation) => void;
   /** Filtre Statut, piloté aussi par les compteurs de la vue ("" = tous les statuts). */
   statut: string;
   onStatutChange: (statut: string) => void;
-  /** Chaque page chargée : la vue met à jour l'opération sélectionnée et le résumé. */
+  /** Lignes chargées (compteurs de la première page) : la vue met à jour la sélection et le
+   * résumé. */
   onLoaded: (page: OperationsPage) => void;
 };
 
-/** Volet « Transactions bancaires » : opérations de la période, 50 par page, sélection au clic. */
+/** Volet « Transactions bancaires » : opérations de la période, chargées 50 par 50 au défilement,
+ * cochées au clic. */
 export function TransactionsPane({
   companyId,
   filter,
   reloadKey,
   selectedId,
-  multi,
+  coches,
   onSelect,
   onLoaded,
   statut,
   onStatutChange,
 }: TransactionsPaneProps) {
-  // Un statut changé depuis les compteurs repart de la première page
-  const [shownStatut, setShownStatut] = useState(statut);
   const [search, setSearch] = useState("");
   const [q, setQ] = useState("");
   const [typeOperation, setTypeOperation] = useState("");
@@ -64,87 +66,56 @@ export function TransactionsPane({
   const [sens, setSens] = useState("");
   const [du, setDu] = useState("");
   const [au, setAu] = useState("");
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<OperationsPage | null>(null);
-  const [state, setState] = useState<"loading" | "error" | "ready">("loading");
   const [retryKey, setRetryKey] = useState(0);
-  if (statut !== shownStatut) {
-    setShownStatut(statut);
-    setPage(1);
-    setState("loading");
-  }
 
   const periode = bornerPeriode(filter, du, au);
   const filtresActifs = !!(statut || typeOperation || sens || du || au || q || search);
+  const requete = {
+    ...filter,
+    from: periode.from,
+    to: periode.to,
+    statut: statut || undefined,
+    q,
+    typeOperation: typeOperation || undefined,
+    sens: sens || undefined,
+    sansAVerifier: true,
+  };
+  // Un filtre changé (ici ou par les compteurs de la vue) repart du haut
+  const { etat, lu, suite, reste, chargerPlus } = useDefilement(
+    JSON.stringify([companyId, requete]),
+    `${reloadKey}|${retryKey}`,
+    (page) => listTransactions(companyId, { ...requete, page }),
+    extraireOperations,
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    listTransactions(companyId, {
-      ...filter,
-      from: periode.from,
-      to: periode.to,
-      statut: statut || undefined,
-      q,
-      page,
-      typeOperation: typeOperation || undefined,
-      sens: sens || undefined,
-      sansAVerifier: true,
-    }).then(
-      (result) => {
-        if (cancelled) return;
-        setData(result);
-        setState("ready");
-        onLoaded(result);
-      },
-      () => {
-        if (!cancelled) setState("error");
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-    // La vue remonte le volet (key) quand la période ou le compte change : on repart page 1
-  }, [
-    companyId,
-    filter,
-    periode.from,
-    periode.to,
-    statut,
-    q,
-    typeOperation,
-    sens,
-    page,
-    reloadKey,
-    retryKey,
-    onLoaded,
-  ]);
+    if (lu) onLoaded({ ...lu.premiere, operations: lu.lignes });
+  }, [lu, onLoaded]);
 
-  const pages = data ? pageCount(data.total, data.taille) : 1;
-  const caseColumn: Column<Operation>[] = multi
-    ? [
-        {
-          key: "choisie",
-          header: "",
-          render: (row) => (
-            <input
-              type="checkbox"
-              readOnly
-              tabIndex={-1}
-              checked={multi.ids.includes(row.id)}
-              disabled={row.statut === "Rapprochée"}
-              aria-label={`Choisir ${row.libelle}`}
-              className="pointer-events-none h-4 w-4 accent-simtis-primary"
-            />
-          ),
-        },
-      ]
-    : [];
   const columns: Column<Operation>[] = [
-    ...caseColumn,
+    {
+      key: "choisie",
+      header: "",
+      render: (row) => (
+        <input
+          type="checkbox"
+          readOnly
+          tabIndex={-1}
+          checked={coches.ids.includes(row.id)}
+          disabled={row.statut === "Rapprochée"}
+          aria-label={`Choisir ${row.libelle}`}
+          className="pointer-events-none h-3.5 w-3.5 accent-simtis-primary"
+        />
+      ),
+    },
     {
       key: "date_operation",
       header: "Date",
-      render: (row) => <span className="whitespace-nowrap">{formatDate(row.date_operation)}</span>,
+      render: (row) => (
+        <span className="whitespace-nowrap tabular-nums" title={formatDate(row.date_operation)}>
+          {dateCourte(row.date_operation)}
+        </span>
+      ),
     },
     {
       key: "libelle",
@@ -152,12 +123,12 @@ export function TransactionsPane({
       render: (row) => (
         // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, Réf. à la suite
         <span
-          className="flex max-w-[360px] min-w-[160px] items-baseline gap-2"
+          className="flex max-w-[360px] min-w-[140px] items-baseline gap-2"
           title={row.reference ? `${row.libelle} · Réf. ${row.reference}` : row.libelle}
         >
           <span className="truncate">{row.libelle}</span>
           {row.reference && (
-            <span className="shrink-0 text-xs text-simtis-muted">Réf. {row.reference}</span>
+            <span className="shrink-0 text-[11px] text-simtis-muted">Réf. {row.reference}</span>
           )}
           {row.en_cours && <EnCoursBadge />}
         </span>
@@ -165,17 +136,17 @@ export function TransactionsPane({
     },
     {
       key: "debit",
-      header: "Débit",
+      header: "Débit (DH)",
       align: "right",
-      render: (row) => formatAmount(row.debit, unite(row.devise), { dashForZero: true }),
+      render: (row) => montantVolet(row.debit, row.devise),
     },
     {
       key: "credit",
-      header: "Crédit",
+      header: "Crédit (DH)",
       align: "right",
-      render: (row) => formatAmount(row.credit, unite(row.devise), { dashForZero: true }),
+      render: (row) => montantVolet(row.credit, row.devise),
     },
-    { key: "statut", header: "Statut", render: (row) => <StatusBadge status={row.statut} /> },
+    { key: "statut", header: "St.", render: (row) => <StatusDot status={row.statut} /> },
     {
       key: "code",
       header: "Code",
@@ -191,18 +162,20 @@ export function TransactionsPane({
     <Card
       title="Transactions bancaires"
       icon={Landmark}
+      compact
+      headerExtra={
+        <BoutonFiltres
+          volet="operations"
+          actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
+        />
+      }
       className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
     >
-      <FiltresRepliables
-        volet="operations"
-        actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
-      >
+      <FiltresRepliables volet="operations">
         <form
           className="flex flex-wrap items-end gap-3"
           onSubmit={(event) => {
             event.preventDefault();
-            setState("loading");
-            setPage(1);
             setQ(search.trim());
           }}
         >
@@ -225,8 +198,6 @@ export function TransactionsPane({
                 placeholder="Tous les types"
                 options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setTypeOperation(event.target.value);
                 }}
               />
@@ -240,8 +211,6 @@ export function TransactionsPane({
                 placeholder="Tous"
                 options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setSens(event.target.value);
                 }}
               />
@@ -255,8 +224,6 @@ export function TransactionsPane({
                 min={filter.from}
                 max={filter.to}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setDu(event.target.value);
                 }}
               />
@@ -270,8 +237,6 @@ export function TransactionsPane({
                 min={filter.from}
                 max={filter.to}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setAu(event.target.value);
                 }}
               />
@@ -302,8 +267,6 @@ export function TransactionsPane({
             icon={X}
             disabled={!filtresActifs}
             onClick={() => {
-              setState("loading");
-              setPage(1);
               onStatutChange("");
               setTypeOperation("");
               setSens("");
@@ -324,47 +287,46 @@ export function TransactionsPane({
         </p>
       )}
 
-      {state === "loading" && <LoadingState rows={5} />}
-      {state === "error" && (
+      {etat === "loading" && <LoadingState rows={5} />}
+      {etat === "error" && (
         <ErrorState
           message="Impossible de charger les opérations."
-          onRetry={() => {
-            setState("loading");
-            setRetryKey((key) => key + 1);
-          }}
+          onRetry={() => setRetryKey((key) => key + 1)}
         />
       )}
-      {state === "ready" && data && (
+      {etat === "ready" && lu && (
         <>
           <DataTable
-            // Nouvelle page : le tableau repart en haut
-            key={data.page}
             stickyHeader
             dense
             className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             columns={columns}
-            rows={data.operations}
+            rows={lu.lignes}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune opération sur ces critères."
-            onRowClick={multi ? multi.onToggle : onSelect}
-            isRowSelected={(row) => (multi ? multi.ids.includes(row.id) : row.id === selectedId)}
+            onRowClick={(row) =>
+              row.statut === "Rapprochée" ? onSelect(row) : coches.onToggle(row)
+            }
+            isRowSelected={(row) => coches.ids.includes(row.id) || row.id === selectedId}
             rowLabel={(row) =>
               `Opération du ${formatDate(row.date_operation)}, ${row.libelle}, ${row.statut}`
             }
+            onScrollEnd={chargerPlus}
           />
-          <Pagination
-            label="Pages des opérations"
-            page={data.page}
-            pages={pages}
-            total={data.total}
-            noun="opération"
-            onPage={(next) => {
-              setState("loading");
-              setPage(next);
-            }}
+          <PiedDefilement
+            chargees={lu.lignes.length}
+            total={lu.total}
+            nom="opération"
+            suite={suite}
+            reste={reste}
+            onChargerPlus={chargerPlus}
           />
         </>
       )}
     </Card>
   );
+}
+
+function extraireOperations(page: OperationsPage) {
+  return { total: page.total, lignes: page.operations };
 }

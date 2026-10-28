@@ -5,19 +5,28 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
+import { BoutonFiltres, FiltresRepliables } from "@/components/rapprochement/FiltresRepliables";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { PiedDefilement } from "@/components/rapprochement/PiedDefilement";
+import { useDefilement } from "@/components/rapprochement/useDefilement";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
-import { Pagination } from "@/components/ui/Pagination";
-import { StatusBadge } from "@/components/ui/StatusBadge";
-import { STATUTS_RAPPROCHEMENT, pageCount } from "@/lib/accounting";
+import { StatusDot } from "@/components/ui/StatusBadge";
+import { STATUTS_RAPPROCHEMENT } from "@/lib/accounting";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
-import { bornerPeriode, SENS_VOLET, TYPES_OPERATION, unite } from "@/lib/reconciliation";
+import {
+  avecDevise,
+  bornerPeriode,
+  dateCourte,
+  montantVolet,
+  SENS_VOLET,
+  TYPES_OPERATION,
+  unite,
+} from "@/lib/reconciliation";
 import { listEntries } from "@/services/accounting";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
 
@@ -25,16 +34,19 @@ type EntriesPaneProps = {
   companyId: number;
   filter: ReconciliationFilter;
   reloadKey: number;
+  /** Ligne dont le détail est ouvert. */
   selectedId: number | null;
-  /** Sélection multiple (P13, 15/10/2026) : une case par ligne, le clic coche ou décoche. */
-  multi?: { ids: readonly number[]; onToggle: (row: Ecriture) => void };
+  /** Lignes cochées (toujours, depuis le 28/10/2026) : le clic coche ou décoche. */
+  coches: { ids: readonly number[]; onToggle: (row: Ecriture) => void };
+  /** Clic sur une ligne rapprochée (non cochable) : son détail. */
   onSelect: (entry: Ecriture) => void;
-  /** Chaque page chargée : la vue met à jour l'écriture sélectionnée. */
+  /** Lignes chargées : la vue met à jour l'écriture sélectionnée. */
   onLoaded: (entries: Ecriture[]) => void;
 };
 
 /**
- * Volet « Écritures comptables » : écritures Sage de la période (même compte), 50 par page.
+ * Volet « Écritures comptables » : écritures Sage de la période (même compte), chargées 50 par 50
+ * au défilement.
  * Débit et crédit au sens de Sage : un débit du compte banque correspond à un crédit en banque.
  */
 export function EntriesPane({
@@ -42,7 +54,7 @@ export function EntriesPane({
   filter,
   reloadKey,
   selectedId,
-  multi,
+  coches,
   onSelect,
   onLoaded,
 }: EntriesPaneProps) {
@@ -54,109 +66,103 @@ export function EntriesPane({
   const [sens, setSens] = useState("");
   const [du, setDu] = useState("");
   const [au, setAu] = useState("");
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<EcrituresPage | null>(null);
-  const [state, setState] = useState<"loading" | "error" | "ready">("loading");
   const [retryKey, setRetryKey] = useState(0);
 
   const periode = bornerPeriode(filter, du, au);
   const filtresActifs = !!(statut || typeOperation || sens || du || au || q || search);
+  const requete = {
+    ...filter,
+    from: periode.from,
+    to: periode.to,
+    statut: statut || undefined,
+    q: q || undefined,
+    typeOperation: typeOperation || undefined,
+    sens: sens || undefined,
+  };
+  // Un filtre changé repart du haut
+  const { etat, lu, suite, reste, chargerPlus } = useDefilement(
+    JSON.stringify([companyId, requete]),
+    `${reloadKey}|${retryKey}`,
+    (page) => listEntries(companyId, { ...requete, page }),
+    extraireEcritures,
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    listEntries(companyId, {
-      ...filter,
-      from: periode.from,
-      to: periode.to,
-      statut: statut || undefined,
-      q: q || undefined,
-      typeOperation: typeOperation || undefined,
-      sens: sens || undefined,
-      page,
-    }).then(
-      (result) => {
-        if (cancelled) return;
-        setData(result);
-        setState("ready");
-        onLoaded(result.ecritures);
-      },
-      () => {
-        if (!cancelled) setState("error");
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    companyId,
-    filter,
-    periode.from,
-    periode.to,
-    statut,
-    q,
-    typeOperation,
-    sens,
-    page,
-    reloadKey,
-    retryKey,
-    onLoaded,
-  ]);
+    if (lu) onLoaded(lu.lignes);
+  }, [lu, onLoaded]);
 
-  const pages = data ? pageCount(data.total, data.taille) : 1;
-  const caseColumn: Column<Ecriture>[] = multi
-    ? [
-        {
-          key: "choisie",
-          header: "",
-          render: (row) => (
-            <input
-              type="checkbox"
-              readOnly
-              tabIndex={-1}
-              checked={multi.ids.includes(row.id)}
-              disabled={row.statut === "Rapprochée"}
-              aria-label={`Choisir ${row.libelle}`}
-              className="pointer-events-none h-4 w-4 accent-simtis-primary"
-            />
-          ),
-        },
-      ]
-    : [];
-  const columns: Column<Ecriture>[] = [
-    ...caseColumn,
+  const colonnesBase: Column<Ecriture>[] = [
+    {
+      key: "choisie",
+      header: "",
+      render: (row) => (
+        <input
+          type="checkbox"
+          readOnly
+          tabIndex={-1}
+          checked={coches.ids.includes(row.id)}
+          disabled={row.statut === "Rapprochée"}
+          aria-label={`Choisir ${row.libelle}`}
+          className="pointer-events-none h-3.5 w-3.5 accent-simtis-primary"
+        />
+      ),
+    },
     {
       key: "date_ecriture",
       header: "Date",
-      render: (row) => <span className="whitespace-nowrap">{formatDate(row.date_ecriture)}</span>,
+      // Échéance au survol de la date (28/10/2026)
+      render: (row) => (
+        <span
+          className="whitespace-nowrap tabular-nums"
+          title={
+            row.echeance
+              ? `${formatDate(row.date_ecriture)} · Échéance ${formatDate(row.echeance)}`
+              : formatDate(row.date_ecriture)
+          }
+        >
+          {dateCourte(row.date_ecriture)}
+        </span>
+      ),
     },
     {
       key: "libelle",
       header: "Libellé",
       render: (row) => (
-        // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, tiers à la suite
+        // Une seule ligne (27/10/2026) : libellé coupé, complet au survol, N° pièce (28/10/2026)
+        // puis tiers à la suite
         <span
-          className="flex max-w-[360px] min-w-[160px] items-baseline gap-2"
-          title={row.tiers ? `${row.libelle} · ${row.tiers}` : row.libelle}
+          className="flex max-w-[360px] min-w-[140px] items-baseline gap-2"
+          title={[row.libelle, row.numero_piece ? `Pièce ${row.numero_piece}` : null, row.tiers]
+            .filter(Boolean)
+            .join(" · ")}
         >
           <span className="truncate">{row.libelle}</span>
+          {row.numero_piece && (
+            <span className="shrink-0 text-[11px] whitespace-nowrap text-simtis-muted">
+              Pce {row.numero_piece}
+            </span>
+          )}
           {row.tiers && (
-            <span className="shrink-0 truncate text-xs text-simtis-muted">{row.tiers}</span>
+            <span className="shrink truncate text-[11px] text-simtis-muted">{row.tiers}</span>
           )}
         </span>
       ),
     },
     {
       key: "debit",
-      header: "Débit",
+      header: "Débit (DH)",
       align: "right",
-      render: (row) => formatAmount(row.debit, "DH", { dashForZero: true }),
+      render: (row) => montantVolet(row.debit),
     },
     {
       key: "credit",
-      header: "Crédit",
+      header: "Crédit (DH)",
       align: "right",
-      render: (row) => formatAmount(row.credit, "DH", { dashForZero: true }),
+      render: (row) => montantVolet(row.credit),
     },
+  ];
+  // Colonne « Devise » seulement si la page contient un compte en devise (28/10/2026)
+  const colonneDevise: Column<Ecriture>[] = [
     {
       key: "montant_devise",
       header: "Devise",
@@ -165,17 +171,11 @@ export function EntriesPane({
       render: (row) =>
         row.montant_devise != null ? formatAmount(row.montant_devise, unite(row.devise)) : "-",
     },
-    {
-      key: "numero_piece",
-      header: "N° pièce",
-      render: (row) => <span className="whitespace-nowrap">{row.numero_piece ?? "-"}</span>,
-    },
-    {
-      key: "echeance",
-      header: "Échéance",
-      render: (row) => <span className="whitespace-nowrap">{formatDate(row.echeance)}</span>,
-    },
-    { key: "statut", header: "Statut", render: (row) => <StatusBadge status={row.statut} /> },
+  ];
+  const columns: Column<Ecriture>[] = [
+    ...colonnesBase,
+    ...(lu && avecDevise(lu.lignes) ? colonneDevise : []),
+    { key: "statut", header: "St.", render: (row) => <StatusDot status={row.statut} /> },
     { key: "code", header: "Code", render: (row) => <CodeBadge code={row.code_rapprochement} /> },
   ];
 
@@ -183,18 +183,20 @@ export function EntriesPane({
     <Card
       title="Écritures comptables"
       icon={BookText}
+      compact
+      headerExtra={
+        <BoutonFiltres
+          volet="ecritures"
+          actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
+        />
+      }
       className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
     >
-      <FiltresRepliables
-        volet="ecritures"
-        actifs={[statut, typeOperation, sens, du, au, q].filter(Boolean).length}
-      >
+      <FiltresRepliables volet="ecritures">
         <form
           className="flex flex-wrap items-end gap-3"
           onSubmit={(event) => {
             event.preventDefault();
-            setState("loading");
-            setPage(1);
             setQ(search.trim());
           }}
         >
@@ -206,8 +208,6 @@ export function EntriesPane({
                 placeholder="Tous les statuts"
                 options={STATUTS_RAPPROCHEMENT.map((item) => ({ value: item, label: item }))}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setStatut(event.target.value);
                 }}
               />
@@ -221,8 +221,6 @@ export function EntriesPane({
                 placeholder="Tous les types"
                 options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setTypeOperation(event.target.value);
                 }}
               />
@@ -236,8 +234,6 @@ export function EntriesPane({
                 placeholder="Tous"
                 options={SENS_VOLET.map((item) => ({ value: item, label: item }))}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setSens(event.target.value);
                 }}
               />
@@ -251,8 +247,6 @@ export function EntriesPane({
                 min={filter.from}
                 max={filter.to}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setDu(event.target.value);
                 }}
               />
@@ -266,8 +260,6 @@ export function EntriesPane({
                 min={filter.from}
                 max={filter.to}
                 onChange={(event) => {
-                  setState("loading");
-                  setPage(1);
                   setAu(event.target.value);
                 }}
               />
@@ -298,8 +290,6 @@ export function EntriesPane({
             icon={X}
             disabled={!filtresActifs}
             onClick={() => {
-              setState("loading");
-              setPage(1);
               setStatut("");
               setTypeOperation("");
               setSens("");
@@ -320,47 +310,46 @@ export function EntriesPane({
         </p>
       )}
 
-      {state === "loading" && <LoadingState rows={5} />}
-      {state === "error" && (
+      {etat === "loading" && <LoadingState rows={5} />}
+      {etat === "error" && (
         <ErrorState
           message="Impossible de charger les écritures."
-          onRetry={() => {
-            setState("loading");
-            setRetryKey((key) => key + 1);
-          }}
+          onRetry={() => setRetryKey((key) => key + 1)}
         />
       )}
-      {state === "ready" && data && (
+      {etat === "ready" && lu && (
         <>
           <DataTable
-            // Nouvelle page : le tableau repart en haut
-            key={data.page}
             stickyHeader
             dense
             className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
             columns={columns}
-            rows={data.ecritures}
+            rows={lu.lignes}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune écriture sur ces critères."
-            onRowClick={multi ? multi.onToggle : onSelect}
-            isRowSelected={(row) => (multi ? multi.ids.includes(row.id) : row.id === selectedId)}
+            onRowClick={(row) =>
+              row.statut === "Rapprochée" ? onSelect(row) : coches.onToggle(row)
+            }
+            isRowSelected={(row) => coches.ids.includes(row.id) || row.id === selectedId}
             rowLabel={(row) =>
               `Écriture du ${formatDate(row.date_ecriture)}, ${row.libelle}, ${row.statut}`
             }
+            onScrollEnd={chargerPlus}
           />
-          <Pagination
-            label="Pages des écritures"
-            page={data.page}
-            pages={pages}
-            total={data.total}
-            noun="écriture"
-            onPage={(next) => {
-              setState("loading");
-              setPage(next);
-            }}
+          <PiedDefilement
+            chargees={lu.lignes.length}
+            total={lu.total}
+            nom="écriture"
+            suite={suite}
+            reste={reste}
+            onChargerPlus={chargerPlus}
           />
         </>
       )}
     </Card>
   );
+}
+
+function extraireEcritures(page: EcrituresPage) {
+  return { total: page.total, lignes: page.ecritures };
 }

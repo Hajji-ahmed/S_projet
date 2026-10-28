@@ -46,3 +46,21 @@ export function StatusBadge({ status, className }: { status: Status; className?:
     </span>
   );
 }
+
+/** Statut réduit à une pastille (volets du rapprochement, 28/10/2026) : le texte au survol. */
+export function StatusDot({ status, className }: { status: Status; className?: string }) {
+  return (
+    <span
+      role="img"
+      aria-label={status}
+      title={status}
+      className={cn(
+        "inline-grid h-4 w-4 place-items-center rounded-full align-middle",
+        STATUS_STYLES[status],
+        className,
+      )}
+    >
+      <span className="h-2 w-2 rounded-full bg-current" aria-hidden />
+    </span>
+  );
+}
