@@ -17,12 +17,13 @@ from app.repositories import parametres_repository
 from app.services import audit_service
 from app.services.errors import ConflictError, NotFoundError
 
-CRITERES = ("REFERENCE", "MONTANT", "DATE", "LIBELLE", "TIERS")
+# Montant identique (28/10/2026) : MONTANT avec centimes, MONTANT_ROND sans
+CRITERES = ("REFERENCE", "MONTANT", "MONTANT_ROND", "DATE", "LIBELLE", "TIERS")
 SEUILS = ("SEUIL_PROPOSITION", "SEUIL_FORT", "ECART_AMBIGUITE")
 FENETRE = "FENETRE"
 # Recherche élargie (20/10/2026) : de 31 à 366 jours
 FENETRE_ELARGIE = "FENETRE_ELARGIE"
-# Espèces (27/10/2026) : de 0 à 10 jours
+# Espèces : jours à date pleine (28/10/2026), de 0 à 10
 FENETRE_ESPECES = "FENETRE_ESPECES"
 CENT = Decimal("100")
 

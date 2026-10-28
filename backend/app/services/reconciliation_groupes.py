@@ -30,9 +30,10 @@ from app.services.reconciliation_scoring import (
     _points,
     date_comparee,
     ecart_jours,
-    fenetre_du_type,
+    est_especes,
     numeros,
-    ratio_date,
+    points_date,
+    points_montant,
     ratio_libelle,
     type_ecriture,
     type_operation,
@@ -105,8 +106,9 @@ def score_groupe(ops: Sequence[Operation], ecriture: Ecriture, grille: Grille) -
     ecart = max(ecart_jours(op, ecriture) for op in ops)
     detail = {
         "reference": grille.reference if commun else ZERO,
-        "montant": grille.montant,
-        "date": _points(grille.date, ratio_date(ecart, grille.tolerance_jours)),
+        # Somme exacte : 60 points si le montant a des centimes, 40 s'il est rond (28/10/2026)
+        "montant": points_montant(-ecriture.montant, ecriture.montant, grille),
+        "date": points_date(ecart, est_especes(principale, ecriture), grille),
         "libelle": _points(grille.libelle, ratio_libelle(principale, ecriture)),
         "tiers": ZERO,
     }
@@ -243,6 +245,7 @@ def _groupes_possibles(
     reconnues comme frais par la règle de « À comptabiliser »."""
     cible = -ecriture.montant
     compte = ecriture.bank_account_id
+    fenetre = grille.fenetre_jours if grille is not None else None
     type_sage = type_ecriture(ecriture.libelle)
     trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
     for principale in candidats:
@@ -259,8 +262,7 @@ def _groupes_possibles(
             continue
         for commission, tva in paires.get(cible - principale.montant, ()):
             ops = (principale, commission, tva)
-            limite = fenetre_du_type(type_op, type_sage, grille) if grille is not None else None
-            if limite is not None and max(ecart_jours(op, ecriture) for op in ops) > limite:
+            if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
                 continue
             trouves.setdefault(frozenset(op.id for op in ops), ops)
     return list(trouves.values())
@@ -418,10 +420,9 @@ def operations_couvertes(
                     type_op = _principale_possible(principale.libelle)[1]
                     if type_op is not None and type_sage is not None and type_op != type_sage:
                         continue
-                    limite = fenetre_du_type(type_op, type_sage, grille)
                     for commission, tva in paires:
                         ops = (principale, commission, tva)
-                        if max(ecart_jours(op, ecriture) for op in ops) > limite:
+                        if max(ecart_jours(op, ecriture) for op in ops) > fenetre:
                             continue
                         if any((op.id, ecriture.id) in paires_rejetees for op in ops):
                             continue
@@ -449,10 +450,11 @@ def score_ensemble(
     cote_banque = set().union(*(numeros(op.libelle, op.reference) for op in ops))
     cote_sage = set().union(*(numeros(e.libelle, e.reference, e.numero_piece) for e in ecritures))
     ecart = max(min(ecart_jours(op, e) for e in ecritures) for op in ops)
+    total_ops = sum((op.montant for op in ops), ZERO)
     detail = {
         "reference": grille.reference if cote_banque & cote_sage else ZERO,
-        "montant": grille.montant,
-        "date": _points(grille.date, ratio_date(ecart, grille.tolerance_jours)),
+        "montant": points_montant(total_ops, -total_ops, grille),
+        "date": points_date(ecart, est_especes(principale, plus_grosse), grille),
         "libelle": _points(grille.libelle, ratio_libelle(principale, plus_grosse)),
         "tiers": ZERO,
     }

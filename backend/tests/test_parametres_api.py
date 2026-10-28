@@ -25,9 +25,10 @@ def envoyer(client, headers, *regles):
 def test_the_grid_is_listed_in_screen_order(client, admin):
     body = client.get("/api/parametres/rapprochement", headers=admin).json()
 
-    assert [r["code"] for r in body][:6] == [
+    assert [r["code"] for r in body][:7] == [
         "REFERENCE",
         "MONTANT",
+        "MONTANT_ROND",
         "DATE",
         "LIBELLE",
         "TIERS",
@@ -131,3 +132,12 @@ def test_settings_need_admin_settings(client, reference):
     assert client.get("/api/parametres/rapprochement", headers=headers).status_code == 403
     assert envoyer(client, headers, {"code": "DATE", "poids": "1"}).status_code == 403
     assert client.get("/api/parametres/mappings", headers=headers).status_code == 403
+
+
+def test_the_round_amount_points_are_a_setting(client, admin, db):
+    """28/10/2026 : « Montant identique, sans centimes » (40) se règle comme un critère."""
+    assert reconciliation_service.grille(db).montant == Decimal("60.00")
+    response = envoyer(client, admin, {"code": "MONTANT_ROND", "poids": "35", "actif": True})
+
+    assert response.status_code == 200, response.text
+    assert reconciliation_service.grille(db).montant_rond == Decimal("35.00")

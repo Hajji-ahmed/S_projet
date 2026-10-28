@@ -63,12 +63,12 @@ def test_example_of_the_functional_architecture_scores_each_criterion():
 
     assert resultat.detail == {
         "reference": Decimal("0.00"),
-        "montant": Decimal("50.00"),
+        "montant": Decimal("40.00"),  # montant rond (28/10/2026)
         "date": Decimal("30.00"),
         "libelle": Decimal("20.00"),
         "tiers": Decimal("0.00"),
     }
-    assert resultat.total == Decimal("100.00")
+    assert resultat.total == Decimal("90.00")
 
 
 def test_the_score_uses_cheque_number_amount_date_and_label():
@@ -125,7 +125,23 @@ def test_a_bank_credit_matches_a_sage_debit_only():
 
 def test_amount_points_need_the_exact_amount():
     assert score(op(montant="12500"), ec(montant="-12450")).detail["montant"] == Decimal("0.00")
-    assert score(op(montant="-12500"), ec(montant="12500")).detail["montant"] == Decimal("50.00")
+    assert score(op(montant="-12500"), ec(montant="12500")).detail["montant"] == Decimal("40.00")
+
+
+def test_an_amount_with_cents_is_worth_more_than_a_round_one():
+    """28/10/2026 : 60 points avec centimes, 40 sans ; le total reste plafonné à 100."""
+    centimes = score(op(montant="12500.50"), ec(montant="-12500.50"))
+    assert centimes.detail["montant"] == Decimal("60.00")
+    assert centimes.total == Decimal("100.00")
+    assert score(op(montant="-0.05"), ec(montant="0.05")).detail["montant"] == Decimal("60.00")
+    assert score(op(montant="12500.00"), ec(montant="-12500.00")).detail["montant"] == (
+        Decimal("40.00")
+    )
+    reglee = Grille(montant=Decimal("70"), montant_rond=Decimal("30"))
+    assert score(op(montant="10.10"), ec(montant="-10.10"), reglee).detail["montant"] == (
+        Decimal("70.00")
+    )
+    assert score(op(montant="10"), ec(montant="-10"), reglee).detail["montant"] == Decimal("30.00")
 
 
 def test_date_points_decrease_until_the_tolerance():
@@ -234,8 +250,10 @@ def test_rejected_pairs_are_never_proposed_again():
 
 def test_the_grid_is_configurable():
     assert proposer([op()], [ec()], Grille(seuil_proposition=Decimal("100.01"))).propositions == []
-    assert score(op(), ec(), Grille(montant=Decimal("0"))).total == Decimal("50.00")
-    assert Grille(montant=Decimal("0")).criteres_actifs == ("reference", "date", "libelle")
+    sans_montant = Grille(montant=Decimal("0"), montant_rond=Decimal("0"))
+    assert score(op(), ec(), sans_montant).total == Decimal("50.00")
+    assert sans_montant.criteres_actifs == ("reference", "date", "libelle")
+    assert Grille(montant=Decimal("0")).criteres_actifs[1] == "montant"
 
 
 def test_a_close_but_lower_candidate_no_longer_blocks_the_best():
@@ -246,8 +264,8 @@ def test_a_close_but_lower_candidate_no_longer_blocks_the_best():
     resultat = proposer([op()], [meme_jour, lendemain])
 
     [proposition] = resultat.propositions
-    assert (proposition.ecriture_id, proposition.score.total) == (1, Decimal("100.00"))
-    assert proposition.second == Decimal("92.50")
+    assert (proposition.ecriture_id, proposition.score.total) == (1, Decimal("90.00"))
+    assert proposition.second == Decimal("82.50")
     assert resultat.operations_ambigues == set()
 
 
@@ -478,7 +496,7 @@ def test_a_far_pair_with_the_same_number_and_amount_is_found():
 
     assert (proposition.operation_id, proposition.ecriture_id) == (1, 10)
     assert proposition.ecart_jours == 200
-    assert proposition.score.total >= Decimal("90")
+    assert proposition.score.total >= Decimal("80")
 
 
 def test_the_wide_search_needs_a_number_one_candidate_and_the_window():
@@ -500,51 +518,59 @@ def test_the_wide_search_needs_a_number_one_candidate_and_the_window():
     assert proposer_elargi([banque], [double[0]], paires_rejetees={(1, 20)}) == []
 
 
-# --- Espèces : ± 2 jours de l'échéance Sage (27/10/2026) -------------------------------------------
+# --- Espèces : date pleine à ± 2 jours de l'échéance Sage, puis dégressive (28/10/2026) ---------
 
 
-def test_especes_are_never_proposed_beyond_two_days_of_the_due_date():
-    versement = op(montant="5000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
-
-    def especes(ecart_jours_echeance: int) -> Ecriture:
-        return ec(
-            montant="-5000",
-            jour=JOUR,
-            echeance=JOUR + timedelta(days=ecart_jours_echeance),
-            libelle="ESP TT26273B6Z6S",
-        )
-
-    assert comparable(versement, especes(2), GRILLE_PAR_DEFAUT)
-    assert proposer([versement], [especes(-2)]).propositions
-    assert not comparable(versement, especes(3), GRILLE_PAR_DEFAUT)
-    assert not proposer([versement], [especes(3)]).propositions
+def especes_a(ecart_jours_echeance: int, libelle: str = "ESP TT26273B6Z6S") -> Ecriture:
+    return ec(
+        montant="-5000",
+        jour=JOUR,
+        echeance=JOUR + timedelta(days=ecart_jours_echeance),
+        libelle=libelle,
+    )
 
 
-def test_the_cash_window_applies_when_only_the_sage_side_is_known():
+VERSEMENT = op(montant="5000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
+
+
+def test_cash_date_points_are_full_up_to_two_days_then_decrease():
+    points = [score(VERSEMENT, especes_a(ecart)).detail["date"] for ecart in range(8)]
+
+    assert points == [
+        Decimal(v) for v in ("30.00", "30.00", "30.00", "22.50", "15.00", "7.50", "0.00", "0.00")
+    ]
+    # Plus de coupure à 2 jours : comparées jusqu'à la fenêtre de 10 jours, comme les autres
+    assert comparable(VERSEMENT, especes_a(3), GRILLE_PAR_DEFAUT)
+    assert comparable(VERSEMENT, especes_a(10), GRILLE_PAR_DEFAUT)
+    assert not comparable(VERSEMENT, especes_a(11), GRILLE_PAR_DEFAUT)
+    assert proposer([VERSEMENT], [especes_a(-3)]).propositions
+
+
+def test_cash_full_date_applies_when_only_the_sage_side_is_known():
     """Un versement BP au libellé collé (type non reconnu) face à une écriture « ESP »."""
     colle = op(montant="5000", libelle="VERSEMENTDEPLACEPARIMANEELBAZCD760324")
-    especes = ec(montant="-5000", echeance=JOUR + timedelta(days=4), libelle="ESP TT26251KM24D")
 
     assert type_operation(colle.libelle) is None
-    assert not comparable(colle, especes, GRILLE_PAR_DEFAUT)
+    assert score(colle, especes_a(2, "ESP TT26251KM24D")).detail["date"] == Decimal("30.00")
 
 
-def test_other_types_keep_their_ten_day_window():
+def test_other_types_lose_date_points_from_the_first_day():
     cheque = op(montant="5000", libelle="ENCAISSEMENT CHEQUE N 1234567")
-    ecriture = ec(montant="-5000", jour=JOUR + timedelta(days=5), libelle="EAR1° AXK 1234567")
+    ecriture = ec(montant="-5000", jour=JOUR + timedelta(days=2), libelle="EAR1° AXK 1234567")
 
-    assert comparable(cheque, ecriture, GRILLE_PAR_DEFAUT)
-
-
-def test_the_cash_window_follows_the_setting():
-    versement = op(montant="5000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
-    especes = ec(montant="-5000", echeance=JOUR + timedelta(days=4), libelle="ESP TT26251KM24D")
-
-    assert comparable(versement, especes, Grille(fenetre_especes_jours=5))
-    assert not comparable(versement, especes, Grille(fenetre_especes_jours=0))
+    assert score(cheque, ecriture).detail["date"] == Decimal("15.00")
 
 
-def test_the_wide_search_never_proposes_cash():
+def test_the_cash_full_date_days_follow_the_setting():
+    assert score(VERSEMENT, especes_a(4), Grille(fenetre_especes_jours=4)).detail["date"] == (
+        Decimal("30.00")
+    )
+    assert score(VERSEMENT, especes_a(1), Grille(fenetre_especes_jours=0)).detail["date"] == (
+        Decimal("22.50")
+    )
+
+
+def test_the_wide_search_proposes_cash_again():
     versement = op(montant="5000", libelle="VERSEMENT DEPLACE 2600123", reference="2600123")
     loin = ec(
         montant="-5000",
@@ -553,4 +579,4 @@ def test_the_wide_search_never_proposes_cash():
         piece="2600123",
     )
 
-    assert proposer_elargi([versement], [loin]) == []
+    assert [p.ecart_jours for p in proposer_elargi([versement], [loin])] == [40]

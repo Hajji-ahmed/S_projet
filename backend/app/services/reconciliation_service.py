@@ -75,6 +75,7 @@ CONCURRENT = "Le rapprochement vient d'être modifié par un autre utilisateur :
 _CRITERES_REGLES = {
     "REFERENCE": "reference",
     "MONTANT": "montant",
+    "MONTANT_ROND": "montant_rond",
     "DATE": "date",
     "LIBELLE": "libelle",
     "TIERS": "tiers",

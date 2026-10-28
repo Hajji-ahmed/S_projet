@@ -65,7 +65,9 @@ FORECAST_CATEGORIES = [
 # Codes lus par `reconciliation_service.grille()` ; valeurs par défaut : `reconciliation_scoring.Grille`.
 RECONCILIATION_RULES = [
     ("REFERENCE", "N° chèque / référence identique", "reference", "40", None, True),
-    ("MONTANT", "Montant exact, sens opposé", "montant", "50", None, True),
+    # Montant identique (28/10/2026) : 60 points avec centimes, 40 sans (migration 0042)
+    ("MONTANT", "Montant identique, avec centimes", "montant", "60", None, True),
+    ("MONTANT_ROND", "Montant identique, sans centimes", "montant_rond", "40", None, True),
     ("DATE", "Date dans la tolérance (jours), dégressif", "date", "30", "3", True),
     ("LIBELLE", "Libellé similaire", "libelle", "20", None, True),
     ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None, False),
@@ -79,10 +81,11 @@ RECONCILIATION_RULES = [
         "365",
         True,
     ),
-    # Espèces (27/10/2026) : jamais proposées au-delà de 2 jours d'écart avec l'échéance Sage
+    # Espèces (28/10/2026) : points de date pleins jusqu'à 2 jours de l'échéance Sage, puis
+    # dégressifs (27/10/2026 : jamais proposées au-delà)
     (
         "FENETRE_ESPECES",
-        "Espèces : écart maximal avec l'échéance Sage (jours)",
+        "Espèces : jours à date pleine autour de l'échéance Sage",
         "fenetre",
         "0",
         "2",

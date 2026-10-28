@@ -807,3 +807,43 @@ def test_migration_0022_allows_several_journals_per_account(empty_database):
         journal = connection.execute(text("SELECT journal_sage FROM bank_accounts")).scalar_one()
 
     assert journal == "5243"
+
+
+def test_migration_0042_amount_with_cents_is_worth_60(empty_database):
+    """Décision du 28/10/2026 : MONTANT passe de 50 à 60 (une valeur changée à la main est gardée),
+    MONTANT_ROND (40) est créé par les seeds."""
+    config, engine = empty_database
+    command.upgrade(config, "0041")
+
+    def inserer(poids: int) -> None:
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM reconciliation_rules"))
+            connection.execute(
+                text(
+                    "INSERT INTO reconciliation_rules (code, libelle, critere, poids, tolerance) "
+                    f"VALUES ('MONTANT', 'Montant exact, sens opposé', 'montant', {poids}, NULL), "
+                    "('MONTANT_ROND', 'Rond', 'montant_rond', 40, NULL)"
+                )
+            )
+
+    def montant() -> tuple[int, str]:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT poids, libelle FROM reconciliation_rules WHERE code = 'MONTANT'")
+            ).one()
+            return int(row[0]), row[1]
+
+    inserer(50)
+    command.upgrade(config, "0042")
+    apres = montant()
+    command.downgrade(config, "0041")
+    with engine.connect() as connection:
+        codes = connection.execute(text("SELECT code FROM reconciliation_rules")).scalars().all()
+
+    assert apres == (60, "Montant identique, avec centimes")
+    assert montant() == (50, "Montant exact, sens opposé")
+    assert codes == ["MONTANT"]
+
+    inserer(45)
+    command.upgrade(config, "0042")
+    assert montant()[0] == 45

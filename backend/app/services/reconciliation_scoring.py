@@ -44,11 +44,15 @@ class Grille:
 
     Décision du 07/10/2026 : montant, date et libellé (50 + 30 + 20). Décision du 08/10/2026 : le
     n° de chèque / référence revient (40), lu aussi dans les libellés ; le total reste plafonné à
-    100. Le tiers est désactivé (0 point).
+    100. Le tiers est désactivé (0 point). Décision du 28/10/2026 : un montant identique vaut 60
+    points s'il a des centimes, 40 s'il est rond (`points_montant`).
     """
 
     reference: Decimal = Decimal("40")
-    montant: Decimal = Decimal("50")
+    # Montant identique avec centimes (28/10/2026 : 60 ; 50 avant pour tout montant identique)
+    montant: Decimal = Decimal("60")
+    # Montant identique sans centimes (28/10/2026)
+    montant_rond: Decimal = Decimal("40")
     date: Decimal = Decimal("30")
     libelle: Decimal = Decimal("20")
     tiers: Decimal = Decimal("0")
@@ -60,7 +64,8 @@ class Grille:
     fenetre_numero_jours: int = 180
     # Recherche élargie (bouton à part, 20/10/2026) : même n° et même montant jusqu'à ± 365 jours
     fenetre_elargie_jours: int = 365
-    # Espèces (27/10/2026) : au-delà de ± 2 jours d'écart avec l'échéance Sage, jamais proposé
+    # Espèces (28/10/2026) : points de date pleins jusqu'à ± 2 jours de l'échéance Sage, puis
+    # dégressifs sur `tolerance_jours` (27/10/2026 : jamais proposé au-delà de 2 jours)
     fenetre_especes_jours: int = 2
     # En dessous : aucune proposition
     seuil_proposition: Decimal = Decimal("50")
@@ -72,6 +77,9 @@ class Grille:
     ecart_ambiguite: Decimal = Decimal("10")
 
     def poids(self, critere: str) -> Decimal:
+        # Le montant rapporte `montant` ou `montant_rond` selon les centimes (28/10/2026)
+        if critere == "montant":
+            return max(self.montant, self.montant_rond)
         return getattr(self, critere)
 
     @property
@@ -342,16 +350,26 @@ TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement"})
 ESPECES = "Espèces"
 
 
-def fenetre_du_type(type_op: str | None, type_sage: str | None, grille: Grille) -> int:
-    """Écart maximal d'une paire : celui des espèces dès qu'un des deux côtés en est (27/10/2026,
-    une écriture « ESP » face à un versement au libellé non reconnu compte), sinon `fenetre_jours`."""
-    if ESPECES in (type_op, type_sage):
-        return min(grille.fenetre_jours, grille.fenetre_especes_jours)
-    return grille.fenetre_jours
-
-
 def est_especes(operation: Operation, ecriture: Ecriture) -> bool:
+    """Un des deux côtés est des espèces (une écriture « ESP » face à un versement au libellé non
+    reconnu compte)."""
     return ESPECES in (type_operation(operation.libelle), type_ecriture(ecriture.libelle))
+
+
+def points_montant(montant_banque: Decimal, montant_sage: Decimal, grille: Grille) -> Decimal:
+    """Points du montant (28/10/2026) : montants exactement opposés, `montant` (60) s'ils ont des
+    centimes, `montant_rond` (40) sinon ; 0 si les montants diffèrent."""
+    if montant_banque != -montant_sage:
+        return ZERO
+    return grille.montant if montant_banque % 1 else grille.montant_rond
+
+
+def points_date(ecart: int, especes: bool, grille: Grille) -> Decimal:
+    """Points de la date. Espèces (28/10/2026) : pleins jusqu'à `fenetre_especes_jours` d'écart,
+    puis dégressifs comme les autres (2 j : 30 ; 3 j : 22,5 ; 4 j : 15 ; 5 j : 7,5 ; 6 j : 0)."""
+    if especes:
+        ecart = max(0, ecart - grille.fenetre_especes_jours)
+    return _points(grille.date, ratio_date(ecart, grille.tolerance_jours))
 
 
 def date_comparee(ecriture: Ecriture) -> date:
@@ -426,9 +444,6 @@ def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grill
     if not types_compatibles(operation, ecriture):
         return None
     ecart = ecart_jours(operation, ecriture)
-    # Espèces (27/10/2026) : ± `fenetre_especes_jours` seulement, jamais au-delà
-    if est_especes(operation, ecriture):
-        return ecart if ecart <= min(grille.fenetre_jours, grille.fenetre_especes_jours) else None
     if ecart <= grille.fenetre_jours:
         return ecart
     # Au-delà : seulement un chèque ou un effet au même n° et au même montant (12/10/2026)
@@ -475,8 +490,8 @@ def _score(
         reference = critere_reference(operation, ecriture)
     detail = {
         "reference": grille.reference if reference else ZERO,
-        "montant": grille.montant if operation.montant == -ecriture.montant else ZERO,
-        "date": _points(grille.date, ratio_date(ecart, grille.tolerance_jours)),
+        "montant": points_montant(operation.montant, ecriture.montant, grille),
+        "date": points_date(ecart, est_especes(operation, ecriture), grille),
         "libelle": _points(grille.libelle, ratio_libelle(operation, ecriture)),
         "tiers": grille.tiers if critere_tiers(operation, ecriture) else ZERO,
     }
@@ -593,8 +608,8 @@ def _peut_atteindre(operation: Operation, ecriture: Ecriture, grille: Grille) ->
     tiers parfaits ? Sinon, le libellé (le calcul le plus coûteux) n'est pas comparé : une paire
     écartée ici aurait de toute façon un score sous le seuil, le résultat ne change pas."""
     plafond = (
-        (grille.montant if operation.montant == -ecriture.montant else ZERO)
-        + _points(grille.date, ratio_date(ecart_jours(operation, ecriture), grille.tolerance_jours))
+        points_montant(operation.montant, ecriture.montant, grille)
+        + points_date(ecart_jours(operation, ecriture), est_especes(operation, ecriture), grille)
         + grille.libelle
         + grille.tiers
     )
@@ -629,8 +644,8 @@ def _candidat(
     cote_op = cote_op or _cote_operation(operation)
     cote_ec = cote_ec or _cote_ecriture(ecriture)
     acquis = (
-        (grille.montant if operation.montant == -ecriture.montant else ZERO)
-        + _points(grille.date, ratio_date(ecart, grille.tolerance_jours))
+        points_montant(operation.montant, ecriture.montant, grille)
+        + points_date(ecart, est_especes(operation, ecriture), grille)
         + (grille.tiers if grille.tiers and critere_tiers(operation, ecriture) else ZERO)
     )
     manque = grille.seuil_proposition - acquis
@@ -754,9 +769,6 @@ def proposer_elargi(
             if (operation.id, ecriture.id) in paires_rejetees:
                 continue
             if not types_compatibles(operation, ecriture):
-                continue
-            # Espèces (27/10/2026) : jamais au-delà de leur fenêtre de 2 jours
-            if est_especes(operation, ecriture):
                 continue
             if not numeros_op & _numeros_ecriture(ecriture):
                 continue

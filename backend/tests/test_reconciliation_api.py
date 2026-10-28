@@ -134,14 +134,14 @@ def test_example_of_the_functional_architecture_is_proposed_then_validated(clien
     assert (proposal["statut"], proposal["origine"], proposal["score"]) == (
         "Proposée",
         "Automatique",
-        "100.00",
+        "90.00",  # montant rond : 40 points (28/10/2026)
     )
     # Forte, mais jamais validée sans un utilisateur
     assert proposal["forte"] is True
     # N° de chèque / référence, montant, date et libellé (décisions du 07 et du 08/10/2026)
     assert [(c["code"], c["points"]) for c in proposal["criteres"]] == [
         ("reference", "0.00"),
-        ("montant", "50.00"),
+        ("montant", "40.00"),
         ("date", "30.00"),
         ("libelle", "20.00"),
     ]
@@ -671,8 +671,10 @@ def test_a_disabled_criterion_is_worth_zero_and_can_be_enabled_again(reference):
 
     # Tiers désactivé (07/10/2026) ; n° de chèque / référence réactivé (08/10/2026)
     assert (seeded.reference, seeded.tiers) == (Decimal("40"), Decimal("0"))
-    assert (seeded.montant, seeded.date, seeded.libelle) == (
-        Decimal("50"),
+    # Montant : 60 avec centimes, 40 sans (28/10/2026)
+    assert (seeded.montant, seeded.montant_rond, seeded.date, seeded.libelle) == (
+        Decimal("60"),
+        Decimal("40"),
         Decimal("30"),
         Decimal("20"),
     )
@@ -821,7 +823,7 @@ def test_a_strong_proposal_with_a_close_competitor_is_flagged(client, comptable,
     assert proposal["ecriture"]["id"] == best.id
     assert (proposal["forte"], proposal["score_second"], proposal["concurrente_proche"]) == (
         True,
-        "92.50",
+        "82.50",
         True,
     )
 
