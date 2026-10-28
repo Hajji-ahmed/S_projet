@@ -25,16 +25,19 @@ def envoyer(client, headers, *regles):
 def test_the_grid_is_listed_in_screen_order(client, admin):
     body = client.get("/api/parametres/rapprochement", headers=admin).json()
 
-    assert [r["code"] for r in body][:7] == [
+    assert [r["code"] for r in body][:8] == [
         "REFERENCE",
         "MONTANT",
         "MONTANT_ROND",
         "DATE",
         "LIBELLE",
         "TIERS",
+        "BONUS_SANS_REFERENCE",
         "FENETRE",
     ]
     assert {r["code"]: r["genre"] for r in body}["SEUIL_FORT"] == "seuil"
+    # 28/10/2026 : le bonus des espèces, virements et autres se règle comme un critère
+    assert {r["code"]: r["genre"] for r in body}["BONUS_SANS_REFERENCE"] == "critere"
 
 
 def test_a_change_is_used_by_the_next_engine_run_and_audited(client, admin, db):
@@ -141,3 +144,20 @@ def test_the_round_amount_points_are_a_setting(client, admin, db):
 
     assert response.status_code == 200, response.text
     assert reconciliation_service.grille(db).montant_rond == Decimal("35.00")
+
+
+def test_the_bonus_without_reference_is_used_by_the_engine_grid(client, admin, db):
+    """28/10/2026 : « BONUS_SANS_REFERENCE » (10 par défaut) se modifie à l'écran et désactivé
+    vaut 0 dans la grille du moteur."""
+    from app.services.reconciliation_service import grille
+
+    assert grille(db).bonus_sans_reference == Decimal("10")
+
+    response = envoyer(
+        client, admin, {"code": "BONUS_SANS_REFERENCE", "poids": "15", "actif": True}
+    )
+    assert response.status_code == 200, response.text
+    assert grille(db).bonus_sans_reference == Decimal("15")
+
+    envoyer(client, admin, {"code": "BONUS_SANS_REFERENCE", "poids": "15", "actif": False})
+    assert grille(db).bonus_sans_reference == Decimal("0")

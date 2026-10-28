@@ -11,7 +11,7 @@ débit du compte banque dans Sage ; une paire n'est donc comparée que si
 import re
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
@@ -75,6 +75,9 @@ class Grille:
     # Une 2e écriture à moins de cet écart de points est signalée « concurrente proche » ; depuis le
     # 08/10/2026, seule une égalité de score rend une opération ambiguë
     ecart_ambiguite: Decimal = Decimal("10")
+    # Espèces, virement et autre (28/10/2026) : pas de points de référence, mais ce bonus ajouté au
+    # montant, au montant rond, à la date et au libellé (`grille_de_la_paire`)
+    bonus_sans_reference: Decimal = Decimal("10")
 
     def poids(self, critere: str) -> Decimal:
         # Le montant rapporte `montant` ou `montant_rond` selon les centimes (28/10/2026)
@@ -252,6 +255,40 @@ def type_operation(libelle: str | None) -> str | None:
 def type_ecriture(libelle: str | None) -> str | None:
     """Type d'une écriture Sage (Chèque, Effet, Espèces) ; None = autre."""
     return _type(libelle, TYPES_SAGE)
+
+
+# Types sans points de référence (28/10/2026) : leur n° (code de versement, réf. de virement) n'est
+# presque jamais le même des deux côtés. None = autre (type non reconnu).
+TYPES_SANS_REFERENCE = frozenset({"Espèces", "Virement", None})
+# Recherche élargie de ces types : libellés semblables à 70 % au moins, faute de n° (28/10/2026)
+SEUIL_LIBELLE_ELARGIE = Decimal("0.70")
+
+
+def sans_reference(operation: Operation, ecriture: Ecriture) -> bool:
+    """Les deux lignes sont du même type, sans référence (espèces, virement ou autre)."""
+    type_ = type_operation(operation.libelle)
+    return type_ in TYPES_SANS_REFERENCE and type_ == type_ecriture(ecriture.libelle)
+
+
+@lru_cache(maxsize=64)
+def _grille_sans_reference(grille: Grille) -> Grille:
+    bonus = grille.bonus_sans_reference
+    return replace(
+        grille,
+        reference=ZERO,
+        montant=grille.montant + bonus if grille.montant else ZERO,
+        montant_rond=grille.montant_rond + bonus if grille.montant_rond else ZERO,
+        date=grille.date + bonus if grille.date else ZERO,
+        libelle=grille.libelle + bonus if grille.libelle else ZERO,
+    )
+
+
+def grille_de_la_paire(grille: Grille, operation: Operation, ecriture: Ecriture) -> Grille:
+    """Grille appliquée à une paire (28/10/2026) : pour des espèces, un virement ou un autre type,
+    la référence ne compte pas et chaque critère actif gagne `bonus_sans_reference` points ; les
+    seuils et fenêtres ne changent pas. Chèque, effet, impayé (ou deux types différents, choisis
+    à la main) : la grille telle quelle."""
+    return _grille_sans_reference(grille) if sans_reference(operation, ecriture) else grille
 
 
 def types_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
@@ -488,8 +525,9 @@ def _score(
 ) -> Score:
     """`score`, avec l'écart de dates (et la référence, si elle est déjà connue) calculés par
     l'appelant : mêmes formules, sans les refaire."""
+    grille = grille_de_la_paire(grille, operation, ecriture)
     if reference is None:
-        reference = critere_reference(operation, ecriture)
+        reference = bool(grille.reference) and critere_reference(operation, ecriture)
     detail = {
         "reference": grille.reference if reference else ZERO,
         "montant": points_montant(operation.montant, ecriture.montant, grille),
@@ -609,6 +647,7 @@ def _peut_atteindre(operation: Operation, ecriture: Ecriture, grille: Grille) ->
     """Le score de la paire peut-il atteindre le seuil de proposition, même avec un libellé et un
     tiers parfaits ? Sinon, le libellé (le calcul le plus coûteux) n'est pas comparé : une paire
     écartée ici aurait de toute façon un score sous le seuil, le résultat ne change pas."""
+    grille = grille_de_la_paire(grille, operation, ecriture)
     plafond = (
         points_montant(operation.montant, ecriture.montant, grille)
         + points_date(ecart_jours(operation, ecriture), est_especes(operation, ecriture), grille)
@@ -645,27 +684,29 @@ def _candidat(
     ratio n'est calculé que s'il le faut."""
     cote_op = cote_op or _cote_operation(operation)
     cote_ec = cote_ec or _cote_ecriture(ecriture)
+    # Grille de la paire pour le pré-filtre ; `_score` l'applique lui-même (une seule fois)
+    paire = grille_de_la_paire(grille, operation, ecriture)
     acquis = (
-        points_montant(operation.montant, ecriture.montant, grille)
-        + points_date(ecart, est_especes(operation, ecriture), grille)
-        + (grille.tiers if grille.tiers and critere_tiers(operation, ecriture) else ZERO)
+        points_montant(operation.montant, ecriture.montant, paire)
+        + points_date(ecart, est_especes(operation, ecriture), paire)
+        + (paire.tiers if paire.tiers and critere_tiers(operation, ecriture) else ZERO)
     )
-    manque = grille.seuil_proposition - acquis
-    if manque > grille.libelle + grille.reference:
+    manque = paire.seuil_proposition - acquis
+    if manque > paire.libelle + paire.reference:
         return None
-    reference = bool(grille.reference) and _reference_preparee(cote_op, cote_ec)
+    reference = bool(paire.reference) and _reference_preparee(cote_op, cote_ec)
     if reference:
-        manque -= grille.reference
-    if manque > grille.libelle:
+        manque -= paire.reference
+    if manque > paire.libelle:
         return None
-    if manque > 0 and _points(grille.libelle, _mots_prepares(cote_op, cote_ec)) < manque:
+    if manque > 0 and _points(paire.libelle, _mots_prepares(cote_op, cote_ec)) < manque:
         # `ratio` ≤ `quick_ratio` ≤ `real_quick_ratio` = 2·min(longueurs) / somme des longueurs
         a, b = cote_op.plain, cote_ec.plain
         longueurs = len(a) + len(b)
         borne = 2 * min(len(a), len(b)) / longueurs if longueurs else 1.0
-        if _points(grille.libelle, _majorant(borne)) < manque:
+        if _points(paire.libelle, _majorant(borne)) < manque:
             return None
-        if _points(grille.libelle, _majorant(SequenceMatcher(None, a, b).quick_ratio())) < manque:
+        if _points(paire.libelle, _majorant(SequenceMatcher(None, a, b).quick_ratio())) < manque:
             return None
     resultat = _score(operation, ecriture, grille, ecart, reference)
     return resultat if resultat.total >= grille.seuil_proposition else None
@@ -754,10 +795,11 @@ def proposer_elargi(
     paires_rejetees: frozenset[tuple[int, int]] | set[tuple[int, int]] = frozenset(),
 ) -> list[PropositionElargie]:
     """Paires très éloignées en date (au-delà de `fenetre_jours`, jusqu'à `fenetre_elargie_jours`) :
-    montant exactement opposé,
-    même compte, types compatibles et un n° commun (5 chiffres ou plus, ou la référence). Les
-    écritures sont rangées par (compte, montant) : chaque opération ne regarde que celles de son
-    montant opposé. Une paire n'est proposée que si chacune n'a QUE cette candidate."""
+    montant exactement opposé, même compte, même type et un n° commun (5 chiffres ou plus, ou la
+    référence) ; pour des espèces, un virement ou un autre type (28/10/2026), des libellés
+    semblables à `SEUIL_LIBELLE_ELARGIE` au moins au lieu du n°. Les écritures sont rangées par
+    (compte, montant) : chaque opération ne regarde que celles de son montant opposé. Une paire
+    n'est proposée que si chacune n'a QUE cette candidate."""
     par_montant: dict[tuple[int | None, Decimal], list[Ecriture]] = {}
     for ecriture in ecritures:
         par_montant.setdefault((ecriture.bank_account_id, ecriture.montant), []).append(ecriture)
@@ -765,14 +807,18 @@ def proposer_elargi(
     par_ecriture: dict[int, int] = {}
     for operation in operations:
         numeros_op = numeros(operation.libelle, operation.reference)
-        if not numeros_op:
+        par_libelle = type_operation(operation.libelle) in TYPES_SANS_REFERENCE
+        if not numeros_op and not par_libelle:
             continue
         for ecriture in par_montant.get((operation.bank_account_id, -operation.montant), ()):
             if (operation.id, ecriture.id) in paires_rejetees:
                 continue
             if not types_compatibles(operation, ecriture):
                 continue
-            if not numeros_op & _numeros_ecriture(ecriture):
+            if par_libelle:
+                if ratio_libelle(operation, ecriture) < SEUIL_LIBELLE_ELARGIE:
+                    continue
+            elif not numeros_op & _numeros_ecriture(ecriture):
                 continue
             ecart = ecart_jours(operation, ecriture)
             # Dans la fenêtre normale, c'est le moteur habituel qui compare

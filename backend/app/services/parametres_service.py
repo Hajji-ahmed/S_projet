@@ -18,7 +18,16 @@ from app.services import audit_service
 from app.services.errors import ConflictError, NotFoundError
 
 # Montant identique (28/10/2026) : MONTANT avec centimes, MONTANT_ROND sans
-CRITERES = ("REFERENCE", "MONTANT", "MONTANT_ROND", "DATE", "LIBELLE", "TIERS")
+# Bonus des types sans référence (28/10/2026) : réglé comme un critère (points, activation)
+CRITERES = (
+    "REFERENCE",
+    "MONTANT",
+    "MONTANT_ROND",
+    "DATE",
+    "LIBELLE",
+    "TIERS",
+    "BONUS_SANS_REFERENCE",
+)
 SEUILS = ("SEUIL_PROPOSITION", "SEUIL_FORT", "ECART_AMBIGUITE")
 FENETRE = "FENETRE"
 # Recherche élargie (20/10/2026) : de 31 à 366 jours

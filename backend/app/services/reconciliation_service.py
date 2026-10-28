@@ -79,6 +79,7 @@ _CRITERES_REGLES = {
     "DATE": "date",
     "LIBELLE": "libelle",
     "TIERS": "tiers",
+    "BONUS_SANS_REFERENCE": "bonus_sans_reference",
 }
 
 

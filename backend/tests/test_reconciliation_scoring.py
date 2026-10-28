@@ -31,7 +31,13 @@ AVEC_REFERENCE = Grille(
 )
 
 
-def op(id=1, montant="50000", jour=JOUR, libelle="VIR ABC", reference=None, valeur=None):
+# Libellés par défaut : un chèque des deux côtés (28/10/2026 : espèces, virement et autre ont leur
+# propre grille, sans référence et +10 par critère, testée à part)
+CHQ_OP = "ENCAISSEMENT CHEQUE ABC"
+CHQ_EC = "EAR1° ENCAISSEMENT CHEQUE ABC"
+
+
+def op(id=1, montant="50000", jour=JOUR, libelle=CHQ_OP, reference=None, valeur=None):
     return Operation(
         id=id,
         date_operation=jour,
@@ -42,7 +48,7 @@ def op(id=1, montant="50000", jour=JOUR, libelle="VIR ABC", reference=None, vale
     )
 
 
-def ec(id=1, montant="-50000", jour=JOUR, libelle="Virement ABC", piece="REG458", **over):
+def ec(id=1, montant="-50000", jour=JOUR, libelle=CHQ_EC, piece="REG458", **over):
     return Ecriture(
         **{
             "id": id,
@@ -74,7 +80,7 @@ def test_example_of_the_functional_architecture_scores_each_criterion():
 def test_the_score_uses_cheque_number_amount_date_and_label():
     """Décisions du 07 et du 08/10/2026 : tiers désactivé, n° de chèque / référence réactivé."""
     grille = Grille()
-    resultat = score(op(libelle="VIR REG458 ABC"), ec())
+    resultat = score(op(libelle="ENCAISSEMENT CHEQUE REG458 ABC"), ec())
 
     assert grille.criteres_actifs == ("reference", "montant", "date", "libelle")
     assert (resultat.detail["reference"], resultat.detail["tiers"]) == (
@@ -91,7 +97,7 @@ def test_example_is_proposed_as_a_strong_match():
 
 
 def test_piece_number_written_in_the_bank_label_gives_the_reference_points():
-    resultat = score(op(libelle="VIR REG-458 ABC"), ec(), AVEC_REFERENCE)
+    resultat = score(op(libelle="ENCAISSEMENT CHEQUE REG-458 ABC"), ec(), AVEC_REFERENCE)
 
     assert resultat.detail["reference"] == Decimal("40.00")
     assert resultat.total == Decimal("100.00")
@@ -180,7 +186,8 @@ def test_virements_are_typed_and_compared_at_their_due_date():
     assert type_operation("RTGS EMIS VERS CIH") == "Virement"
     virement = ec(libelle="Virement ATLAS", jour=date(2026, 8, 1), echeance=JOUR)
 
-    assert score(op(libelle="VIR ATLAS"), virement).detail["date"] == Decimal("30.00")
+    # 28/10/2026 : un virement n'a pas de points de référence, 10 de plus par critère (date 40)
+    assert score(op(libelle="VIR ATLAS"), virement).detail["date"] == Decimal("40.00")
     # Un virement ne se rapproche jamais d'un chèque
     assert not comparable(op(libelle="VIR ATLAS"), ec(libelle="EAR1° 1234567"), GRILLE_PAR_DEFAUT)
 
@@ -193,7 +200,8 @@ def test_entries_outside_the_window_are_not_compared():
 def test_unrelated_labels_score_low():
     resultat = score(op(libelle="PRLV ONEE"), ec(libelle="Achat fournitures", tiers=None))
 
-    assert resultat.detail["libelle"] < Decimal("5")
+    # Deux types inconnus (autre) : libellé sur 30 points (28/10/2026), moins d'un quart ici
+    assert resultat.detail["libelle"] < Decimal("7.5")
     assert resultat.detail["tiers"] == Decimal("0.00")
 
 
@@ -290,13 +298,13 @@ def test_numbers_are_read_without_leading_zeros_and_short_ones_are_ignored():
 
 
 def test_same_cheque_number_in_both_labels_gives_the_reference_points():
-    banque = op(libelle="EAR1° AXK 173813 JAID MOHAMED ADNAN")
+    banque = op(libelle="ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW")
 
-    meme = score(banque, ec(libelle="ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW", piece=None))
-    autre = score(banque, ec(libelle="ENCAISSEMENT CHEQUE N 0173814 TIRE SUR ATW", piece=None))
+    meme = score(banque, ec(libelle="EAR1° AXK 173813 JAID MOHAMED ADNAN", piece=None))
+    autre = score(banque, ec(libelle="EAR1° AXK 173814 JAID MOHAMED ADNAN", piece=None))
     remise = score(
-        op(libelle="EAR° 3308407 LAHNINE"),
-        ec(libelle="REMISE D'EFFETS N 5812970 A L'ESCOMPTE/N°3308407", piece=None),
+        op(libelle="REMISE D'EFFETS N 5812970 A L'ESCOMPTE/N°3308407"),
+        ec(libelle="EAR° 3308407 LAHNINE", piece=None),
     )
 
     assert meme.detail["reference"] == Decimal("40.00")
@@ -308,10 +316,16 @@ def test_the_right_cheque_wins_even_four_days_apart():
     """Cas réel du 28/08/2026 : le bon chèque passé 4 jours plus tôt en banque, un autre le jour même."""
     entry = ec(
         id=1, montant="-60000", jour=date(2026, 8, 28), piece=None,
-        libelle="ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW", tiers=None,
+        libelle="EAR1° AXK 173813 JAID", tiers=None,
     )  # fmt: skip
-    bon = op(id=1, montant="60000", jour=date(2026, 8, 24), libelle="EAR1° AXK 173813 JAID")
-    voisin = op(id=2, montant="60000", jour=date(2026, 8, 28), libelle="EAR1° AXK 173814 JAID")
+    bon = op(
+        id=1, montant="60000", jour=date(2026, 8, 24),
+        libelle="ENCAISSEMENT CHEQUE N 0173813 TIRE SUR ATW",
+    )  # fmt: skip
+    voisin = op(
+        id=2, montant="60000", jour=date(2026, 8, 28),
+        libelle="ENCAISSEMENT CHEQUE N 0173814 TIRE SUR ATW",
+    )  # fmt: skip
 
     resultat = proposer([bon, voisin], [entry])
 
@@ -325,8 +339,10 @@ def test_the_right_cheque_wins_even_four_days_apart():
 
 def test_the_prefilter_never_drops_a_pair_that_reaches_the_threshold():
     """Montant différent, même jour, même libellé : 30 + 20 = 50, juste au seuil : candidat."""
-    banque = op(montant="50000", libelle="VIR ATLAS SARL")
-    entry = ec(montant="-49000", libelle="VIR ATLAS SARL", piece=None, tiers=None)
+    banque = op(montant="50000", libelle="ENCAISSEMENT CHEQUE ATLAS SARL")
+    entry = ec(
+        montant="-49000", libelle="EAR1° ENCAISSEMENT CHEQUE ATLAS SARL", piece=None, tiers=None
+    )
 
     assert score(banque, entry).total == Decimal("50.00")
     assert _peut_atteindre(banque, entry, GRILLE_PAR_DEFAUT)
@@ -415,7 +431,7 @@ def test_especes_are_compared_at_their_due_date():
     especes = ec(montant="-4000", jour=date(2026, 8, 1), echeance=JOUR, libelle="ESP TT23241QZKZC")
     cheque = ec(montant="-4000", jour=date(2026, 8, 1), echeance=JOUR, libelle="EAR1° 1234567")
 
-    assert score(versement, especes).detail["date"] == Decimal("30.00")
+    assert score(versement, especes).detail["date"] == Decimal("40.00")  # +10 (28/10/2026)
     assert proposer([versement], [especes]).propositions
     assert ecart_jours(op(libelle="ENCAISSEMENT CHEQUE N 1234567"), cheque) == 54
 
@@ -477,8 +493,8 @@ def test_a_line_taken_by_a_better_pair_gives_way_to_the_next_candidate():
     B reçoit sa candidate suivante E2 (2 jours d'écart), sans ambiguïté."""
     a = op(id=1, jour=JOUR)
     b = op(id=2, jour=JOUR + timedelta(days=1))
-    meme_jour = ec(id=10, jour=JOUR, libelle="VIR ABC")
-    lendemain = ec(id=11, jour=JOUR + timedelta(days=3), libelle="VIR ABC")
+    meme_jour = ec(id=10, jour=JOUR)
+    lendemain = ec(id=11, jour=JOUR + timedelta(days=3))
 
     resultat = proposer([a, b], [meme_jour, lendemain])
 
@@ -515,7 +531,8 @@ def test_the_wide_search_needs_a_number_one_candidate_and_the_window():
         id=10, montant="-19000", jour=JOUR - timedelta(days=50), libelle="EAR1° 174512"
     )
     trop_loin = ec(id=11, montant="-20000", jour=JOUR - timedelta(days=400), libelle="EAR1° 174512")
-    vir = ec(id=12, montant="-700", jour=JOUR - timedelta(days=50), libelle="Virement ABC")
+    # Virement sans n° (28/10/2026) : cherché par le libellé, ici trop différent
+    vir = ec(id=12, montant="-700", jour=JOUR - timedelta(days=50), libelle="Virement XYZ AUTRE")
 
     assert proposer_elargi([banque, sans_numero], [autre_montant, trop_loin, vir]) == []
     # Deux écritures possibles pour la même opération : rien n'est choisi au hasard
@@ -546,7 +563,7 @@ def test_cash_date_points_are_full_up_to_two_days_then_decrease():
     points = [score(VERSEMENT, especes_a(ecart)).detail["date"] for ecart in range(8)]
 
     assert points == [
-        Decimal(v) for v in ("30.00", "30.00", "30.00", "22.50", "15.00", "7.50", "0.00", "0.00")
+        Decimal(v) for v in ("40.00", "40.00", "40.00", "30.00", "20.00", "10.00", "0.00", "0.00")
     ]
     # Plus de coupure à 2 jours : comparées jusqu'à la fenêtre de 10 jours, comme les autres
     assert comparable(VERSEMENT, especes_a(3), GRILLE_PAR_DEFAUT)
@@ -572,20 +589,62 @@ def test_other_types_lose_date_points_from_the_first_day():
 
 def test_the_cash_full_date_days_follow_the_setting():
     assert score(VERSEMENT, especes_a(4), Grille(fenetre_especes_jours=4)).detail["date"] == (
-        Decimal("30.00")
+        Decimal("40.00")
     )
     assert score(VERSEMENT, especes_a(1), Grille(fenetre_especes_jours=0)).detail["date"] == (
-        Decimal("22.50")
+        Decimal("30.00")
     )
 
 
-def test_the_wide_search_proposes_cash_again():
-    versement = op(montant="5000", libelle="VERSEMENT DEPLACE 2600123", reference="2600123")
-    loin = ec(
-        montant="-5000",
-        jour=JOUR - timedelta(days=40),
-        libelle="ESP 2600123 CLIENT",
-        piece="2600123",
-    )
+def test_the_wide_search_finds_cash_by_amount_and_label():
+    """28/10/2026 : espèces, virement et autre sont cherchés par le montant et un libellé semblable
+    à 70 % au moins, sans n° commun."""
+    versement = op(montant="5000", libelle="VERSEMENT DEPLACE PAR ALAMI")
+    proche = ec(
+        id=10, montant="-5000", jour=JOUR - timedelta(days=40),
+        libelle="ESP VERSEMENT DEPLACE PAR ALAMI", piece=None,
+    )  # fmt: skip
+    eloigne = ec(
+        id=11, montant="-5000", jour=JOUR - timedelta(days=40), libelle="ESP TT26273B6Z6S",
+        piece=None,
+    )  # fmt: skip
 
-    assert [p.ecart_jours for p in proposer_elargi([versement], [loin])] == [40]
+    assert [p.ecart_jours for p in proposer_elargi([versement], [proche])] == [40]
+    assert proposer_elargi([versement], [eloigne]) == []
+
+
+def test_cash_transfer_and_other_have_no_reference_points_and_ten_more_per_criterion():
+    """28/10/2026 : espèces, virement et autre (même type des deux côtés) : référence 0, montant
+    70 / 50, date 40, libellé 30 ; chèque, effet et impayé gardent la grille."""
+    virement = score(
+        op(montant="1250.50", libelle="VIR RECU ATLAS 1234567"),
+        ec(montant="-1250.50", libelle="VIR ATLAS 1234567", piece=None),
+    )
+    autre = score(
+        op(montant="300", libelle="OPERATION BANCAIRE X"),
+        ec(montant="-300", libelle="REGULARISATION X", piece=None),
+    )
+    cheque = score(op(libelle="ENCAISSEMENT CHEQUE N 1234567"), ec(libelle="EAR1° 1234567"))
+
+    assert virement.detail["reference"] == Decimal("0.00")  # n° commun, mais pas compté
+    assert (virement.detail["montant"], virement.detail["date"]) == (
+        Decimal("70.00"),
+        Decimal("40.00"),
+    )
+    assert autre.detail["montant"] == Decimal("50.00")
+    assert score(VERSEMENT, especes_a(0)).detail["montant"] == Decimal("50.00")
+    assert cheque.detail["reference"] == Decimal("40.00")
+    assert (cheque.detail["montant"], cheque.detail["date"]) == (Decimal("40.00"), Decimal("30.00"))
+    sans_bonus = Grille(bonus_sans_reference=Decimal("0"))
+    assert score(VERSEMENT, especes_a(0), sans_bonus).detail["montant"] == Decimal("40.00")
+
+
+def test_the_engine_gives_the_same_score_as_score_for_cash_and_transfers():
+    """28/10/2026 : le pré-filtre du moteur et `score` appliquent le bonus une seule fois."""
+    virement = op(montant="1250", libelle="VIR RECU ATLAS")
+    entree = ec(montant="-1250", libelle="VIR ATLAS", piece=None)
+
+    [proposition] = proposer([virement], [entree]).propositions
+
+    assert proposition.score == score(virement, entree)
+    assert proposition.score.detail["montant"] == Decimal("50.00")

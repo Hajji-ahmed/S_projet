@@ -134,16 +134,16 @@ def test_example_of_the_functional_architecture_is_proposed_then_validated(clien
     assert (proposal["statut"], proposal["origine"], proposal["score"]) == (
         "Proposée",
         "Automatique",
-        "90.00",  # montant rond : 40 points (28/10/2026)
+        "100.00",  # virement (28/10/2026) : montant rond 50 + date 40 + libellé 30, plafonné
     )
     # Forte, mais jamais validée sans un utilisateur
     assert proposal["forte"] is True
-    # N° de chèque / référence, montant, date et libellé (décisions du 07 et du 08/10/2026)
+    # Virement des deux côtés (28/10/2026) : pas de référence, 10 points de plus par critère
     assert [(c["code"], c["points"]) for c in proposal["criteres"]] == [
         ("reference", "0.00"),
-        ("montant", "40.00"),
-        ("date", "30.00"),
-        ("libelle", "20.00"),
+        ("montant", "50.00"),
+        ("date", "40.00"),
+        ("libelle", "30.00"),
     ]
     assert proposal["operation"]["id"] == tx.id
     assert proposal["ecriture"]["numero_piece"] == "REG458"
@@ -264,7 +264,7 @@ def test_rejected_pair_comes_back_only_at_the_next_run(client, comptable, db):
     # Le rejet reste dans l'historique, marqué levé
     assert rejet.statut == "Rejetée"
     assert rejet.detail_score["rejet_leve"] is True
-    assert rejet.detail_score["montant"] == "40.00"
+    assert rejet.detail_score["montant"] == "50.00"
     lancement = db.scalar(
         select(AuditLog)
         .where(AuditLog.action == "rapprochement_lance")
@@ -348,14 +348,17 @@ def _strong_and_weak(client, comptable, db):
     compte = account(db)
     strong_tx = operation(db, compte, libelle="VIR REG458 ABC")
     ecriture(db, compte)
-    # Même montant, deux jours d'écart, libellés différents : 50 + 15 + quelques points, < 90
-    weak_tx = operation(db, compte, montant="700", jour=date(2026, 9, 10), libelle="VIR XYZ")
+    # Chèque au même montant rond, deux jours d'écart, libellés différents : 40 + 15 + quelques
+    # points, < 80
+    weak_tx = operation(
+        db, compte, montant="700", jour=date(2026, 9, 10), libelle="ENCAISSEMENT CHEQUE XYZ"
+    )
     ecriture(
         db,
         compte,
         montant="-700",
         jour=date(2026, 9, 12),
-        libelle="VIR divers",
+        libelle="EAR1° divers",
         tiers=None,
         numero_piece="P7",
     )
@@ -849,9 +852,10 @@ def test_a_manual_match_frees_the_competing_operation(client, comptable, db):
 
 def test_a_strong_proposal_with_a_close_competitor_is_flagged(client, comptable, db):
     compte = account(db)
-    operation(db, compte)
-    best = ecriture(db, compte)
-    ecriture(db, compte, jour=date(2026, 9, 25))
+    # Chèques : un virement à 1 jour serait aussi plafonné à 100 (égalité, 28/10/2026)
+    operation(db, compte, libelle="ENCAISSEMENT CHEQUE ABC")
+    best = ecriture(db, compte, libelle="EAR1° ENCAISSEMENT CHEQUE ABC")
+    ecriture(db, compte, jour=date(2026, 9, 25), libelle="EAR1° ENCAISSEMENT CHEQUE ABC")
     body = run(client, comptable, db).json()
     assert (body["nb_propositions"], body["nb_operations_ambigues"]) == (1, 0)
 
@@ -1659,7 +1663,7 @@ def test_a_pending_operation_is_never_compared_nor_matched_by_hand(client, compt
     en_cours = operation(db, compte, libelle="VIR ABC (*)", en_cours=True)
     entry = ecriture(db, compte)
     remplacee = operation(db, compte, montant="700", libelle="VIR Z (*)", en_cours=True)
-    definitive = operation(db, compte, montant="700", libelle="VIR Z")
+    definitive = operation(db, compte, montant="700", libelle="OPERATION Z")
     remplacee.remplacee_par_id = definitive.id
     db.flush()
 

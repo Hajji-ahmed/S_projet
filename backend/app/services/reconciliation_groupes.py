@@ -31,6 +31,7 @@ from app.services.reconciliation_scoring import (
     date_comparee,
     ecart_jours,
     est_especes,
+    grille_de_la_paire,
     numeros,
     points_date,
     points_montant,
@@ -104,6 +105,8 @@ def score_groupe(ops: Sequence[Operation], ecriture: Ecriture, grille: Grille) -
         & numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
     )
     ecart = max(ecart_jours(op, ecriture) for op in ops)
+    # Espèces, virement, autre : sans référence, +10 par critère (28/10/2026)
+    grille = grille_de_la_paire(grille, principale, ecriture)
     detail = {
         "reference": grille.reference if commun else ZERO,
         # Somme exacte : 60 points si le montant a des centimes, 40 s'il est rond (28/10/2026)
@@ -447,6 +450,7 @@ def score_ensemble(
     cote_sage = set().union(*(numeros(e.libelle, e.reference, e.numero_piece) for e in ecritures))
     ecart = max(min(ecart_jours(op, e) for e in ecritures) for op in ops)
     total_ops = sum((op.montant for op in ops), ZERO)
+    grille = grille_de_la_paire(grille, principale, plus_grosse)
     detail = {
         "reference": grille.reference if cote_banque & cote_sage else ZERO,
         "montant": points_montant(total_ops, -total_ops, grille),

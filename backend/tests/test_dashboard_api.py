@@ -262,14 +262,16 @@ def test_the_tasks_count_strong_and_weak_proposals(client, comptable, db):
     compte = account(db)
     operation(db, compte, jour=date(2026, 9, 24))
     ecriture(db, compte, jour=date(2026, 9, 24))
-    # Montant avec centimes (60 points, 28/10/2026) : faible mais proposée
-    operation(db, compte, montant="700.50", jour=date(2026, 9, 10), libelle="VIR XYZ")
+    # Chèque avec centimes (60 points, 28/10/2026) : faible mais proposée
+    operation(
+        db, compte, montant="700.50", jour=date(2026, 9, 10), libelle="ENCAISSEMENT CHEQUE XYZ"
+    )
     ecriture(
         db,
         compte,
         montant="-700.50",
         jour=date(2026, 9, 14),
-        libelle="VIR divers",
+        libelle="EAR1° divers",
         numero_piece="Z",
     )
     assert run(client, comptable, db).status_code == 200

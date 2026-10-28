@@ -71,6 +71,16 @@ RECONCILIATION_RULES = [
     ("DATE", "Date dans la tolérance (jours), dégressif", "date", "30", "3", True),
     ("LIBELLE", "Libellé similaire", "libelle", "20", None, True),
     ("TIERS", "Tiers retrouvé dans le libellé bancaire", "tiers", "5", None, False),
+    # Espèces, virement et autre (28/10/2026) : sans points de référence, ce bonus s'ajoute au
+    # montant, au montant rond, à la date et au libellé
+    (
+        "BONUS_SANS_REFERENCE",
+        "Espèces, virement, autre : points ajoutés à chaque critère (sans référence)",
+        "bonus_sans_reference",
+        "10",
+        None,
+        True,
+    ),
     ("FENETRE", "Fenêtre de comparaison des dates (jours)", "fenetre", "0", "10", True),
     # Recherche élargie (20/10/2026) : même n° et même montant, jusqu'à 365 jours d'écart
     (
