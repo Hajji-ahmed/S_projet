@@ -1,4 +1,14 @@
-import { ArrowRight, Bell, ChevronRight, FileText, RefreshCw, type LucideIcon } from "lucide-react";
+import {
+  ArrowRight,
+  Bell,
+  CircleAlert,
+  CircleCheck,
+  FileText,
+  Info,
+  RefreshCw,
+  TriangleAlert,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
@@ -14,6 +24,7 @@ export function RapprochementCard({ data }: { data: Dashboard }) {
       icon={RefreshCw}
       pastille="bg-simtis-success-bg text-simtis-success-fg"
       lien={{ label: "Voir le détail", href: "/rapprochement" }}
+      centre
     >
       <Anneau
         pourcent={pourcentage(data.rapprochees, data.total_operations)}
@@ -37,6 +48,7 @@ export function EcrituresCard({ data }: { data: Dashboard }) {
       icon={FileText}
       pastille="bg-simtis-violet-bg text-simtis-violet-fg"
       lien={{ label: "Voir les écritures", href: "/ecritures" }}
+      centre
     >
       <Anneau
         pourcent={pourcentage(data.ecritures_exportees, totalEcritures)}
@@ -58,6 +70,7 @@ export function Petite({
   lien,
   badge,
   className,
+  centre = false,
   children,
 }: {
   titre: string;
@@ -66,6 +79,8 @@ export function Petite({
   lien?: { label: string; href: string };
   badge?: ReactNode;
   className?: string;
+  /** Contenu centré en hauteur (anneaux, 27/10/2026). */
+  centre?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -84,7 +99,7 @@ export function Petite({
         </h2>
         {badge}
       </header>
-      <div className="flex-1">{children}</div>
+      <div className={cn("flex-1", centre && "flex flex-col justify-center")}>{children}</div>
       {lien && (
         <Link
           href={lien.href}
@@ -112,12 +127,12 @@ function Anneau({
   couleur: string;
   valeurs: [number, string, string][];
 }) {
-  const taille = 76;
-  const trait = 9;
+  const taille = 104;
+  const trait = 11;
   const rayon = (taille - trait) / 2;
   const circonference = 2 * Math.PI * rayon;
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-5">
       <div
         className="relative shrink-0"
         style={{ width: taille, height: taille }}
@@ -150,20 +165,19 @@ function Anneau({
             className={couleur}
           />
         </svg>
-        <span className="absolute inset-0 grid place-items-center text-base font-bold text-simtis-text tabular-nums">
+        <span className="absolute inset-0 grid place-items-center text-xl font-bold tracking-tight text-simtis-text tabular-nums">
           {pourcent}%
         </span>
       </div>
-      <ul className="min-w-0 flex-1 space-y-1 text-[13px]">
+      <ul className="min-w-0 flex-1 space-y-2 text-[13px]">
         {valeurs.map(([valeur, libelle, puce]) => (
           <li key={libelle} className="flex items-center gap-2">
-            <span className={cn("h-2 w-2 shrink-0 rounded-full", puce)} aria-hidden />
-            <span className="font-semibold text-simtis-text tabular-nums">{valeur}</span>
+            <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", puce)} aria-hidden />
             <span className="truncate text-simtis-muted">{libelle}</span>
+            <span className="ml-auto font-semibold text-simtis-text tabular-nums">{valeur}</span>
           </li>
         ))}
       </ul>
-      <ChevronRight className="h-4 w-4 shrink-0 text-simtis-muted" aria-hidden />
     </div>
   );
 }
@@ -173,6 +187,25 @@ export const PUCES: Record<Alerte["niveau"], string> = {
   warning: "bg-simtis-warning",
   info: "bg-simtis-info",
 };
+
+// Alertes du dashboard (27/10/2026) : une ligne colorée par niveau, avec son icône
+const STYLES_ALERTE: Record<Alerte["niveau"], { fond: string; icone: LucideIcon }> = {
+  danger: { fond: "bg-simtis-danger-bg text-simtis-danger-fg", icone: TriangleAlert },
+  warning: { fond: "bg-simtis-warning-bg text-simtis-warning-fg", icone: CircleAlert },
+  info: { fond: "bg-simtis-info-bg text-simtis-info-fg", icone: Info },
+};
+
+/** « 797 opérations à rapprocher » → le nombre en gras, le reste en texte. */
+function MessageAlerte({ message }: { message: string }) {
+  const nombre = /^([\d\s\u202f.,]+)(\s.*)$/.exec(message);
+  if (!nombre) return <>{message}</>;
+  return (
+    <>
+      <strong className="font-semibold tabular-nums">{nombre[1].trim()}</strong>
+      {nombre[2]}
+    </>
+  );
+}
 
 export function Alertes({ alertes }: { alertes: Alerte[] }) {
   return (
@@ -191,25 +224,38 @@ export function Alertes({ alertes }: { alertes: Alerte[] }) {
       {/* La cloche de l'en-tête compte le mois en cours : ce chiffre peut donc différer */}
       <p className="mb-2 text-xs text-simtis-muted">Période et banque choisies</p>
       {alertes.length === 0 ? (
-        <p className="text-sm text-simtis-muted">Aucune alerte sur cette période.</p>
+        <p className="flex items-center gap-2 rounded-[10px] bg-simtis-success-bg px-3 py-2.5 text-sm text-simtis-success-fg">
+          <CircleCheck className="h-4 w-4 shrink-0" aria-hidden />
+          Aucune alerte sur cette période.
+        </p>
       ) : (
-        <ul className="space-y-1.5 text-[13px]">
-          {alertes.map((alerte) => (
-            <li key={alerte.message}>
-              <Link
-                href={alerte.lien}
-                className="flex items-center gap-2 rounded-md text-simtis-text hover:text-simtis-primary"
-              >
-                <span
-                  className={cn("h-2 w-2 shrink-0 rounded-full", PUCES[alerte.niveau])}
-                  aria-hidden
-                />
-                <span className="min-w-0 flex-1 truncate" title={alerte.message}>
-                  {alerte.message}
-                </span>
-              </Link>
-            </li>
-          ))}
+        <ul className="space-y-2 text-[13px]">
+          {alertes.map((alerte) => {
+            const { fond, icone: Icone } = STYLES_ALERTE[alerte.niveau];
+            return (
+              <li key={alerte.message}>
+                <Link
+                  href={alerte.lien}
+                  className={cn(
+                    "group flex items-center gap-3 rounded-[10px] px-3 py-2.5 transition-shadow duration-150 hover:shadow-simtis",
+                    fond,
+                  )}
+                >
+                  <Icone className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate text-simtis-text" title={alerte.message}>
+                    <MessageAlerte message={alerte.message} />
+                  </span>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold">
+                    Traiter
+                    <ArrowRight
+                      className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
+                      aria-hidden
+                    />
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </Petite>

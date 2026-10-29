@@ -11,7 +11,7 @@ import {
 
 import { Card } from "@/components/ui/Card";
 import { formatDate } from "@/lib/balances";
-import { jourCourt } from "@/lib/dashboard";
+import { bornesAxe, jourCourt } from "@/lib/dashboard";
 import { formatAmount, formatCompact } from "@/lib/format";
 import type { Dashboard } from "@/types/dashboard";
 
@@ -34,6 +34,8 @@ export function EvolutionCard({ data }: { data: Dashboard }) {
     texte: point.solde,
   }));
   const connus = points.some((point) => point.solde !== null);
+  // Axe calé sur la série (27/10/2026) : depuis 0, un solde de 70 M donnait une courbe plate
+  const bornes = bornesAxe(points.map((point) => point.solde));
   return (
     <Card title="Évolution des soldes bancaires" icon={TrendingUp}>
       {!connus ? (
@@ -43,6 +45,12 @@ export function EvolutionCard({ data }: { data: Dashboard }) {
           <div className="h-[250px]">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="degrade-solde" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={SOLDE} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={SOLDE} stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke={GRILLE} vertical={false} />
                 <XAxis
                   dataKey="jour"
@@ -57,6 +65,8 @@ export function EvolutionCard({ data }: { data: Dashboard }) {
                   axisLine={false}
                   width={72}
                   tickFormatter={axe}
+                  domain={bornes ?? ["auto", "auto"]}
+                  allowDataOverflow={false}
                 />
                 <Tooltip
                   cursor={{ stroke: GRIS, strokeDasharray: "3 3" }}
@@ -73,9 +83,13 @@ export function EvolutionCard({ data }: { data: Dashboard }) {
                   dataKey="solde"
                   stroke={SOLDE}
                   strokeWidth={2.5}
-                  fill={SOLDE}
-                  fillOpacity={0.14}
-                  dot={{ r: 3, fill: SOLDE, stroke: "var(--simtis-card)", strokeWidth: 1.5 }}
+                  fill="url(#degrade-solde)"
+                  baseValue={bornes ? bornes[0] : 0}
+                  dot={
+                    points.length <= 45
+                      ? { r: 2.5, fill: SOLDE, stroke: "var(--simtis-card)", strokeWidth: 1.5 }
+                      : false
+                  }
                   activeDot={{ r: 5, fill: SOLDE, stroke: "var(--simtis-card)", strokeWidth: 2 }}
                   connectNulls={false}
                   isAnimationActive={false}

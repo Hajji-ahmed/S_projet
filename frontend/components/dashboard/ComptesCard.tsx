@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ChevronRight, Landmark } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, Landmark, WalletCards } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -9,15 +9,26 @@ import { formatAmount } from "@/lib/format";
 import { unite } from "@/lib/reconciliation";
 import type { CompteDashboard, Dashboard } from "@/types/dashboard";
 
+// Comptes affichés sur la carte (27/10/2026) ; les autres via « Voir tous »
+const COMPTES_AFFICHES = 5;
+
 /** Comptes actifs de la société : solde à la fin de la période, dans la devise du compte. */
 export function ComptesCard({ data }: { data: Dashboard }) {
+  const nombre = data.comptes.length;
   return (
-    <Card title="Comptes bancaires" action={{ label: "Voir tous", href: "/comptes" }}>
+    <Card
+      title="Comptes bancaires"
+      icon={WalletCards}
+      action={{
+        label: nombre > COMPTES_AFFICHES ? `Voir tous (${nombre})` : "Voir tous",
+        href: "/comptes",
+      }}
+    >
       {data.comptes.length === 0 ? (
         <p className="text-sm text-simtis-muted">Aucun compte actif pour cette société.</p>
       ) : (
         <ul className="-mx-2 divide-y divide-simtis-border">
-          {data.comptes.map((compte) => (
+          {data.comptes.slice(0, COMPTES_AFFICHES).map((compte) => (
             <Compte key={compte.id} compte={compte} />
           ))}
         </ul>
@@ -33,29 +44,34 @@ function Compte({ compte }: { compte: CompteDashboard }) {
     <li>
       <Link
         href={`/banques/${compte.bank_id}`}
-        className="group flex items-center gap-3 rounded-[12px] px-2 py-3 transition-colors duration-150 hover:bg-simtis-surface"
+        className="group flex items-center gap-3 rounded-[12px] px-2 py-2 transition-colors duration-150 hover:bg-simtis-surface"
       >
-        <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full border border-simtis-border bg-simtis-card">
+        <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full border border-simtis-border bg-simtis-card">
           {compte.bank_logo ? (
             <Image
               src={compte.bank_logo}
               alt=""
-              width={28}
-              height={28}
-              className="h-7 w-7 object-contain"
+              width={24}
+              height={24}
+              className="h-6 w-6 object-contain"
             />
           ) : (
             <Landmark className="h-5 w-5 text-simtis-muted" aria-hidden />
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold text-simtis-text">
-            {compte.bank_nom}
-            {compte.devise !== "MAD" && (
-              <span className="ml-1.5 rounded-full bg-simtis-info-bg px-1.5 py-0.5 text-[11px] font-medium text-simtis-info-fg">
-                {compte.devise}
-              </span>
-            )}
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-simtis-text">
+            <span className="truncate">{compte.bank_nom}</span>
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium",
+                compte.devise === "MAD"
+                  ? "bg-simtis-surface text-simtis-muted"
+                  : "bg-simtis-info-bg text-simtis-info-fg",
+              )}
+            >
+              {compte.devise}
+            </span>
           </span>
           <span className="block truncate text-xs text-simtis-muted tabular-nums">
             {compte.numero}

@@ -56,3 +56,31 @@ export function libellePeriode(from: string, to: string): string {
   if (!from || !to) return "Choisir une période";
   return `${jourCourt(from)} ${from.slice(0, 4)} - ${jourCourt(to)} ${to.slice(0, 4)}`;
 }
+
+/**
+ * Heure relative d'une action du journal (27/10/2026) : « à l'instant », « il y a 5 min »,
+ * « il y a 3 h », « hier », sinon « il y a 4 j ». `maintenant` en millisecondes (tests).
+ */
+export function heureRelative(iso: string, maintenant: number = Date.now()): string {
+  const secondes = Math.max(0, Math.round((maintenant - Date.parse(iso)) / 1000));
+  if (secondes < 60) return "à l'instant";
+  const minutes = Math.floor(secondes / 60);
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const heures = Math.floor(minutes / 60);
+  if (heures < 24) return `il y a ${heures} h`;
+  const jours = Math.floor(heures / 24);
+  return jours === 1 ? "hier" : `il y a ${jours} j`;
+}
+
+/**
+ * Bornes de l'axe des montants d'une courbe (27/10/2026) : du minimum au maximum de la série,
+ * avec 10 % de marge, au lieu de partir de 0 (la courbe d'un solde de 70 M paraissait plate).
+ */
+export function bornesAxe(valeurs: (number | null)[]): [number, number] | null {
+  const connues = valeurs.filter((valeur): valeur is number => valeur !== null);
+  if (connues.length === 0) return null;
+  const mini = Math.min(...connues);
+  const maxi = Math.max(...connues);
+  const marge = (maxi - mini) * 0.1 || Math.abs(maxi) * 0.05 || 1;
+  return [Math.floor(mini - marge), Math.ceil(maxi + marge)];
+}

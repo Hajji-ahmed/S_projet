@@ -1,13 +1,25 @@
 "use client";
 
-import { Activity, Building2, ListChecks } from "lucide-react";
+import {
+  Activity,
+  ArrowLeftRight,
+  Building2,
+  FileUp,
+  KeyRound,
+  ListChecks,
+  Receipt,
+  Settings,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { Petite } from "@/components/dashboard/SyntheseCards";
+import { cn } from "@/lib/cn";
+import { heureRelative, pourcentage } from "@/lib/dashboard";
 import { formatDateTime } from "@/lib/statements";
-import { pourcentage } from "@/lib/dashboard";
 import { getHistorique } from "@/services/historique";
 import type { Dashboard } from "@/types/dashboard";
 import type { LigneHistorique } from "@/types/historique";
@@ -29,22 +41,34 @@ export function TachesCard({ data }: { data: Dashboard }) {
       icon={ListChecks}
       pastille="bg-simtis-light text-simtis-primary"
     >
-      <ul className="divide-y divide-simtis-border text-sm">
+      {/* Une tuile par tâche (27/10/2026) : orange s'il reste du travail, grisée à 0 */}
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {lignes.map(([libelle, nombre]) => (
           <li key={libelle}>
             <Link
               href="/rapprochement"
-              className="flex items-center justify-between gap-3 py-2 text-simtis-text hover:text-simtis-primary"
+              className={cn(
+                "flex h-full flex-col justify-between gap-2 rounded-[12px] border p-3 transition-shadow duration-150 hover:shadow-simtis",
+                nombre > 0
+                  ? "border-transparent bg-simtis-warning-bg"
+                  : "border-simtis-border bg-simtis-surface",
+              )}
             >
-              <span>{libelle}</span>
               <span
-                className={
-                  nombre > 0
-                    ? "rounded-full bg-simtis-warning-bg px-2 py-0.5 text-xs font-semibold text-simtis-warning-fg tabular-nums"
-                    : "text-xs text-simtis-muted tabular-nums"
-                }
+                className={cn(
+                  "text-2xl leading-none font-bold tracking-tight tabular-nums",
+                  nombre > 0 ? "text-simtis-warning-fg" : "text-simtis-muted",
+                )}
               >
                 {nombre}
+              </span>
+              <span
+                className={cn(
+                  "text-xs leading-snug",
+                  nombre > 0 ? "text-simtis-text" : "text-simtis-muted",
+                )}
+              >
+                {libelle}
               </span>
             </Link>
           </li>
@@ -100,7 +124,21 @@ export function BanquesCard({ data, className }: { data: Dashboard; className?: 
   );
 }
 
-/** Les 10 dernières actions du journal d'audit (permission « audit.view »). */
+// Icône d'une action du journal, d'après son code (27/10/2026) ; Activity par défaut
+const ICONES_ACTION: [RegExp, LucideIcon][] = [
+  [/connexion|deconnexion|mot_de_passe/, KeyRound],
+  [/suppression/, Trash2],
+  [/import|export/, FileUp],
+  [/frais|comptabilisation/, Receipt],
+  [/rapprochement|rejet|validation|reprise/, ArrowLeftRight],
+  [/parametre|permission|role|utilisateur/, Settings],
+];
+
+function iconeAction(action: string): LucideIcon {
+  return ICONES_ACTION.find(([motif]) => motif.test(action))?.[1] ?? Activity;
+}
+
+/** Les 5 dernières actions du journal d'audit (permission « audit.view »). */
 export function ActiviteCard() {
   const [lignes, setLignes] = useState<LigneHistorique[] | null>(null);
   const [erreur, setErreur] = useState(false);
@@ -109,7 +147,7 @@ export function ActiviteCard() {
     let cancelled = false;
     getHistorique({ page: 1, user_id: "", action: "", entite: "", from: "", to: "" }).then(
       (page) => {
-        if (!cancelled) setLignes(page.items.slice(0, 10));
+        if (!cancelled) setLignes(page.items.slice(0, 5));
       },
       () => {
         if (!cancelled) setErreur(true);
@@ -125,7 +163,7 @@ export function ActiviteCard() {
       titre="Activité récente"
       icon={Activity}
       pastille="bg-simtis-violet-bg text-simtis-violet-fg"
-      lien={{ label: "Tout l'historique", href: "/historique" }}
+      lien={{ label: "Voir l'historique", href: "/historique" }}
     >
       {erreur && <p className="text-sm text-simtis-muted">Historique indisponible.</p>}
       {!erreur && lignes === null && <p className="text-sm text-simtis-muted">Chargement…</p>}
@@ -133,16 +171,35 @@ export function ActiviteCard() {
         <p className="text-sm text-simtis-muted">Aucune action enregistrée.</p>
       )}
       {lignes !== null && lignes.length > 0 && (
-        <ul className="divide-y divide-simtis-border text-[13px]">
-          {lignes.map((ligne) => (
-            <li key={ligne.id} className="flex flex-wrap items-baseline gap-x-2 py-1.5">
-              <span className="font-medium text-simtis-text">{ligne.action_libelle}</span>
-              <span className="text-simtis-muted">
-                {ligne.utilisateur ?? "Système"} · {formatDateTime(ligne.created_at)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <ol className="relative space-y-3 text-[13px]">
+          {/* Frise : un trait vertical relie les actions */}
+          <span className="absolute top-2 bottom-2 left-[13px] w-px bg-simtis-border" aria-hidden />
+          {lignes.map((ligne) => {
+            const Icone = iconeAction(ligne.action);
+            return (
+              <li key={ligne.id} className="relative flex items-start gap-3">
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-simtis-border bg-simtis-card text-simtis-primary">
+                  <Icone className="h-3.5 w-3.5" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1 pt-1">
+                  <span className="block truncate font-medium text-simtis-text">
+                    {ligne.action_libelle}
+                  </span>
+                  <span className="block truncate text-xs text-simtis-muted">
+                    {ligne.utilisateur ?? "Système"}
+                  </span>
+                </span>
+                <time
+                  dateTime={ligne.created_at}
+                  title={formatDateTime(ligne.created_at)}
+                  className="shrink-0 pt-1 text-xs whitespace-nowrap text-simtis-muted"
+                >
+                  {heureRelative(ligne.created_at)}
+                </time>
+              </li>
+            );
+          })}
+        </ol>
       )}
     </Petite>
   );

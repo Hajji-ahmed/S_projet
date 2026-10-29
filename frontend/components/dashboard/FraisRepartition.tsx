@@ -69,7 +69,7 @@ export function FraisRepartition({ data }: { data: Dashboard }) {
               </div>
             </div>
           </div>
-          <ul className="w-full min-w-0 space-y-2.5 text-sm">
+          <ul className="w-full min-w-0 space-y-2 text-sm">
             {secteurs.map((item) => (
               <li key={item.code} className="flex items-center gap-2.5">
                 <span
@@ -80,8 +80,13 @@ export function FraisRepartition({ data }: { data: Dashboard }) {
                 <span className="min-w-0 flex-1 truncate text-simtis-text" title={item.libelle}>
                   {item.libelle}
                 </span>
-                <span className="w-16 shrink-0 text-right font-semibold whitespace-nowrap tabular-nums">
-                  {partFrais(item.total, data.frais_total)} %
+                <span className="shrink-0 text-right whitespace-nowrap">
+                  <span className="block text-[13px] font-semibold text-simtis-text tabular-nums">
+                    {formatAmount(item.total, "DH")}
+                  </span>
+                  <span className="block text-xs text-simtis-muted tabular-nums">
+                    {partFrais(item.total, data.frais_total)} %
+                  </span>
                 </span>
               </li>
             ))}

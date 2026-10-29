@@ -104,12 +104,12 @@ function Tuile({
   children: ReactNode;
 }) {
   return (
-    <section className="@container flex gap-4 rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis transition-shadow duration-200 hover:shadow-simtis-hover">
+    <section className="@container flex h-full gap-4 rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis transition-shadow duration-200 hover:shadow-simtis-hover">
       <span className={cn("grid h-12 w-12 shrink-0 place-items-center rounded-[14px]", pastille)}>
         <Icon className="h-6 w-6" strokeWidth={1.75} aria-hidden />
       </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-2">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-8 items-start justify-between gap-2">
           <p className="pt-0.5 text-sm text-simtis-muted">{titre}</p>
           {courbe}
         </div>
@@ -117,7 +117,7 @@ function Tuile({
         <p className="mt-0.5 text-[length:clamp(18px,8cqw,26px)] leading-tight font-bold tracking-tight whitespace-nowrap text-simtis-text tabular-nums">
           {valeur}
         </p>
-        <div className="mt-2">{children}</div>
+        <div className="mt-auto pt-2">{children}</div>
       </div>
     </section>
   );
@@ -129,17 +129,19 @@ function Variation({ kpi, inverse = false }: { kpi: Kpi; inverse?: boolean }) {
   const hausse = tendance(kpi.variation) === "up";
   const bon = inverse ? !hausse : hausse;
   return (
-    <p className="flex flex-wrap items-center gap-x-2 text-xs">
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <span
         className={cn(
-          "inline-flex items-center gap-0.5 text-[13px] font-semibold tabular-nums",
-          bon ? "text-simtis-success-fg" : "text-simtis-danger-fg",
+          "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums",
+          bon
+            ? "bg-simtis-success-bg text-simtis-success-fg"
+            : "bg-simtis-danger-bg text-simtis-danger-fg",
         )}
       >
         {hausse ? (
-          <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+          <ArrowUp className="h-3 w-3" aria-hidden />
         ) : (
-          <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+          <ArrowDown className="h-3 w-3" aria-hidden />
         )}
         {texte}
       </span>
