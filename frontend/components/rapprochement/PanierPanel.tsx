@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Layers, Link2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Layers, Link2, Maximize2, Minimize2, X } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/Button";
@@ -44,6 +44,8 @@ export function PanierPanel({
   onRetirerEcriture,
   onVider,
   onDone,
+  pleinEcran,
+  onPleinEcran,
 }: {
   operations: Operation[];
   ecritures: Ecriture[];
@@ -52,6 +54,9 @@ export function PanierPanel({
   onRetirerEcriture: (ecriture: Ecriture) => void;
   onVider: () => void;
   onDone: (message: string) => void;
+  /** Plein écran du rapprochement (29/10/2026) : bouton au bout du bandeau. */
+  pleinEcran?: boolean;
+  onPleinEcran?: () => void;
 }) {
   const { toast } = useToast();
   const [commentaire, setCommentaire] = useState("");
@@ -160,6 +165,20 @@ export function PanierPanel({
                 ? "Rapprochement..."
                 : `Rapprocher (${operations.length} → ${ecritures.length})`}
             </Button>
+          )}
+          {onPleinEcran && (
+            <Button
+              variant="secondary"
+              icon={pleinEcran ? Minimize2 : Maximize2}
+              onClick={onPleinEcran}
+              className="h-8 w-8 justify-center px-0"
+              aria-label={pleinEcran ? "Quitter le plein écran" : "Plein écran"}
+              title={
+                pleinEcran
+                  ? "Quitter le plein écran (Échap)"
+                  : "Plein écran : masque le menu, l'en-tête et les compteurs"
+              }
+            />
           )}
         </div>
       </div>

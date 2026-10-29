@@ -6,8 +6,6 @@ import {
   GitCompareArrows,
   History,
   ListChecks,
-  Maximize2,
-  Minimize2,
   Play,
   Search,
 } from "lucide-react";
@@ -350,18 +348,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
           description="Rapprochement des transactions bancaires et des écritures comptables"
           actions={
             <div className="flex flex-wrap gap-2">
-              <Button
-                variant="secondary"
-                icon={pleinEcran ? Minimize2 : Maximize2}
-                onClick={() => setPleinEcran(!pleinEcran)}
-                title={
-                  pleinEcran
-                    ? "Revenir à l'affichage normal (Échap)"
-                    : "Masquer le menu, l'en-tête et les compteurs pour voir plus de lignes"
-                }
-              >
-                {pleinEcran ? "Quitter le plein écran" : "Plein écran"}
-              </Button>
               {canValidate && (
                 <>
                   <Button
@@ -519,17 +505,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
               </button>
             ))}
           </div>
-          {pleinEcran && (
-            <Button
-              variant="ghost"
-              icon={Minimize2}
-              onClick={() => setPleinEcran(false)}
-              className="mb-1 h-8 px-3"
-              title="Revenir à l'affichage normal (Échap)"
-            >
-              Quitter le plein écran
-            </Button>
-          )}
         </div>
       )}
 
@@ -633,6 +608,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
                 viderPanier();
                 reload(message);
               }}
+              pleinEcran={pleinEcran}
+              onPleinEcran={() => setPleinEcran(!pleinEcran)}
             />
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-3 xl:grid-cols-2">
