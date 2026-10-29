@@ -107,6 +107,13 @@ def _snapshot(account: BankAccount, fields: tuple[str, ...]) -> dict[str, Any]:
 def _check_numero_free(db: Session, numero: str, account_id: int | None = None) -> None:
     existing = account_repository.get_by_numero(db, numero)
     if existing is not None and existing.id != account_id:
+        if not existing.actif:
+            # Un compte désactivé garde son numéro (29/10/2026) : le dire, et comment le retrouver
+            raise ConflictError(
+                f"Le numéro {numero} appartient au compte désactivé {existing.bank.code} "
+                f"{existing.devise} « {existing.libelle} ». Cochez « Afficher les comptes "
+                "désactivés » dans l'écran Comptes pour le réactiver."
+            )
         raise ConflictError(f"Le numéro {numero} est déjà utilisé par un autre compte.")
 
 

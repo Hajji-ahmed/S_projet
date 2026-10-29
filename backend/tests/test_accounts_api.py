@@ -210,6 +210,18 @@ def test_duplicate_numero_gives_409_even_with_other_spacing(client, tresorerie, 
     assert "déjà utilisé" in response.json()["detail"]
 
 
+def test_numero_of_a_deactivated_account_says_how_to_get_it_back(client, tresorerie, db):
+    """29/10/2026 : un compte désactivé garde son numéro ; le message dit comment le réactiver."""
+    add(db, "SIMTIS", "BP", numero="230780000123456789012345", libelle="Ancien BP", actif=False)
+
+    response = client.post(ACCOUNTS, json=payload(db), headers=tresorerie)
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "compte désactivé BP MAD « Ancien BP »" in detail
+    assert "Afficher les comptes désactivés" in detail
+
+
 def test_inactive_bank_gives_409(client, tresorerie, db):
     bank(db, "CIH").actif = False
     db.flush()
