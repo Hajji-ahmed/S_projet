@@ -40,6 +40,8 @@ import { listEntries } from "@/services/accounting";
 import type { Ecriture, EcrituresPage } from "@/types/accounting";
 
 type EntriesPaneProps = {
+  /** Plein écran (29/10/2026) : le volet remplit la fenêtre sous le bandeau. */
+  pleinEcran?: boolean;
   companyId: number;
   filter: ReconciliationFilter;
   reloadKey: number;
@@ -66,6 +68,7 @@ export function EntriesPane({
   coches,
   onSelect,
   onLoaded,
+  pleinEcran = false,
 }: EntriesPaneProps) {
   const [filtres, setFiltres] = useState<FiltresVolet>(FILTRES_VIDES);
   const [retryKey, setRetryKey] = useState(0);
@@ -261,7 +264,12 @@ export function EntriesPane({
           onEffacer={() => setFiltres(FILTRES_VIDES)}
         />
       }
-      className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
+      className={cn(
+        "xl:flex xl:min-h-[480px] xl:flex-col",
+        pleinEcran
+          ? "xl:h-[calc(100dvh-var(--hauteur-bandeau)-1.75rem)]"
+          : "xl:h-[calc(100dvh-7rem)]",
+      )}
     >
       {periode.ajustee && (
         <p className="mb-2 text-xs text-simtis-warning-fg">

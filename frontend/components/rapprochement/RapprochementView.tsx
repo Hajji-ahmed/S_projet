@@ -9,7 +9,14 @@ import {
   Play,
   Search,
 } from "lucide-react";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+} from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
@@ -261,6 +268,33 @@ function Rapprochement({ companyId }: { companyId: number }) {
     return () => window.removeEventListener("keydown", quitter);
   }, [pleinEcran]);
   useEffect(() => () => setPleinEcran(false), []);
+
+  // Plein écran (29/10/2026) : la page descend jusqu'au bandeau de correspondance, et les deux
+  // volets prennent la hauteur restante de la fenêtre (mesurée sous le bandeau, qui peut s'ouvrir)
+  const zoneRef = useRef<HTMLDivElement>(null);
+  const bandeauRef = useRef<HTMLDivElement>(null);
+  const [hauteurBandeau, setHauteurBandeau] = useState(0);
+  useEffect(() => {
+    const bandeau = bandeauRef.current;
+    if (!bandeau || typeof ResizeObserver === "undefined") return;
+    const observateur = new ResizeObserver(() => setHauteurBandeau(bandeau.offsetHeight));
+    observateur.observe(bandeau);
+    return () => observateur.disconnect();
+  }, [tab, periodeLue]);
+  useEffect(() => {
+    if (!pleinEcran) return;
+    // Après le retrait du menu et de l'en-tête : la mise en page a changé
+    const image = requestAnimationFrame(() => {
+      const zone = zoneRef.current;
+      if (!zone) return;
+      const doux = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      window.scrollTo({
+        top: zone.getBoundingClientRect().top + window.scrollY,
+        behavior: doux ? "smooth" : "auto",
+      });
+    });
+    return () => cancelAnimationFrame(image);
+  }, [pleinEcran]);
 
   // Détail d'une ligne rapprochée ou d'une proposition ouverte depuis l'onglet Propositions : le
   // panneau Correspondance dans une fenêtre (28/10/2026), les lignes libres se cochent
@@ -589,9 +623,14 @@ function Rapprochement({ companyId }: { companyId: number }) {
       )}
 
       {periodeLue && !periodError && tab === "rapprochement" && (
-        <div className="space-y-3">
+        <div
+          ref={zoneRef}
+          className="space-y-3"
+          style={{ "--hauteur-bandeau": `${hauteurBandeau}px` } as CSSProperties}
+        >
           {/* Bandeau de correspondance (28/10/2026) : montants cochés et écart, visible au défilement */}
           <div
+            ref={bandeauRef}
             className={cn(
               "sticky z-10",
               pleinEcran ? "top-0" : "top-[var(--simtis-header-height)]",
@@ -615,6 +654,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
           <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-3 xl:grid-cols-2">
             <TransactionsPane
               key={`tx-${filterKey}`}
+              pleinEcran={pleinEcran}
               companyId={companyId}
               filter={filter}
               reloadKey={reloadKey}
@@ -630,6 +670,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
             />
             <EntriesPane
               key={`ec-${filterKey}`}
+              pleinEcran={pleinEcran}
               companyId={companyId}
               filter={filter}
               reloadKey={reloadKey}

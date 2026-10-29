@@ -38,6 +38,8 @@ import { listTransactions } from "@/services/reconciliation";
 import type { Operation, OperationsPage } from "@/types/reconciliation";
 
 type TransactionsPaneProps = {
+  /** Plein écran (29/10/2026) : le volet remplit la fenêtre sous le bandeau. */
+  pleinEcran?: boolean;
   companyId: number;
   filter: ReconciliationFilter;
   reloadKey: number;
@@ -67,6 +69,7 @@ export function TransactionsPane({
   onLoaded,
   statut,
   onStatutChange,
+  pleinEcran = false,
 }: TransactionsPaneProps) {
   // Dates, libellé, type et sens propres au volet ; le statut vient de la vue (compteurs)
   const [autres, setAutres] = useState<FiltresVolet>(FILTRES_VIDES);
@@ -245,7 +248,12 @@ export function TransactionsPane({
           }}
         />
       }
-      className="xl:flex xl:h-[calc(100dvh-7rem)] xl:min-h-[480px] xl:flex-col"
+      className={cn(
+        "xl:flex xl:min-h-[480px] xl:flex-col",
+        pleinEcran
+          ? "xl:h-[calc(100dvh-var(--hauteur-bandeau)-1.75rem)]"
+          : "xl:h-[calc(100dvh-7rem)]",
+      )}
     >
       {periode.ajustee && (
         <p className="mb-2 text-xs text-simtis-warning-fg">
