@@ -427,7 +427,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
             ))}
           </div>
 
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
             <div className="w-full max-w-[170px]">
               <Field label="Du" htmlFor="rapprochement-du">
                 <DateInput
@@ -451,12 +451,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
                 {periodError}
               </p>
             )}
-          </div>
-
-          {periodeLue && !periodError && !pleinEcran && (
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-simtis-border pt-4">
+            {/* Compteurs sur la ligne des dates (29/10/2026), visibles aussi en plein écran */}
+            {periodeLue && !periodError && (
               <div
-                className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5"
+                className="ml-auto flex flex-wrap items-end gap-1 text-sm"
                 role="group"
                 aria-label="Résumé du rapprochement : un clic filtre les transactions"
               >
@@ -502,8 +500,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </Card>
 
