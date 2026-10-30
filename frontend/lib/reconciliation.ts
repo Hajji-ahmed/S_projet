@@ -258,6 +258,23 @@ export function filterProposals(
     });
 }
 
+/**
+ * Nombre affiché sur chaque filtre de l'onglet Propositions (30/10/2026) : celui des propositions que
+ * le filtre liste, plus les ambiguës, comptées par le serveur. Avant, « Éloignées » n'avait pas de cas
+ * et montrait le nombre d'écritures ambiguës, alors que son clic ne listait aucune proposition.
+ */
+export function compteFiltre(
+  items: readonly Correspondance[],
+  filtre: ProposalsFilter,
+  ambigues: number,
+  ecrituresAmbigues: number,
+): number {
+  if (filtre === "ambigues") return ambigues;
+  if (filtre === "ecritures_ambigues") return ecrituresAmbigues;
+  const propositions = filterProposals(items, filtre).length;
+  return filtre === "toutes" ? propositions + ambigues + ecrituresAmbigues : propositions;
+}
+
 /** Résumé de la sélection : nombre, nombre de faibles et total des opérations (centimes exacts). */
 export function selectionSummary(
   items: readonly Correspondance[],

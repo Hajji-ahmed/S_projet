@@ -24,6 +24,7 @@ import {
   defaultPeriod,
   defaultSelection,
   ecartManuel,
+  compteFiltre,
   filterProposals,
   formatScore,
   rapprochable,
@@ -374,6 +375,18 @@ describe("propositions éloignées (20/10/2026)", () => {
 
     expect([...defaultSelection([eloignee, normale])]).toEqual([2]);
     expect(filterProposals([eloignee, normale], "eloignees").map((item) => item.id)).toEqual([1]);
+  });
+
+  it("compte sur chaque filtre exactement ce que le filtre liste", () => {
+    const normale = proposal(2, "95.00", true);
+    const faible = proposal(3, "60.00", false);
+    // Aucune éloignée mais une écriture ambiguë : « Éloignées » doit valoir 0 (il valait 1)
+    expect(compteFiltre([normale, faible], "eloignees", 4, 1)).toBe(0);
+    expect(compteFiltre([normale, faible], "fortes", 4, 1)).toBe(1);
+    expect(compteFiltre([normale, faible], "a_verifier", 4, 1)).toBe(1);
+    expect(compteFiltre([normale, faible], "ambigues", 4, 1)).toBe(4);
+    expect(compteFiltre([normale, faible], "ecritures_ambigues", 4, 1)).toBe(1);
+    expect(compteFiltre([normale, faible], "toutes", 4, 1)).toBe(7);
   });
 });
 

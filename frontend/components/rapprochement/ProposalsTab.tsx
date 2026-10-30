@@ -22,6 +22,7 @@ import {
   aValider,
   TYPES_OPERATION,
   defaultSelection,
+  compteFiltre,
   filterProposals,
   LOT_MAX,
   formatScore,
@@ -243,7 +244,6 @@ export function ProposalsTab({
   );
   const totalTexte =
     unites.size > 1 ? "plusieurs devises" : formatAmount(summary.total, [...unites][0] ?? "DH");
-  const nbFortes = items.filter((item) => item.forte).length;
   const ambiguous = ambigues.ambigues;
   const seuil = formatScore(pending?.seuil_fort ?? ambigues.seuil_fort);
   const opsMasquees = masqueesOps.source === ambiguous ? masqueesOps.ids : new Set<number>();
@@ -324,17 +324,7 @@ export function ProposalsTab({
               <StatButton
                 key={value}
                 label={label}
-                value={
-                  value === "toutes"
-                    ? items.length + ambigues.total + ecrituresAmbigues.total
-                    : value === "fortes"
-                      ? nbFortes
-                      : value === "a_verifier"
-                        ? items.length - nbFortes
-                        : value === "ambigues"
-                          ? ambigues.total
-                          : ecrituresAmbigues.total
-                }
+                value={compteFiltre(items, value, ambigues.total, ecrituresAmbigues.total)}
                 active={filtre === value}
                 onClick={() => setFiltre(value)}
               />
