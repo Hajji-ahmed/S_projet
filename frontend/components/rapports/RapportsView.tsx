@@ -8,12 +8,14 @@ import {
   Landmark,
   Link2,
   Receipt,
+  Scale,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { BankPicker } from "@/components/banks/BankPicker";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { Button } from "@/components/ui/Button";
 import { DateInput, Field } from "@/components/ui/Field";
@@ -23,9 +25,12 @@ import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { moisEnCours } from "@/lib/dashboard";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
+import { periodeRapprochement } from "@/lib/reconciliation";
 import { saveFile } from "@/lib/statements";
 import { exportLettrage } from "@/services/reconciliation";
-import { exportEtatRapprochement, exportPosition } from "@/services/rapports";
+import { listBanks } from "@/services/banks";
+import { exportEtatRapprochement, exportNonRapproches, exportPosition } from "@/services/rapports";
+import type { Bank } from "@/types/bank";
 
 /** Rapports (P16.4) : exports Excel de la société active. Chaque export est audité. */
 export function RapportsView() {
@@ -39,13 +44,14 @@ export function RapportsView() {
     <div className="space-y-6">
       <PageHeader
         title="Rapports"
-        description={`Exports Excel${company ? ` de ${company.nom}` : ""} : position, rapprochement, lettrage`}
+        description={`Exports Excel${company ? ` de ${company.nom}` : ""} : position, rapprochement, lettrage, lignes non rapprochées`}
       />
       {company && (
         <div className="grid gap-5 lg:grid-cols-2">
           <PositionRapport companyId={company.id} actif={peutPosition} />
           <EtatRapport companyId={company.id} actif={peutRapprochement} />
           <LettrageRapport companyId={company.id} actif={peutRapprochement} />
+          <NonRapprochesRapport companyId={company.id} actif={peutRapprochement} />
           <Rapport
             titre="Écritures de frais pour Sage"
             icon={Receipt}
@@ -215,6 +221,64 @@ function EtatRapport({ companyId, actif }: { companyId: number; actif: boolean }
               telecharger(
                 () => exportEtatRapprochement(companyId, periode.from, periode.to),
                 `etat-rapprochement-${periode.from}-${periode.to}.xlsx`,
+              )
+            }
+          >
+            {envoi ? "Préparation..." : "Télécharger"}
+          </Button>
+        </div>
+      ) : (
+        <SansDroit />
+      )}
+    </Rapport>
+  );
+}
+
+/** Lignes non rapprochées (30/10/2026) : relevé et écritures Sage côte à côte, par compte. */
+function NonRapprochesRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
+  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
+  const [banque, setBanque] = useState<number | undefined>(undefined);
+  const [banques, setBanques] = useState<Bank[]>([]);
+  const { envoi, telecharger } = useTelechargement();
+
+  useEffect(() => {
+    let cancelled = false;
+    listBanks(companyId).then(
+      (liste) => {
+        if (!cancelled) setBanques(liste.filter((b) => b.actif));
+      },
+      () => undefined, // sans la liste, seul « Toutes les banques » reste proposé
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId]);
+
+  const code = banques.find((b) => b.id === banque)?.code ?? "toutes";
+  return (
+    <Rapport
+      titre="Lignes non rapprochées"
+      icon={Scale}
+      description="Par compte, côte à côte comme l'écran Rapprochement : opérations du relevé et écritures Sage pas encore rapprochées de la période (en proposition et frais à comptabiliser compris)."
+    >
+      {actif ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <Periode id="rapport-non-rapproches" periode={periode} onChange={setPeriode} />
+          <div className="w-[230px]">
+            <BankPicker
+              id="rapport-non-rapproches-banque"
+              banques={banques}
+              value={banque}
+              onChange={setBanque}
+            />
+          </div>
+          <Button
+            icon={Download}
+            disabled={envoi || !periodeValide(periode)}
+            onClick={() =>
+              telecharger(
+                () => exportNonRapproches(companyId, periode.from, periode.to, banque),
+                `non-rapproches-${code}-${periode.from}-${periode.to}.xlsx`,
               )
             }
           >

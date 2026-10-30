@@ -9,6 +9,8 @@ Aucun chiffre n'est recalculé ici :
 - « État de rapprochement » compte les opérations du relevé par statut sur la période, compte par
   compte (chacun dans sa devise, jamais additionnés entre devises), puis liste les opérations qui
   ne sont pas « Rapprochée ».
+- « Lignes non rapprochées » (30/10/2026) met côte à côte, compte par compte, les opérations du
+  relevé et les écritures Sage pas encore rapprochées de la période, comme l'écran Rapprochement.
 Le lettrage et les écritures de frais pour Sage gardent leurs exports existants. Chaque export
 est audité (`export_rapport`).
 """
@@ -18,7 +20,7 @@ from decimal import Decimal
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from reportlab.lib import colors
@@ -28,7 +30,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
-from app.models import BankAccount
+from app.models import AccountingEntry, BankAccount, BankTransaction
 from app.repositories import account_repository, rapports_repository, reconciliation_repository
 from app.services import audit_service, position_banques_service
 from app.services.account_service import fraction_to_pct
@@ -392,3 +394,184 @@ def etat_rapprochement(
     )
     nom = f"etat-rapprochement-{company.code}-{date_from:%Y%m%d}-{date_to:%Y%m%d}.xlsx"
     return nom.lower(), contenu
+
+
+# --- Lignes non rapprochées (30/10/2026) ----------------------------------------------------------
+
+PROPOSITION = PatternFill("solid", fgColor="FEF3C7")
+TITRE = Font(bold=True, size=13, color="004F54")
+SOUS_TITRE = Font(bold=True, size=12, color="004F54")
+EN_TETE_ECRAN = Font(bold=True, color="004F54")
+TRAIT = Border(bottom=Side(style="thin", color="D9E3E8"))
+COLONNES_RELEVE = (("Date", 10), ("Libellé", 52), ("Réf.", 14), ("Débit", 15), ("Crédit", 15),
+                   ("St.", 18))  # fmt: skip
+COLONNES_SAGE = (("Date", 10), ("Libellé", 52), ("Pce", 18), ("Débit", 15), ("Crédit", 15),
+                 ("St.", 18))  # fmt: skip
+DEBUT_SAGE = len(COLONNES_RELEVE) + 2
+
+
+def statut_affiche(statut: str, frais: bool = False) -> str:
+    """« À vérifier » se lit « En proposition » comme à l'écran ; un frais est signalé."""
+    texte = "En proposition" if statut == "À vérifier" else statut
+    return f"{texte} · frais" if frais else texte
+
+
+def _feuille_compte(
+    sheet: Worksheet,
+    compte: BankAccount,
+    operations: list[BankTransaction],
+    ecritures: list[AccountingEntry],
+    frais_ids: set[int],
+    date_from: date,
+    date_to: date,
+) -> None:
+    sheet.sheet_view.showGridLines = False
+    unite = "DH" if compte.devise == "MAD" else compte.devise
+    sheet.cell(
+        row=1,
+        column=1,
+        value=f"{compte.company.nom} · {compte.bank.code} · {compte.devise} · {compte.numero} — "
+        f"non rapprochées du {date_from:%d/%m/%Y} au {date_to:%d/%m/%Y}",
+    ).font = TITRE
+    sheet.cell(
+        row=2, column=1, value=f"Transactions bancaires ({len(operations)})"
+    ).font = SOUS_TITRE
+    sheet.cell(
+        row=2, column=DEBUT_SAGE, value=f"Écritures comptables ({len(ecritures)})"
+    ).font = SOUS_TITRE
+    for debut, colonnes in ((1, COLONNES_RELEVE), (DEBUT_SAGE, COLONNES_SAGE)):
+        for index, (titre, largeur) in enumerate(colonnes):
+            montant = titre in ("Débit", "Crédit")
+            cellule = sheet.cell(
+                row=3, column=debut + index, value=f"{titre} ({unite})" if montant else titre
+            )
+            cellule.font = EN_TETE_ECRAN
+            cellule.fill = EN_TETE
+            cellule.alignment = Alignment(horizontal="right" if montant else "left")
+            sheet.column_dimensions[get_column_letter(debut + index)].width = largeur
+    sheet.column_dimensions[get_column_letter(len(COLONNES_RELEVE) + 1)].width = 3
+    sheet.freeze_panes = "A4"
+
+    def ligne(rang: int, debut: int, valeurs: list, proposition: bool) -> None:
+        for index, valeur in enumerate(valeurs):
+            cellule = sheet.cell(row=rang, column=debut + index, value=valeur)
+            cellule.border = TRAIT
+            if index == 0:
+                cellule.number_format = "DD/MM/YY"
+            elif index in (3, 4):
+                cellule.number_format = FORMAT_MONTANT
+            if proposition:
+                cellule.fill = PROPOSITION
+
+    for rang, op in enumerate(operations, start=4):
+        ligne(
+            rang,
+            1,
+            [
+                op.date_operation,
+                op.libelle,
+                op.reference,
+                op.debit or None,
+                op.credit or None,
+                statut_affiche(op.statut, op.id in frais_ids),
+            ],
+            op.statut == "À vérifier",
+        )
+    for rang, ec in enumerate(ecritures, start=4):
+        ligne(
+            rang,
+            DEBUT_SAGE,
+            [
+                ec.date_ecriture,
+                ec.libelle,
+                ec.numero_piece,
+                ec.debit or None,
+                ec.credit or None,
+                statut_affiche(ec.statut),
+            ],
+            ec.statut == "À vérifier",
+        )
+    fin = 4 + max(len(operations), len(ecritures)) + 1
+    for debut, lignes in ((1, operations), (DEBUT_SAGE, ecritures)):
+        sheet.cell(row=fin, column=debut, value="Total").font = GRAS
+        for decalage, champ in ((3, "debit"), (4, "credit")):
+            total = sum((getattr(x, champ) for x in lignes), Decimal("0"))
+            cellule = sheet.cell(row=fin, column=debut + decalage, value=total)
+            cellule.font = GRAS
+            cellule.number_format = FORMAT_MONTANT
+
+
+def _nom_feuille(compte: BankAccount, pris: set[str]) -> str:
+    base = f"{compte.bank.code} {compte.devise} {compte.numero[-4:]}"
+    nom, suite = base[:31], 2
+    while nom in pris:
+        nom, suite = f"{base[:27]} {suite}", suite + 1
+    pris.add(nom)
+    return nom
+
+
+def non_rapproches(
+    db: Session,
+    company_id: int,
+    date_from: date | None,
+    date_to: date | None,
+    bank_id: int | None,
+    *,
+    acteur_id: int,
+    ip: str | None,
+) -> tuple[str, bytes]:
+    """Opérations et écritures non rapprochées de la période, une feuille par compte, côte à côte
+    comme l'écran Rapprochement (frais à comptabiliser et lignes en proposition compris)."""
+    company = _company(db, company_id)
+    date_from, date_to = _periode(date_from, date_to)
+    comptes = sorted(
+        (
+            account
+            for account in reconciliation_repository.company_accounts(db, company.id)
+            if bank_id is None or account.bank_id == bank_id
+        ),
+        key=lambda a: (a.bank.ordre_affichage, a.devise, a.id),
+    )
+    if bank_id is not None and not comptes:
+        raise NotFoundError("Aucun compte de cette banque pour la société.")
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    pris: set[str] = set()
+    nombres: dict[str, int] = {}
+    for compte in comptes:
+        operations = rapports_repository.operations_non_rapprochees(
+            db, compte.id, date_from, date_to
+        )
+        ecritures = rapports_repository.ecritures_non_rapprochees(db, compte.id, date_from, date_to)
+        if not operations and not ecritures:
+            continue
+        # Frais bancaires (règle de « À comptabiliser ») : signalés dans la colonne St.
+        frais_ids = reconciliation_repository.fee_transaction_ids(db, [op.id for op in operations])
+        nom = _nom_feuille(compte, pris)
+        _feuille_compte(
+            workbook.create_sheet(nom), compte, operations, ecritures, frais_ids, date_from, date_to
+        )
+        nombres[nom] = len(operations) + len(ecritures)
+    if not workbook.sheetnames:
+        vide = workbook.create_sheet("Non rapprochées")
+        vide.append(
+            [
+                f"Aucune ligne non rapprochée du {date_from:%d/%m/%Y} au {date_to:%d/%m/%Y}"
+                f"{' pour ' + comptes[0].bank.code if bank_id is not None else ''}."
+            ]
+        )
+    contenu = _octets(workbook)
+
+    banque = comptes[0].bank.code if bank_id is not None else "toutes"
+    _audit(
+        db,
+        rapport="non_rapproches",
+        company_id=company.id,
+        acteur_id=acteur_id,
+        ip=ip,
+        du=date_from,
+        au=date_to,
+        banque=banque,
+        lignes=sum(nombres.values()),
+    )
+    return f"non-rapproches-{company.code}-{banque}-{date_from}-{date_to}.xlsx".lower(), contenu
