@@ -21,8 +21,8 @@ import { LoadingState, Skeleton } from "@/components/ui/LoadingState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
-import { moisEnCours } from "@/lib/dashboard";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
+import { periodeRapprochement } from "@/lib/reconciliation";
 import { getDashboard } from "@/services/dashboard";
 import type { Dashboard } from "@/types/dashboard";
 
@@ -54,7 +54,8 @@ function DashboardSociete({ companyId }: { companyId: number }) {
   const onglet: Onglet = params.get("onglet") === "indicateurs" ? "indicateurs" : "suivi";
   const banque = Number(params.get("banque")) || undefined;
   const [periode, setPeriode] = useState(() => {
-    const defaut = moisEnCours(businessToday());
+    // Du 1er janvier de l'année en cours à aujourd'hui (30/10/2026 ; le mois en cours avant)
+    const defaut = periodeRapprochement(businessToday());
     return { from: params.get("from") || defaut.from, to: params.get("to") || defaut.to };
   });
   const [data, setData] = useState<Dashboard | null>(null);
