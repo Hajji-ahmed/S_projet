@@ -94,6 +94,7 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
         invalid={grid.invalid.includes(key)}
         align={text ? "left" : "right"}
         maxLength={text ? LIBELLE_MAX : undefined}
+        formule={!text}
       />
     );
   }

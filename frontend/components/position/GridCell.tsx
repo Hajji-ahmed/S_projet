@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
+import { estFormule, evaluerFormule } from "@/lib/formule";
 
 /**
  * Style des tableaux du classeur (Banques, Devises, Prévisions), aligné sur `DataTable` : cadre
@@ -43,6 +44,8 @@ type GridCellProps = {
   invalid?: boolean;
   align?: "left" | "right";
   maxLength?: number;
+  /** « =1200+350 » est remplacé par son résultat sur Entrée ou en quittant la cellule (Prévisions). */
+  formule?: boolean;
 };
 
 /** Contenu d'une cellule : un champ sans bordure qui la remplit, ou le texte seul en lecture. */
@@ -54,12 +57,19 @@ export function GridCell({
   invalid,
   align = "right",
   maxLength,
+  formule = false,
 }: GridCellProps): ReactNode {
   const alignment = align === "right" ? "text-right tabular-nums" : "text-left";
   if (readOnly) {
     return (
       <span className={cn("block min-h-10 px-3 py-2.5 whitespace-nowrap", alignment)}>{value}</span>
     );
+  }
+  // Une formule fausse reste telle quelle : « Enregistrer » la signale comme cellule à corriger
+  function calculer() {
+    if (!formule || !estFormule(value)) return;
+    const resultat = evaluerFormule(value);
+    if (resultat !== null) onChange(resultat);
   }
   return (
     <input
@@ -70,6 +80,10 @@ export function GridCell({
       value={value}
       maxLength={maxLength}
       onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") calculer();
+      }}
+      onBlur={calculer}
       className={cn(
         "block h-10 w-full min-w-0 bg-transparent px-3 outline-none",
         "focus:bg-simtis-card focus:ring-2 focus:ring-simtis-primary focus:ring-inset",
