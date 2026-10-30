@@ -1352,15 +1352,13 @@ def list_transactions(
     en_cours = repo.count_rows(db, query.where(BankTransaction.en_cours.is_(True)))
     comptees = query.where(BankTransaction.en_cours.is_(False))
     par_statut = repo.count_by_status(db, comptees)
-    # Frais bancaires non rapprochés : « À comptabiliser », comptés à part (12/10/2026)
+    # Frais bancaires non rapprochés : « À comptabiliser » (12/10/2026) ; depuis le 30/10/2026 ils
+    # restent aussi dans « Non rapprochée » jusqu'à leur rapprochement (une partie de ce compteur)
     nb_frais, total_frais = repo.a_comptabiliser(db, comptees)
-    par_statut["Non rapprochée"] = par_statut.get("Non rapprochée", 0) - nb_frais
     listed = repo.without_status(query, "À vérifier") if sans_a_verifier else query
     if a_comptabiliser:
         listed = listed.where(BankTransaction.statut == "Non rapprochée", repo.frais_bancaire())
         statut = None
-    elif statut == "Non rapprochée":
-        listed = listed.where(~repo.frais_bancaire())
     total, rows = repo.page_of_transactions(
         db, listed, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE
     )

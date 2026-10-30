@@ -957,10 +957,12 @@ def test_a_manual_match_between_two_types_is_refused(client, comptable, db):
 
 
 def test_bank_fees_are_counted_apart_as_to_be_booked(client, comptable, db):
+    """30/10/2026 : les frais à comptabiliser restent aussi dans « Non rapprochée », dont ils sont
+    une partie, jusqu'à leur rapprochement."""
     compte = account(db)
-    operation(db, compte, montant="-1", libelle="DROIT DE TIMBRE SUR VERSEMENT")
-    operation(db, compte, montant="-2.50", libelle="TAXE SUR VALEUR AJOUTEE")
-    operation(db, compte, montant="-25", libelle="COMMISSION")
+    timbre = operation(db, compte, montant="-1", libelle="DROIT DE TIMBRE SUR VERSEMENT")
+    tva = operation(db, compte, montant="-2.50", libelle="TAXE SUR VALEUR AJOUTEE")
+    commission = operation(db, compte, montant="-25", libelle="COMMISSION")
     # Un prélèvement n'est pas un frais (21/10/2026)
     prelevement = operation(db, compte, montant="-900", libelle="PRELEVEMENT ONEE")
     autre = operation(db, compte, montant="50000", libelle="VIR CLIENT ATLAS")
@@ -974,9 +976,15 @@ def test_bank_fees_are_counted_apart_as_to_be_booked(client, comptable, db):
     ).json()
 
     assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (3, "28.50")
-    assert tous["par_statut"]["Non rapprochée"] == 2
+    assert tous["par_statut"]["Non rapprochée"] == 5
     assert frais["total"] == 3
-    assert {op["id"] for op in non_rapprochees["operations"]} == {autre.id, prelevement.id}
+    assert {op["id"] for op in non_rapprochees["operations"]} == {
+        autre.id,
+        prelevement.id,
+        timbre.id,
+        tva.id,
+        commission.id,
+    }
 
 
 def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, comptable, db):
@@ -1001,17 +1009,20 @@ def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, 
         libelle="REMISE DOCUMENTAIRE IMPORT",
         pointage_type_id=interet.id,
     )
-    operation(db, compte, montant="151110.79", libelle="AGIOS BANCAIRES", pointage_type_id=agios.id)
+    remboursement = operation(
+        db, compte, montant="151110.79", libelle="AGIOS BANCAIRES", pointage_type_id=agios.id
+    )
     url = "/api/reconciliation/transactions"
     params = {"company_id": company(db).id}
 
     tous = client.get(url, params=params, headers=comptable).json()
-    non_rapprochees = client.get(
-        url, params={**params, "statut": "Non rapprochée"}, headers=comptable
-    ).json()
+    frais = client.get(url, params={**params, "a_comptabiliser": "true"}, headers=comptable).json()
 
     assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (1, "151110.79")
-    assert {op["id"] for op in non_rapprochees["operations"]} == {virement.id, remise.id}
+    assert {op["id"] for op in frais["operations"]} == {remboursement.id}
+    # Depuis le 30/10/2026, les trois restent dans « Non rapprochée »
+    assert tous["par_statut"]["Non rapprochée"] == 3
+    assert {virement.id, remise.id} <= {op["id"] for op in tous["operations"]}
 
 
 def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):
