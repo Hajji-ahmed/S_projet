@@ -1,6 +1,6 @@
 "use client";
 
-import { Landmark } from "lucide-react";
+import { ChevronDown, ChevronUp, Landmark } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
@@ -11,6 +11,7 @@ import {
   GRID_ROW_HEAD,
   GRID_TABLE,
 } from "@/components/position/GridCell";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -102,28 +103,59 @@ export function BanquesTable({ companyId, jour, onCharge }: BanquesTableProps) {
 function Grid({ table }: { table: Table }) {
   const cadre = useRef<HTMLDivElement>(null);
   const tableau = useRef<HTMLTableElement>(null);
+  // « Afficher tous les jours » déplie le tableau sans défilement ; non mémorisé (3 jours à
+  // l'ouverture de la page)
+  const [tout, setTout] = useState(false);
+  const repliable = table.jours.length > JOURS_AFFICHES;
 
-  // Hauteur du cadre = tout le tableau moins les jours plus anciens que les derniers ; recalculée
-  // quand le tableau change de taille (largeur de l'écran). Ouvert en bas, sur les jours récents.
+  // Hauteur du cadre = en-tête + derniers jours + Disponible Fc reel, mesurés en fractions de pixel
+  // (offsetHeight arrondit chaque ligne : sur des centaines de jours, l'écart écrasait le cadre).
+  // Recalculée quand le tableau change de taille (largeur de l'écran, logos chargés). Ouvert en
+  // bas, sur les jours récents.
   useLayoutEffect(() => {
     const frame = cadre.current;
     const grid = tableau.current;
     if (!frame || !grid) return;
     const ajuster = () => {
-      const jours = [...grid.querySelectorAll<HTMLTableRowElement>("tbody tr")];
-      const caches = jours.slice(0, Math.max(0, jours.length - JOURS_AFFICHES));
-      const hauteur = caches.reduce((total, row) => total - row.offsetHeight, grid.offsetHeight);
-      frame.style.maxHeight = caches.length > 0 ? `${hauteur + 2}px` : "";
+      const jours = grid.querySelectorAll<HTMLTableRowElement>("tbody tr");
+      const haut = grid.tHead?.getBoundingClientRect();
+      const bas = grid.tFoot?.getBoundingClientRect();
+      if (tout || jours.length <= JOURS_AFFICHES || !haut || !bas) {
+        frame.style.maxHeight = "";
+        return;
+      }
+      const premier = jours[jours.length - JOURS_AFFICHES].getBoundingClientRect();
+      const dernier = jours[jours.length - 1].getBoundingClientRect();
+      const hauteur = haut.height + (dernier.bottom - premier.top) + bas.height;
+      frame.style.maxHeight = `${Math.ceil(hauteur) + 2}px`;
     };
     ajuster();
     frame.scrollTop = frame.scrollHeight;
     const observer = new ResizeObserver(ajuster);
     observer.observe(grid);
     return () => observer.disconnect();
-  }, [table]);
+  }, [table, tout]);
 
   return (
     <>
+      {repliable && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <p className="text-simtis-muted">
+            {tout
+              ? `${table.jours.length} jours`
+              : `${JOURS_AFFICHES} derniers jours sur ${table.jours.length}, les plus anciens en défilant`}
+          </p>
+          <Button
+            variant="ghost"
+            icon={tout ? ChevronUp : ChevronDown}
+            onClick={() => setTout((value) => !value)}
+            aria-expanded={tout}
+            className="h-auto min-h-10 px-0 whitespace-normal"
+          >
+            {tout ? `Réduire à ${JOURS_AFFICHES} jours` : "Afficher tous les jours"}
+          </Button>
+        </div>
+      )}
       {/* GRID_FRAME est relative : le texte des lecteurs d'écran ne doit pas élargir la page */}
       <div ref={cadre} className={cn(GRID_FRAME, "overflow-y-auto")}>
         <table
