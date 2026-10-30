@@ -6,8 +6,8 @@ import { finNumero } from "@/lib/accounts";
 import { formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
 
-/** Jours « facilité de caisse » visibles d'abord ; les plus anciens derrière « Afficher plus ». */
-export const JOURS_AFFICHES = 10;
+/** Jours « facilité de caisse » visibles sans défiler (30/10/2026) ; les plus anciens au-dessus. */
+export const JOURS_AFFICHES = 3;
 
 /** Taux en % : « 5.5 » → « 5,50 % » (deux décimales au moins, jamais tronqué) ; absent → « - ». */
 export function formatTaux(pct: string | null): string {

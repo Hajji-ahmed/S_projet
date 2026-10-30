@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronUp, Landmark } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Landmark } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import {
@@ -11,7 +11,6 @@ import {
   GRID_ROW_HEAD,
   GRID_TABLE,
 } from "@/components/position/GridCell";
-import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
@@ -25,7 +24,6 @@ import {
   signTone,
   type Tone,
 } from "@/lib/position";
-import { showLast } from "@/lib/statements";
 import { getBanquesTable } from "@/services/position";
 import type { BanquesTable as Table, CelluleBanque, LigneBanques } from "@/types/position";
 
@@ -34,6 +32,9 @@ type LoadState = "loading" | "error" | "ready";
 const NUMBER = "px-3 py-2.5 text-right tabular-nums whitespace-nowrap";
 const ROW_HEAD = GRID_ROW_HEAD;
 const GRID = cn(GRID_TABLE, "table-fixed");
+// Lignes fixées pendant le défilement vertical : fond opaque, au-dessus des jours qui défilent
+const STICKY_HAUT = "sticky top-0 z-10 bg-simtis-card";
+const STICKY_BAS = "sticky bottom-0 z-10 bg-simtis-card";
 // Disponible Fc reel : vert > 0, rouge < 0 (tokens de statut, pas le vert du classeur)
 const TONES: Record<Tone, string> = {
   positive: "text-simtis-success",
@@ -57,7 +58,6 @@ export function BanquesTable({ companyId, jour, onCharge }: BanquesTableProps) {
   const [table, setTable] = useState<Table | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [retryKey, setRetryKey] = useState(0);
-  const [shown, setShown] = useState(JOURS_AFFICHES);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,49 +89,45 @@ export function BanquesTable({ companyId, jour, onCharge }: BanquesTableProps) {
           }}
         />
       )}
-      {state === "ready" && table && (
-        <Grid
-          table={table}
-          shown={shown}
-          onShowMore={() => setShown((count) => count + JOURS_AFFICHES)}
-        />
-      )}
+      {state === "ready" && table && <Grid table={table} />}
     </Card>
   );
 }
 
-function Grid({
-  table,
-  shown,
-  onShowMore,
-}: {
-  table: Table;
-  shown: number;
-  onShowMore: () => void;
-}) {
-  // Les jours les plus récents d'abord visibles ; ordre du classeur : le plus ancien en haut
-  const visible = showLast(table.jours, shown, JOURS_AFFICHES);
+/**
+ * Tableau dans un cadre qui défile verticalement (30/10/2026) : seuls les `JOURS_AFFICHES` derniers
+ * jours sont visibles, les plus anciens au-dessus ; l'en-tête, Taux et LIGNE restent en haut et
+ * Disponible Fc reel en bas.
+ */
+function Grid({ table }: { table: Table }) {
+  const cadre = useRef<HTMLDivElement>(null);
+  const tableau = useRef<HTMLTableElement>(null);
+
+  // Hauteur du cadre = tout le tableau moins les jours plus anciens que les derniers ; recalculée
+  // quand le tableau change de taille (largeur de l'écran). Ouvert en bas, sur les jours récents.
+  useLayoutEffect(() => {
+    const frame = cadre.current;
+    const grid = tableau.current;
+    if (!frame || !grid) return;
+    const ajuster = () => {
+      const jours = [...grid.querySelectorAll<HTMLTableRowElement>("tbody tr")];
+      const caches = jours.slice(0, Math.max(0, jours.length - JOURS_AFFICHES));
+      const hauteur = caches.reduce((total, row) => total - row.offsetHeight, grid.offsetHeight);
+      frame.style.maxHeight = caches.length > 0 ? `${hauteur + 2}px` : "";
+    };
+    ajuster();
+    frame.scrollTop = frame.scrollHeight;
+    const observer = new ResizeObserver(ajuster);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, [table]);
 
   return (
     <>
-      {visible.hidden > 0 && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
-          <p className="text-simtis-muted">
-            {visible.rows.length} derniers jours sur {table.jours.length}
-          </p>
-          <Button
-            variant="ghost"
-            icon={ChevronUp}
-            onClick={onShowMore}
-            className="h-auto min-h-10 px-0 whitespace-normal"
-          >
-            Afficher {visible.next} {visible.next > 1 ? "jours plus anciens" : "jour plus ancien"}
-          </Button>
-        </div>
-      )}
       {/* GRID_FRAME est relative : le texte des lecteurs d'écran ne doit pas élargir la page */}
-      <div className={GRID_FRAME}>
+      <div ref={cadre} className={cn(GRID_FRAME, "overflow-y-auto")}>
         <table
+          ref={tableau}
           className={GRID}
           style={largeurMin(200 + 2 * 150, table.banques.length)}
           aria-label="Banques"
@@ -144,7 +140,8 @@ function Grid({
             <col className="w-[150px]" />
             <col className="w-[150px]" />
           </colgroup>
-          <thead>
+          {/* En-tête, Taux et LIGNE restent en haut pendant le défilement */}
+          <thead className={STICKY_HAUT}>
             <tr>
               <th scope="col" className={cn(GRID_HEAD, "text-left")}>
                 Banque
@@ -161,8 +158,6 @@ function Grid({
                 DEPASSEMENT
               </th>
             </tr>
-          </thead>
-          <tbody>
             <tr>
               <th scope="row" className={ROW_HEAD}>
                 Taux
@@ -191,7 +186,9 @@ function Grid({
               <td className={NUMBER}>{formatAmount(table.ligne_total)}</td>
               <td />
             </tr>
-            {visible.rows.map((day) => (
+          </thead>
+          <tbody>
+            {table.jours.map((day) => (
               <tr key={day.date}>
                 <th scope="row" className={ROW_HEAD}>
                   facilité de caisse <span className="tabular-nums">{formatJour(day.date)}</span>
@@ -200,9 +197,10 @@ function Grid({
               </tr>
             ))}
           </tbody>
-          {/* Ligne séparée sous le tableau, mais dans le même tableau : elle défile avec lui et
-              garde les en-têtes de colonnes (lecteurs d'écran). La rangée vide la détache. */}
-          <tbody>
+          {/* Ligne séparée sous les jours, mais dans le même tableau : elle garde les en-têtes de
+              colonnes (lecteurs d'écran) et reste en bas pendant le défilement. La rangée vide la
+              détache. */}
+          <tfoot className={STICKY_BAS}>
             <tr aria-hidden="true">
               <td
                 colSpan={table.banques.length + 3}
@@ -216,7 +214,7 @@ function Grid({
               </th>
               <LineCells line={table.disponible} colored />
             </tr>
-          </tbody>
+          </tfoot>
         </table>
       </div>
       {table.jours.length === 0 && (
