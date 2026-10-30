@@ -288,6 +288,15 @@ class HistoriqueOut(BaseModel):
         )
 
 
+class ConcurrenteOut(BaseModel):
+    """Autre opération que l'écriture pourrait recevoir au même score (30/10/2026)."""
+
+    id: int
+    date_operation: date
+    libelle: str
+    score: Decimal
+
+
 class CandidatOut(BaseModel):
     ecriture: EcritureOut
     score: Decimal
@@ -296,6 +305,7 @@ class CandidatOut(BaseModel):
     proposee_ailleurs: bool = Field(
         description="Proposée pour une autre opération : la choisir rejette cette proposition"
     )
+    concurrentes: list[ConcurrenteOut] = Field(default_factory=list)
 
     @classmethod
     def from_candidate(cls, item: Candidate) -> "CandidatOut":
@@ -325,7 +335,22 @@ class AmbigueOut(BaseModel):
     def from_view(cls, view: AmbiguousView) -> "AmbigueOut":
         return cls(
             operation=OperationOut.of(view.transaction, view.bank_code),
-            candidats=[CandidatOut.from_candidate(item) for item in view.candidats],
+            candidats=[
+                CandidatOut.from_candidate(item).model_copy(
+                    update={
+                        "concurrentes": [
+                            ConcurrenteOut(
+                                id=c.transaction.id,
+                                date_operation=c.transaction.date_operation,
+                                libelle=c.transaction.libelle,
+                                score=c.score.total,
+                            )
+                            for c in view.concurrentes.get(item.entry.id, [])
+                        ]
+                    }
+                )
+                for item in view.candidats
+            ],
         )
 
 

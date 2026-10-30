@@ -91,16 +91,6 @@ RECONCILIATION_RULES = [
         "365",
         True,
     ),
-    # Espèces (28/10/2026) : points de date pleins jusqu'à 2 jours de l'échéance Sage, puis
-    # dégressifs (27/10/2026 : jamais proposées au-delà)
-    (
-        "FENETRE_ESPECES",
-        "Espèces : jours à date pleine autour de l'échéance Sage",
-        "fenetre",
-        "0",
-        "2",
-        True,
-    ),
     ("SEUIL_PROPOSITION", "Score minimal d'une proposition", "seuil", "50", None, True),
     ("SEUIL_FORT", "Score d'une forte correspondance", "seuil", "80", None, True),
     (

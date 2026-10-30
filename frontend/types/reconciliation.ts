@@ -108,6 +108,8 @@ export type Candidat = {
   criteres: Critere[];
   rejetee: boolean;
   proposee_ailleurs: boolean;
+  /** Autres opérations au même score pour cette écriture (30/10/2026), absent hors ambiguës. */
+  concurrentes?: { id: number; date_operation: string; libelle: string; score: string }[];
 };
 
 export type Candidats = {

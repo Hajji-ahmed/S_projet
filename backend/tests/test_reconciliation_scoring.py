@@ -440,7 +440,8 @@ def test_especes_are_compared_at_their_due_date():
     especes = ec(montant="-4000", jour=date(2026, 8, 1), echeance=JOUR, libelle="ESP TT23241QZKZC")
     cheque = ec(montant="-4000", jour=date(2026, 8, 1), echeance=JOUR, libelle="EAR1° 1234567")
 
-    assert score(versement, especes).detail["date"] == Decimal("40.00")  # +10 (28/10/2026)
+    # Barème des espèces (30/10/2026) : échéance exacte = 30, sans le bonus « sans référence »
+    assert score(versement, especes).detail["date"] == Decimal("30.00")
     assert proposer([versement], [especes]).propositions
     assert ecart_jours(op(libelle="ENCAISSEMENT CHEQUE N 1234567"), cheque) == 54
 
@@ -568,12 +569,16 @@ def especes_a(ecart_jours_echeance: int, libelle: str = "ESP TT26273B6Z6S") -> E
 VERSEMENT = op(montant="5000", libelle="VERSEMENT DEPLACE PAR UN TIERS")
 
 
-def test_cash_date_points_are_full_up_to_two_days_then_decrease():
-    points = [score(VERSEMENT, especes_a(ecart)).detail["date"] for ecart in range(8)]
+def test_cash_date_points_follow_the_business_scale():
+    """30/10/2026 : échéance exacte 30, 1 jour 15, 2 à 5 jours 10, 6 à 10 jours 5, sans le bonus
+    « sans référence » (il reste sur le montant et le libellé)."""
+    points = [score(VERSEMENT, especes_a(ecart)).detail["date"] for ecart in range(12)]
 
     assert points == [
-        Decimal(v) for v in ("40.00", "40.00", "40.00", "30.00", "20.00", "10.00", "0.00", "0.00")
+        Decimal(v) for v in ("30", "15", "10", "10", "10", "10", "5", "5", "5", "5", "5", "0")
     ]
+    assert score(VERSEMENT, especes_a(-1)).detail["date"] == Decimal("15")
+    assert score(VERSEMENT, especes_a(0)).detail["libelle"] <= Decimal("30.00")
     # Plus de coupure à 2 jours : comparées jusqu'à la fenêtre de 10 jours, comme les autres
     assert comparable(VERSEMENT, especes_a(3), GRILLE_PAR_DEFAUT)
     assert comparable(VERSEMENT, especes_a(10), GRILLE_PAR_DEFAUT)
@@ -586,7 +591,7 @@ def test_cash_full_date_applies_when_only_the_sage_side_is_known():
     colle = op(montant="5000", libelle="VERSEMENTDEPLACEPARIMANEELBAZCD760324")
 
     assert type_operation(colle.libelle) is None
-    assert score(colle, especes_a(2, "ESP TT26251KM24D")).detail["date"] == Decimal("30.00")
+    assert score(colle, especes_a(2, "ESP TT26251KM24D")).detail["date"] == Decimal("10.00")
 
 
 def test_other_types_lose_date_points_from_the_first_day():
@@ -596,13 +601,8 @@ def test_other_types_lose_date_points_from_the_first_day():
     assert score(cheque, ecriture).detail["date"] == Decimal("15.00")
 
 
-def test_the_cash_full_date_days_follow_the_setting():
-    assert score(VERSEMENT, especes_a(4), Grille(fenetre_especes_jours=4)).detail["date"] == (
-        Decimal("40.00")
-    )
-    assert score(VERSEMENT, especes_a(1), Grille(fenetre_especes_jours=0)).detail["date"] == (
-        Decimal("30.00")
-    )
+def test_the_cash_scale_gives_nothing_when_the_date_criterion_is_off():
+    assert score(VERSEMENT, especes_a(0), Grille(date=Decimal("0"))).detail["date"] == Decimal("0")
 
 
 def test_the_wide_search_finds_cash_by_amount_and_label():

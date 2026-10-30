@@ -64,9 +64,6 @@ class Grille:
     fenetre_numero_jours: int = 180
     # Recherche élargie (bouton à part, 20/10/2026) : même n° et même montant jusqu'à ± 365 jours
     fenetre_elargie_jours: int = 365
-    # Espèces (28/10/2026) : points de date pleins jusqu'à ± 2 jours de l'échéance Sage, puis
-    # dégressifs sur `tolerance_jours` (27/10/2026 : jamais proposé au-delà de 2 jours)
-    fenetre_especes_jours: int = 2
     # En dessous : aucune proposition
     seuil_proposition: Decimal = Decimal("50")
     # À partir de : « Forte correspondance », validable en lot (toujours par un humain) ; 80 depuis
@@ -409,11 +406,24 @@ def points_montant(montant_banque: Decimal, montant_sage: Decimal, grille: Grill
     return grille.montant if montant_banque % 1 else grille.montant_rond
 
 
+# Espèces (30/10/2026, fixé par le métier) : points de date selon l'écart avec l'échéance Sage,
+# (écart maximal en jours, points), sans le bonus « sans référence »
+BAREME_ESPECES: tuple[tuple[int, Decimal], ...] = (
+    (0, Decimal("30.00")),
+    (1, Decimal("15.00")),
+    (5, Decimal("10.00")),
+    (10, Decimal("5.00")),
+)
+
+
 def points_date(ecart: int, especes: bool, grille: Grille) -> Decimal:
-    """Points de la date. Espèces (28/10/2026) : pleins jusqu'à `fenetre_especes_jours` d'écart,
-    puis dégressifs comme les autres (2 j : 30 ; 3 j : 22,5 ; 4 j : 15 ; 5 j : 7,5 ; 6 j : 0)."""
+    """Points de la date. Espèces (30/10/2026) : barème fixe `BAREME_ESPECES` (échéance exacte 30,
+    1 jour 15, 2 à 5 jours 10, 6 à 10 jours 5, au-delà 0) ; 0 si le critère Date est désactivé.
+    Autres types : dégressif sur `tolerance_jours`."""
     if especes:
-        ecart = max(0, ecart - grille.fenetre_especes_jours)
+        if not grille.date:
+            return ZERO
+        return next((points for jours, points in BAREME_ESPECES if ecart <= jours), ZERO)
     return _points(grille.date, ratio_date(ecart, grille.tolerance_jours))
 
 

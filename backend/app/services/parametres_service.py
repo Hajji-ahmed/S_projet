@@ -32,8 +32,6 @@ SEUILS = ("SEUIL_PROPOSITION", "SEUIL_FORT", "ECART_AMBIGUITE")
 FENETRE = "FENETRE"
 # Recherche élargie (20/10/2026) : de 31 à 366 jours
 FENETRE_ELARGIE = "FENETRE_ELARGIE"
-# Espèces : jours à date pleine (28/10/2026), de 0 à 10
-FENETRE_ESPECES = "FENETRE_ESPECES"
 CENT = Decimal("100")
 
 # Ce que chaque règle laisse modifier, pour l'écran : points, jours, activation
@@ -42,7 +40,6 @@ GENRES = {
     **{code: "seuil" for code in SEUILS},
     FENETRE: "fenetre",
     FENETRE_ELARGIE: "fenetre",
-    FENETRE_ESPECES: "fenetre",
 }
 
 
@@ -104,9 +101,7 @@ def verifier(rules: dict[str, ReconciliationRule], changements: list[Changement]
         elif genre == "fenetre":
             # Recherche élargie (20/10/2026) : de 31 à 366 jours ; fenêtre normale : de 1 à 60
             # Espèces (27/10/2026) : de 0 à 10 jours
-            mini, maxi = {FENETRE_ELARGIE: (31, 366), FENETRE_ESPECES: (0, 10)}.get(
-                changement.code, (1, 60)
-            )
+            mini, maxi = {FENETRE_ELARGIE: (31, 366)}.get(changement.code, (1, 60))
             finales[changement.code] = {
                 "poids": rule.poids,
                 "tolerance": _jours(changement.tolerance, mini, maxi, quoi),
@@ -141,10 +136,7 @@ def verifier(rules: dict[str, ReconciliationRule], changements: list[Changement]
 def grille(db: Session) -> list[ReconciliationRule]:
     """Les règles dans l'ordre de l'écran : critères, fenêtre, seuils."""
     ordre = {
-        code: index
-        for index, code in enumerate(
-            (*CRITERES, FENETRE, FENETRE_ESPECES, FENETRE_ELARGIE, *SEUILS)
-        )
+        code: index for index, code in enumerate((*CRITERES, FENETRE, FENETRE_ELARGIE, *SEUILS))
     }
     return sorted(
         parametres_repository.rules(db), key=lambda rule: ordre.get(rule.code, len(ordre))

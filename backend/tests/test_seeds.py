@@ -84,9 +84,9 @@ def test_reference_seed_creates_the_expected_rows(db):
         # accounting.prepare est créée par la migration 0024
         permissions=12,
         roles=5,
-        # + FENETRE_ELARGIE (20/10/2026), FENETRE_ESPECES (27/10/2026), MONTANT_ROND et
-        # BONUS_SANS_REFERENCE (28/10/2026)
-        reconciliation_rules=13,
+        # + FENETRE_ELARGIE (20/10/2026), MONTANT_ROND et BONUS_SANS_REFERENCE (28/10/2026) ;
+        # FENETRE_ESPECES retiré le 30/10/2026 (barème fixe)
+        reconciliation_rules=12,
     )
 
 

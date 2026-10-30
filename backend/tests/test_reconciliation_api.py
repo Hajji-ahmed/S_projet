@@ -825,6 +825,29 @@ def test_ambiguous_lines_come_with_their_candidates(client, comptable, direction
     assert after["ambigues"] == []
 
 
+def test_an_ambiguous_operation_names_the_operation_its_entry_hesitates_with(
+    client, comptable, direction, db
+):
+    """30/10/2026 : l'égalité vient de l'écriture (deux opérations au même score pour elle) : la
+    carte de chaque opération nomme l'autre."""
+    compte = account(db)
+    une = operation(db, compte)
+    autre = operation(db, compte)
+    seule = ecriture(db, compte)
+    run(client, comptable, db)
+
+    response = client.get(
+        "/api/reconciliation/ambiguous", params={"company_id": company(db).id}, headers=direction
+    )
+
+    cartes = {a["operation"]["id"]: a for a in response.json()["ambigues"]}
+    assert set(cartes) == {une.id, autre.id}
+    [candidat] = cartes[une.id]["candidats"]
+    assert candidat["ecriture"]["id"] == seule.id
+    assert [c["id"] for c in candidat["concurrentes"]] == [autre.id]
+    assert candidat["concurrentes"][0]["score"] == candidat["score"]
+
+
 def test_ambiguous_lines_never_mix_companies_and_need_the_right(client, comptable, reference, db):
     tefil = account(db, "SOCX")
     operation(db, tefil)

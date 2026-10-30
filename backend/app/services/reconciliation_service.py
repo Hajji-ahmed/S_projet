@@ -106,9 +106,6 @@ def grille(db: Session) -> Grille:
             case "FENETRE_ELARGIE":
                 if rule.tolerance is not None:
                     valeurs["fenetre_elargie_jours"] = int(rule.tolerance)
-            case "FENETRE_ESPECES":
-                if rule.tolerance is not None:
-                    valeurs["fenetre_especes_jours"] = int(rule.tolerance)
             case "SEUIL_PROPOSITION" | "SEUIL_FORT" | "ECART_AMBIGUITE":
                 valeurs[rule.code.lower()] = rule.poids
     return Grille(**{**GRILLE_PAR_DEFAUT.__dict__, **valeurs})
@@ -1588,6 +1585,9 @@ class AmbiguousView:
     transaction: BankTransaction
     bank_code: str
     candidats: list[Candidate]
+    # Par écriture candidate, les autres opérations au même score (30/10/2026) : quand l'égalité
+    # vient de l'écriture, la carte dit avec quelle opération elle hésite
+    concurrentes: dict[int, list["CandidateOperation"]] = field(default_factory=dict)
 
 
 def list_ambiguous(
@@ -1623,14 +1623,40 @@ def list_ambiguous(
         _, bank_code, items, seuil_proposition, _ = candidates(
             db, tx.id, regles=regles, rejetees=rejetees
         )
+        retenus = a_egalite(items, seuil_proposition)
         views.append(
             AmbiguousView(
                 transaction=tx,
                 bank_code=bank_code,
-                candidats=a_egalite(items, seuil_proposition),
+                candidats=retenus,
+                concurrentes={
+                    item.entry.id: _concurrentes(db, tx.id, item, regles, rejetees)
+                    for item in retenus
+                },
             )
         )
     return regles.seuil_fort, total, views
+
+
+def _concurrentes(
+    db: Session,
+    transaction_id: int,
+    candidat: Candidate,
+    regles: Grille,
+    rejetees: set[tuple[int, int]],
+) -> list["CandidateOperation"]:
+    """Autres opérations que l'écriture candidate pourrait recevoir au même score que
+    l'opération ambiguë (30/10/2026) : la cause de l'égalité quand elle vient de l'écriture."""
+    _, operations, seuil = candidates_of_entry(
+        db, candidat.entry.id, regles=regles, rejetees=rejetees
+    )
+    return [
+        item
+        for item in operations
+        if item.transaction.id != transaction_id
+        and eligible(item, seuil)
+        and item.score.total == candidat.score.total
+    ]
 
 
 # Au plus 500 opérations ou écritures par « aucune correspondance » en lot (15/10/2026)

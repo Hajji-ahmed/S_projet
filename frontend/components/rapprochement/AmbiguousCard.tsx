@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
   datesEcriture,
+  formatScore,
   montantEcriture,
   unite,
   uniteEcriture,
@@ -83,7 +84,9 @@ export function AmbiguousCard({
         <div className="space-y-1">
           <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-simtis-warning-fg uppercase">
             <Shuffle className="h-3.5 w-3.5" aria-hidden />
-            Ambiguë : {candidats.length} écritures aussi proches
+            {candidats.length > 1
+              ? `Ambiguë : ${candidats.length} écritures aussi proches`
+              : "Ambiguë : l'écriture hésite avec une autre opération"}
           </p>
           <p className="text-[22px] leading-tight font-bold text-simtis-primary-dark tabular-nums">
             {formatAmount(absolute(operation.montant), unite(operation.devise))}{" "}
@@ -148,6 +151,13 @@ export function AmbiguousCard({
                     {candidat.ecriture.numero_piece && ` · Pièce ${candidat.ecriture.numero_piece}`}
                     {candidat.ecriture.tiers && ` · ${candidat.ecriture.tiers}`}
                   </p>
+                  {/* L'égalité vient de l'écriture (30/10/2026) : avec quelle opération elle hésite */}
+                  {(candidat.concurrentes ?? []).map((autre) => (
+                    <p key={autre.id} className="text-xs text-simtis-warning-fg">
+                      Aussi proche de : {autre.libelle} · {formatDate(autre.date_operation)} · score{" "}
+                      {formatScore(autre.score)}
+                    </p>
+                  ))}
                   {candidat.proposee_ailleurs && (
                     <p className="text-xs text-simtis-warning-fg">
                       Proposée pour une autre opération : la choisir rejette cette proposition.
