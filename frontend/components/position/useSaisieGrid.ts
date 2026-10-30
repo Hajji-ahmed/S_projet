@@ -53,6 +53,13 @@ export function useSaisieGrid<T, I>(companyId: number, jour: string, api: GridAp
     setInvalid((current) => (current.includes(key) ? current.filter((k) => k !== key) : current));
   }
 
+  /** Change tout le brouillon d'un coup (ajout ou suppression d'une ligne des Prévisions). */
+  function changeDraft(change: (current: Draft) => Draft) {
+    const next = change(draft);
+    setDraft(next);
+    setInvalid((keys) => keys.filter((key) => key in next));
+  }
+
   function reset() {
     setDraft(saved);
     setInvalid([]);
@@ -91,6 +98,7 @@ export function useSaisieGrid<T, I>(companyId: number, jour: string, api: GridAp
     loadState,
     draft,
     setCell,
+    changeDraft,
     invalid,
     dirty: !sameDraft(saved, draft),
     saving,

@@ -1,12 +1,13 @@
 "use client";
 
 import { FileDown } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { BanquesTable } from "@/components/position/BanquesTable";
 import { DevisesTable } from "@/components/position/DevisesTable";
+import { PositionChart } from "@/components/position/PositionChart";
 import { PrevisionsTable } from "@/components/position/PrevisionsTable";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -21,12 +22,13 @@ import { saveFile } from "@/lib/statements";
 import { listBanks } from "@/services/banks";
 import { exportPositionPdf } from "@/services/rapports";
 import type { Bank } from "@/types/bank";
+import type { BanquesTable as TableBanques } from "@/types/position";
 
 type LoadState = "loading" | "error" | "ready";
 
 /**
- * Page Position bancaire : tableau Banques calculé (P8.1), puis tableaux Devises et Prévisions de
- * la société active, saisis à la main pour une date (en attendant P9 et P14).
+ * Page Position bancaire, dans l'ordre décidé le 30/10/2026 : tableau Banques calculé (P8.1),
+ * Prévisions et Devises saisis à la main (en attendant P9 et P14), puis « Évolution de la position ».
  */
 export function PositionView() {
   const { user } = useAuth();
@@ -41,6 +43,14 @@ export function PositionView() {
   const [reloadKey, setReloadKey] = useState(0);
   const [exportEnCours, setExportEnCours] = useState(false);
   const [erreurExport, setErreurExport] = useState<string | null>(null);
+  // Réponse du tableau Banques et la grille (société, date) qu'elle concerne : le graphique ne
+  // montre jamais celle d'une autre date pendant le chargement
+  const [banquesChargees, setBanquesChargees] = useState<{
+    cle: string;
+    table: TableBanques;
+  } | null>(null);
+  const cle = `${companyId}-${jour}`;
+  const surCharge = useCallback((table: TableBanques) => setBanquesChargees({ cle, table }), [cle]);
 
   // Tableau Banques à la date choisie, en PDF (27/10/2026)
   async function exporterPdf() {
@@ -82,7 +92,7 @@ export function PositionView() {
     <>
       <PageHeader
         title="Position bancaire"
-        description="Tableau Banques calculé ; Devises et Prévisions saisis à la main"
+        description="Tableau Banques calculé ; Prévisions et Devises saisis à la main"
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm font-medium text-simtis-text">
@@ -130,21 +140,33 @@ export function PositionView() {
       )}
       {loadState === "ready" && companyId !== undefined && (
         <>
-          <BanquesTable key={`banques-${companyId}-${jour}`} companyId={companyId} jour={jour} />
-          <DevisesTable
-            key={`devises-${companyId}-${jour}`}
+          <BanquesTable
+            key={`banques-${cle}`}
             companyId={companyId}
             jour={jour}
-            banks={banks}
-            canEdit={canEnterDevises}
+            onCharge={surCharge}
           />
           <PrevisionsTable
-            key={`previsions-${companyId}-${jour}`}
+            key={`previsions-${cle}`}
             companyId={companyId}
             jour={jour}
             banks={banks}
             canEdit={canEnterPrevisions}
           />
+          <DevisesTable
+            key={`devises-${cle}`}
+            companyId={companyId}
+            jour={jour}
+            banks={banks}
+            canEdit={canEnterDevises}
+          />
+          {/* P8.3 : mêmes données que le tableau Banques, sans second appel à l'API */}
+          {banquesChargees?.cle === cle && (
+            <PositionChart
+              jours={banquesChargees.table.jours}
+              banques={banquesChargees.table.banques}
+            />
+          )}
         </>
       )}
     </>

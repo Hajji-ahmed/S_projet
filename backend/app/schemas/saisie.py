@@ -10,12 +10,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import SaisieDevise, SaisiePrevision, SaisiePrevisionJour, enums
-from app.services.saisie_service import DeviseCell, PrevisionCell
+from app.services.saisie_service import DeviseCell, LignePrevision
 
 # Montant d'une cellule : positif ou négatif, 2 décimales au plus
 Montant = Annotated[Decimal, Field(max_digits=18, decimal_places=2)]
 LigneDevise = Literal["EUR", "USD", "Exp DH convertible"]
-NumeroLigne = Annotated[int, Field(ge=1, le=enums.NB_LIGNES_PREVISIONS)]
 
 
 class MontantBanque(BaseModel):
@@ -107,9 +106,12 @@ class DevisesOut(BaseModel):
 
 
 class LignePrevisionsIn(BaseModel):
+    """Une ligne du tableau, avec sa date (décision du 30/10/2026). Son rang est donné par le serveur
+    dans l'ordre d'envoi des lignes de la même date."""
+
     model_config = ConfigDict(extra="forbid")
 
-    ligne: NumeroLigne
+    jour: date
     libelle: str | None = Field(default=None, max_length=80)
     banques: list[MontantBanque] = Field(default_factory=list, max_length=50)
     # Une valeur par ligne depuis le 03/10/2026 (avant : une pour toute la journée)
@@ -124,38 +126,30 @@ class LignePrevisionsIn(BaseModel):
 
 
 class PrevisionsIn(BaseModel):
-    """La grille complète de la date : une cellule absente est vidée."""
+    """Toutes les lignes à partir de la date de la page : une ligne absente est supprimée."""
 
     model_config = ConfigDict(extra="forbid")
 
-    lignes: list[LignePrevisionsIn] = Field(max_length=enums.NB_LIGNES_PREVISIONS)
+    lignes: list[LignePrevisionsIn] = Field(max_length=enums.LIGNES_PREVISIONS_MAX)
 
-    @model_validator(mode="after")
-    def _lignes_uniques(self) -> "PrevisionsIn":
-        _unique([item.ligne for item in self.lignes], "Une ligne apparaît deux fois.")
-        return self
-
-    def cells(self) -> dict[PrevisionCell, str | Decimal | None]:
-        cells: dict[PrevisionCell, str | Decimal | None] = {}
-        for item in self.lignes:
-            cells[(item.ligne, None)] = item.libelle
-            for cell in item.banques:
-                cells[(item.ligne, cell.bank_id)] = cell.montant
-        return cells
-
-    def jour_values(self) -> dict[int, dict[str, Decimal | None]]:
-        """Encaissement, Escompte et Douane de chaque ligne envoyée."""
-        return {
-            item.ligne: {
-                "encaissement": item.encaissement,
-                "escompte": item.escompte,
-                "douane": item.douane,
-            }
+    def lignes_saisies(self) -> list[LignePrevision]:
+        return [
+            LignePrevision(
+                jour=item.jour,
+                libelle=item.libelle,
+                banques={cell.bank_id: cell.montant for cell in item.banques},
+                montants={
+                    "encaissement": item.encaissement,
+                    "escompte": item.escompte,
+                    "douane": item.douane,
+                },
+            )
             for item in self.lignes
-        }
+        ]
 
 
 class LignePrevisionsOut(BaseModel):
+    jour: date
     ligne: int
     libelle: str | None
     banques: list[MontantBanque]
@@ -177,15 +171,17 @@ class PrevisionsOut(BaseModel):
         rows: list[SaisiePrevision],
         days: list[SaisiePrevisionJour],
     ) -> "PrevisionsOut":
-        """Toujours les 14 lignes du bloc, même vides."""
-        by_line = {day.ligne: day for day in days}
+        """Les lignes enregistrées à partir de `jour`, par date puis par rang (jamais de ligne vide)."""
+        by_line = {(day.jour, day.ligne): day for day in days}
+        keys = sorted({(row.jour, row.ligne) for row in rows} | set(by_line))
         lignes = []
-        for numero in range(1, enums.NB_LIGNES_PREVISIONS + 1):
-            mine = [row for row in rows if row.ligne == numero]
-            day = by_line.get(numero)
+        for key in keys:
+            mine = [row for row in rows if (row.jour, row.ligne) == key]
+            day = by_line.get(key)
             lignes.append(
                 LignePrevisionsOut(
-                    ligne=numero,
+                    jour=key[0],
+                    ligne=key[1],
                     libelle=next((row.libelle for row in mine if row.bank_id is None), None),
                     banques=[
                         MontantBanque(bank_id=row.bank_id, montant=row.montant)

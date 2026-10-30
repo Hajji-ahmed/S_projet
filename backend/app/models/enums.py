@@ -53,5 +53,7 @@ ORIGINES_OPERATION = ("Fichier", "Corrigée", "Manuelle")  # Manuelle : 24/10/20
 LIGNES_DEVISES = ("EUR", "USD", "Exp DH convertible")
 COLONNES_DEVISES = ("Banque", "TOTAL", "DEPASSEMENT")
 
-# Tableau Prévisions saisi à la main : nombre de lignes du bloc d'une journée
-NB_LIGNES_PREVISIONS = 14
+# Tableau Prévisions saisi à la main : chaque ligne a sa date (30/10/2026), au plus 99 lignes par date
+LIGNES_PREVISIONS_PAR_DATE = 99
+# Lignes envoyées en une fois (toutes celles à partir de la date de la page)
+LIGNES_PREVISIONS_MAX = 1000

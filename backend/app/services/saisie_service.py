@@ -1,7 +1,9 @@
 """Tableaux Devises et Prévisions de la page Position bancaire, saisis à la main (première version).
 
 Règles :
-- une grille par société et par date ; l'enregistrer remplace la grille de cette date ;
+- Devises : une grille par société et par date ; l'enregistrer remplace la grille de cette date ;
+- Prévisions : chaque ligne a sa date (30/10/2026) ; l'écran montre et remplace les lignes datées
+  du jour choisi ou plus tard ;
 - une cellule vide n'est pas enregistrée, jamais remplacée par 0 ; rien n'est calculé (pas de TOTAL
   automatique) en attendant P9 (devises) et P14 (prévisions) ;
 - seules les colonnes des banques actives se saisissent ; les valeurs d'une banque désactivée sont
@@ -10,6 +12,7 @@ Règles :
 """
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -17,17 +20,20 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models import Bank, Company, SaisieDevise, SaisiePrevision, SaisiePrevisionJour
+from app.models.enums import LIGNES_PREVISIONS_PAR_DATE
 from app.repositories import account_repository, bank_repository, saisie_repository
 from app.services import audit_service
 from app.services.errors import ConflictError, NotFoundError
+from app.services.position_service import PREMIERE_DATE_SOLDE
 
 CENT = Decimal("0.01")
 JOUR_FIELDS = {"encaissement": "Encaissement", "escompte": "Escompte", "douane": "Douane"}
 
 # Cellule du tableau Devises : (ligne, colonne, banque). La banque n'existe que pour la colonne « Banque ».
 DeviseCell = tuple[str, str, int | None]
-# Cellule du bloc de 14 lignes des Prévisions : (ligne, banque). Sans banque, c'est le libellé.
-PrevisionCell = tuple[int, int | None]
+# Cellule du tableau Prévisions : (date de la ligne, rang dans la date, banque). Sans banque,
+# c'est le libellé.
+PrevisionCell = tuple[date, int, int | None]
 
 
 def _amount(value: Decimal | None) -> Decimal | None:
@@ -162,38 +168,92 @@ def save_devises(
 # --- Prévisions ------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class LignePrevision:
+    """Une ligne envoyée par l'écran : sa date, son libellé, un montant par banque et Encaissement,
+    Escompte, Douane (`montants`)."""
+
+    jour: date
+    libelle: str | None
+    banques: Mapping[int, Decimal | None] = field(default_factory=dict)
+    montants: Mapping[str, Decimal | None] = field(default_factory=dict)
+
+
 def list_previsions(
-    db: Session, company_id: int, jour: date
+    db: Session, company_id: int, depuis: date
 ) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
+    """Les lignes dont la date est `depuis` ou plus tard (décision du 30/10/2026)."""
     _company(db, company_id)
     return (
-        saisie_repository.list_previsions(db, company_id, jour),
-        saisie_repository.list_previsions_jour(db, company_id, jour),
+        saisie_repository.list_previsions(db, company_id, depuis),
+        saisie_repository.list_previsions_jour(db, company_id, depuis),
     )
+
+
+def _date(jour: date) -> str:
+    """JJ/MM/AAAA, l'année sur 4 chiffres même avant l'an 1000 (« 0026 » mal saisi)."""
+    return f"{jour.day:02d}/{jour.month:02d}/{jour.year:04d}"
+
+
+def _numeroter(
+    depuis: date, lignes: list[LignePrevision]
+) -> tuple[dict[PrevisionCell, str | Decimal], dict[tuple[date, int], dict[str, Decimal | None]]]:
+    """Cellules et montants sans banque voulus, par (date, rang). Une ligne entièrement vide est
+    ignorée ; les autres sont numérotées dans l'ordre d'envoi, à partir de 1 pour chaque date."""
+    cells: dict[PrevisionCell, str | Decimal] = {}
+    days: dict[tuple[date, int], dict[str, Decimal | None]] = {}
+    rangs: dict[date, int] = {}
+    for item in lignes:
+        if item.jour < depuis:
+            raise ConflictError(
+                f"Une ligne du {_date(item.jour)} est antérieure à la date affichée "
+                f"({_date(depuis)})."
+            )
+        if item.jour < PREMIERE_DATE_SOLDE:
+            raise ConflictError(f"Date invalide : {_date(item.jour)}.")
+        libelle = _text(item.libelle)
+        banques = {
+            bank_id: _amount(value) for bank_id, value in item.banques.items() if value is not None
+        }
+        montants = {name: _amount(item.montants.get(name)) for name in JOUR_FIELDS}
+        if libelle is None and not banques and all(v is None for v in montants.values()):
+            continue
+        rang = rangs.get(item.jour, 0) + 1
+        if rang > LIGNES_PREVISIONS_PAR_DATE:
+            raise ConflictError(
+                f"Au plus {LIGNES_PREVISIONS_PAR_DATE} lignes par date ({_date(item.jour)})."
+            )
+        rangs[item.jour] = rang
+        if libelle is not None:
+            cells[(item.jour, rang, None)] = libelle
+        for bank_id, montant in banques.items():
+            cells[(item.jour, rang, bank_id)] = montant
+        if any(v is not None for v in montants.values()):
+            days[(item.jour, rang)] = montants
+    return cells, days
+
+
+def _ligne_label(jour: date, ligne: int, colonne: str) -> str:
+    return f"{_date(jour)} · Ligne {ligne} · {colonne}"
 
 
 def save_previsions(
     db: Session,
     company_id: int,
-    jour: date,
-    cells: Mapping[PrevisionCell, str | Decimal | None],
-    jour_values: Mapping[int, Mapping[str, Decimal | None]],
+    depuis: date,
+    lignes: list[LignePrevision],
     *,
     acteur_id: int,
     ip: str | None = None,
 ) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
-    """`cells` : libellé (sans banque) ou montant par banque. `jour_values` : Encaissement, Escompte
-    et Douane de chaque ligne (décision du 03/10/2026) ; une ligne absente est vidée."""
+    """Remplace toutes les lignes datées `depuis` ou plus tard par `lignes` (décision du
+    30/10/2026) : une ligne absente est supprimée, les lignes plus anciennes ne bougent pas."""
     company = _company(db, company_id)
-    banks = _active_banks(db, {bank_id for _, bank_id in cells if bank_id is not None})
-    wanted: dict[PrevisionCell, str | Decimal] = {}
-    for key, value in cells.items():
-        clean = _text(value) if key[1] is None else _amount(value)
-        if clean is not None:
-            wanted[key] = clean
+    banks = _active_banks(db, {bank_id for item in lignes for bank_id in item.banques})
+    wanted, wanted_days = _numeroter(depuis, lignes)
     existing = {
-        (row.ligne, row.bank_id): row
-        for row in saisie_repository.list_previsions(db, company.id, jour)
+        (row.jour, row.ligne, row.bank_id): row
+        for row in saisie_repository.list_previsions(db, company.id, depuis)
     }
 
     def value_of(row: SaisiePrevision) -> str | Decimal | None:
@@ -207,7 +267,7 @@ def save_previsions(
         row.saisi_par_id = acteur_id
 
     def build(key: PrevisionCell, value: str | Decimal) -> SaisiePrevision:
-        ligne, bank_id = key
+        jour, ligne, bank_id = key
         return SaisiePrevision(
             company_id=company.id,
             jour=jour,
@@ -219,8 +279,8 @@ def save_previsions(
         )
 
     def label(key: PrevisionCell) -> str:
-        ligne, bank_id = key
-        return f"Ligne {ligne} · {banks[bank_id].code if bank_id is not None else 'libellé'}"
+        jour, ligne, bank_id = key
+        return _ligne_label(jour, ligne, banks[bank_id].code if bank_id is not None else "libellé")
 
     avant: dict[str, Any] = {}
     apres: dict[str, Any] = {}
@@ -228,7 +288,7 @@ def save_previsions(
         db,
         existing,
         wanted,
-        editable=lambda key: key[1] is None or key[1] in banks,
+        editable=lambda key: key[2] is None or key[2] in banks,
         value_of=value_of,
         set_value=set_value,
         build=build,
@@ -238,17 +298,19 @@ def save_previsions(
     )
 
     # Encaissement, Escompte, Douane : un enregistrement par ligne, supprimé quand les trois sont vides
-    days = {row.ligne: row for row in saisie_repository.list_previsions_jour(db, company.id, jour)}
-    for ligne in sorted(set(days) | set(jour_values)):
-        day = days.get(ligne)
-        values = jour_values.get(ligne, {})
-        new_day = {field: _amount(values.get(field)) for field in JOUR_FIELDS}
+    days = {
+        (row.jour, row.ligne): row
+        for row in saisie_repository.list_previsions_jour(db, company.id, depuis)
+    }
+    for key in sorted(set(days) | set(wanted_days)):
+        day = days.get(key)
+        new_day = wanted_days.get(key, dict.fromkeys(JOUR_FIELDS))
         day_changed = False
-        for field, title in JOUR_FIELDS.items():
-            old = None if day is None else getattr(day, field)
-            if old != new_day[field]:
-                avant[f"Ligne {ligne} · {title}"] = old
-                apres[f"Ligne {ligne} · {title}"] = new_day[field]
+        for name, title in JOUR_FIELDS.items():
+            old = None if day is None else getattr(day, name)
+            if old != new_day[name]:
+                avant[_ligne_label(*key, title)] = old
+                apres[_ligne_label(*key, title)] = new_day[name]
                 day_changed = True
         if not day_changed:
             continue
@@ -256,10 +318,10 @@ def save_previsions(
             saisie_repository.delete(db, day)
             continue
         if day is None:
-            day = SaisiePrevisionJour(company_id=company.id, jour=jour, ligne=ligne)
+            day = SaisiePrevisionJour(company_id=company.id, jour=key[0], ligne=key[1])
             saisie_repository.add(db, day)
-        for field, value in new_day.items():
-            setattr(day, field, value)
+        for name, value in new_day.items():
+            setattr(day, name, value)
         day.saisi_par_id = acteur_id
 
     if apres:
@@ -269,9 +331,9 @@ def save_previsions(
             action="saisie_previsions",
             entite="saisie_previsions",
             entite_id=company.id,
-            avant={"jour": jour, **avant},
-            apres={"jour": jour, **apres},
+            avant={"a_partir_du": depuis, **avant},
+            apres={"a_partir_du": depuis, **apres},
             ip=ip,
         )
         db.commit()
-    return list_previsions(db, company.id, jour)
+    return list_previsions(db, company.id, depuis)

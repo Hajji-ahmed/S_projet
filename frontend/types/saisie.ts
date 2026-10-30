@@ -17,6 +17,9 @@ export type Devises = { company_id: number; jour: string; lignes: LigneDevises[]
 export type DevisesInput = { lignes: LigneDevises[] };
 
 export type LignePrevisions = {
+  /** Date de la ligne (décision du 30/10/2026). */
+  jour: string;
+  /** Rang de la ligne parmi celles de sa date, donné par le serveur. */
   ligne: number;
   libelle: string | null;
   banques: MontantBanque[];
@@ -28,4 +31,5 @@ export type LignePrevisions = {
 
 export type Previsions = { company_id: number; jour: string; lignes: LignePrevisions[] };
 
-export type PrevisionsInput = Omit<Previsions, "company_id" | "jour">;
+/** Les lignes à partir de la date de la page ; leur rang est donné par le serveur. */
+export type PrevisionsInput = { lignes: Omit<LignePrevisions, "ligne">[] };

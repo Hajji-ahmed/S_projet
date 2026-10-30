@@ -99,13 +99,12 @@ def save_previsions(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_enter_previsions),
 ) -> PrevisionsOut:
-    """Enregistre la grille Prévisions de la date. Une cellule absente ou `null` est vidée."""
+    """Remplace les lignes Prévisions datées `date` ou plus tard : une ligne absente est supprimée."""
     rows, days = saisie_service.save_previsions(
         db,
         company_id,
         jour,
-        body.cells(),
-        body.jour_values(),
+        body.lignes_saisies(),
         acteur_id=user.id,
         ip=client_ip(request),
     )

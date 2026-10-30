@@ -11,7 +11,6 @@ import {
   GRID_ROW_HEAD,
   GRID_TABLE,
 } from "@/components/position/GridCell";
-import { PositionChart } from "@/components/position/PositionChart";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
@@ -46,13 +45,15 @@ type BanquesTableProps = {
   companyId: number;
   /** Date de fin du tableau (« AAAA-MM-JJ ») ; l'API ne va jamais au-delà d'aujourd'hui. */
   jour: string;
+  /** Réponse chargée, pour le graphique « Évolution de la position » placé en bas de la page. */
+  onCharge?: (table: Table) => void;
 };
 
 /**
  * Tableau Banques du classeur, calculé par l'API à partir des soldes du jour (lecture seule) :
  * Taux, LIGNE, une ligne « facilité de caisse » par jour (solde + LIGNE), Disponible Fc reel.
  */
-export function BanquesTable({ companyId, jour }: BanquesTableProps) {
+export function BanquesTable({ companyId, jour, onCharge }: BanquesTableProps) {
   const [table, setTable] = useState<Table | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [retryKey, setRetryKey] = useState(0);
@@ -65,6 +66,7 @@ export function BanquesTable({ companyId, jour }: BanquesTableProps) {
         if (cancelled) return;
         setTable(result);
         setState("ready");
+        onCharge?.(result);
       },
       () => {
         if (!cancelled) setState("error");
@@ -73,32 +75,28 @@ export function BanquesTable({ companyId, jour }: BanquesTableProps) {
     return () => {
       cancelled = true;
     };
-  }, [companyId, jour, retryKey]);
+  }, [companyId, jour, retryKey, onCharge]);
 
   return (
-    <>
-      <Card title="Banques" icon={Landmark}>
-        {state === "loading" && <LoadingState rows={4} />}
-        {state === "error" && (
-          <ErrorState
-            message="Impossible de charger le tableau Banques."
-            onRetry={() => {
-              setState("loading");
-              setRetryKey((key) => key + 1);
-            }}
-          />
-        )}
-        {state === "ready" && table && (
-          <Grid
-            table={table}
-            shown={shown}
-            onShowMore={() => setShown((count) => count + JOURS_AFFICHES)}
-          />
-        )}
-      </Card>
-      {/* P8.3 : mêmes données que le tableau, sans second appel à l'API */}
-      {state === "ready" && table && <PositionChart jours={table.jours} banques={table.banques} />}
-    </>
+    <Card title="Banques" icon={Landmark}>
+      {state === "loading" && <LoadingState rows={4} />}
+      {state === "error" && (
+        <ErrorState
+          message="Impossible de charger le tableau Banques."
+          onRetry={() => {
+            setState("loading");
+            setRetryKey((key) => key + 1);
+          }}
+        />
+      )}
+      {state === "ready" && table && (
+        <Grid
+          table={table}
+          shown={shown}
+          onShowMore={() => setShown((count) => count + JOURS_AFFICHES)}
+        />
+      )}
+    </Card>
   );
 }
 

@@ -13,19 +13,22 @@ def list_devises(db: Session, company_id: int, jour: date) -> list[SaisieDevise]
     return list(db.scalars(query.order_by(SaisieDevise.id)))
 
 
-def list_previsions(db: Session, company_id: int, jour: date) -> list[SaisiePrevision]:
+def list_previsions(db: Session, company_id: int, depuis: date) -> list[SaisiePrevision]:
+    """Cellules des lignes datées `depuis` ou plus tard, par date puis par rang."""
     query = select(SaisiePrevision).where(
-        SaisiePrevision.company_id == company_id, SaisiePrevision.jour == jour
+        SaisiePrevision.company_id == company_id, SaisiePrevision.jour >= depuis
     )
-    return list(db.scalars(query.order_by(SaisiePrevision.ligne, SaisiePrevision.id)))
+    return list(
+        db.scalars(query.order_by(SaisiePrevision.jour, SaisiePrevision.ligne, SaisiePrevision.id))
+    )
 
 
-def list_previsions_jour(db: Session, company_id: int, jour: date) -> list[SaisiePrevisionJour]:
-    """Encaissement / Escompte / Douane de la date, une ligne du bloc par enregistrement."""
+def list_previsions_jour(db: Session, company_id: int, depuis: date) -> list[SaisiePrevisionJour]:
+    """Encaissement / Escompte / Douane des lignes datées `depuis` ou plus tard."""
     query = select(SaisiePrevisionJour).where(
-        SaisiePrevisionJour.company_id == company_id, SaisiePrevisionJour.jour == jour
+        SaisiePrevisionJour.company_id == company_id, SaisiePrevisionJour.jour >= depuis
     )
-    return list(db.scalars(query.order_by(SaisiePrevisionJour.ligne)))
+    return list(db.scalars(query.order_by(SaisiePrevisionJour.jour, SaisiePrevisionJour.ligne)))
 
 
 def add(db: Session, row: object) -> None:

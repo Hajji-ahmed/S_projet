@@ -166,6 +166,26 @@ def test_migration_0007_downgrade_refuses_to_lose_line_amounts(empty_database):
         command.downgrade(config, "0006")
 
 
+def test_migration_0044_downgrade_refuses_to_lose_lines_beyond_14(empty_database):
+    """Depuis 0044, une date peut avoir jusqu'à 99 lignes de Prévisions : le retour arrière ne les
+    tronque pas en silence."""
+    config, engine = empty_database
+    command.upgrade(config, "head")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'Société');
+                INSERT INTO saisies_previsions (company_id, jour, ligne, libelle)
+                    VALUES (1, '2026-09-30', 15, 'Client');
+                """
+            )
+        )
+
+    with pytest.raises(Exception, match="14e ligne"):
+        command.downgrade(config, "0043")
+
+
 def test_migration_0008_fixes_debits_proven_by_the_balance(empty_database):
     """Relevé BP « Format_Different » importé avec une colonne Montant sans signe : tout était au
     crédit. Seules les opérations dont la chaîne des soldes prouve un débit sont corrigées."""

@@ -21,7 +21,6 @@ export const COLONNES_DEVISES = [
   { key: "depassement", label: "DEPASSEMENT" },
 ] as const;
 
-export const NB_LIGNES_PREVISIONS = 14;
 export const LIBELLE_MAX = 80;
 /** Les trois colonnes sans banque du tableau Prévisions : un montant par ligne (03/10/2026). */
 export const COLONNES_JOUR = [
@@ -101,34 +100,75 @@ export function draftToDevisesInput(draft: Draft, bankIds: number[]): Parsed<Dev
 
 // --- Prévisions ------------------------------------------------------------------------------------
 
-export const LIGNES_PREVISIONS: readonly number[] = Array.from(
-  { length: NB_LIGNES_PREVISIONS },
-  (_, index) => index + 1,
-);
+/** Au plus 99 lignes par date (`LIGNES_PREVISIONS_PAR_DATE` du backend). */
+export const LIGNES_PAR_DATE_MAX = 99;
+
+/**
+ * Une ligne du tableau Prévisions dans le brouillon : `id` est propre à l'écran (les lignes chargées
+ * puis les lignes ajoutées), `jour` sa date (décision du 30/10/2026). Ses cellules sont « id|… ».
+ */
+export type LigneBrouillon = { id: number; jour: string };
+
+/** Les lignes du brouillon, par date puis dans l'ordre d'ajout (l'ordre envoyé au serveur). */
+export function lignesPrevisions(draft: Draft): LigneBrouillon[] {
+  const lignes: LigneBrouillon[] = [];
+  for (const [key, value] of Object.entries(draft)) {
+    const [row, column] = key.split("|");
+    if (column === "jour") lignes.push({ id: Number(row), jour: value });
+  }
+  return lignes.sort((a, b) => a.jour.localeCompare(b.jour) || a.id - b.id);
+}
+
+/** Lignes regroupées par date, pour la cellule de date fusionnée de chaque groupe. */
+export function groupesParDate(
+  lignes: LigneBrouillon[],
+): { jour: string; lignes: LigneBrouillon[] }[] {
+  const groupes: { jour: string; lignes: LigneBrouillon[] }[] = [];
+  for (const ligne of lignes) {
+    const dernier = groupes.at(-1);
+    if (dernier?.jour === ligne.jour) dernier.lignes.push(ligne);
+    else groupes.push({ jour: ligne.jour, lignes: [ligne] });
+  }
+  return groupes;
+}
+
+/** Ajoute une ligne vide à la date `jour`, après les lignes de cette date. */
+export function ajouterLigne(draft: Draft, jour: string): Draft {
+  const id = Math.max(0, ...lignesPrevisions(draft).map((ligne) => ligne.id)) + 1;
+  return { ...draft, [cellKey(id, "jour")]: jour };
+}
+
+/** Retire la ligne `id` et toutes ses cellules. */
+export function supprimerLigne(draft: Draft, id: number): Draft {
+  return Object.fromEntries(Object.entries(draft).filter(([key]) => !key.startsWith(`${id}|`)));
+}
 
 export function previsionsToDraft(previsions: Previsions): Draft {
   const draft: Draft = {};
-  for (const line of previsions.lignes) {
-    if (line.libelle !== null) draft[cellKey(line.ligne, "libelle")] = line.libelle;
-    putBanks(draft, line.ligne, line.banques);
-    for (const { key } of COLONNES_JOUR) putAmount(draft, cellKey(line.ligne, key), line[key]);
-  }
+  previsions.lignes.forEach((line, index) => {
+    const id = index + 1;
+    draft[cellKey(id, "jour")] = line.jour;
+    if (line.libelle !== null) draft[cellKey(id, "libelle")] = line.libelle;
+    putBanks(draft, id, line.banques);
+    for (const { key } of COLONNES_JOUR) putAmount(draft, cellKey(id, key), line[key]);
+  });
   return draft;
 }
 
+/** Toutes les lignes affichées, dans l'ordre : une ligne absente est supprimée par le serveur. */
 export function draftToPrevisionsInput(draft: Draft, bankIds: number[]): Parsed<PrevisionsInput> {
   const invalid: string[] = [];
-  const lignes = LIGNES_PREVISIONS.map((ligne) => {
-    const key = cellKey(ligne, "libelle");
+  const lignes = lignesPrevisions(draft).map(({ id, jour }) => {
+    const key = cellKey(id, "libelle");
     const libelle = (draft[key] ?? "").trim();
     if (libelle.length > LIBELLE_MAX) invalid.push(key);
     return {
-      ligne,
+      jour,
       libelle: libelle || null,
-      banques: banksOf(draft, ligne, bankIds, invalid),
-      encaissement: amountOf(draft, cellKey(ligne, "encaissement"), invalid),
-      escompte: amountOf(draft, cellKey(ligne, "escompte"), invalid),
-      douane: amountOf(draft, cellKey(ligne, "douane"), invalid),
+      banques: banksOf(draft, id, bankIds, invalid),
+      encaissement: amountOf(draft, cellKey(id, "encaissement"), invalid),
+      escompte: amountOf(draft, cellKey(id, "escompte"), invalid),
+      douane: amountOf(draft, cellKey(id, "douane"), invalid),
     };
   });
   return invalid.length ? { ok: false, invalid } : { ok: true, value: { lignes } };

@@ -23,11 +23,12 @@ export function saveDevises(companyId: number, jour: string, data: DevisesInput)
   return put<Devises>(`/position/devises${query(companyId, jour)}`, data);
 }
 
+/** Lignes Prévisions datées du `jour` ou plus tard (décision du 30/10/2026). */
 export function getPrevisions(companyId: number, jour: string) {
   return apiFetch<Previsions>(`/position/previsions${query(companyId, jour)}`);
 }
 
-/** Remplace la grille Prévisions de la date : une cellule absente est vidée. */
+/** Remplace les lignes Prévisions datées du `jour` ou plus tard : une ligne absente est supprimée. */
 export function savePrevisions(companyId: number, jour: string, data: PrevisionsInput) {
   return put<Previsions>(`/position/previsions${query(companyId, jour)}`, data);
 }

@@ -1,7 +1,6 @@
 """Tableaux Devises et Prévisions saisis à la main (page Position bancaire)."""
 
 from datetime import date, timedelta
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -241,52 +240,57 @@ def test_comptable_cannot_enter_devises(client, comptable, db):
 
 # --- Prévisions ------------------------------------------------------------------------------------
 
+LATER = DAY + timedelta(days=5)
 
-def test_empty_previsions_grid_has_the_14_lines(client, direction, db):
+
+def put_previsions(client, db, headers, lignes, jour: date = DAY):
+    return client.put(
+        PREVISIONS, params=params(db, jour=jour), json={"lignes": lignes}, headers=headers
+    )
+
+
+def keys(body: dict) -> list[tuple[str, int, str | None]]:
+    return [(item["jour"], item["ligne"], item["libelle"]) for item in body["lignes"]]
+
+
+def test_empty_previsions_table_has_no_line(client, direction, db):
+    """Décision du 30/10/2026 : plus de bloc fixe de 14 lignes, la Trésorerie ajoute ses lignes."""
     body = client.get(PREVISIONS, params=params(db), headers=direction).json()
 
-    assert [item["ligne"] for item in body["lignes"]] == list(range(1, 15))
-    assert all(
-        item
-        == {
-            "ligne": item["ligne"],
-            "libelle": None,
-            "banques": [],
-            "encaissement": None,
-            "escompte": None,
-            "douane": None,
-        }
-        for item in body["lignes"]
-    )
-    # Décision du 03/10/2026 : Encaissement, Escompte et Douane se saisissent ligne par ligne
+    assert body["lignes"] == []
     assert "encaissement" not in body
 
 
-def test_previsions_grid_round_trip(client, tresorerie, db):
+def test_previsions_round_trip_with_a_date_per_line(client, tresorerie, db):
     cih = bank_id(db, "CIH")
-    body = {
-        "lignes": [
-            {
-                "ligne": 1,
-                "libelle": "  Client A  ",
-                "banques": [{"bank_id": cih, "montant": "1000"}],
-                "encaissement": "250000",
-            },
-            {"ligne": 7, "escompte": "5"},  # ligne avec seulement un montant de la journée
-            {
-                "ligne": 14,
-                "libelle": "   ",
-                "banques": [{"bank_id": cih, "montant": "-50.25"}],
-                "douane": "-12000.5",
-            },
-        ],
-    }
+    lignes = [
+        {
+            "jour": DAY.isoformat(),
+            "libelle": "  Client A  ",
+            "banques": [{"bank_id": cih, "montant": "1000"}],
+            "encaissement": "250000",
+        },
+        {"jour": LATER.isoformat(), "escompte": "5"},  # seulement un montant sans banque
+        {
+            "jour": DAY.isoformat(),
+            "libelle": "   ",
+            "banques": [{"bank_id": cih, "montant": "-50.25"}],
+            "douane": "-12000.5",
+        },
+    ]
 
-    saved = client.put(PREVISIONS, params=params(db), json=body, headers=tresorerie).json()
+    saved = put_previsions(client, db, tresorerie, lignes).json()
     again = client.get(PREVISIONS, params=params(db), headers=tresorerie).json()
 
     assert saved == again
-    assert line(again, 1) == {
+    # Triées par date ; rangs donnés dans l'ordre d'envoi pour chaque date
+    assert keys(again) == [
+        (DAY.isoformat(), 1, "Client A"),
+        (DAY.isoformat(), 2, None),  # un libellé blanc est une cellule vide
+        (LATER.isoformat(), 1, None),
+    ]
+    assert again["lignes"][0] == {
+        "jour": DAY.isoformat(),
         "ligne": 1,
         "libelle": "Client A",
         "banques": [{"bank_id": cih, "montant": "1000.00"}],
@@ -294,89 +298,158 @@ def test_previsions_grid_round_trip(client, tresorerie, db):
         "escompte": None,
         "douane": None,
     }
-    assert line(again, 7) | {"ligne": 0} == {
-        "ligne": 0,
-        "libelle": None,
-        "banques": [],
-        "encaissement": None,
-        "escompte": "5.00",
-        "douane": None,
-    }
-    assert line(again, 14)["libelle"] is None  # un libellé blanc est une cellule vide
-    assert line(again, 14)["douane"] == "-12000.50"
-    assert line(again, 2)["encaissement"] is None
+    assert again["lignes"][1]["douane"] == "-12000.50"
+    assert again["lignes"][2]["escompte"] == "5.00"
 
 
-def test_previsions_grid_is_replaced_and_audited(client, tresorerie, db):
-    cih = bank_id(db, "CIH")
-    first = {
-        "lignes": [
-            {
-                "ligne": 3,
-                "libelle": "Client A",
-                "banques": [{"bank_id": cih, "montant": "1"}],
-                "escompte": "10",
-            }
+def test_previsions_shows_lines_from_the_chosen_date_onwards(client, tresorerie, db):
+    put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {"jour": DAY.isoformat(), "libelle": "Aujourd'hui"},
+            {"jour": LATER.isoformat(), "libelle": "Plus tard"},
         ],
-    }
-    client.put(PREVISIONS, params=params(db), json=first, headers=tresorerie)
-
-    response = client.put(
-        PREVISIONS,
-        params=params(db),
-        json={"lignes": [{"ligne": 3, "libelle": "Client B"}]},
-        headers=tresorerie,
     )
 
-    assert line(response.json(), 3) == {
-        "ligne": 3,
-        "libelle": "Client B",
-        "banques": [],
-        "encaissement": None,
-        "escompte": None,
-        "douane": None,
-    }
+    body = client.get(
+        PREVISIONS, params=params(db, jour=DAY + timedelta(days=1)), headers=tresorerie
+    )
+
+    assert keys(body.json()) == [(LATER.isoformat(), 1, "Plus tard")]
+
+
+def test_saving_from_a_later_date_keeps_older_lines(client, tresorerie, db):
+    put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {"jour": DAY.isoformat(), "libelle": "Ancienne"},
+            {"jour": LATER.isoformat(), "libelle": "Plus tard"},
+        ],
+    )
+
+    put_previsions(client, db, tresorerie, [], jour=DAY + timedelta(days=1))
+
+    body = client.get(PREVISIONS, params=params(db), headers=tresorerie).json()
+    assert keys(body) == [(DAY.isoformat(), 1, "Ancienne")]
+
+
+def test_deleted_line_is_removed_renumbered_and_audited(client, tresorerie, db):
+    cih = bank_id(db, "CIH")
+    put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {"jour": DAY.isoformat(), "libelle": "Client A", "escompte": "10"},
+            {
+                "jour": DAY.isoformat(),
+                "libelle": "Client B",
+                "banques": [{"bank_id": cih, "montant": "1"}],
+            },
+        ],
+    )
+
+    # La ligne « Client A » est supprimée : « Client B » devient la ligne 1
+    response = put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {
+                "jour": DAY.isoformat(),
+                "libelle": "Client B",
+                "banques": [{"bank_id": cih, "montant": "1"}],
+            }
+        ],
+    )
+
+    assert response.json()["lignes"] == [
+        {
+            "jour": DAY.isoformat(),
+            "ligne": 1,
+            "libelle": "Client B",
+            "banques": [{"bank_id": cih, "montant": "1.00"}],
+            "encaissement": None,
+            "escompte": None,
+            "douane": None,
+        }
+    ]
     assert db.scalar(select(SaisiePrevisionJour)) is None  # trois cellules vides : ligne supprimée
     entry = audit(db, "saisie_previsions")[-1]
     assert entry.ancienne_valeur == {
-        "jour": DAY.isoformat(),
-        "Ligne 3 · libellé": "Client A",
-        "Ligne 3 · CIH": "1.00",
-        "Ligne 3 · Escompte": "10.00",
+        "a_partir_du": DAY.isoformat(),
+        "30/09/2026 · Ligne 1 · libellé": "Client A",
+        "30/09/2026 · Ligne 1 · CIH": None,
+        "30/09/2026 · Ligne 1 · Escompte": "10.00",
+        "30/09/2026 · Ligne 2 · libellé": "Client B",
+        "30/09/2026 · Ligne 2 · CIH": "1.00",
     }
     assert entry.nouvelle_valeur == {
-        "jour": DAY.isoformat(),
-        "Ligne 3 · libellé": "Client B",
-        "Ligne 3 · CIH": None,
-        "Ligne 3 · Escompte": None,
+        "a_partir_du": DAY.isoformat(),
+        "30/09/2026 · Ligne 1 · libellé": "Client B",
+        "30/09/2026 · Ligne 1 · CIH": "1.00",
+        "30/09/2026 · Ligne 1 · Escompte": None,
+        "30/09/2026 · Ligne 2 · libellé": None,
+        "30/09/2026 · Ligne 2 · CIH": None,
     }
 
 
-def test_day_amounts_of_two_lines_are_kept_apart(client, tresorerie, db):
-    body = {"lignes": [{"ligne": 1, "encaissement": "100"}, {"ligne": 2, "encaissement": "200"}]}
-    client.put(PREVISIONS, params=params(db), json=body, headers=tresorerie)
+def test_same_previsions_again_writes_no_audit(client, tresorerie, db):
+    lignes = [{"jour": DAY.isoformat(), "libelle": "Client A", "encaissement": "1"}]
+    put_previsions(client, db, tresorerie, lignes)
 
-    response = client.put(
-        PREVISIONS,
-        params=params(db),
-        json={"lignes": [{"ligne": 2, "encaissement": "250"}]},
-        headers=tresorerie,
+    put_previsions(client, db, tresorerie, lignes)
+
+    assert len(audit(db, "saisie_previsions")) == 1
+
+
+def test_empty_added_line_is_not_saved(client, tresorerie, db):
+    body = put_previsions(
+        client,
+        db,
+        tresorerie,
+        [{"jour": DAY.isoformat()}, {"jour": LATER.isoformat(), "libelle": "A"}],
+    ).json()
+
+    assert keys(body) == [(LATER.isoformat(), 1, "A")]
+
+
+def test_line_before_the_chosen_date_gives_409(client, tresorerie, db):
+    response = put_previsions(
+        client, db, tresorerie, [{"jour": (DAY - timedelta(days=1)).isoformat(), "libelle": "A"}]
     )
 
-    assert line(response.json(), 1)["encaissement"] is None  # absente de la grille : vidée
-    assert line(response.json(), 2)["encaissement"] == "250.00"
-    rows = list(db.scalars(select(SaisiePrevisionJour)))
-    assert [(row.ligne, row.encaissement) for row in rows] == [(2, Decimal("250.00"))]
+    assert response.status_code == 409
+    assert "antérieure" in response.json()["detail"]
+
+
+def test_mistyped_year_gives_409(client, tresorerie, db):
+    response = put_previsions(
+        client, db, tresorerie, [{"jour": "0026-10-01", "libelle": "A"}], jour=date(1, 1, 1)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Date invalide : 01/10/0026."
+
+
+def test_at_most_99_lines_per_date(client, tresorerie, db):
+    lignes = [{"jour": DAY.isoformat(), "libelle": f"L{n}"} for n in range(100)]
+
+    response = put_previsions(client, db, tresorerie, lignes)
+
+    assert response.status_code == 409
+    assert "99 lignes" in response.json()["detail"]
 
 
 def test_future_previsions_can_be_entered(client, tresorerie, db):
     future = business_today() + timedelta(days=30)
 
-    response = client.put(
-        PREVISIONS,
-        params=params(db, jour=future),
-        json={"lignes": [{"ligne": 1, "encaissement": "1"}]},
-        headers=tresorerie,
+    response = put_previsions(
+        client, db, tresorerie, [{"jour": future.isoformat(), "encaissement": "1"}], jour=future
     )
 
     assert response.status_code == 200
@@ -385,25 +458,24 @@ def test_future_previsions_can_be_entered(client, tresorerie, db):
 @pytest.mark.parametrize(
     "body",
     [
-        {"lignes": [{"ligne": 0}]},
-        {"lignes": [{"ligne": 15}]},
-        {"lignes": [{"ligne": 1}, {"ligne": 1}]},
-        {"lignes": [{"ligne": 1, "libelle": "x" * 81}]},
-        {"lignes": [{"ligne": 1, "encaissement": "abc"}]},
-        {"lignes": [{"ligne": 1, "douane": "1.234"}]},
-        # Ancienne forme : un montant pour toute la journée n'est plus accepté
+        {"lignes": [{"libelle": "sans date"}]},
+        {"lignes": [{"jour": "2026-13-01"}]},
+        {"lignes": [{"jour": "2026-09-30", "ligne": 1}]},  # le rang est donné par le serveur
+        {"lignes": [{"jour": "2026-09-30", "libelle": "x" * 81}]},
+        {"lignes": [{"jour": "2026-09-30", "encaissement": "abc"}]},
+        {"lignes": [{"jour": "2026-09-30", "douane": "1.234"}]},
         {"lignes": [], "encaissement": "1"},
         {"lignes": [], "inconnu": "x"},
     ],
 )
-def test_invalid_previsions_grid_gives_422(client, tresorerie, db, body):
+def test_invalid_previsions_gives_422(client, tresorerie, db, body):
     assert (
         client.put(PREVISIONS, params=params(db), json=body, headers=tresorerie).status_code == 422
     )
 
 
 def test_direction_and_comptable_cannot_enter_previsions(client, direction, comptable, db):
-    body = {"lignes": [{"ligne": 1, "encaissement": "1"}]}
+    body = {"lignes": [{"jour": DAY.isoformat(), "encaissement": "1"}]}
 
     assert client.get(PREVISIONS, params=params(db), headers=direction).status_code == 200
     for headers in (direction, comptable):

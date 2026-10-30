@@ -66,12 +66,15 @@ class SaisieDevise(TimestampMixin, Base):
 
 
 class SaisiePrevision(TimestampMixin, Base):
-    """Une cellule des 14 lignes du tableau Prévisions : le libellé de la ligne (sans banque) ou le
-    montant d'une banque."""
+    """Une cellule d'une ligne du tableau Prévisions : le libellé de la ligne (sans banque) ou le
+    montant d'une banque. `jour` est la date de la ligne et `ligne` son rang parmi les lignes de
+    cette date (décision du 30/10/2026 ; avant, un bloc fixe de 14 lignes par date de page)."""
 
     __tablename__ = "saisies_previsions"
     __table_args__ = (
-        CheckConstraint(f"ligne BETWEEN 1 AND {enums.NB_LIGNES_PREVISIONS}", name="ligne_du_bloc"),
+        CheckConstraint(
+            f"ligne BETWEEN 1 AND {enums.LIGNES_PREVISIONS_PAR_DATE}", name="ligne_du_bloc"
+        ),
         CheckConstraint(
             "(bank_id IS NULL AND libelle IS NOT NULL AND montant IS NULL)"
             " OR (bank_id IS NOT NULL AND montant IS NOT NULL AND libelle IS NULL)",
@@ -117,7 +120,9 @@ class SaisiePrevisionJour(TimestampMixin, Base):
         UniqueConstraint(
             "company_id", "jour", "ligne", name="uq_saisies_previsions_jour_societe_jour_ligne"
         ),
-        CheckConstraint(f"ligne BETWEEN 1 AND {enums.NB_LIGNES_PREVISIONS}", name="ligne_du_bloc"),
+        CheckConstraint(
+            f"ligne BETWEEN 1 AND {enums.LIGNES_PREVISIONS_PAR_DATE}", name="ligne_du_bloc"
+        ),
         # Trois cellules vides : la ligne est supprimée, jamais gardée avec des 0
         CheckConstraint(
             "encaissement IS NOT NULL OR escompte IS NOT NULL OR douane IS NOT NULL",

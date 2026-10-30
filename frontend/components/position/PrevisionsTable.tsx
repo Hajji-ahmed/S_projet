@@ -1,6 +1,7 @@
 "use client";
 
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import {
@@ -14,8 +15,10 @@ import {
   GridFooter,
 } from "@/components/position/GridCell";
 import { useSaisieGrid, type GridApi } from "@/components/position/useSaisieGrid";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
+import { DateInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { useToast } from "@/components/ui/Toast";
 import { formatDate } from "@/lib/balances";
@@ -23,11 +26,14 @@ import { cn } from "@/lib/cn";
 import {
   COLONNES_JOUR,
   LIBELLE_MAX,
-  LIGNES_PREVISIONS,
-  NB_LIGNES_PREVISIONS,
+  LIGNES_PAR_DATE_MAX,
+  ajouterLigne,
   cellKey,
   draftToPrevisionsInput,
+  groupesParDate,
+  lignesPrevisions,
   previsionsToDraft,
+  supprimerLigne,
 } from "@/lib/saisies";
 import { getPrevisions, savePrevisions } from "@/services/saisies";
 import type { Bank } from "@/types/bank";
@@ -39,6 +45,9 @@ const API: GridApi<Previsions, PrevisionsInput> = {
   toDraft: previsionsToDraft,
 };
 
+const ICON_BUTTON =
+  "rounded-md p-1 text-simtis-muted transition-colors duration-150 disabled:pointer-events-none disabled:opacity-40";
+
 type PrevisionsTableProps = {
   companyId: number;
   jour: string;
@@ -48,20 +57,31 @@ type PrevisionsTableProps = {
 };
 
 /**
- * Tableau Prévisions du classeur, saisi à la main : la date fusionnée à gauche sur les 14 lignes, un
- * libellé et un montant par banque sur chaque ligne, puis Encaissement, Escompte et Douane, une
- * cellule par ligne (décision du 03/10/2026). Rien n'y est calculé.
+ * Tableau Prévisions, saisi à la main : chaque ligne a sa date (décision du 30/10/2026), fusionnée à
+ * gauche sur les lignes de la même date ; un libellé et un montant par banque, puis Encaissement,
+ * Escompte et Douane. Le tableau montre les lignes datées du jour choisi ou plus tard ; la Trésorerie
+ * ajoute une ligne (à une nouvelle date ou sous une date existante) ou la supprime, puis enregistre.
+ * Rien n'y est calculé.
  */
 export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsTableProps) {
   const { toast } = useToast();
   const grid = useSaisieGrid(companyId, jour, API);
+  const [nouvelleDate, setNouvelleDate] = useState(jour);
+  const groupes = groupesParDate(lignesPrevisions(grid.draft));
+  const pleine = (date: string) =>
+    (groupes.find((groupe) => groupe.jour === date)?.lignes.length ?? 0) >= LIGNES_PAR_DATE_MAX;
+  const dateValide = nouvelleDate >= jour && !pleine(nouvelleDate);
 
   async function save() {
     const parsed = draftToPrevisionsInput(
       grid.draft,
       banks.map((bank) => bank.id),
     );
-    if (await grid.submit(parsed)) toast(`Tableau Prévisions du ${formatDate(jour)} enregistré.`);
+    if (await grid.submit(parsed)) toast("Tableau Prévisions enregistré.");
+  }
+
+  function ajouter(date: string) {
+    grid.changeDraft((draft) => ajouterLigne(draft, date));
   }
 
   function cell(key: string, label: string, text = false) {
@@ -89,11 +109,14 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
           <div className={GRID_FRAME}>
             <table
               className={cn(GRID_TABLE, "table-fixed")}
-              style={largeurMin(110 + 180 + COLONNES_JOUR.length * 120, banks.length)}
+              style={largeurMin(
+                130 + 180 + COLONNES_JOUR.length * 120 + (canEdit ? 44 : 0),
+                banks.length,
+              )}
               aria-label="Prévisions"
             >
               <colgroup>
-                <col className="w-[110px]" />
+                <col className="w-[130px]" />
                 <col className="w-[180px]" />
                 {banks.map((bank) => (
                   <col key={bank.id} />
@@ -101,6 +124,7 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
                 {COLONNES_JOUR.map((column) => (
                   <col key={column.key} className="w-[120px]" />
                 ))}
+                {canEdit && <col className="w-[44px]" />}
               </colgroup>
               <thead>
                 <tr>
@@ -124,39 +148,119 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
                       {column.label}
                     </th>
                   ))}
+                  {canEdit && (
+                    <th scope="col" className={GRID_HEAD}>
+                      <span className="sr-only">Supprimer</span>
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {LIGNES_PREVISIONS.map((ligne) => (
-                  <tr key={ligne}>
-                    {ligne === 1 && (
-                      <th
-                        scope="rowgroup"
-                        rowSpan={NB_LIGNES_PREVISIONS}
-                        className={cn(GRID_ROW_HEAD, "text-center align-middle")}
-                      >
-                        {formatDate(jour)}
-                      </th>
-                    )}
-                    <td className="p-0">
-                      {cell(cellKey(ligne, "libelle"), `Ligne ${ligne} libellé`, true)}
+                {groupes.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={2 + banks.length + COLONNES_JOUR.length + (canEdit ? 1 : 0)}
+                      className="px-3 py-6 text-center text-sm text-simtis-muted"
+                    >
+                      Aucune prévision à partir du {formatDate(jour)}.
                     </td>
-                    {banks.map((bank) => (
-                      <td key={bank.id} className="p-0">
-                        {cell(cellKey(ligne, bank.id), `Ligne ${ligne} ${bank.code}`)}
-                      </td>
-                    ))}
-                    {/* Une cellule par ligne (décision du 03/10/2026), comme les banques */}
-                    {COLONNES_JOUR.map((column) => (
-                      <td key={column.key} className="p-0">
-                        {cell(cellKey(ligne, column.key), `Ligne ${ligne} ${column.label}`)}
-                      </td>
-                    ))}
                   </tr>
-                ))}
+                )}
+                {groupes.flatMap((groupe) =>
+                  groupe.lignes.map(({ id }, index) => (
+                    <tr key={id}>
+                      {index === 0 && (
+                        <th
+                          scope="rowgroup"
+                          rowSpan={groupe.lignes.length}
+                          className={cn(GRID_ROW_HEAD, "text-center align-middle")}
+                        >
+                          <span className="tabular-nums">{formatDate(groupe.jour)}</span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => ajouter(groupe.jour)}
+                              disabled={grid.saving || pleine(groupe.jour)}
+                              title="Ajouter une ligne à cette date"
+                              aria-label={`Ajouter une ligne au ${formatDate(groupe.jour)}`}
+                              className={cn(
+                                ICON_BUTTON,
+                                "mt-1 flex w-full items-center justify-center gap-1 text-xs font-normal hover:bg-simtis-light hover:text-simtis-primary",
+                              )}
+                            >
+                              <Plus className="h-3.5 w-3.5" aria-hidden />
+                              ligne
+                            </button>
+                          )}
+                        </th>
+                      )}
+                      <td className="p-0">
+                        {cell(cellKey(id, "libelle"), `${formatDate(groupe.jour)} libellé`, true)}
+                      </td>
+                      {banks.map((bank) => (
+                        <td key={bank.id} className="p-0">
+                          {cell(cellKey(id, bank.id), `${formatDate(groupe.jour)} ${bank.code}`)}
+                        </td>
+                      ))}
+                      {COLONNES_JOUR.map((column) => (
+                        <td key={column.key} className="p-0">
+                          {cell(
+                            cellKey(id, column.key),
+                            `${formatDate(groupe.jour)} ${column.label}`,
+                          )}
+                        </td>
+                      ))}
+                      {canEdit && (
+                        <td className="text-center">
+                          <button
+                            type="button"
+                            onClick={() => grid.changeDraft((draft) => supprimerLigne(draft, id))}
+                            disabled={grid.saving}
+                            title="Supprimer la ligne"
+                            aria-label={`Supprimer la ligne ${index + 1} du ${formatDate(groupe.jour)}`}
+                            className={cn(
+                              ICON_BUTTON,
+                              "hover:bg-simtis-danger-bg hover:text-simtis-danger-fg",
+                            )}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  )),
+                )}
               </tbody>
             </table>
           </div>
+          {canEdit && (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-simtis-text">
+                Date de la ligne
+                <DateInput
+                  id="prevision-nouvelle-date"
+                  value={nouvelleDate}
+                  min={jour}
+                  onChange={(event) => setNouvelleDate(event.target.value)}
+                  invalid={nouvelleDate !== "" && !dateValide}
+                  className="w-[170px]"
+                />
+              </label>
+              <Button
+                variant="secondary"
+                icon={Plus}
+                onClick={() => ajouter(nouvelleDate)}
+                disabled={!dateValide || grid.saving}
+              >
+                Ajouter une ligne
+              </Button>
+              {nouvelleDate !== "" && nouvelleDate < jour && (
+                <span className="text-sm text-simtis-danger-fg">
+                  La date doit être le {formatDate(jour)} ou plus tard.
+                </span>
+              )}
+            </div>
+          )}
           {canEdit && (
             <GridFooter
               name="Prévisions"

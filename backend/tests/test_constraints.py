@@ -858,8 +858,8 @@ def test_same_devises_cell_is_accepted_on_another_day_or_line(db, world):
     )
 
 
-@pytest.mark.parametrize("ligne", [0, 15])
-def test_previsions_line_is_within_the_14_line_block(db, world, ligne):
+@pytest.mark.parametrize("ligne", [0, 100])
+def test_previsions_line_rank_is_at_most_99_per_date(db, world, ligne):
     assert_rejected(db, "ck_saisies_previsions_ligne_du_bloc", prevision(world, ligne=ligne))
 
 
@@ -893,7 +893,7 @@ def test_previsions_line_with_label_and_amounts_is_accepted(db, world):
         db,
         prevision(world, bank_id=None, montant=None, libelle="Client A"),
         prevision(world),
-        prevision(world, ligne=14),
+        prevision(world, ligne=99),
     )
 
 
@@ -905,7 +905,7 @@ def day_amounts(world, **over) -> SaisiePrevisionJour:
 
 
 def test_one_day_amounts_row_per_company_day_and_line(db, world):
-    save(db, day_amounts(world), day_amounts(world, ligne=14))
+    save(db, day_amounts(world), day_amounts(world, ligne=99))
 
     assert_rejected(
         db,
@@ -914,8 +914,8 @@ def test_one_day_amounts_row_per_company_day_and_line(db, world):
     )
 
 
-@pytest.mark.parametrize("ligne", [0, 15])
-def test_day_amounts_line_is_in_the_block(db, world, ligne):
+@pytest.mark.parametrize("ligne", [0, 100])
+def test_day_amounts_line_rank_is_at_most_99_per_date(db, world, ligne):
     assert_rejected(db, "ck_saisies_previsions_jour_ligne_du_bloc", day_amounts(world, ligne=ligne))
 
 
