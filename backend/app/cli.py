@@ -69,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
     reprise.add_argument(
         "--jusqu-au", required=True, type=date.fromisoformat, help="date de l'état, AAAA-MM-JJ"
     )
+    reprise.add_argument(
+        "--avec-solde-ouverture",
+        action="store_true",
+        help="le solde d'ouverture comptable du compte fait face à la ligne d'ouverture du relevé",
+    )
     reprise.add_argument("--motif", help="obligatoire avec --appliquer")
     reprise.add_argument("--email", help="auteur du rapprochement ; obligatoire avec --appliquer")
     reprise.add_argument(
@@ -138,6 +143,11 @@ def _afficher(bilan: reprise_service.Bilan) -> None:
         f"(crédit − débit {bilan.total_operations}), {len(bilan.ecritures)} écritures "
         f"(montant {bilan.total_ecritures}), écart {bilan.ecart}"
     )
+    if bilan.ouverture is not None:
+        print(
+            f"Solde d'ouverture comptable au {bilan.date_ouverture:%d/%m/%Y} : {bilan.ouverture} "
+            "(compté comme une écriture au débit)"
+        )
     for ligne in bilan.deja_rapprochees:
         print(f"  Déjà rapprochée ou proposée, laissée telle quelle : {ligne}")
     for probleme in bilan.problemes:
@@ -157,6 +167,7 @@ def _reprise(args: argparse.Namespace) -> int:
         "jusqu_au": args.jusqu_au,
         "feuille_banque": args.feuille_banque,
         "feuille_compta": args.feuille_compta,
+        "avec_solde_ouverture": args.avec_solde_ouverture,
     }
     try:
         with SessionLocal() as db:

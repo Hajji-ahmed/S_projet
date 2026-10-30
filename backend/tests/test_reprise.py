@@ -325,3 +325,73 @@ def test_a_large_match_sends_twenty_lines_per_side_with_the_full_counts(run, ref
         Decimal("-250"),
         Decimal("0"),
     )
+
+
+# --- Solde d'ouverture comptable (30/10/2026) -----------------------------------------------------
+
+
+@pytest.fixture
+def avec_ouverture(situation):
+    """La ligne d'ouverture du relevé (5 000 au crédit) n'a pas d'écriture en face : sa
+    contrepartie est le solde d'ouverture comptable du compte (5 000 au débit Sage)."""
+    db, compte = situation["db"], situation["compte"]
+    situation["ouverture"] = operation(
+        db, compte, montant="5000", jour=JOUR - timedelta(days=30), libelle="RAPPROCHEMENT BLOC"
+    )
+    compte.date_solde_comptable = JOUR - timedelta(days=30)
+    compte.solde_comptable_ouverture = Decimal("5000.00")
+    db.flush()
+    return situation
+
+
+def test_without_the_option_the_opening_line_unbalances_the_reprise(run, avec_ouverture):
+    s = avec_ouverture
+
+    code, out, _ = run(s["compte"], s["banque"], s["compta"])
+
+    assert code == 1
+    assert "écart 5000.00" in out
+
+
+def test_the_opening_balance_faces_the_opening_line(run, avec_ouverture):
+    s = avec_ouverture
+
+    code, out, err = run(
+        s["compte"], s["banque"], s["compta"], "--avec-solde-ouverture",
+        "--appliquer", "--motif", "Reprise au 30/09/2026", "--email", EMAIL,
+    )  # fmt: skip
+
+    assert code == 0, out + err
+    assert "Solde d'ouverture comptable au 11/08/2026 : 5000.00" in out
+    db = s["db"]
+    match = db.scalar(select(ReconciliationMatch).filter_by(origine="Reprise"))
+    assert match.statut == "Validée"
+    assert (
+        "solde d'ouverture comptable au 11/08/2026 (5000.00)" in match.detail_score["explication"]
+    )
+    for ligne in [s["ouverture"], *s["reprises"], *s["ecr_reprises"]]:
+        db.refresh(ligne)
+        assert ligne.statut == "Rapprochée"
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "reprise_rapprochement"))
+    assert audit.nouvelle_valeur["solde_ouverture"] == "5000.00"
+    assert audit.nouvelle_valeur["date_solde_ouverture"] == "2026-08-11"
+
+
+def test_the_option_without_an_opening_balance_is_refused(run, situation):
+    code, out, _ = run(
+        situation["compte"], situation["banque"], situation["compta"], "--avec-solde-ouverture"
+    )
+
+    assert code == 1
+    assert "pas de solde d'ouverture comptable" in out
+
+
+def test_an_opening_balance_after_the_state_date_is_refused(run, avec_ouverture):
+    s = avec_ouverture
+    s["compte"].date_solde_comptable = date(2026, 10, 15)
+    s["db"].flush()
+
+    code, out, _ = run(s["compte"], s["banque"], s["compta"], "--avec-solde-ouverture")
+
+    assert code == 1
+    assert "daté du 15/10/2026, après la date de l'état" in out

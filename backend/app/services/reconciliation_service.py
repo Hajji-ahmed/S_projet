@@ -755,18 +755,23 @@ MONTANTS_DIFFERENTS = (
 )
 
 
-def _check_amounts(db: Session, match: ReconciliationMatch) -> None:
-    """Un rapprochement validé s'équilibre : la somme des montants (banque + Sage) vaut zéro."""
+def _check_amounts(
+    db: Session, match: ReconciliationMatch, ecart_admis: Decimal = Decimal("0")
+) -> None:
+    """Un rapprochement validé s'équilibre : la somme des montants (banque + Sage) vaut zéro, ou
+    `ecart_admis` pour une reprise qui compte le solde d'ouverture comptable."""
     tx_ids, entry_ids = _members(match)
     total = sum((db.get(BankTransaction, i).montant for i in tx_ids), Decimal("0")) + sum(
         (montant_rapprochement(db.get(AccountingEntry, i)) for i in entry_ids), Decimal("0")
     )
-    if total != 0:
+    if total != ecart_admis:
         raise ConflictError(MONTANTS_DIFFERENTS)
 
 
-def _validate(db: Session, match: ReconciliationMatch, acteur_id: int) -> None:
-    _check_amounts(db, match)
+def _validate(
+    db: Session, match: ReconciliationMatch, acteur_id: int, ecart_admis: Decimal = Decimal("0")
+) -> None:
+    _check_amounts(db, match, ecart_admis)
     _decide(match, "Validée", acteur_id)
     match.valide_par_id = acteur_id
     match.valide_le = match.decide_le

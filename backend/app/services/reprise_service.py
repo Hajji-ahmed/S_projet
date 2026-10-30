@@ -239,10 +239,14 @@ class Bilan:
     problemes: list[str] = field(default_factory=list)  # bloquent l'application
     code: str | None = None
     propositions_rejetees: list[int] = field(default_factory=list)
+    # Solde d'ouverture comptable (débit Sage = positif) pris comme une écriture de la reprise :
+    # il fait face à la ligne d'ouverture du relevé, qui n'a pas d'écriture en face
+    ouverture: Decimal | None = None
+    date_ouverture: date | None = None
 
     @property
     def ecart(self) -> Decimal:
-        return self.total_operations + self.total_ecritures
+        return self.total_operations + self.total_ecritures - (self.ouverture or ZERO)
 
 
 def _ligne_operation(tx: BankTransaction) -> LigneSimtis:
@@ -264,6 +268,27 @@ def _actives(db: Session, tx_ids: list[int], entry_ids: list[int]) -> list[Recon
     ]
 
 
+def _ouverture(bilan: Bilan, account, jusqu_au: date) -> None:
+    """Solde d'ouverture comptable du compte, dans sa devise (montant en devise pour EUR / USD)."""
+    montant = (
+        account.solde_comptable_ouverture
+        if account.devise == "MAD"
+        else account.solde_comptable_ouverture_devise
+    )
+    if account.date_solde_comptable is None or montant is None:
+        bilan.problemes.append(
+            "Le compte n'a pas de solde d'ouverture comptable : saisissez-le dans « Solde "
+            "comptable » (/ecritures) ou relancez sans --avec-solde-ouverture."
+        )
+    elif account.date_solde_comptable > jusqu_au:
+        bilan.problemes.append(
+            f"Le solde d'ouverture comptable est daté du "
+            f"{account.date_solde_comptable.strftime('%d/%m/%Y')}, après la date de l'état."
+        )
+    else:
+        bilan.ouverture, bilan.date_ouverture = montant, account.date_solde_comptable
+
+
 def analyser(
     db: Session,
     *,
@@ -273,8 +298,10 @@ def analyser(
     jusqu_au: date,
     feuille_banque: str | None = None,
     feuille_compta: str | None = None,
+    avec_solde_ouverture: bool = False,
 ) -> Bilan:
-    """Ce que la reprise ferait, sans rien écrire."""
+    """Ce que la reprise ferait, sans rien écrire. Avec `avec_solde_ouverture`, le solde
+    d'ouverture comptable du compte entre dans l'équilibre comme une écriture au débit."""
     account = account_repository.get_by_numero(db, numero_compte)
     if account is None:
         raise NotFoundError(f"Compte bancaire introuvable : {numero_compte}.")
@@ -321,6 +348,8 @@ def analyser(
             bilan.ecritures.append(entry.id)
             bilan.total_ecritures += reconciliation_service.montant_rapprochement(entry)
 
+    if avec_solde_ouverture:
+        _ouverture(bilan, account, jusqu_au)
     if not bilan.operations or not bilan.ecritures:
         bilan.problemes.append("Rien à rapprocher d'un côté : aucune reprise possible.")
     if bilan.ecart != 0:
@@ -343,6 +372,7 @@ def appliquer(
     email: str,
     feuille_banque: str | None = None,
     feuille_compta: str | None = None,
+    avec_solde_ouverture: bool = False,
 ) -> Bilan:
     """Crée le rapprochement de reprise, tout ou rien ; refusé au moindre problème du bilan."""
     texte = " ".join(motif.split())
@@ -363,6 +393,7 @@ def appliquer(
         jusqu_au=jusqu_au,
         feuille_banque=feuille_banque,
         feuille_compta=feuille_compta,
+        avec_solde_ouverture=avec_solde_ouverture,
     )
     if bilan.problemes:
         raise ConflictError(
@@ -392,18 +423,22 @@ def appliquer(
         tx.id: tx for tx in reprise_repository.operations_jusqu_au(db, account.id, jusqu_au)
     }
     ecritures = {e.id: e for e in reprise_repository.ecritures_jusqu_au(db, account.id, jusqu_au)}
+    explication = (
+        f"Reprise de l'état de rapprochement au {jusqu_au.strftime('%d/%m/%Y')} : "
+        f"{len(bilan.operations)} opérations ↔ {len(bilan.ecritures)} écritures"
+    )
+    if bilan.ouverture is not None:
+        explication += (
+            f" + solde d'ouverture comptable au {bilan.date_ouverture.strftime('%d/%m/%Y')} "
+            f"({bilan.ouverture})"
+        )
     match = ReconciliationMatch(
         company_id=account.company_id,
         type="N-N",
         statut="Proposée",
         origine=ORIGINE,
         commentaire=texte,
-        detail_score={
-            "explication": (
-                f"Reprise de l'état de rapprochement au {jusqu_au.strftime('%d/%m/%Y')} : "
-                f"{len(bilan.operations)} opérations ↔ {len(bilan.ecritures)} écritures"
-            )
-        },
+        detail_score={"explication": explication},
         items=[
             *(
                 Item(bank_transaction_id=i, montant_affecte=abs(operations[i].montant), actif=True)
@@ -421,7 +456,7 @@ def appliquer(
     )
     reconciliation_repository.add(db, match)
     db.flush()
-    reconciliation_service._validate(db, match, user.id)
+    reconciliation_service._validate(db, match, user.id, ecart_admis=bilan.ouverture or ZERO)
     bilan.code = match.code
     audit_service.log(
         db,
@@ -440,6 +475,10 @@ def appliquer(
             "nb_ecritures": len(bilan.ecritures),
             "total_operations": bilan.total_operations,
             "total_ecritures": bilan.total_ecritures,
+            "solde_ouverture": bilan.ouverture,
+            "date_solde_ouverture": bilan.date_ouverture.isoformat()
+            if bilan.date_ouverture
+            else None,
             "operations_gardees": bilan.gardees_operations,
             "ecritures_gardees": bilan.gardees_ecritures,
             "propositions_rejetees": bilan.propositions_rejetees,
