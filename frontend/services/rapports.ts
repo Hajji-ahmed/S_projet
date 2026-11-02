@@ -19,8 +19,15 @@ export function exportNonRapproches(companyId: number, from: string, to: string,
   return apiDownload(`/rapports/non-rapproches?${params}`);
 }
 
-/** Synthèse par compte et opérations restant à rapprocher sur la période, en Excel. */
-export function exportEtatRapprochement(companyId: number, from: string, to: string) {
+/** Rapprochements validés de la période : opérations et écritures côte à côte par compte
+ *  (30/10/2026), d'une banque ou de toutes. */
+export function exportEtatRapprochement(
+  companyId: number,
+  from: string,
+  to: string,
+  bankId?: number,
+) {
   const params = new URLSearchParams({ company_id: String(companyId), from, to });
+  if (bankId !== undefined) params.set("bank_id", String(bankId));
   return apiDownload(`/rapports/rapprochement?${params}`);
 }

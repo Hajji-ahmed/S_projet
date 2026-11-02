@@ -55,12 +55,100 @@ def test_the_daily_position_keeps_the_banks_table_structure(client, responsable,
     assert audit.nouvelle_valeur["rapport"] == "position_du_jour"
 
 
-def test_the_reconciliation_state_counts_statuses_per_account(client, responsable, db):
-    awb = account(db)
-    operation(db, awb, montant="1000", jour=date(2026, 9, 2), statut="Rapprochée")
-    operation(db, awb, montant="-250", jour=date(2026, 9, 3), libelle="CHQ 1")
-    operation(db, awb, montant="400", jour=date(2026, 9, 4), statut="À vérifier")
-    operation(db, awb, montant="-999", jour=date(2026, 10, 1), libelle="hors période")
+def rapprocher(client, headers, operations, ecritures, id_seulement=False):
+    """Rapprochement manuel validé ; renvoie son code (ou son id)."""
+    response = client.post(
+        "/api/reconciliation/matches",
+        json={
+            "transaction_ids": [o.id for o in operations],
+            "ecriture_ids": [e.id for e in ecritures],
+        },
+        headers=headers,
+    )
+    assert response.status_code in (200, 201), response.text
+    return response.json()["id" if id_seulement else "code"]
+
+
+def test_the_reconciliation_state_puts_matched_lines_side_by_side(client, reference, db):
+    """30/10/2026 : les rapprochements validés de la période, une feuille par compte de la banque
+    choisie, opérations à gauche, écritures à droite, un bloc par code, totaux équilibrés."""
+    make_auth_user(reference, "COMPTABLE", email="comptable@example.com")
+    comptable = bearer(login(client, "comptable@example.com"))
+    bp = account(db, bank_code="BP")
+    awb = account(db, bank_code="AWB")
+    chq = operation(db, bp, montant="-1200", jour=date(2026, 9, 3), libelle="CHQ 0173813")
+    e_chq = ecriture(db, bp, montant="1200", jour=date(2026, 9, 3), libelle="EAR1 173813")
+    vir = operation(db, bp, montant="3000", jour=date(2026, 9, 10), libelle="VIR KARIM")
+    e1 = ecriture(db, bp, montant="-1000", jour=date(2026, 9, 10), libelle="REG KARIM 1")
+    e2 = ecriture(db, bp, montant="-2000", jour=date(2026, 9, 11), libelle="REG KARIM 2")
+    hors = operation(db, bp, montant="500", jour=date(2026, 10, 2), libelle="HORS PERIODE")
+    e_hors = ecriture(db, bp, montant="-500", jour=date(2026, 10, 2))
+    autre = operation(db, awb, montant="700", jour=date(2026, 9, 5), libelle="AUTRE BANQUE")
+    e_autre = ecriture(db, awb, montant="-700", jour=date(2026, 9, 5))
+    annule = operation(db, bp, montant="900", jour=date(2026, 9, 20), libelle="ANNULE")
+    e_annule = ecriture(db, bp, montant="-900", jour=date(2026, 9, 20))
+    code_chq = rapprocher(client, comptable, [chq], [e_chq])
+    code_vir = rapprocher(client, comptable, [vir], [e1, e2])
+    rapprocher(client, comptable, [hors], [e_hors])
+    rapprocher(client, comptable, [autre], [e_autre])
+    match_annule = rapprocher(client, comptable, [annule], [e_annule], id_seulement=True)
+    assert (
+        client.request(
+            "DELETE",
+            f"/api/reconciliation/matches/{match_annule}",
+            json={"motif": "erreur"},
+            headers=comptable,
+        ).status_code
+        == 200
+    )
+
+    response = client.get(
+        "/api/rapports/rapprochement",
+        params={
+            "company_id": str(company(db).id),
+            "from": "2026-09-01",
+            "to": "2026-09-30",
+            "bank_id": str(bp.bank_id),
+        },
+        headers=comptable,
+    )
+
+    workbook = classeur(response)
+    assert len(workbook.sheetnames) == 1
+    feuille = workbook[workbook.sheetnames[0]]
+    assert feuille.cell(row=2, column=1).value == "2 rapprochements validés"
+    assert feuille.cell(row=3, column=1).value == "Transactions bancaires"
+    assert feuille.cell(row=3, column=7).value == "Rapprochement"
+    assert feuille.cell(row=3, column=12).value == "Écritures comptables"
+    lignes = [list(r) for r in feuille.iter_rows(min_row=5, values_only=True)]
+    # Bloc 1 : le chèque, une ligne ; bloc 2 : le virement face à ses deux écritures
+    assert (lignes[0][1], lignes[0][6], lignes[0][12]) == ("CHQ 0173813", code_chq, "EAR1 173813")
+    assert (lignes[1][1], lignes[1][6], lignes[1][7], lignes[1][12]) == (
+        "VIR KARIM",
+        code_vir,
+        "1-N",
+        "REG KARIM 1",
+    )
+    assert (lignes[2][1], lignes[2][6], lignes[2][12]) == (None, None, "REG KARIM 2")
+    # Totaux : débit banque = crédit Sage, crédit banque = débit Sage
+    total = lignes[3]
+    assert total[0] == "Total" and total[11] == "Total"
+    assert (total[3], total[4]) == (1200, 3000)
+    assert (total[14], total[15]) == (3000, 1200)
+    assert feuille.cell(row=6, column=1).fill.fgColor.rgb.endswith("F5F8FA")
+    assert (
+        "etat-rapprochement-simtis-bp-20260901-20260930.xlsx"
+        in (response.headers["content-disposition"])
+    )
+    audit = db.scalar(
+        select(AuditLog).where(AuditLog.action == "export_rapport").order_by(AuditLog.id.desc())
+    )
+    assert audit.nouvelle_valeur["rapport"] == "etat_rapprochement"
+    assert audit.nouvelle_valeur["rapprochements"] == 2
+
+
+def test_the_reconciliation_state_without_match_says_so(client, responsable, db):
+    account(db, bank_code="BP")
 
     response = client.get(
         "/api/rapports/rapprochement",
@@ -68,19 +156,8 @@ def test_the_reconciliation_state_counts_statuses_per_account(client, responsabl
         headers=responsable,
     )
 
-    workbook = classeur(response)
-    synthese = [[c.value for c in row] for row in workbook["Synthèse"].iter_rows(min_row=4)]
-    assert len(synthese) == 1
-    ligne = synthese[0]
-    assert ligne[0].startswith("AWB · ")
-    assert ligne[1:6] == [1, 1, 1, 0, 3]
-    assert ligne[6] == pytest.approx(33.3)
-    assert ligne[7:9] == [250, 400]
-    detail = [[c.value for c in row] for row in workbook["À rapprocher"].iter_rows(min_row=2)]
-    assert [(r[3], r[7]) for r in detail] == [
-        ("CHQ 1", "Non rapprochée"),
-        ("VIR ABC", "À vérifier"),
-    ]
+    feuille = classeur(response)["Rapprochées"]
+    assert feuille["A1"].value.startswith("Aucun rapprochement validé du 01/09/2026")
 
 
 def test_reports_check_the_period_and_their_permissions(client, reference, db):
@@ -173,8 +250,13 @@ def test_pdf_amounts_are_written_the_french_way(valeur, texte):
 
 
 def lignes(feuille, colonne: int) -> list[str]:
-    """Libellés d'un côté de la feuille (colonne 2 = relevé, 9 = Sage), sous l'en-tête."""
-    valeurs = [row[colonne - 1] for row in feuille.iter_rows(min_row=4, values_only=True)]
+    """Libellés d'un côté de la feuille (colonne 2 = relevé, 9 = Sage), sous l'en-tête et la
+    ligne des soldes, jusqu'au total."""
+    valeurs = []
+    for row in feuille.iter_rows(min_row=5, values_only=True):
+        if row[0] == "Total" or row[colonne - 2] == "Total":
+            break
+        valeurs.append(row[colonne - 1])
     return [v for v in valeurs if v not in (None, "Total") and not isinstance(v, (int, float))]
 
 
@@ -212,9 +294,9 @@ def test_unreconciled_lines_side_by_side_for_one_bank_and_period(client, respons
     assert feuille.cell(row=2, column=8).value == "Écritures comptables (1)"
     # Le plus récent d'abord, rapprochées, en cours et hors période exclues
     assert lignes(feuille, 2) == ["VERSEMENT DEPLACE PAR X", "COMMISSION", "VIR KARIM"]
-    statuts = [row[5] for row in feuille.iter_rows(min_row=4, max_row=6, values_only=True)]
+    statuts = [row[5] for row in feuille.iter_rows(min_row=5, max_row=7, values_only=True)]
     assert statuts == ["Non rapprochée", "Non rapprochée · frais", "En proposition"]
-    assert feuille.cell(row=4, column=9).value == "ESP TT26272F48TV"
+    assert feuille.cell(row=5, column=9).value == "ESP TT26272F48TV"
     assert (
         "non-rapproches-simtis-bp-2026-09-01-2026-09-30.xlsx"
         in (response.headers["content-disposition"])
@@ -232,3 +314,92 @@ def test_unreconciled_lines_need_the_reconciliation_permission(client, reference
     )
 
     assert response.status_code == 403
+
+
+# --- Soldes et contrôle des lignes non rapprochées (02/11/2026) -----------------------------------
+
+
+def non_rapproches(client, headers, db, compte, du="2026-09-01", au="2026-09-30"):
+    return client.get(
+        "/api/rapports/non-rapproches",
+        params={"company_id": str(company(db).id), "from": du, "to": au, "bank_id": compte.bank_id},
+        headers=headers,
+    )
+
+
+def test_unreconciled_lines_start_with_both_balances_and_end_at_zero(client, responsable, db):
+    bp = account(db, bank_code="BP")
+    bp.date_solde_comptable = date(2026, 8, 31)
+    bp.solde_comptable_ouverture = Decimal("1000.00")
+    paye = operation(db, bp, montant="500", jour=date(2026, 9, 10), solde=Decimal("1500"))
+    paye.statut = "Rapprochée"
+    operation(db, bp, montant="9000", jour=date(2026, 9, 30), libelle="VERSEMENT X",
+              solde=Decimal("10500"))  # fmt: skip
+    # Sage : débit = entrée en banque ; la 2e écriture n'est pas encore au relevé
+    lettree = ecriture(db, bp, montant="-500", jour=date(2026, 9, 10))
+    lettree.statut = "Rapprochée"
+    ecriture(db, bp, montant="-200", jour=date(2026, 9, 29), libelle="ESP Y")
+    db.flush()
+
+    feuille = classeur(non_rapproches(client, responsable, db, bp)).active
+
+    # Solde du relevé créditeur (Crédit), solde comptable débiteur dans Sage (Débit)
+    assert feuille.cell(row=4, column=2).value == "Solde du relevé au 30/09/2026"
+    assert feuille.cell(row=4, column=5).value == 10500
+    assert feuille.cell(row=4, column=9).value == "Solde comptable au 30/09/2026"
+    assert feuille.cell(row=4, column=11).value == 1700
+    assert lignes(feuille, 2) == ["VERSEMENT X"]
+    assert lignes(feuille, 9) == ["ESP Y"]
+    controle = [(r[1], r[3]) for r in feuille.iter_rows(min_row=10, max_row=12, values_only=True)]
+    assert controle == [
+        ("Solde banque rectifié (solde du relevé + écritures non rapprochées)", 10700),
+        ("Solde compta rectifié (solde comptable + opérations non rapprochées)", 10700),
+        ("Écart", 0),
+    ]
+
+
+def test_without_accounting_opening_the_balance_is_not_invented(client, responsable, db):
+    bp = account(db, bank_code="BP")
+    operation(db, bp, montant="9000", jour=date(2026, 9, 30), solde=Decimal("9000"))
+    db.flush()
+
+    feuille = classeur(non_rapproches(client, responsable, db, bp)).active
+
+    assert feuille.cell(row=4, column=13).value == "non renseigné"
+    assert feuille.cell(row=4, column=11).value is None
+    valeurs = {r[1]: r[3] for r in feuille.iter_rows(min_row=9, values_only=True) if r[1]}
+    assert valeurs["Écart"] == "non calculable"
+    assert valeurs["Solde banque rectifié (solde du relevé + écritures non rapprochées)"] == 9000
+
+
+def test_unreconciled_lines_cover_up_to_ten_years(client, responsable, db):
+    bp = account(db, bank_code="BP")
+    operation(db, bp, montant="10", jour=date(2017, 1, 20))
+    db.flush()
+
+    neuf_ans = non_rapproches(client, responsable, db, bp, du="2017-01-20", au="2026-09-30")
+    onze_ans = non_rapproches(client, responsable, db, bp, du="2015-09-01", au="2026-09-30")
+
+    assert lignes(classeur(neuf_ans).active, 2) == ["VIR ABC"]
+    assert onze_ans.status_code == 409
+    assert onze_ans.json()["detail"] == "La période ne peut pas dépasser 10 ans."
+
+
+@pytest.mark.parametrize(
+    ("releve", "comptable", "attendu"),
+    [
+        ("-969604.15", "-3202420.03", ["-7936707.88", "-7936707.88", "0.00"]),
+        (None, "100.00", [None, "-4734187.85", None]),
+    ],
+)
+def test_reconciliation_control_rule(releve, comptable, attendu):
+    from app.services.rapports_service import etat_controle
+
+    resultat = etat_controle(
+        None if releve is None else Decimal(releve),
+        Decimal(comptable),
+        Decimal("-4734287.85"),
+        Decimal("-6967103.73"),
+    )
+
+    assert [None if v is None else str(v) for _, v in resultat] == attendu

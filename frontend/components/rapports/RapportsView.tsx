@@ -202,25 +202,38 @@ function periodeValide(periode: { from: string; to: string }): boolean {
   return periode.from !== "" && periode.to !== "" && periode.from <= periode.to;
 }
 
+/** État de rapprochement (30/10/2026) : les rapprochements validés, opérations et écritures
+ *  côte à côte, par compte. */
 function EtatRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
-  const [periode, setPeriode] = useState(() => moisEnCours(businessToday()));
+  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
+  const [banque, setBanque] = useState<number | undefined>(undefined);
+  const banques = useBanques(companyId);
   const { envoi, telecharger } = useTelechargement();
+  const code = banques.find((b) => b.id === banque)?.code ?? "toutes";
   return (
     <Rapport
       titre="État de rapprochement"
       icon={GitCompareArrows}
-      description="Par compte : opérations rapprochées, à vérifier, non rapprochées et taux ; puis la liste des opérations qui restent à rapprocher."
+      description="Par compte : chaque rapprochement validé de la période, ses opérations du relevé à gauche et ses écritures Sage à droite, avec son code, et les totaux de chaque côté."
     >
       {actif ? (
         <div className="flex flex-wrap items-end gap-3">
           <Periode id="rapport-etat" periode={periode} onChange={setPeriode} />
+          <div className="w-[230px]">
+            <BankPicker
+              id="rapport-etat-banque"
+              banques={banques}
+              value={banque}
+              onChange={setBanque}
+            />
+          </div>
           <Button
             icon={Download}
             disabled={envoi || !periodeValide(periode)}
             onClick={() =>
               telecharger(
-                () => exportEtatRapprochement(companyId, periode.from, periode.to),
-                `etat-rapprochement-${periode.from}-${periode.to}.xlsx`,
+                () => exportEtatRapprochement(companyId, periode.from, periode.to, banque),
+                `etat-rapprochement-${code}-${periode.from}-${periode.to}.xlsx`,
               )
             }
           >
@@ -234,13 +247,9 @@ function EtatRapport({ companyId, actif }: { companyId: number; actif: boolean }
   );
 }
 
-/** Lignes non rapprochées (30/10/2026) : relevé et écritures Sage côte à côte, par compte. */
-function NonRapprochesRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
-  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
-  const [banque, setBanque] = useState<number | undefined>(undefined);
+/** Banques actives de la société, pour les filtres « Banque » des rapports. */
+function useBanques(companyId: number): Bank[] {
   const [banques, setBanques] = useState<Bank[]>([]);
-  const { envoi, telecharger } = useTelechargement();
-
   useEffect(() => {
     let cancelled = false;
     listBanks(companyId).then(
@@ -253,6 +262,15 @@ function NonRapprochesRapport({ companyId, actif }: { companyId: number; actif: 
       cancelled = true;
     };
   }, [companyId]);
+  return banques;
+}
+
+/** Lignes non rapprochées (30/10/2026) : relevé et écritures Sage côte à côte, par compte. */
+function NonRapprochesRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
+  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
+  const [banque, setBanque] = useState<number | undefined>(undefined);
+  const banques = useBanques(companyId);
+  const { envoi, telecharger } = useTelechargement();
 
   const code = banques.find((b) => b.id === banque)?.code ?? "toutes";
   return (

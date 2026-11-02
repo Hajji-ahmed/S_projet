@@ -64,13 +64,15 @@ def etat_rapprochement(
     company_id: Annotated[int, Query(description="Société")],
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
+    bank_id: Annotated[int | None, Query(description="Banque (toutes sans valeur)")] = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_permission(PermissionCode.RECONCILIATION_VIEW)),
 ) -> Response:
-    """Synthèse par compte (par statut) et opérations restant à rapprocher sur la période."""
+    """Rapprochements validés de la période, opérations et écritures côte à côte par compte
+    (30/10/2026)."""
     return _fichier(
         *rapports_service.etat_rapprochement(
-            db, company_id, date_from, date_to, acteur_id=user.id, ip=client_ip(request)
+            db, company_id, date_from, date_to, bank_id, acteur_id=user.id, ip=client_ip(request)
         )
     )
 

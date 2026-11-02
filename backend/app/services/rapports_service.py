@@ -6,16 +6,16 @@ Aucun chiffre n'est recalculé ici :
   (`position_banques_service.banques_table`), dans sa structure : une colonne par banque, TOTAL,
   DEPASSEMENT ; la ligne LIGNE, une ligne « facilité de caisse » par jour, « Disponible Fc reel » ;
   un dernier solde connu repris d'un jour précédent est en italique gris, comme à l'écran ;
-- « État de rapprochement » compte les opérations du relevé par statut sur la période, compte par
-  compte (chacun dans sa devise, jamais additionnés entre devises), puis liste les opérations qui
-  ne sont pas « Rapprochée ».
+- « État de rapprochement » (refait le 30/10/2026) met côte à côte, compte par compte, les
+  opérations du relevé et les écritures Sage de chaque rapprochement validé de la période, un bloc
+  par code (au milieu : code, type, validé par / le), avec les totaux de chaque côté.
 - « Lignes non rapprochées » (30/10/2026) met côte à côte, compte par compte, les opérations du
   relevé et les écritures Sage pas encore rapprochées de la période, comme l'écran Rapprochement.
 Le lettrage et les écritures de frais pour Sage gardent leurs exports existants. Chaque export
 est audité (`export_rapport`).
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
 
@@ -30,15 +30,17 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
-from app.models import AccountingEntry, BankAccount, BankTransaction
+from app.models import AccountingEntry, BankAccount, BankTransaction, ReconciliationMatch
 from app.repositories import account_repository, rapports_repository, reconciliation_repository
-from app.services import audit_service, position_banques_service
+from app.services import audit_service, position_banques_service, solde_comptable_service
 from app.services.account_service import fraction_to_pct
 from app.services.errors import ConflictError, NotFoundError
-from app.services.position_service import LigneTableau, business_today
+from app.services.position_service import BUSINESS_TZ, LigneTableau, business_today
+from app.services.reconciliation_service import montant_rapprochement
+from app.services.solde_comptable_service import SoldeComptable
 
 PERIODE_MAX_JOURS = 1827  # 5 ans, comme le lettrage
-STATUTS = ("Rapprochée", "À vérifier", "Non rapprochée", "Écart")
+NON_RAPPROCHES_MAX_JOURS = 3653  # 10 ans pour « Lignes non rapprochées » (02/11/2026)
 FORMAT_MONTANT = "#,##0.00"
 FORMAT_DATE = "DD/MM/YYYY"
 GRAS = Font(bold=True)
@@ -293,107 +295,20 @@ def position_pdf(
     return f"position-{company.code}-{tableau.date_fin:%Y%m%d}.pdf".lower(), buffer.getvalue()
 
 
-def _periode(date_from: date | None, date_to: date | None) -> tuple[date, date]:
+def _periode(
+    date_from: date | None,
+    date_to: date | None,
+    max_jours: int = PERIODE_MAX_JOURS,
+    max_texte: str = "5 ans",
+) -> tuple[date, date]:
     today = business_today()
     date_to = min(date_to or today, today)
     date_from = date_from or date_to.replace(day=1)
     if date_from > date_to:
         raise ConflictError("La date de début doit précéder la date de fin.")
-    if (date_to - date_from).days >= PERIODE_MAX_JOURS:
-        raise ConflictError("La période ne peut pas dépasser 5 ans.")
+    if (date_to - date_from).days >= max_jours:
+        raise ConflictError(f"La période ne peut pas dépasser {max_texte}.")
     return date_from, date_to
-
-
-def _nom_compte(account: BankAccount) -> str:
-    return f"{account.bank.code} · {account.numero} · {account.devise}"
-
-
-def etat_rapprochement(
-    db: Session,
-    company_id: int,
-    date_from: date | None,
-    date_to: date | None,
-    *,
-    acteur_id: int,
-    ip: str | None,
-) -> tuple[str, bytes]:
-    company = _company(db, company_id)
-    date_from, date_to = _periode(date_from, date_to)
-    comptes = sorted(
-        reconciliation_repository.company_accounts(db, company.id),
-        key=lambda a: (a.bank.ordre_affichage, a.devise, a.id),
-    )
-    ids = [account.id for account in comptes]
-    par_compte = rapports_repository.statuts_par_compte(db, ids, date_from, date_to)
-
-    workbook = Workbook()
-    synthese = workbook.active
-    synthese.title = "Synthèse"
-    synthese.append(
-        [f"État de rapprochement — {company.nom} — du {date_from:%d/%m/%Y} au {date_to:%d/%m/%Y}"]
-    )
-    synthese["A1"].font = Font(bold=True, size=13)
-    synthese.append([])
-    _en_tete(
-        synthese,
-        ["Compte", *STATUTS, "Total", "Taux rapproché (%)", "Reste à rapprocher : débit",
-         "Reste à rapprocher : crédit"],
-    )  # fmt: skip
-    for account in comptes:
-        statuts = par_compte.get(account.id, {})
-        total = sum(nombre for nombre, _, _ in statuts.values())
-        if total == 0:
-            continue
-        rapprochees = statuts.get("Rapprochée", (0, 0, 0))[0]
-        reste = [v for s, v in statuts.items() if s != "Rapprochée"]
-        synthese.append(
-            [
-                _nom_compte(account),
-                *(statuts.get(statut, (0, 0, 0))[0] for statut in STATUTS),
-                total,
-                (Decimal(rapprochees) * 100 / total).quantize(Decimal("0.1")),
-                sum((debit for _, debit, _ in reste), Decimal("0.00")),
-                sum((credit for _, _, credit in reste), Decimal("0.00")),
-            ]
-        )
-    for row in synthese.iter_rows(min_row=4):
-        row[6].number_format = "0.0"
-        row[7].number_format = row[8].number_format = FORMAT_MONTANT
-    _largeurs(synthese, [34, 12, 12, 15, 9, 9, 18, 24, 24])
-    synthese.freeze_panes = "B4"
-
-    detail = workbook.create_sheet("À rapprocher")
-    _en_tete(
-        detail,
-        ["Compte", "Date d'opération", "Date de valeur", "Libellé", "Référence", "Débit",
-         "Crédit", "Statut"],
-    )  # fmt: skip
-    noms = {account.id: _nom_compte(account) for account in comptes}
-    operations = rapports_repository.non_rapprochees(db, ids, date_from, date_to)
-    for tx in operations:
-        detail.append(
-            [noms[tx.bank_account_id], tx.date_operation, tx.date_valeur, tx.libelle,
-             tx.reference, tx.debit or None, tx.credit or None, tx.statut]
-        )  # fmt: skip
-    for row in detail.iter_rows(min_row=2):
-        row[1].number_format = row[2].number_format = FORMAT_DATE
-        row[5].number_format = row[6].number_format = FORMAT_MONTANT
-    _largeurs(detail, [34, 14, 14, 50, 18, 16, 16, 16])
-    detail.freeze_panes = "A2"
-    contenu = _octets(workbook)
-
-    _audit(
-        db,
-        rapport="etat_rapprochement",
-        company_id=company.id,
-        acteur_id=acteur_id,
-        ip=ip,
-        du=date_from,
-        au=date_to,
-        operations_a_rapprocher=len(operations),
-    )
-    nom = f"etat-rapprochement-{company.code}-{date_from:%Y%m%d}-{date_to:%Y%m%d}.xlsx"
-    return nom.lower(), contenu
 
 
 # --- Lignes non rapprochées (30/10/2026) ----------------------------------------------------------
@@ -424,6 +339,7 @@ def _feuille_compte(
     frais_ids: set[int],
     date_from: date,
     date_to: date,
+    soldes: SoldeComptable,
 ) -> None:
     sheet.sheet_view.showGridLines = False
     unite = "DH" if compte.devise == "MAD" else compte.devise
@@ -463,7 +379,29 @@ def _feuille_compte(
             if proposition:
                 cellule.fill = PROPOSITION
 
-    for rang, op in enumerate(operations, start=4):
+    # Soldes au « Au » en tête de chaque côté (02/11/2026), dans la colonne de leur sens :
+    # relevé débiteur (négatif) au Débit ; Sage débiteur (positif) au Débit
+    banque = soldes.solde_bancaire
+    compta = soldes.solde if compte.devise == "MAD" else soldes.solde_devise
+    for debut, libelle, solde, debit_si_negatif in (
+        (1, "Solde du relevé", banque, True),
+        (DEBUT_SAGE, "Solde comptable", compta, False),
+    ):
+        sheet.cell(row=4, column=debut, value=date_to).number_format = "DD/MM/YY"
+        sheet.cell(row=4, column=debut + 1, value=f"{libelle} au {date_to:%d/%m/%Y}")
+        if solde is None:
+            sheet.cell(row=4, column=debut + 5, value="non renseigné")
+        elif solde != 0:
+            au_debit = (solde < 0) == debit_si_negatif
+            cellule = sheet.cell(row=4, column=debut + (3 if au_debit else 4), value=abs(solde))
+            cellule.number_format = FORMAT_MONTANT
+        for index in range(len(COLONNES_RELEVE)):
+            cellule = sheet.cell(row=4, column=debut + index)
+            cellule.font = GRAS
+            cellule.fill = EN_TETE
+            cellule.border = TRAIT
+
+    for rang, op in enumerate(operations, start=5):
         ligne(
             rang,
             1,
@@ -477,7 +415,7 @@ def _feuille_compte(
             ],
             op.statut == "À vérifier",
         )
-    for rang, ec in enumerate(ecritures, start=4):
+    for rang, ec in enumerate(ecritures, start=5):
         ligne(
             rang,
             DEBUT_SAGE,
@@ -491,7 +429,7 @@ def _feuille_compte(
             ],
             ec.statut == "À vérifier",
         )
-    fin = 4 + max(len(operations), len(ecritures)) + 1
+    fin = 5 + max(len(operations), len(ecritures)) + 1
     for debut, lignes in ((1, operations), (DEBUT_SAGE, ecritures)):
         sheet.cell(row=fin, column=debut, value="Total").font = GRAS
         for decalage, champ in ((3, "debit"), (4, "credit")):
@@ -499,6 +437,67 @@ def _feuille_compte(
             cellule = sheet.cell(row=fin, column=debut + decalage, value=total)
             cellule.font = GRAS
             cellule.number_format = FORMAT_MONTANT
+
+    controle = etat_controle(
+        banque,
+        compta,
+        sum((op.montant for op in operations), Decimal("0")),
+        # Une écriture Sage au débit est une entrée en banque : vue du relevé, −montant
+        sum((-montant_rapprochement(ec) for ec in ecritures), Decimal("0")),
+    )
+    rang = fin + 2
+    sheet.cell(
+        row=rang, column=1, value=f"Contrôle au {date_to:%d/%m/%Y} (en {unite}, signe du relevé)"
+    ).font = SOUS_TITRE
+    for libelle, valeur in controle:
+        rang += 1
+        sheet.cell(row=rang, column=2, value=libelle).font = GRAS
+        cellule = sheet.cell(
+            row=rang, column=4, value="non calculable" if valeur is None else valeur
+        )
+        cellule.font = GRAS
+        cellule.number_format = FORMAT_MONTANT
+    sheet.cell(
+        row=rang + 1,
+        column=2,
+        value=f"Les lignes datées avant le {date_from:%d/%m/%Y} ne sont pas listées : l'écart "
+        "n'est complet que si « Du » couvre tout l'historique du compte.",
+    ).font = Font(italic=True, color="5F6B73")
+
+
+def etat_controle(
+    solde_releve: Decimal | None,
+    solde_comptable: Decimal | None,
+    operations: Decimal,
+    ecritures: Decimal,
+) -> list[tuple[str, Decimal | None]]:
+    """Règle pure de l'état de rapprochement, tout dans le signe du relevé (crédit − débit) :
+    solde banque rectifié = solde du relevé + écritures non rapprochées ;
+    solde compta rectifié = solde comptable + opérations non rapprochées ; écart = banque − compta
+    (0 quand tout est expliqué). Un solde inconnu rend son côté et l'écart non calculables."""
+    banque = None if solde_releve is None else solde_releve + ecritures
+    compta = None if solde_comptable is None else solde_comptable + operations
+    ecart = None if banque is None or compta is None else banque - compta
+    return [
+        ("Solde banque rectifié (solde du relevé + écritures non rapprochées)", banque),
+        ("Solde compta rectifié (solde comptable + opérations non rapprochées)", compta),
+        ("Écart", ecart),
+    ]
+
+
+def _comptes(db: Session, company_id: int, bank_id: int | None) -> list[BankAccount]:
+    """Comptes de la société (ceux d'une banque, si elle est donnée), dans l'ordre des banques."""
+    comptes = sorted(
+        (
+            account
+            for account in reconciliation_repository.company_accounts(db, company_id)
+            if bank_id is None or account.bank_id == bank_id
+        ),
+        key=lambda a: (a.bank.ordre_affichage, a.devise, a.id),
+    )
+    if bank_id is not None and not comptes:
+        raise NotFoundError("Aucun compte de cette banque pour la société.")
+    return comptes
 
 
 def _nom_feuille(compte: BankAccount, pris: set[str]) -> str:
@@ -523,17 +522,8 @@ def non_rapproches(
     """Opérations et écritures non rapprochées de la période, une feuille par compte, côte à côte
     comme l'écran Rapprochement (frais à comptabiliser et lignes en proposition compris)."""
     company = _company(db, company_id)
-    date_from, date_to = _periode(date_from, date_to)
-    comptes = sorted(
-        (
-            account
-            for account in reconciliation_repository.company_accounts(db, company.id)
-            if bank_id is None or account.bank_id == bank_id
-        ),
-        key=lambda a: (a.bank.ordre_affichage, a.devise, a.id),
-    )
-    if bank_id is not None and not comptes:
-        raise NotFoundError("Aucun compte de cette banque pour la société.")
+    date_from, date_to = _periode(date_from, date_to, NON_RAPPROCHES_MAX_JOURS, "10 ans")
+    comptes = _comptes(db, company.id, bank_id)
     workbook = Workbook()
     workbook.remove(workbook.active)
     pris: set[str] = set()
@@ -549,7 +539,14 @@ def non_rapproches(
         frais_ids = reconciliation_repository.fee_transaction_ids(db, [op.id for op in operations])
         nom = _nom_feuille(compte, pris)
         _feuille_compte(
-            workbook.create_sheet(nom), compte, operations, ecritures, frais_ids, date_from, date_to
+            workbook.create_sheet(nom),
+            compte,
+            operations,
+            ecritures,
+            frais_ids,
+            date_from,
+            date_to,
+            solde_comptable_service.solde_du_compte(db, compte, date_to),
         )
         nombres[nom] = len(operations) + len(ecritures)
     if not workbook.sheetnames:
@@ -575,3 +572,241 @@ def non_rapproches(
         lignes=sum(nombres.values()),
     )
     return f"non-rapproches-{company.code}-{banque}-{date_from}-{date_to}.xlsx".lower(), contenu
+
+
+# --- État de rapprochement (refait le 30/10/2026) -------------------------------------------------
+
+BLOC_PAIR = PatternFill("solid", fgColor="F5F8FA")
+SECTION = PatternFill("solid", fgColor="004F54")
+SECTION_POLICE = Font(bold=True, color="FFFFFF")
+SEPARATION = Side(style="thin", color="B7D7D9")
+TOTAL_TRAIT = Border(top=Side(style="medium", color="004F54"))
+COLONNES_OPERATIONS = (("Date", 10), ("Libellé", 46), ("Réf.", 14), ("Débit", 15),
+                       ("Crédit", 15))  # fmt: skip
+COLONNES_MILIEU = (("Code", 16), ("Type", 7), ("Validé par", 16), ("Validé le", 15))
+COLONNES_ECRITURES = (("Date", 10), ("Libellé", 46), ("N° pièce", 14), ("Débit", 15),
+                      ("Crédit", 15))  # fmt: skip
+DEBUT_MILIEU = len(COLONNES_OPERATIONS) + 2
+DEBUT_ECRITURES = DEBUT_MILIEU + len(COLONNES_MILIEU) + 1
+PREMIERE_LIGNE = 5
+FORMATS_COTE = ("DD/MM/YY", None, None, FORMAT_MONTANT, FORMAT_MONTANT)
+ZERO = Decimal("0.00")
+
+
+def _heure_locale(moment: datetime | None) -> datetime | None:
+    """Excel ne connaît pas les fuseaux : l'heure du Maroc, sans fuseau."""
+    return moment.astimezone(BUSINESS_TZ).replace(tzinfo=None) if moment else None
+
+
+def debit_credit_sage(entry: AccountingEntry, devise: str) -> tuple[Decimal, Decimal]:
+    """Débit et crédit de l'écriture dans la devise du compte, comme l'écran : le montant en devise
+    d'un compte EUR / USD (une écriture Sage au débit y est négative), sinon le MAD."""
+    if devise != "MAD" and entry.montant_devise is not None:
+        montant = entry.montant_devise
+        return (-montant if montant < 0 else ZERO), (montant if montant > 0 else ZERO)
+    return entry.debit, entry.credit
+
+
+Bloc = tuple[ReconciliationMatch, list[BankTransaction], list[AccountingEntry]]
+
+
+def _en_tetes_rapprochement(sheet: Worksheet, unite: str) -> None:
+    for debut, titre, colonnes in (
+        (1, "Transactions bancaires", COLONNES_OPERATIONS),
+        (DEBUT_MILIEU, "Rapprochement", COLONNES_MILIEU),
+        (DEBUT_ECRITURES, "Écritures comptables", COLONNES_ECRITURES),
+    ):
+        fin = debut + len(colonnes) - 1
+        for colonne in range(debut, fin + 1):
+            sheet.cell(row=3, column=colonne).fill = SECTION
+        sheet.merge_cells(start_row=3, start_column=debut, end_row=3, end_column=fin)
+        cellule = sheet.cell(row=3, column=debut, value=titre)
+        cellule.font = SECTION_POLICE
+        cellule.alignment = Alignment(horizontal="center")
+        for index, (nom, largeur) in enumerate(colonnes):
+            montant = nom in ("Débit", "Crédit")
+            cellule = sheet.cell(
+                row=4, column=debut + index, value=f"{nom} ({unite})" if montant else nom
+            )
+            cellule.font = EN_TETE_ECRAN
+            cellule.fill = EN_TETE
+            cellule.alignment = Alignment(horizontal="right" if montant else "left")
+            sheet.column_dimensions[get_column_letter(debut + index)].width = largeur
+    for colonne in (DEBUT_MILIEU - 1, DEBUT_ECRITURES - 1):
+        sheet.column_dimensions[get_column_letter(colonne)].width = 2
+    sheet.freeze_panes = f"A{PREMIERE_LIGNE}"
+
+
+def _feuille_rapprochements(
+    sheet: Worksheet,
+    compte: BankAccount,
+    blocs: list[Bloc],
+    noms: dict[int, str],
+    date_from: date,
+    date_to: date,
+) -> None:
+    """Un bloc de lignes par rapprochement : ses opérations à gauche, ses écritures à droite, ligne
+    à ligne ; au milieu, sur la première ligne, le code, le type et la validation. Les blocs
+    alternent blanc / gris clair et sont séparés par un trait fin."""
+    sheet.sheet_view.showGridLines = False
+    sheet.cell(
+        row=1,
+        column=1,
+        value=f"{compte.company.nom} · {compte.bank.code} · {compte.devise} · {compte.numero} — "
+        f"état de rapprochement du {date_from:%d/%m/%Y} au {date_to:%d/%m/%Y}",
+    ).font = TITRE
+    pluriel = "s" if len(blocs) > 1 else ""
+    sheet.cell(
+        row=2, column=1, value=f"{len(blocs)} rapprochement{pluriel} validé{pluriel}"
+    ).font = Font(italic=True, color="71839B")
+    _en_tetes_rapprochement(sheet, "DH" if compte.devise == "MAD" else compte.devise)
+
+    zones = (
+        range(1, DEBUT_MILIEU - 1),
+        range(DEBUT_MILIEU, DEBUT_ECRITURES - 1),
+        range(DEBUT_ECRITURES, DEBUT_ECRITURES + len(COLONNES_ECRITURES)),
+    )
+    totaux = [ZERO, ZERO, ZERO, ZERO]  # débit / crédit banque, débit / crédit Sage
+    rang = PREMIERE_LIGNE
+    for numero, (match, operations, ecritures) in enumerate(blocs):
+        fond = BLOC_PAIR if numero % 2 else None
+        hauteur = max(len(operations), len(ecritures), 1)
+        for decalage in range(hauteur):
+            ligne = rang + decalage
+            # fond et trait sur toute la largeur du bloc, même là où un côté n'a plus de ligne
+            for zone in zones:
+                for colonne in zone:
+                    case = sheet.cell(row=ligne, column=colonne)
+                    case.alignment = Alignment(vertical="top")
+                    if fond is not None:
+                        case.fill = fond
+                    if decalage == 0:
+                        case.border = Border(top=SEPARATION)
+            cotes = []
+            if decalage < len(operations):
+                op = operations[decalage]
+                cotes.append((1, [op.date_operation, op.libelle, op.reference, op.debit or None,
+                                  op.credit or None]))  # fmt: skip
+                totaux[0] += op.debit
+                totaux[1] += op.credit
+            if decalage < len(ecritures):
+                ec = ecritures[decalage]
+                debit, credit = debit_credit_sage(ec, compte.devise)
+                cotes.append((DEBUT_ECRITURES, [ec.date_ecriture, ec.libelle, ec.numero_piece,
+                                                debit or None, credit or None]))  # fmt: skip
+                totaux[2] += debit
+                totaux[3] += credit
+            for debut, valeurs in cotes:
+                for index, valeur in enumerate(valeurs):
+                    case = sheet.cell(row=ligne, column=debut + index, value=valeur)
+                    if FORMATS_COTE[index]:
+                        case.number_format = FORMATS_COTE[index]
+        milieu = [match.code, match.type, noms.get(match.valide_par_id),
+                  _heure_locale(match.valide_le)]  # fmt: skip
+        for index, valeur in enumerate(milieu):
+            sheet.cell(row=rang, column=DEBUT_MILIEU + index, value=valeur)
+        sheet.cell(row=rang, column=DEBUT_MILIEU).font = Font(bold=True, color="004F54")
+        sheet.cell(row=rang, column=DEBUT_MILIEU + 3).number_format = "DD/MM/YY HH:MM"
+        rang += hauteur
+
+    for debut, debit, credit in ((1, *totaux[:2]), (DEBUT_ECRITURES, *totaux[2:])):
+        for colonne in range(debut, debut + len(COLONNES_OPERATIONS)):
+            case = sheet.cell(row=rang, column=colonne)
+            case.border = TOTAL_TRAIT
+            case.fill = EN_TETE
+            case.font = GRAS
+        sheet.cell(row=rang, column=debut, value="Total")
+        for decalage, valeur in ((3, debit), (4, credit)):
+            sheet.cell(
+                row=rang, column=debut + decalage, value=valeur
+            ).number_format = FORMAT_MONTANT
+
+
+def etat_rapprochement(
+    db: Session,
+    company_id: int,
+    date_from: date | None,
+    date_to: date | None,
+    bank_id: int | None = None,
+    *,
+    acteur_id: int,
+    ip: str | None,
+) -> tuple[str, bytes]:
+    """Rapprochements validés de la période (une de leurs opérations y est datée, comme le
+    lettrage), une feuille par compte : opérations du relevé à gauche, écritures Sage à droite."""
+    company = _company(db, company_id)
+    date_from, date_to = _periode(date_from, date_to)
+    comptes = _comptes(db, company.id, bank_id)
+    retenus = {account.id for account in comptes}
+    matches = reconciliation_repository.validated_matches(
+        db,
+        reconciliation_repository.decisions_query(
+            company.id, bank_account_id=None, date_from=date_from, date_to=date_to
+        ),
+    )
+    tx_ids = {i.bank_transaction_id for m in matches for i in m.items if i.bank_transaction_id}
+    entry_ids = {i.accounting_entry_id for m in matches for i in m.items if i.accounting_entry_id}
+    transactions = reconciliation_repository.transactions_with_bank(db, tx_ids)
+    entries = reconciliation_repository.entries_with_bank(db, entry_ids)
+    noms = reconciliation_repository.user_names(
+        db, {m.valide_par_id for m in matches if m.valide_par_id}
+    )
+
+    blocs_par_compte: dict[int, list[Bloc]] = {}
+    for match in matches:
+        operations = sorted(
+            (transactions[i.bank_transaction_id][0] for i in match.items if i.bank_transaction_id),
+            key=lambda tx: (tx.date_operation, tx.id),
+        )
+        ecritures = sorted(
+            (entries[i.accounting_entry_id][0] for i in match.items if i.accounting_entry_id),
+            key=lambda ec: (ec.date_ecriture, ec.id),
+        )
+        # un rapprochement ne couvre qu'un compte : celui de ses opérations
+        if operations and operations[0].bank_account_id in retenus:
+            blocs_par_compte.setdefault(operations[0].bank_account_id, []).append(
+                (match, operations, ecritures)
+            )
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    pris: set[str] = set()
+    nombre = 0
+    for compte in comptes:
+        blocs = blocs_par_compte.get(compte.id)
+        if not blocs:
+            continue
+        blocs.sort(key=lambda b: (b[1][0].date_operation, b[0].code or "", b[0].id))
+        _feuille_rapprochements(
+            workbook.create_sheet(_nom_feuille(compte, pris)),
+            compte,
+            blocs,
+            noms,
+            date_from,
+            date_to,
+        )
+        nombre += len(blocs)
+    if not workbook.sheetnames:
+        vide = workbook.create_sheet("Rapprochées")
+        vide.append(
+            [
+                f"Aucun rapprochement validé du {date_from:%d/%m/%Y} au {date_to:%d/%m/%Y}"
+                f"{' pour ' + comptes[0].bank.code if bank_id is not None else ''}."
+            ]
+        )
+    contenu = _octets(workbook)
+
+    banque = comptes[0].bank.code if bank_id is not None else "toutes"
+    _audit(
+        db,
+        rapport="etat_rapprochement",
+        company_id=company.id,
+        acteur_id=acteur_id,
+        ip=ip,
+        du=date_from,
+        au=date_to,
+        banque=banque,
+        rapprochements=nombre,
+    )
+    nom = f"etat-rapprochement-{company.code}-{banque}-{date_from:%Y%m%d}-{date_to:%Y%m%d}.xlsx"
+    return nom.lower(), contenu

@@ -26,6 +26,7 @@ import {
   pageOf,
   sageLinesFor,
   toggleVue,
+  totauxCoches,
   type VueLignes,
 } from "@/lib/importLines";
 import { fileProblem } from "@/lib/statements";
@@ -356,10 +357,16 @@ export function AccountingImportWizard({
     const shown = sageLinesFor(current.lignes, vue, coches);
     // 100 lignes par page ; les tuiles et les totaux portent sur tout le fichier
     const pageLignesView = pageOf(shown, pageLignes);
+    // Totaux et solde (débit − crédit) des lignes cochées : ils suivent les cases (29/10/2026)
+    const totaux = totauxCoches(current.lignes, coches);
     const tiles: [string, ReactNode][] = [
       [
-        "Total débit / crédit",
-        `${formatAmount(summary.total_debit, "DH")} / ${formatAmount(summary.total_credit, "DH")}`,
+        "Total débit / crédit / solde",
+        <span key="totaux" className="inline-flex flex-wrap gap-x-14 gap-y-1">
+          <span>{formatAmount(totaux.debit, "DH")}</span>
+          <span>{formatAmount(totaux.credit, "DH")}</span>
+          <span>solde {formatAmount(totaux.solde, "DH")}</span>
+        </span>,
       ],
       [
         "Période",

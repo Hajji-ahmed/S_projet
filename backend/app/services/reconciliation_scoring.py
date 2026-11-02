@@ -8,6 +8,32 @@ débit du compte banque dans Sage ; une paire n'est donc comparée que si
 `montant de l'opération = − montant de l'écriture` en signe, c'est-à-dire de signes opposés.
 """
 
+# ==================================================================================================
+# GUIDE DE LECTURE
+# ==================================================================================================
+# Chemin d'une paire (opération bancaire ↔ écriture Sage) dans le moteur 1 → 1 :
+#
+#   1. `_paires_comparables` : pour chaque opération, on ne regarde que les écritures des jours
+#      proches (± fenetre_jours) ou, pour un chèque / effet / impayé, celles qui portent le même n°.
+#   2. `_ecart_si_comparable` (pré-filtre) : même compte bancaire, sens opposés, même type
+#      d'opération, écart de dates dans la fenêtre. Sinon la paire n'est jamais notée.
+#   3. `_candidat` : montant exactement opposé obligatoire, puis le score ; la paire n'est gardée
+#      que si son score atteint `seuil_proposition`.
+#   4. `_score` : somme des points par critère, plafonnée à 100 :
+#        référence (même n°)  + montant (centimes ou rond) + date (dégressive)
+#        + libellé (au prorata de la ressemblance) + tiers (tiers Sage lu dans le libellé banque).
+#      Pour espèces / virement / autre, la référence vaut 0 et chaque critère gagne un bonus.
+#   5. `proposer` : on attribue les paires du meilleur score au plus bas ; une ligne déjà prise
+#      laisse sa place ; une ÉGALITÉ au meilleur score rend les lignes « ambiguës » (À vérifier).
+#
+# Exemple (grille par défaut) : chèque « CHEQUE N 0173813 » de +10 000,00 en banque le 05/01,
+# écriture Sage « EAR1° AXK 173813 » de −10 000,00 le 06/01 :
+#   référence 40 (n° 173813 commun) + montant rond 40 + date 22,5 (1 jour) + libellé x
+#   → au moins 102,5, plafonné à 100 : proposition « forte » (≥ 80), validée ensuite par un humain.
+#
+# Les montants sont des Decimal (jamais des float). Un montant positif = crédit, négatif = débit.
+# ==================================================================================================
+
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -24,6 +50,7 @@ try:
 except ImportError:  # pragma: no cover - repli si la dépendance manque
     from difflib import SequenceMatcher
 
+# Arrondi au centime des points, et zéro « monétaire » (deux décimales)
 CENT = Decimal("0.01")
 ZERO = Decimal("0.00")
 
@@ -48,6 +75,9 @@ class Grille:
     points s'il a des centimes, 40 s'il est rond (`points_montant`).
     """
 
+    # Valeurs PAR DÉFAUT seulement : le moteur utilise celles de la table `reconciliation_rules`
+    # (Administration > Paramètres), lues par `reconciliation_service.grille()` à chaque lancement.
+    # Un critère désactivé à l'écran vaut 0 point (c'est ainsi que le tiers peut être actif ou non).
     reference: Decimal = Decimal("40")
     # Montant identique avec centimes (28/10/2026 : 60 ; 50 avant pour tout montant identique)
     montant: Decimal = Decimal("60")
@@ -76,6 +106,7 @@ class Grille:
     # montant, au montant rond, à la date et au libellé (`grille_de_la_paire`)
     bonus_sans_reference: Decimal = Decimal("10")
 
+    # Points maximum d'un critère (sert à savoir s'il est actif et à l'afficher)
     def poids(self, critere: str) -> Decimal:
         # Le montant rapporte `montant` ou `montant_rond` selon les centimes (28/10/2026)
         if critere == "montant":
@@ -89,6 +120,12 @@ class Grille:
 
 
 GRILLE_PAR_DEFAUT = Grille()
+
+
+# --- Lignes comparées ------------------------------------------------------------------------------
+# Copies simples (sans base de données) des lignes : `reconciliation_service` les construit à partir
+# des tables `bank_transactions` et `accounting_entries`. `frozen=True` : elles ne changent jamais
+# pendant le calcul, et peuvent servir de clés de cache.
 
 
 @dataclass(frozen=True)
@@ -121,12 +158,15 @@ class Ecriture:
     echeance: date | None = None
 
 
+# Résultat d'une paire : `total` (0 à 100) et `detail` = points par critère, par exemple
+# {"reference": 40, "montant": 40, "date": 22.5, "libelle": 12.4, "tiers": 0}
 @dataclass(frozen=True)
 class Score:
     total: Decimal
     detail: dict[str, Decimal]
 
 
+# Une paire retenue par `proposer` ; `second` sert à afficher « Concurrente proche · 2e à N »
 @dataclass(frozen=True)
 class Proposition:
     operation_id: int
@@ -136,6 +176,7 @@ class Proposition:
     second: Decimal | None = None
 
 
+# Ce que renvoie `proposer` : les propositions, et les lignes ambiguës (sans proposition)
 @dataclass
 class Resultat:
     propositions: list[Proposition] = field(default_factory=list)
@@ -156,6 +197,7 @@ _MOTS_VIDES = frozenset(
         "DHS", "NO", "N",
     }
 )  # fmt: skip
+# Tout ce qui n'est ni lettre majuscule ni chiffre (ponctuation, espaces…) : remplacé par un espace
 _NON_ALNUM = re.compile(r"[^A-Z0-9]+")
 # N° de chèque, d'effet ou de remise : 5 chiffres ou plus (« EAR1° » n'en est pas un)
 _NUMERO = re.compile(r"\d{5,}")
@@ -168,8 +210,10 @@ _CACHE = 65536
 @lru_cache(maxsize=_CACHE)
 def _plain(text: str | None) -> str:
     """Majuscules sans accents, ponctuation remplacée par des espaces."""
+    # Exemple : « Vir. Société ABC-12 » → « VIR SOCIETE ABC 12 »
     if not text:
         return ""
+    # NFKD sépare la lettre de son accent (« é » → « e » + accent), l'accent est ensuite retiré
     raw = unicodedata.normalize("NFKD", text)
     upper = "".join(char for char in raw if not unicodedata.combining(char)).upper()
     return " ".join(_NON_ALNUM.sub(" ", upper).split())
@@ -178,6 +222,7 @@ def _plain(text: str | None) -> str:
 @lru_cache(maxsize=_CACHE)
 def _mots(text: str | None) -> frozenset[str]:
     """Mots significatifs d'un libellé : sans mots vides, d'au moins 2 caractères."""
+    # Exemple : « VIR SOCIETE ABC DE CASA » → {SOCIETE, ABC, CASA} (VIR et DE sont des mots vides)
     return frozenset(
         mot for mot in _plain(text).split() if len(mot) >= 2 and mot not in _MOTS_VIDES
     )
@@ -188,6 +233,9 @@ def _cle(value: str | None) -> str:
     return _plain(value).replace(" ", "")
 
 
+# Expression régulière qui retrouve une clé dans un texte, un espace étant permis entre ses
+# caractères (« REG458 » retrouve « REG 458 ») et la clé devant être un mot entier
+# (« 458 » ne se trouve pas dans « 14582 »). Compilée une fois par clé grâce au cache.
 @lru_cache(maxsize=_CACHE)
 def _motif_cle(cle: str) -> re.Pattern[str]:
     motif = r"\s?".join(re.escape(char) for char in cle)
@@ -205,6 +253,10 @@ def _contient(texte_plain: str, cle: str) -> bool:
 # --- Type d'opération lu dans le libellé (décision du 09/10/2026) ------------------------------------
 # Une ligne Chèque ne se rapproche jamais d'une ligne Effet ou Espèces ; « Autre » (virements, frais…)
 # reste comparable à tout. Préfixes cherchés au début du libellé normalisé (`_plain`).
+# Note : depuis le 28/10/2026, le moteur exige le MÊME type des deux côtés (`types_compatibles`) ;
+# « Autre » (type non reconnu, None) ne se compare plus qu'à un autre « Autre ».
+# L'ordre compte : le premier préfixe trouvé gagne (« IMP EAR1° … » est un impayé, pas un chèque ;
+# « EAR1 » est testé avant « EAR »).
 TYPES_SAGE: tuple[tuple[str, str], ...] = (
     # Impayés (16/10/2026) : « IMP EAR1° … », « IMP EAR° … » annulent un encaissement
     ("IMPAYE", "Impayé"),
@@ -234,6 +286,8 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
 )
 
 
+# Type lu au début du libellé, préfixe en mot entier : « VIR SOCIETE » → Virement, mais
+# « VIRGULE » ne commence pas par le mot « VIR ». Aucun préfixe trouvé → None (« Autre »).
 def _type(libelle: str | None, regles: tuple[tuple[str, str], ...]) -> str | None:
     texte = _plain(libelle)
     for prefixe, nom in regles:
@@ -267,6 +321,9 @@ def sans_reference(operation: Operation, ecriture: Ecriture) -> bool:
     return type_ in TYPES_SANS_REFERENCE and type_ == type_ecriture(ecriture.libelle)
 
 
+# Grille des espèces / virements / autres. Avec un bonus de 10 : référence 0, montant 60 → 70,
+# montant rond 40 → 50, date 30 → 40, libellé 20 → 30 ; un critère à 0 (désactivé) reste à 0.
+# Le tiers, les seuils et les fenêtres ne changent pas.
 @lru_cache(maxsize=64)
 def _grille_sans_reference(grille: Grille) -> Grille:
     bonus = grille.bonus_sans_reference
@@ -306,6 +363,8 @@ def numeros(*textes: str | None) -> set[str]:
     return set().union(*(_numeros_du_texte(texte) for texte in textes if texte))
 
 
+# « CHEQUE N 0173813 DU 05/01 » → {"173813"} : seules les suites de 5 chiffres ou plus comptent
+# (une date ou « EAR1° » n'en sont pas)
 @lru_cache(maxsize=_CACHE)
 def _numeros_du_texte(texte: str) -> frozenset[str]:
     return frozenset(numero.lstrip("0") or "0" for numero in _NUMERO.findall(texte))
@@ -314,6 +373,7 @@ def _numeros_du_texte(texte: str) -> frozenset[str]:
 # --- Critères --------------------------------------------------------------------------------------
 
 
+# Points d'un critère partiel : poids × ratio (0 à 1), arrondi au centime. Ex. 30 × 0,75 = 22,50
 def _points(poids: Decimal, ratio: Decimal) -> Decimal:
     return (poids * ratio).quantize(CENT, rounding=ROUND_HALF_UP)
 
@@ -342,6 +402,8 @@ class _Cote:
     textes: tuple[str, ...] = ()
 
 
+# Préparation d'une opération : ses numéros sont lus dans le libellé ET la référence bancaire ;
+# ses clés = la référence et la référence trouvée dans le libellé
 def _cote_operation(operation: Operation) -> _Cote:
     return _Cote(
         plain=_plain(operation.libelle),
@@ -354,6 +416,8 @@ def _cote_operation(operation: Operation) -> _Cote:
     )
 
 
+# Préparation d'une écriture : numéros lus dans le libellé, la référence et le N° pièce Sage ;
+# clés = la référence et le N° pièce
 def _cote_ecriture(ecriture: Ecriture) -> _Cote:
     return _Cote(
         plain=_plain(ecriture.libelle),
@@ -365,10 +429,13 @@ def _cote_ecriture(ecriture: Ecriture) -> _Cote:
 
 def _reference_preparee(operation: _Cote, ecriture: _Cote) -> bool:
     """`critere_reference` sur des lignes préparées : mêmes règles."""
+    # 1) un numéro de 5 chiffres ou plus commun aux deux côtés
     if operation.numeros & ecriture.numeros:
         return True
+    # 2) une même clé (référence / pièce) des deux côtés
     if ecriture.cles & operation.cles:
         return True
+    # 3) une clé de l'écriture (3 caractères au moins) écrite dans le libellé ou la référence banque
     return any(
         len(cle) >= 3 and _contient(texte, cle)
         for cle in ecriture.cles
@@ -403,6 +470,8 @@ def points_montant(montant_banque: Decimal, montant_sage: Decimal, grille: Grill
     centimes, `montant_rond` (40) sinon ; 0 si les montants diffèrent."""
     if montant_banque != -montant_sage:
         return ZERO
+    # `montant % 1` = partie décimale : 1 250,50 % 1 = 0,50 (centimes → `montant`),
+    # 1 250,00 % 1 = 0 (rond → `montant_rond`, moins de points car plus de montants identiques)
     return grille.montant if montant_banque % 1 else grille.montant_rond
 
 
@@ -451,6 +520,7 @@ def ratio_date(ecart: int, tolerance: int) -> Decimal:
     """1 le même jour, puis dégressif jusqu'à 0 au-delà de la tolérance (3 j : 1, ¾, ½, ¼, 0)."""
     if ecart > tolerance:
         return ZERO
+    # Tolérance 3 : écart 0 → 4/4, 1 → 3/4, 2 → 2/4, 3 → 1/4 ; avec 30 points : 30 · 22,5 · 15 · 7,5
     return Decimal(tolerance + 1 - ecart) / Decimal(tolerance + 1)
 
 
@@ -466,12 +536,16 @@ def _ratio_mots(operation: Operation, ecriture: Ecriture) -> Decimal:
 def ratio_libelle(operation: Operation, ecriture: Ecriture) -> Decimal:
     """Similarité des libellés, de 0 à 1 : le meilleur entre les mots significatifs communs (sur le
     plus court des deux libellés) et la similarité des caractères."""
+    # SequenceMatcher.ratio() : part des caractères communs, dans l'ordre (1 = textes identiques).
+    # Exemple : banque « VIR SOCIETE ABC », Sage « VIREMENT ABC » → mots {SOCIETE, ABC} et {ABC},
+    # 1 mot commun sur le plus court (1) = 1,0 : le libellé obtient tous ses points.
     caracteres = SequenceMatcher(None, _plain(operation.libelle), _plain(ecriture.libelle)).ratio()
     return max(_ratio_mots(operation, ecriture), Decimal(str(round(caracteres, 4))))
 
 
 def critere_tiers(operation: Operation, ecriture: Ecriture) -> bool:
     """Le tiers de l'écriture apparaît dans le libellé bancaire (tous ses mots significatifs)."""
+    # Exemple : tiers Sage « STE ABC SARL » → mots {ABC} ; présent dans « VIR RECU ABC » → vrai
     if not ecriture.tiers:
         return False
     libelle = _plain(operation.libelle)
@@ -490,12 +564,17 @@ def comparable(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool
 def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grille) -> int | None:
     """L'écart de dates de la paire si elle passe le pré-filtre (`comparable`), sinon None : il
     est calculé une seule fois et resservi au score (15/10/2026)."""
+    # Chaque test ci-dessous écarte la paire (None) ; les plus rapides d'abord.
+    # Pas le même compte bancaire : jamais comparées
     if operation.bank_account_id != ecriture.bank_account_id:
         return None
+    # Montant nul d'un côté : rien à rapprocher
     if operation.montant == 0 or ecriture.montant == 0:
         return None
+    # Même signe des deux côtés : un crédit banque doit faire face à un débit Sage, et inversement
     if (operation.montant > 0) == (ecriture.montant > 0):
         return None
+    # Types différents (chèque ↔ effet, espèces ↔ autre…) : jamais comparés (28/10/2026)
     if not types_compatibles(operation, ecriture):
         return None
     ecart = ecart_jours(operation, ecriture)
@@ -541,9 +620,12 @@ def _score(
 ) -> Score:
     """`score`, avec l'écart de dates (et la référence, si elle est déjà connue) calculés par
     l'appelant : mêmes formules, sans les refaire."""
+    # Grille ajustée au type de la paire (bonus des espèces / virements / autres)
     grille = grille_de_la_paire(grille, operation, ecriture)
+    # Référence : seulement si le critère rapporte des points (sinon inutile de la chercher)
     if reference is None:
         reference = bool(grille.reference) and critere_reference(operation, ecriture)
+    # Points de chaque critère ; le libellé est le seul critère partiel (au prorata)
     detail = {
         "reference": grille.reference if reference else ZERO,
         "montant": points_montant(operation.montant, ecriture.montant, grille),
@@ -552,10 +634,12 @@ def _score(
         "tiers": grille.tiers if critere_tiers(operation, ecriture) else ZERO,
     }
     detail = {code: value.quantize(CENT) for code, value in detail.items()}
+    # Total plafonné à 100 (40 + 40 + 30 + 20 peut dépasser 100) ; le détail garde les vrais points
     total = min(sum(detail.values(), ZERO), Decimal("100.00")).quantize(CENT)
     return Score(total=total, detail=detail)
 
 
+# « Forte correspondance » : pré-cochée à l'écran (sauf concurrente proche), jamais validée seule
 def est_forte(total: Decimal, grille: Grille = GRILLE_PAR_DEFAUT) -> bool:
     return total >= grille.seuil_fort
 
@@ -580,7 +664,9 @@ def proposer(
     - Les paires retenues sont retirées, puis le choix recommence sur ce qui reste.
     - À la fin, une opération ou une écriture qui garde un candidat est « ambiguë » (« À vérifier »).
     """
+    # Étape 1 : toutes les paires candidates (pré-filtre + montant identique + score ≥ seuil)
     operations, ecritures = list(operations), list(ecritures)
+    # Chaque ligne est préparée une seule fois (texte normalisé, mots, numéros, clés)
     cotes_op = {operation.id: _cote_operation(operation) for operation in operations}
     cotes_ec = {ecriture.id: _cote_ecriture(ecriture) for ecriture in ecritures}
     candidats: dict[tuple[int, int], Score] = {}
@@ -596,6 +682,8 @@ def proposer(
     # Attribution du meilleur score au plus bas (16/10/2026) : une ligne déjà prise passe sa
     # place à la suivante ; seule une ÉGALITÉ au meilleur score d'une ligne la rend ambiguë (ses
     # candidates à égalité aussi), jamais une concurrente de score inférieur
+    # Étape 2 : pour chaque ligne, la liste de ses candidats triés du meilleur score au plus bas
+    #   par_operation[op] = [(score, écriture), …] ; par_ecriture[éc] = [(score, opération), …]
     resultat = Resultat()
     par_operation: dict[int, list[tuple[Decimal, int]]] = {}
     par_ecriture: dict[int, list[tuple[Decimal, int]]] = {}
@@ -604,6 +692,7 @@ def proposer(
         par_ecriture.setdefault(ecriture_id, []).append((valeur.total, operation_id))
     for liste in (*par_operation.values(), *par_ecriture.values()):
         liste.sort(key=lambda item: (-item[0], item[1]))
+    # Lignes déjà attribuées à une proposition
     pris_op: set[int] = set()
     pris_ec: set[int] = set()
 
@@ -617,13 +706,17 @@ def proposer(
                     break
         return trouves
 
+    # Étape 3 : on parcourt TOUTES les paires, de la meilleure à la moins bonne
     for (operation_id, ecriture_id), valeur in sorted(
         candidats.items(), key=lambda item: (-item[1].total, item[0])
     ):
+        # Une des deux lignes est déjà proposée ou ambiguë : paire suivante
         if operation_id in pris_op or operation_id in resultat.operations_ambigues:
             continue
         if ecriture_id in pris_ec or ecriture_id in resultat.ecritures_ambigues:
             continue
+        # Les 2 meilleurs partenaires encore libres de l'opération, puis de l'écriture ; le 1er est
+        # la paire en cours (meilleur score restant), le 2e sert à détecter une égalité
         cote_op = libres(par_operation[operation_id], pris_ec, resultat.ecritures_ambigues)
         cote_ec = libres(par_ecriture[ecriture_id], pris_op, resultat.operations_ambigues)
         if (len(cote_op) == 2 and cote_op[1][0] == valeur.total) or (
@@ -631,6 +724,8 @@ def proposer(
         ):
             # Plusieurs lignes au même meilleur score : toutes celles liées entre elles à ce score
             # sont ambiguës (deux opérations identiques face à deux écritures identiques)
+            # Parcours « de proche en proche » : on suit toutes les lignes liées à ce même score
+            # (exemple : 2 chèques de 500 le même jour face à 2 écritures de 500 → les 4 ambiguës)
             ops, ecs = {operation_id}, {ecriture_id}
             a_voir = [("op", operation_id), ("ec", ecriture_id)]
             while a_voir:
@@ -648,6 +743,8 @@ def proposer(
             resultat.operations_ambigues.update(ops)
             resultat.ecritures_ambigues.update(ecs)
             continue
+        # Pas d'égalité : la paire est proposée ; `second` = meilleur score suivant d'un côté ou de
+        # l'autre (affiché « Concurrente proche » s'il est à moins de `ecart_ambiguite` points)
         autres = [total for total, _ in cote_op[1:]] + [total for total, _ in cote_ec[1:]]
         resultat.propositions.append(
             Proposition(operation_id, ecriture_id, valeur, max(autres) if autres else None)
@@ -655,6 +752,7 @@ def proposer(
         pris_op.add(operation_id)
         pris_ec.add(ecriture_id)
 
+    # Ordre stable du résultat (mêmes données → même liste)
     resultat.propositions.sort(key=lambda item: (item.operation_id, item.ecriture_id))
     return resultat
 
@@ -677,6 +775,7 @@ def _peut_atteindre(operation: Operation, ecriture: Ecriture, grille: Grille) ->
     return plafond >= grille.seuil_proposition
 
 
+# Ratio float de difflib → Decimal arrondi à 4 décimales, comme dans `ratio_libelle`
 def _majorant(ratio: float) -> Decimal:
     return Decimal(str(round(ratio, 4)))
 
@@ -710,14 +809,19 @@ def _candidat(
         + points_date(ecart, est_especes(operation, ecriture), paire)
         + (paire.tiers if paire.tiers and critere_tiers(operation, ecriture) else ZERO)
     )
+    # Exemple (seuil 50) : montant rond 40 + date 0 = 40 acquis, il manque 10 points
     manque = paire.seuil_proposition - acquis
+    # Même avec la référence ET un libellé parfait, le seuil est hors d'atteinte : écartée
     if manque > paire.libelle + paire.reference:
         return None
     reference = bool(paire.reference) and _reference_preparee(cote_op, cote_ec)
     if reference:
         manque -= paire.reference
+    # Seul le libellé peut encore combler le manque ; s'il n'y suffit pas même parfait : écartée
     if manque > paire.libelle:
         return None
+    # Si les mots communs suffisent déjà, inutile d'aller plus loin ; sinon on essaie des bornes
+    # supérieures de plus en plus précises du ratio de caractères avant de le calculer vraiment
     if manque > 0 and _points(paire.libelle, _mots_prepares(cote_op, cote_ec)) < manque:
         # `ratio` ≤ `quick_ratio` ≤ `real_quick_ratio` = 2·min(longueurs) / somme des longueurs
         a, b = cote_op.plain, cote_ec.plain
@@ -727,6 +831,7 @@ def _candidat(
             return None
         if _points(paire.libelle, _majorant(SequenceMatcher(None, a, b).quick_ratio())) < manque:
             return None
+    # Paire encore possible : score exact, gardée seulement si elle atteint le seuil
     resultat = _score(operation, ecriture, grille, ecart, reference)
     return resultat if resultat.total >= grille.seuil_proposition else None
 
@@ -745,7 +850,9 @@ def _paires_comparables(
             for numero in _numeros_ecriture(ecriture):
                 par_numero.setdefault(numero, []).append(ecriture)
     for operation in operations:
+        # Écritures déjà proposées pour cette opération (évite de sortir deux fois la même paire)
         vues: set[int] = set()
+        # 1) Chèque / effet / impayé : d'abord les écritures au même n°, même loin en date
         if type_operation(operation.libelle) in TYPES_PAR_NUMERO:
             for numero in numeros(operation.libelle, operation.reference):
                 for ecriture in par_numero.get(numero, ()):
@@ -754,6 +861,8 @@ def _paires_comparables(
                         ecart = _ecart_si_comparable(operation, ecriture, grille)
                         if ecart is not None:
                             yield operation, ecriture, ecart
+        # 2) Puis les écritures des jours autour de la date d'opération et de la date de valeur
+        #    (± fenetre_jours) ; le pré-filtre décide ensuite quelle date compte vraiment
         jours = {operation.date_operation}
         if operation.date_valeur:
             jours.add(operation.date_valeur)
@@ -768,6 +877,7 @@ def _paires_comparables(
                         yield operation, ecriture, ecart
 
 
+# Petit utilitaire : (score, id) triés ; égalité des deux premiers → None
 def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int | None:
     """Identifiant du meilleur candidat, ou None si le deuxième a le même score (ambiguïté)."""
     classes = sorted(candidats, key=lambda item: (-item[0], item[1]))
@@ -787,6 +897,8 @@ def regex_type(regles: tuple[tuple[str, str], ...], nom: str | None = None) -> s
     """Expression régulière PostgreSQL (insensible à la casse, `~*`) qui reconnaît en base les
     libellés d'un type, comme `type_operation` / `type_ecriture` : le libellé commence par l'un
     des préfixes, mot entier (la ponctuation compte comme un espace). Sans `nom`, tous les types."""
+    # Exemple : type Effet côté banque → ^[^A-Za-z0-9]*(ENCAISSEMENT[^A-Za-z0-9]+EFFET|REMISE…)…
+    # utilisé par le filtre « Type » des écrans, pour qu'il donne le même résultat que le moteur
     prefixes = [
         f"{_SEPARATEUR}+".join(prefixe.split())
         for prefixe, type_ in regles
@@ -819,13 +931,17 @@ def proposer_elargi(
     semblables à `SEUIL_LIBELLE_ELARGIE` au moins au lieu du n°. Les écritures sont rangées par
     (compte, montant) : chaque opération ne regarde que celles de son montant opposé. Une paire
     n'est proposée que si chacune n'a QUE cette candidate."""
+    # Index (compte, montant) → écritures : on cherche directement le montant opposé
     par_montant: dict[tuple[int | None, Decimal], list[Ecriture]] = {}
     for ecriture in ecritures:
         par_montant.setdefault((ecriture.bank_account_id, ecriture.montant), []).append(ecriture)
+    # candidats[opération] = ses écritures possibles ; par_ecriture[écriture] = nombre d'opérations
+    # qui la veulent (une paire n'est proposée que si chacun n'a qu'un seul candidat)
     candidats: dict[int, list[tuple[Operation, Ecriture, int]]] = {}
     par_ecriture: dict[int, int] = {}
     for operation in operations:
         numeros_op = numeros(operation.libelle, operation.reference)
+        # Espèces / virement / autre : comparés par libellé ; chèque / effet / impayé : par n°
         par_libelle = type_operation(operation.libelle) in TYPES_SANS_REFERENCE
         if not numeros_op and not par_libelle:
             continue
@@ -845,6 +961,7 @@ def proposer_elargi(
                 continue
             candidats.setdefault(operation.id, []).append((operation, ecriture, ecart))
             par_ecriture[ecriture.id] = par_ecriture.get(ecriture.id, 0) + 1
+    # Ne garder que les paires uniques des deux côtés, et dont le score atteint le seuil
     propositions = []
     for liste in candidats.values():
         if len(liste) != 1:

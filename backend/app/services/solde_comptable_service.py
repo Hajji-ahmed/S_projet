@@ -89,6 +89,16 @@ def _calcul(
     )
 
 
+def solde_du_compte(db: Session, account: BankAccount, jour: date) -> SoldeComptable:
+    """Solde comptable et solde du relevé d'un seul compte au `jour` (rapport « Lignes non
+    rapprochées »), même calcul que la carte « Solde comptable »."""
+    bancaires = soldes_par_compte(db, [account.id], jour)
+    mvt = accounting_repository.mouvements_comptables(
+        db, account.id, apres=account.date_solde_comptable, jusqu_au=jour
+    )
+    return _calcul(account, jour, mvt, solde_connu(bancaires[account.id], jour))
+
+
 def soldes(
     db: Session, company_id: int, jour: date | None, bank_account_id: int | None = None
 ) -> list[SoldeComptable]:

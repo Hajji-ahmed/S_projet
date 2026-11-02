@@ -3,6 +3,8 @@
  * « Lignes à importer · Lignes en erreur · Doublons · Lignes ignorées ». Fonctions pures.
  */
 
+import { fromCents, toCents } from "@/lib/statementLines";
+
 export type VueLignes = "toutes" | "importer" | "erreurs" | "doublons" | "ignorees";
 
 /** Clic sur une tuile : elle devient le filtre, ou le retire si elle l'était déjà. */
@@ -106,6 +108,26 @@ export function blocageImport(etat: {
     };
   }
   return null;
+}
+
+export type TotauxCoches = { debit: string; credit: string; solde: string };
+
+/**
+ * Totaux des lignes cochées d'un export Sage (29/10/2026) : débit, crédit et solde = débit − crédit,
+ * comme le grand livre du compte banque. Sommés en centimes exacts ; un montant vide compte 0.
+ */
+export function totauxCoches(
+  lines: readonly { numero: number; debit: string | null; credit: string | null }[],
+  cochees: ReadonlySet<number>,
+): TotauxCoches {
+  let debit = BigInt(0);
+  let credit = BigInt(0);
+  for (const line of lines) {
+    if (!cochees.has(line.numero)) continue;
+    if (line.debit) debit += toCents(line.debit);
+    if (line.credit) credit += toCents(line.credit);
+  }
+  return { debit: fromCents(debit), credit: fromCents(credit), solde: fromCents(debit - credit) };
 }
 
 /** Coche ou décoche d'un clic un groupe de lignes (les erreurs), sans toucher aux autres. Depuis

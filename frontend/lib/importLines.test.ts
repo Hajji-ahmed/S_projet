@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   basculerGroupe,
   blocageImport,
+  totauxCoches,
   cellulesText,
   defaultChecked,
   pageOf,
@@ -106,5 +107,46 @@ describe("groupes de lignes", () => {
   it("coche ou décoche un groupe sans toucher aux autres lignes", () => {
     expect([...basculerGroupe(new Set([3, 5]), [5], false)]).toEqual([3]);
     expect([...basculerGroupe(new Set([3]), [5, 7], true)].sort()).toEqual([3, 5, 7]);
+  });
+});
+
+describe("totauxCoches", () => {
+  const lignes = [
+    { numero: 1, debit: "15000000.00", credit: null },
+    { numero: 2, debit: null, credit: "273412.92" },
+    { numero: 3, debit: null, credit: "4397.13" },
+    { numero: 4, debit: null, credit: null },
+  ];
+
+  it("additionne les lignes cochées et donne le solde débit − crédit", () => {
+    expect(totauxCoches(lignes, new Set([1, 2, 3, 4]))).toEqual({
+      debit: "15000000.00",
+      credit: "277810.05",
+      solde: "14722189.95",
+    });
+  });
+
+  it("ignore les lignes décochées", () => {
+    expect(totauxCoches(lignes, new Set([2]))).toEqual({
+      debit: "0.00",
+      credit: "273412.92",
+      solde: "-273412.92",
+    });
+  });
+
+  it("vaut zéro sans ligne cochée", () => {
+    expect(totauxCoches(lignes, new Set())).toEqual({
+      debit: "0.00",
+      credit: "0.00",
+      solde: "0.00",
+    });
+  });
+
+  it("compte les centimes exactement", () => {
+    const petites = [
+      { numero: 1, debit: "0.10", credit: null },
+      { numero: 2, debit: "0.20", credit: null },
+    ];
+    expect(totauxCoches(petites, new Set([1, 2])).solde).toBe("0.30");
   });
 });
