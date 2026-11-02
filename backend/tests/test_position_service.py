@@ -11,7 +11,7 @@ from app.services.position_service import (
     account_figures,
     credit_disponible,
     depassement,
-    facilite_de_caisse,
+    disponible_fc_reel,
     fusion_soldes,
     latest_values,
     ligne_devise,
@@ -116,17 +116,19 @@ def colonne(bank_id, ligne="0", soldes=(), *, compte=True, taux=None) -> BanqueC
     )
 
 
-def test_facilite_de_caisse_is_balance_plus_ligne():
-    assert facilite_de_caisse(D("-200000"), D("500000")) == D("300000")
+def test_disponible_fc_reel_is_balance_plus_ligne():
+    assert disponible_fc_reel(D("-200000"), D("500000")) == D("300000")
 
 
-def test_depassement_is_total_minus_lignes_and_unknown_without_total():
-    assert depassement(D("700000"), D("800000")) == D("-100000")
+def test_depassement_is_total_plus_lignes_and_unknown_without_total():
+    assert depassement(D("-100000"), D("800000")) == D("700000")
+    assert depassement(D("-900000"), D("800000")) == D("-100000")
     assert depassement(None, D("800000")) is None
 
 
 def test_validated_example():
-    """Décision du 02/10/2026 : 300 000 + 400 000 = 700 000 ; 700 000 − 800 000 = −100 000."""
+    """Décision du 02/11/2026 : facilité de caisse = solde du jour ; −200 000 + 100 000 = −100 000 ;
+    DEPASSEMENT = −100 000 + 800 000 = 700 000 ; Disponible Fc reel = 300 000 et 400 000."""
     awb = colonne(1, "500000", [(J30, "-200000")])
     bmce = colonne(2, "300000", [(J30, "100000")])
 
@@ -135,32 +137,34 @@ def test_validated_example():
     [jour] = table.jours
     assert jour.date == J30
     assert jour.ligne.cellules == (
-        Cellule(1, D("300000"), J30, False),
-        Cellule(2, D("400000"), J30, False),
+        Cellule(1, D("-200000"), J30, False),
+        Cellule(2, D("100000"), J30, False),
     )
-    assert jour.ligne.total == D("700000")
-    assert jour.ligne.depassement == D("-100000")
+    assert jour.ligne.total == D("-100000")
+    assert jour.ligne.depassement == D("700000")
+    assert [c.valeur for c in table.disponible.cellules] == [D("300000"), D("400000")]
+    assert (table.disponible.total, table.disponible.depassement) == (D("700000"), D("700000"))
     assert table.ligne_total == D("800000")
     assert table.date_fin == J30
 
 
-def test_disponible_is_last_facilite_minus_ligne():
-    """Décision du 03/10/2026 : Disponible Fc reel = facilité de caisse du dernier jour − LIGNE ;
-    TOTAL = somme ; DEPASSEMENT = TOTAL, la LIGNE étant déjà retirée (correction du 03/10/2026)."""
+def test_disponible_is_last_balance_plus_ligne():
+    """Décision du 02/11/2026 : Disponible Fc reel = solde du dernier jour + LIGNE ;
+    TOTAL = somme ; DEPASSEMENT = TOTAL."""
     awb = colonne(1, "800000", [(J30, "400000")])
     bp = colonne(3, "600000", [(J30, "650000")])
 
     table = tableau_banques([awb, bp], J30)
 
     facilite = table.jours[-1].ligne
-    assert [c.valeur for c in facilite.cellules] == [D("1200000"), D("1250000")]
-    assert (facilite.total, facilite.depassement) == (D("2450000"), D("1050000"))
+    assert [c.valeur for c in facilite.cellules] == [D("400000"), D("650000")]
+    assert (facilite.total, facilite.depassement) == (D("1050000"), D("2450000"))
     assert table.disponible.cellules == (
-        Cellule(1, D("400000"), J30, False),
-        Cellule(3, D("650000"), J30, False),
+        Cellule(1, D("1200000"), J30, False),
+        Cellule(3, D("1250000"), J30, False),
     )
-    assert table.disponible.total == D("1050000")
-    assert table.disponible.depassement == D("1050000")
+    assert table.disponible.total == D("2450000")
+    assert table.disponible.depassement == D("2450000")
     # Même valeur que le DEPASSEMENT de la facilité de caisse du dernier jour
     assert table.disponible.depassement == facilite.depassement
 
@@ -172,11 +176,11 @@ def test_disponible_keeps_the_carried_forward_balance_and_skips_unknown_banks():
     table = tableau_banques([awb, bp], J30)
 
     assert table.disponible.cellules == (
-        Cellule(1, D("10"), J28, True),
+        Cellule(1, D("110"), J28, True),
         Cellule(3, None, None, False),
     )
-    assert table.disponible.total == D("10")
-    assert table.disponible.depassement == D("10")  # = TOTAL
+    assert table.disponible.total == D("110")
+    assert table.disponible.depassement == D("110")  # = TOTAL
 
 
 def test_operation_balance_wins_over_the_day_balance():
@@ -196,10 +200,10 @@ def test_a_day_without_balance_reuses_the_last_known_one():
     table = tableau_banques([awb, bmce], J30)
 
     _j28, j29, j30 = table.jours
-    assert j29.ligne.cellules == (Cellule(1, D("110"), J28, True), Cellule(2, D("220"), J28, True))
-    assert j30.ligne.cellules == (Cellule(1, D("130"), J30, False), Cellule(2, D("220"), J28, True))
-    assert j30.ligne.total == D("350")
-    assert j30.ligne.depassement == D("50")
+    assert j29.ligne.cellules == (Cellule(1, D("10"), J28, True), Cellule(2, D("20"), J28, True))
+    assert j30.ligne.cellules == (Cellule(1, D("30"), J30, False), Cellule(2, D("20"), J28, True))
+    assert j30.ligne.total == D("50")
+    assert j30.ligne.depassement == D("350")
 
 
 def test_bank_before_its_first_balance_is_left_out_of_both_totals():
@@ -209,9 +213,9 @@ def test_bank_before_its_first_balance_is_left_out_of_both_totals():
     j28, j29 = tableau_banques([awb, bmce], J29).jours
 
     assert j28.ligne.cellules[1] == Cellule(2, None, None, False)
-    assert j28.ligne.total == D("110")
-    assert j28.ligne.depassement == D("10")  # 110 − 100 : la LIGNE de BMCE n'est pas comptée
-    assert j29.ligne.total == D("330")
+    assert j28.ligne.total == D("10")
+    assert j28.ligne.depassement == D("110")  # 10 + 100 : la LIGNE de BMCE n'est pas comptée
+    assert j29.ligne.total == D("30")
 
 
 def test_every_calendar_day_has_a_row_weekends_included():
@@ -228,7 +232,7 @@ def test_balances_after_the_end_date_are_ignored():
     table = tableau_banques([awb], J30)
 
     assert [jour.date for jour in table.jours] == [J29, J30]
-    assert table.disponible.cellules[0] == Cellule(1, D("1"), J29, True)
+    assert table.disponible.cellules[0] == Cellule(1, D("1"), J29, True)  # LIGNE 0
 
 
 def test_bank_without_account_has_empty_cells_and_no_ligne():
@@ -271,7 +275,8 @@ def test_table_amounts_are_decimals():
     line = table.jours[0].ligne
     assert isinstance(line.cellules[0].valeur, Decimal)
     assert isinstance(line.total, Decimal)
-    assert line.cellules[0].valeur == D("500000.75")
+    assert line.cellules[0].valeur == D("0.25")
+    assert table.disponible.cellules[0].valeur == D("500000.75")
 
 
 # --- Tableau Devises : soldes des comptes EUR / USD (décision du 05/10/2026) ---------------------

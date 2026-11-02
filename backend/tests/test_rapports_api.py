@@ -45,10 +45,11 @@ def test_the_daily_position_keeps_the_banks_table_structure(client, responsable,
     assert en_tete[1:3] == ["AWB", "BMCE"] and en_tete[-2:] == ["TOTAL", "DEPASSEMENT"]
     assert rows[3][0] == "LIGNE" and rows[3][1] == 500000
     assert rows[4][0] == "facilité de caisse"
-    # 01/09 : -200 000 + 500 000 ; 02/09 : dernier solde connu repris, en italique
-    assert rows[5][1] == 300000 and rows[6][1] == 300000
+    # 01/09 : solde du jour (02/11/2026) ; 02/09 : dernier solde connu repris, en italique
+    assert rows[5][1] == -200000 and rows[6][1] == -200000
     assert sheet.cell(row=7, column=2).font.italic is True
-    assert rows[-1][0] == "Disponible Fc reel"
+    # Disponible Fc reel = solde + LIGNE
+    assert rows[-1][0] == "Disponible Fc reel" and rows[-1][1] == 300000
     assert "attachment" in response.headers["content-disposition"]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_rapport"))
     assert audit.nouvelle_valeur["rapport"] == "position_du_jour"

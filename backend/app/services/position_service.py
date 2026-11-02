@@ -2,11 +2,13 @@
 
     Crédit disponible   = Crédit autorisé (LIGNE) − Crédit utilisé
     Position disponible = Solde bancaire + Crédit disponible
-    facilité de caisse  = Solde du jour + LIGNE (solde : dernière opération du jour, sinon solde
-                          du jour saisi, sinon dernier connu)
-    DEPASSEMENT         = TOTAL de la ligne − somme des LIGNES des mêmes banques
-    Disponible Fc reel  = facilité de caisse du dernier jour − LIGNE (décision du 03/10/2026, qui
-                          remplace « Solde + LIGNE » du CDC pour le tableau Banques)
+    facilité de caisse  = Solde du jour (solde : dernière opération du jour, sinon solde du jour
+                          saisi, sinon dernier connu ; décision du 02/11/2026, « Solde + LIGNE »
+                          avant)
+    DEPASSEMENT         = TOTAL de la ligne + somme des LIGNES des mêmes banques (négatif : ligne
+                          de crédit dépassée)
+    Disponible Fc reel  = Solde du dernier jour + LIGNE (décision du 02/11/2026, qui remplace
+                          « facilité de caisse − LIGNE » du 03/10/2026) ; son DEPASSEMENT = TOTAL
 
 Une valeur inconnue (jamais saisie) reste inconnue (`None`) : elle n'est jamais remplacée par zéro.
 Réutilisé par la position bancaire (P8).
@@ -194,12 +196,13 @@ class TableauBanques:
     disponible: LigneTableau
 
 
-def facilite_de_caisse(solde: Decimal, ligne: Decimal) -> Decimal:
+def disponible_fc_reel(solde: Decimal, ligne: Decimal) -> Decimal:
     return solde + ligne
 
 
 def depassement(total: Decimal | None, total_lignes: Decimal) -> Decimal | None:
-    return None if total is None else total - total_lignes
+    """TOTAL des soldes du jour + LIGNES : négatif quand la ligne de crédit est dépassée."""
+    return None if total is None else total + total_lignes
 
 
 def fusion_soldes(
@@ -290,9 +293,8 @@ def avec_en_cours(
 
 
 def _disponible(banques: Sequence[BanqueColonne], fin: LigneTableau, jour: date) -> LigneTableau:
-    """Disponible Fc reel : facilité de caisse du dernier jour − LIGNE, banque par banque ;
-    TOTAL = somme des banques renseignées ; DEPASSEMENT = TOTAL, la LIGNE étant déjà retirée
-    (correction du 03/10/2026)."""
+    """Disponible Fc reel : solde du dernier jour + LIGNE, banque par banque (décision du
+    02/11/2026) ; TOTAL = somme des banques renseignées ; DEPASSEMENT = TOTAL."""
     cellules: list[Cellule] = []
     total: Decimal | None = None
     for banque, cellule in zip(banques, fin.cellules, strict=True):
@@ -300,7 +302,7 @@ def _disponible(banques: Sequence[BanqueColonne], fin: LigneTableau, jour: date)
         if cellule.valeur is None or ligne is None:
             cellules.append(cellule)
             continue
-        valeur = cellule.valeur - ligne
+        valeur = disponible_fc_reel(cellule.valeur, ligne)
         cellules.append(
             Cellule(cellule.bank_id, valeur, cellule.date_solde, cellule.reprise, cellule.detail)
         )
@@ -311,7 +313,8 @@ def _disponible(banques: Sequence[BanqueColonne], fin: LigneTableau, jour: date)
 def _ligne(
     banques: Sequence[BanqueColonne], jour: date, retenus: dict[int, tuple[date, Decimal]]
 ) -> LigneTableau:
-    """Une ligne du tableau : chaque banque avec son solde retenu, TOTAL et DEPASSEMENT.
+    """Une ligne « facilité de caisse » : chaque banque avec son solde retenu (sans LIGNE depuis le
+    02/11/2026), TOTAL et DEPASSEMENT = TOTAL + LIGNES.
 
     Une banque sans solde retenu (pas de compte, ou avant son premier solde) n'entre ni dans le
     TOTAL ni dans la somme des LIGNES.
@@ -326,17 +329,16 @@ def _ligne(
             cellules.append(Cellule(banque.bank_id, None, None, False))
             continue
         date_solde, solde = retenu
-        valeur = facilite_de_caisse(solde, ligne)
         cellules.append(
             Cellule(
                 banque.bank_id,
-                valeur,
+                solde,
                 date_solde,
                 date_solde != jour,
                 detail_comptes(banque.comptes, jour),
             )
         )
-        total = valeur if total is None else total + valeur
+        total = solde if total is None else total + solde
         lignes += ligne
     return LigneTableau(tuple(cellules), total, depassement(total, lignes))
 

@@ -53,7 +53,8 @@ type BanquesTableProps = {
 
 /**
  * Tableau Banques du classeur, calculé par l'API à partir des soldes du jour (lecture seule) :
- * Taux, LIGNE, une ligne « facilité de caisse » par jour (solde + LIGNE), Disponible Fc reel.
+ * Taux, LIGNE, une ligne « facilité de caisse » par jour (solde du jour, décision du 02/11/2026),
+ * Disponible Fc reel (solde + LIGNE).
  */
 export function BanquesTable({ companyId, jour, onCharge }: BanquesTableProps) {
   const [table, setTable] = useState<Table | null>(null);

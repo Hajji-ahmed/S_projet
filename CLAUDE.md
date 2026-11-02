@@ -94,10 +94,11 @@ Data flow: `Banks / Sage-SI / Excel-CSV → Import → Column mapping + checks �
 ```text
 Crédit disponible       = Crédit autorisé − Crédit utilisé
 Position disponible     = Solde bancaire + Crédit disponible
-facilité de caisse      = Solde du jour + LIGNE   (solde du jour = solde de la dernière opération importée ce jour-là, sinon solde du jour saisi, sinon dernier connu;
-                          since 08/10/2026 an account with an imported statement ignores its entered balances)
-Disponible Fc reel      = facilité de caisse du dernier jour − LIGNE   (Banques table, decision of 03/10/2026; replaces the CDC's « Solde + LIGNE »)
-                          TOTAL = sum of the banks; DEPASSEMENT = TOTAL (LIGNE already removed, so it is not subtracted again)
+facilité de caisse      = Solde du jour   (decision of 02/11/2026, « Solde + LIGNE » before; solde du jour = solde de la dernière opération importée ce jour-là,
+                          sinon solde du jour saisi, sinon dernier connu; since 08/10/2026 an account with an imported statement ignores its entered balances)
+                          DEPASSEMENT of a day = TOTAL of the balances + TOTAL of their LIGNES (negative = credit line exceeded)
+Disponible Fc reel      = Solde du dernier jour + LIGNE   (Banques table, decision of 02/11/2026; replaces « facilité de caisse − LIGNE » of 03/10/2026)
+                          TOTAL = sum of the banks; DEPASSEMENT = TOTAL
 Position prévisionnelle = Position de départ + Encaissements prévus − Décaissements prévus   (cascades day to day)
 ```
 
@@ -113,7 +114,7 @@ Position prévisionnelle = Position de départ + Encaissements prévus − Déca
 - **Daily balances**: the Banques table shows "facilité de caisse" on 3 dates, so balances are a per-day history (`bank_account_balances`), not a single field on the account.
 - **Forecasts** belong to a company and optionally to a bank. A forecast without a bank is an Encaissement / Escompte / Douane amount of the Prévisions block; since 03/10/2026 these are entered **per line** of the block (migration 0007: `saisies_previsions_jour.ligne`, earlier day-level values moved to line 1; `PUT /api/position/previsions` carries them in each `lignes[]` item). Each forecast carries its own direction (`sens`: Entrée / Sortie).
 - **Two companies**: Simtis and **Tefil** (code `SOCX`; shown as "Société X" until its name was confirmed on 05/10/2026, migration 0009 renamed it; Tefil has no EUR / USD accounts, so no Devises table). A `companies` table is required. Positions are shown per company, never consolidated. Each company has its own accounting export, and reconciliation never matches across companies.
-- **Banques table, decided on 02/10/2026** (section 3.3 of the plan): only each bank's **MAD current account** counts ("Exp DH convertible" stays in the Devises table, out of TOTAL and Disponible Fc reel). There is one « facilité de caisse » row **per day, without limit**, and each bank's cell = **that day's balance + LIGNE**. For each date, **DEPASSEMENT = TOTAL of the banks' facilité de caisse − TOTAL of their LIGNES**. Worked example: AWB LIGNE 500 000 and balance −200 000 give 300 000; BMCE LIGNE 300 000 and balance +100 000 give 400 000; TOTAL 700 000; DEPASSEMENT 700 000 − 800 000 = −100 000.
+- **Banques table, decided on 02/10/2026** (section 3.3 of the plan): only each bank's **MAD current account** counts ("Exp DH convertible" stays in the Devises table, out of TOTAL and Disponible Fc reel). There is one « facilité de caisse » row **per day, without limit**, and each bank's cell = **that day's balance** (since 02/11/2026; balance + LIGNE before). For each date, **DEPASSEMENT = TOTAL of the balances + TOTAL of their LIGNES**, and Disponible Fc reel = last balance + LIGNE. Worked example: AWB LIGNE 500 000 and balance −200 000; BMCE LIGNE 300 000 and balance +100 000; day row TOTAL −100 000, DEPASSEMENT −100 000 + 800 000 = 700 000; Disponible Fc reel 300 000 and 400 000, TOTAL = DEPASSEMENT = 700 000. The « Évolution de la position » chart, the PDF and the Excel report follow (the chart now draws the TOTAL of the balances).
 - **Unresolved terms** (section 3.4 of the plan): the business still has to confirm Lettrage/Escompte, what "Exp DH convertible" means (modelled as an account type `DH convertible` in MAD), and how the Prévisions block reads (column C = due date or label). Do not invent their meaning or "fix" these labels. Ask.
 - **Logos**: `frontend/public/logo-simtis.png` and `frontend/public/banques/{attijariwafa,bmce,bp,cih,bmci}.png`. Every table that names a bank shows its logo next to the code through `components/banks/BankLabel.tsx` (stacked above the code in the column headers of the imposed tables; business decision of 02/10/2026).
 
