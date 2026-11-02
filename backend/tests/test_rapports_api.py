@@ -292,10 +292,10 @@ def test_unreconciled_lines_side_by_side_for_one_bank_and_period(client, respons
     feuille = workbook[workbook.sheetnames[0]]
     assert feuille.cell(row=2, column=1).value == "Transactions bancaires (3)"
     assert feuille.cell(row=2, column=8).value == "Écritures comptables (1)"
-    # Le plus récent d'abord, rapprochées, en cours et hors période exclues
-    assert lignes(feuille, 2) == ["VERSEMENT DEPLACE PAR X", "COMMISSION", "VIR KARIM"]
+    # Du plus ancien au plus récent (02/11/2026), rapprochées, en cours et hors période exclues
+    assert lignes(feuille, 2) == ["VIR KARIM", "COMMISSION", "VERSEMENT DEPLACE PAR X"]
     statuts = [row[5] for row in feuille.iter_rows(min_row=5, max_row=7, values_only=True)]
-    assert statuts == ["Non rapprochée", "Non rapprochée · frais", "En proposition"]
+    assert statuts == ["En proposition", "Non rapprochée · frais", "Non rapprochée"]
     assert feuille.cell(row=5, column=9).value == "ESP TT26272F48TV"
     assert (
         "non-rapproches-simtis-bp-2026-09-01-2026-09-30.xlsx"
