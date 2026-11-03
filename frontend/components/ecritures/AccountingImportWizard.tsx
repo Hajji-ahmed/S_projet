@@ -25,6 +25,7 @@ import {
   defaultChecked,
   pageOf,
   sageLinesFor,
+  soldesApresImport,
   toggleVue,
   totauxCoches,
   type VueLignes,
@@ -357,15 +358,35 @@ export function AccountingImportWizard({
     const shown = sageLinesFor(current.lignes, vue, coches);
     // 100 lignes par page ; les tuiles et les totaux portent sur tout le fichier
     const pageLignesView = pageOf(shown, pageLignes);
-    // Totaux et solde (débit − crédit) des lignes cochées : ils suivent les cases (29/10/2026)
+    // Totaux des lignes cochées et solde comptable de chaque compte une fois ces lignes importées
+    // (03/11/2026, au lieu du solde des seules lignes du fichier) : ils suivent les cases
     const totaux = totauxCoches(current.lignes, coches);
+    const soldes = soldesApresImport(summary.par_compte, current.lignes, coches);
     const tiles: [string, ReactNode][] = [
       [
-        "Total débit / crédit / solde",
-        <span key="totaux" className="inline-flex flex-wrap gap-x-14 gap-y-1">
-          <span>{formatAmount(totaux.debit, "DH")}</span>
-          <span>{formatAmount(totaux.credit, "DH")}</span>
-          <span>solde {formatAmount(totaux.solde, "DH")}</span>
+        "Total débit / crédit · solde comptable après import",
+        <span key="totaux" className="flex flex-col gap-1">
+          <span className="inline-flex flex-wrap gap-x-18 gap-y-1">
+            <span>{formatAmount(totaux.debit, "DH")}</span>
+            <span>{formatAmount(totaux.credit, "DH")}</span>
+          </span>
+          {soldes.map((item) => (
+            <span key={item.bank_account_id} className="inline-flex flex-wrap gap-x-2">
+              <span className="font-normal text-simtis-muted">
+                {item.bank_code} · {item.journal}
+                {item.date ? ` au ${formatDate(item.date)}` : ""} :
+              </span>
+              {item.solde !== null ? (
+                <span>solde {formatAmount(item.solde, "DH")}</span>
+              ) : (
+                <span className="font-normal text-simtis-warning">
+                  {item.raison === "apres"
+                    ? "solde d'ouverture daté après le fichier"
+                    : "solde d'ouverture à saisir"}
+                </span>
+              )}
+            </span>
+          ))}
         </span>,
       ],
       [

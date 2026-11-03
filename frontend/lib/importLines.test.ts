@@ -8,6 +8,7 @@ import {
   defaultChecked,
   pageOf,
   sageLinesFor,
+  soldesApresImport,
   toggleVue,
 } from "./importLines";
 
@@ -148,5 +149,63 @@ describe("totauxCoches", () => {
       { numero: 2, debit: "0.20", credit: null },
     ];
     expect(totauxCoches(petites, new Set([1, 2])).solde).toBe("0.30");
+  });
+});
+
+describe("soldesApresImport", () => {
+  const comptes = [
+    {
+      bank_account_id: 1,
+      bank_code: "BP",
+      journal: "5243",
+      date_solde: "2026-08-31",
+      date_ouverture: "2026-01-01",
+      solde_avant: "1000.00",
+    },
+    {
+      bank_account_id: 2,
+      bank_code: "AWB",
+      journal: "5242",
+      date_solde: "2026-08-31",
+      date_ouverture: null,
+      solde_avant: null,
+    },
+    {
+      bank_account_id: 3,
+      bank_code: "CIH",
+      journal: "5548",
+      date_solde: "2026-08-31",
+      date_ouverture: "2026-12-31",
+      solde_avant: null,
+    },
+  ];
+  const lignes = [
+    { numero: 1, bank_account_id: 1, date_ecriture: "2026-08-02", debit: "500.10", credit: null },
+    { numero: 2, bank_account_id: 1, date_ecriture: "2026-08-03", debit: null, credit: "0.30" },
+    { numero: 3, bank_account_id: 1, date_ecriture: "2026-01-01", debit: "99.00", credit: null },
+    { numero: 4, bank_account_id: 2, date_ecriture: "2026-08-02", debit: "7.00", credit: null },
+  ];
+
+  it("ajoute au solde avant import les lignes cochées du compte, après l'ouverture", () => {
+    const [bp] = soldesApresImport(comptes, lignes, new Set([1, 2, 3, 4]));
+    expect(bp).toEqual({
+      bank_account_id: 1,
+      bank_code: "BP",
+      journal: "5243",
+      date: "2026-08-31",
+      solde: "1499.80",
+      raison: null,
+    });
+  });
+
+  it("suit les cases : une ligne décochée ne compte plus", () => {
+    expect(soldesApresImport(comptes, lignes, new Set([2]))[0].solde).toBe("999.70");
+    expect(soldesApresImport(comptes, lignes, new Set())[0].solde).toBe("1000.00");
+  });
+
+  it("ne part jamais de 0 sans solde d'ouverture", () => {
+    const [, awb, cih] = soldesApresImport(comptes, lignes, new Set([4]));
+    expect([awb.solde, awb.raison]).toEqual([null, "ouverture"]);
+    expect([cih.solde, cih.raison]).toEqual([null, "apres"]);
   });
 });

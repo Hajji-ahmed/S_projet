@@ -70,6 +70,13 @@ class TotalCompteOut(BaseModel):
     nb: int
     total_debit: Decimal
     total_credit: Decimal
+    date_solde: date | None = Field(None, description="Dernière date du fichier")
+    date_ouverture: date | None = Field(None, description="Date du solde d'ouverture comptable")
+    solde_avant: Decimal | None = Field(
+        None,
+        description="Solde comptable avant l'import à `date_solde` (débit = positif) ; null sans "
+        "solde d'ouverture ou s'il est daté après le fichier",
+    )
 
 
 class ResumeComptableOut(BaseModel):

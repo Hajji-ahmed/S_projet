@@ -26,7 +26,13 @@ from app.repositories import (
     import_repository,
     reconciliation_repository,
 )
-from app.services import account_service, audit_service, import_file, position_service
+from app.services import (
+    account_service,
+    audit_service,
+    import_file,
+    position_service,
+    solde_comptable_service,
+)
 from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
 from app.services.normalization_service import (
@@ -127,6 +133,12 @@ class AccountTotal:
     nb: int = 0
     total_debit: Decimal = Decimal("0.00")
     total_credit: Decimal = Decimal("0.00")
+    # Solde comptable du compte avant l'import, à la dernière date du fichier (03/11/2026) : l'écran
+    # y ajoute les lignes cochées datées après `date_ouverture`. None : pas de solde d'ouverture,
+    # ou solde d'ouverture daté après le fichier
+    date_solde: date | None = None
+    date_ouverture: date | None = None
+    solde_avant: Decimal | None = None
 
 
 @dataclass
@@ -504,7 +516,31 @@ def analyse_entries(
     _mark_duplicates(db, company.id, lines)
     analysis.lignes = lines
     analysis.resume = _summarise(lines, ignored)
+    _soldes_avant_import(db, analysis.resume, lines, journals)
     return analysis
+
+
+def _soldes_avant_import(
+    db: Session, summary: EntriesSummary, lines: list[EntryLine], journals: dict[str, BankAccount]
+) -> None:
+    """Solde comptable de chaque compte du fichier à sa dernière date, sans le fichier (règle de
+    `solde_comptable_service` : ouverture + débits − crédits après la date d'ouverture)."""
+    dates = [line.date_ecriture for line in lines if line.date_ecriture is not None]
+    if not dates:
+        return
+    jour = max(dates)
+    comptes = {account.id: account for account in journals.values()}
+    for total in summary.par_compte:
+        account = comptes[total.bank_account_id]
+        total.date_solde, total.date_ouverture = jour, account.date_solde_comptable
+        if account.date_solde_comptable is None or account.date_solde_comptable > jour:
+            continue
+        mvt = accounting_repository.mouvements_comptables(
+            db, account.id, apres=account.date_solde_comptable, jusqu_au=jour
+        )
+        total.solde_avant = solde_comptable_service.solde_comptable(
+            account.solde_comptable_ouverture, mvt.debit, mvt.credit
+        )
 
 
 # --- Confirmation ----------------------------------------------------------------------------------

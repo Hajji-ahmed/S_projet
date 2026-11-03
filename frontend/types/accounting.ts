@@ -47,6 +47,11 @@ export type TotalCompte = {
   nb: number;
   total_debit: string;
   total_credit: string;
+  /** Solde comptable avant l'import à la dernière date du fichier (03/11/2026) ; absents dans
+   * la réponse de confirmation. `solde_avant` null : pas d'ouverture ou ouverture après le fichier. */
+  date_solde?: string | null;
+  date_ouverture?: string | null;
+  solde_avant?: string | null;
 };
 
 export type ResumeComptable = {

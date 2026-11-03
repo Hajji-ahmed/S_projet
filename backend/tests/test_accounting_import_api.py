@@ -314,6 +314,48 @@ def test_requires_a_token(client, reference):
 # --- Confirmation ----------------------------------------------------------------------------------
 
 
+def test_each_account_comes_with_its_accounting_balance_before_the_import(
+    client, comptable, db, reference
+):
+    """03/11/2026 : solde comptable de chaque compte à la dernière date du fichier, sans le
+    fichier ; l'écran y ajoute les lignes cochées. Jamais de départ à 0 sans ouverture."""
+    account(
+        db,
+        "AWB",
+        "BQ1",
+        date_solde_comptable=date(2025, 8, 31),
+        solde_comptable_ouverture=Decimal("1000.00"),
+    )
+    account(db, "BP", "BQ2")
+    account(
+        db,
+        "CIH",
+        "BQ4",
+        date_solde_comptable=date(2025, 12, 31),
+        solde_comptable_ouverture=Decimal("5.00"),
+    )
+    avant = [
+        HEADER,
+        [date(2025, 9, 1), "BQ1", "5141", "P0", "VERSEMENT", 500, None, None, None],
+        [date(2025, 8, 30), "BQ1", "5141", "P9", "AVANT OUVERTURE", 99, None, None, None],
+        [date(2025, 9, 4), "BQ1", "5141", "P8", "APRES LE FICHIER", 7, None, None, None],
+    ]
+    assert confirm(client, comptable, db, xlsx(avant), nom="avant.xlsx").status_code == 201
+    rows = [*EXPORT, [date(2025, 9, 2), "BQ4", "5141", "P3", "VIR", 1, None, None, None]]
+
+    resume = analyse(client, comptable, db, xlsx(rows)).json()["resume"]
+
+    soldes = {
+        item["bank_code"]: (item["date_solde"], item["date_ouverture"], item["solde_avant"])
+        for item in resume["par_compte"]
+    }
+    assert soldes == {
+        "AWB": ("2025-09-03", "2025-08-31", "1500.00"),
+        "BP": ("2025-09-03", None, None),
+        "CIH": ("2025-09-03", "2025-12-31", None),  # ouverture après le fichier
+    }
+
+
 def confirm(client, headers, db, content, **form):
     return post(client, CONFIRM, headers, db, content, **form)
 

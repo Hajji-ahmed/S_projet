@@ -130,6 +130,65 @@ export function totauxCoches(
   return { debit: fromCents(debit), credit: fromCents(credit), solde: fromCents(debit - credit) };
 }
 
+export type SoldeApresImport = {
+  bank_account_id: number;
+  bank_code: string;
+  journal: string;
+  date: string | null;
+  /** Null : solde d'ouverture à saisir (`raison` « ouverture ») ou daté après le fichier (« apres ») */
+  solde: string | null;
+  raison: "ouverture" | "apres" | null;
+};
+
+/**
+ * Solde comptable de chaque compte après l'import (03/11/2026) : son solde avant import à la
+ * dernière date du fichier + débit − crédit de ses lignes cochées datées après son solde
+ * d'ouverture (règle de la carte « Solde comptable »). Centimes exacts ; jamais un départ à 0.
+ */
+export function soldesApresImport(
+  comptes: readonly {
+    bank_account_id: number;
+    bank_code: string;
+    journal: string;
+    date_solde?: string | null;
+    date_ouverture?: string | null;
+    solde_avant?: string | null;
+  }[],
+  lines: readonly {
+    numero: number;
+    bank_account_id: number | null;
+    date_ecriture: string | null;
+    debit: string | null;
+    credit: string | null;
+  }[],
+  cochees: ReadonlySet<number>,
+): SoldeApresImport[] {
+  return comptes.map((compte) => {
+    const base = {
+      bank_account_id: compte.bank_account_id,
+      bank_code: compte.bank_code,
+      journal: compte.journal,
+      date: compte.date_solde ?? null,
+    };
+    if (compte.solde_avant == null) {
+      return { ...base, solde: null, raison: compte.date_ouverture ? "apres" : "ouverture" };
+    }
+    let solde = toCents(compte.solde_avant);
+    for (const line of lines) {
+      if (!cochees.has(line.numero) || line.bank_account_id !== compte.bank_account_id) continue;
+      // Dates ISO (AAAA-MM-JJ) : l'ordre des textes est celui des jours
+      if (
+        !line.date_ecriture ||
+        (compte.date_ouverture && line.date_ecriture <= compte.date_ouverture)
+      )
+        continue;
+      if (line.debit) solde += toCents(line.debit);
+      if (line.credit) solde -= toCents(line.credit);
+    }
+    return { ...base, solde: fromCents(solde), raison: null };
+  });
+}
+
 /** Coche ou décoche d'un clic un groupe de lignes (les erreurs), sans toucher aux autres. Depuis
  * le 12/10/2026, un doublon est une ligne déjà en base, jamais cochable : pas de groupe Doublons. */
 export function basculerGroupe(
