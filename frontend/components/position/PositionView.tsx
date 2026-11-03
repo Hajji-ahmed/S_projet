@@ -92,7 +92,6 @@ export function PositionView() {
     <>
       <PageHeader
         title="Position bancaire"
-        description="Tableau Banques calculé ; Prévisions et Devises saisis à la main"
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm font-medium text-simtis-text">
