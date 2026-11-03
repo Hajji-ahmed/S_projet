@@ -36,6 +36,8 @@ STATUTS_CORRESPONDANCE = ("Proposée", "Validée", "Rejetée", "Annulée")
 # Imports (relevés bancaires et écritures comptables partagent le même circuit)
 TYPES_IMPORT = ("Banque", "Comptabilité")
 STATUTS_IMPORT = ("Analysé", "Confirmé", "Annulé", "Échec")
+# Format du fichier d'un modèle de relevé (03/11/2026) : .xlsx et .xls partagent « Excel »
+FORMATS_FICHIER = ("Excel", "PDF")
 
 # Comptes bancaires : « DH convertible » correspond à « Exp DH convertible » du classeur
 TYPES_COMPTE = ("Courant", "DH convertible")

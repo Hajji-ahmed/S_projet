@@ -189,6 +189,9 @@ class StatementAnalysis:
     mapping: Mapping
     mapping_source: str  # Détection / Modèle de la banque / Utilisateur
     erreurs_mapping: list[str]
+    # Sorte de fichier du modèle de colonnes (03/11/2026) : Excel / PDF, opérations en cours
+    format_fichier: str = "Excel"
+    fichier_en_cours: bool = False
     lignes: list[AnalysedLine] = field(default_factory=list)
     resume: Summary = field(default_factory=Summary)
     # Montants des lignes SOLDE INITIAL et SOLDE FINAL du fichier, s'il en a
@@ -219,9 +222,12 @@ def propose_mapping(columns: list[Column]) -> Mapping:
     return import_file.propose_mapping(columns, STATEMENT_FIELDS)
 
 
-def _saved_mapping(db: Session, bank_id: int, columns: list[Column]) -> Mapping | None:
-    """Modèle mémorisé pour la banque (champ → en-tête), s'il retrouve toutes ses colonnes."""
-    saved = import_repository.latest_mapping(db, bank_id, TYPE_IMPORT)
+def _saved_mapping(
+    db: Session, bank_id: int, columns: list[Column], format_fichier: str, en_cours: bool
+) -> Mapping | None:
+    """Modèle mémorisé pour la banque et cette sorte de fichier (champ → en-tête), s'il retrouve
+    toutes ses colonnes."""
+    saved = import_repository.latest_mapping(db, bank_id, TYPE_IMPORT, format_fichier, en_cours)
     if saved is None:
         return None
     return import_file.mapping_from_headers(saved.mapping, columns, STATEMENT_FIELDS)
@@ -846,7 +852,9 @@ def analyse_statement(
         source = "Utilisateur"
         mapping = {code: mapping.get(code) for code in FIELD_CODES}
     else:
-        saved = _saved_mapping(db, account.bank_id, columns)
+        saved = _saved_mapping(
+            db, account.bank_id, columns, import_file.format_fichier(content), en_cours
+        )
         source = "Modèle de la banque" if saved else "Détection"
         mapping = saved or propose_mapping(columns)
 
@@ -864,6 +872,8 @@ def analyse_statement(
         mapping=mapping,
         mapping_source=source,
         erreurs_mapping=mapping_errors(mapping, len(columns)),
+        format_fichier=import_file.format_fichier(content),
+        fichier_en_cours=en_cours,
     )
     if analysis.erreurs_mapping:
         return analysis  # pas de lecture des lignes tant que la correspondance est incomplète
@@ -993,17 +1003,29 @@ def _save_mapping(db: Session, analysis: StatementAnalysis) -> bool:
     if not all(headers.values()):
         return False
     bank = analysis.account.bank
-    saved = import_repository.latest_mapping(db, bank.id, TYPE_IMPORT)
+    sorte = (analysis.format_fichier, analysis.fichier_en_cours)
+    saved = import_repository.latest_mapping(db, bank.id, TYPE_IMPORT, *sorte)
     if saved is None:
         import_repository.add(
             db,
             ColumnMapping(
-                type=TYPE_IMPORT, bank_id=bank.id, nom=f"Relevé {bank.code}", mapping=headers
+                type=TYPE_IMPORT,
+                bank_id=bank.id,
+                format_fichier=analysis.format_fichier,
+                en_cours=analysis.fichier_en_cours,
+                nom=nom_modele(bank.code, *sorte),
+                mapping=headers,
             ),
         )
     elif saved.mapping != headers:
         saved.mapping = headers
     return True
+
+
+def nom_modele(code_banque: str, format_fichier: str, en_cours: bool) -> str:
+    """« Relevé BP · Excel », « Opérations en cours BMCE · PDF » (migration 0045)."""
+    debut = "Opérations en cours" if en_cours else "Relevé"
+    return f"{debut} {code_banque} · {format_fichier}"
 
 
 def _closing_balance(

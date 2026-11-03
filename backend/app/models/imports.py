@@ -59,15 +59,34 @@ class ImportBatch(TimestampMixin, Base):
 
 
 class ColumnMapping(TimestampMixin, Base):
-    """Modèle de correspondance colonnes du fichier → champs standard, mémorisé par banque."""
+    """Modèle de correspondance colonnes du fichier → champs standard, mémorisé par banque (relevés)
+    ou par société (Sage).
+
+    Depuis le 03/11/2026 une banque a un modèle par sorte de fichier : format (Excel / PDF) ×
+    fichier des opérations en cours ou relevé ; Sage n'a pas de format."""
 
     __tablename__ = "column_mappings"
-    __table_args__ = (check_in("type", "type", enums.TYPES_IMPORT),)
+    __table_args__ = (
+        check_in("type", "type", enums.TYPES_IMPORT),
+        check_in("format_fichier", "format_fichier", enums.FORMATS_FICHIER),
+        CheckConstraint("(bank_id IS NULL) = (format_fichier IS NULL)", name="format_si_banque"),
+        Index(
+            "uq_column_mappings_banque_format",
+            "bank_id",
+            "type",
+            "format_fichier",
+            "en_cours",
+            unique=True,
+            postgresql_where=text("bank_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
     type: Mapped[str] = mapped_column(String(15))
     bank_id: Mapped[int | None] = mapped_column(ForeignKey("banks.id"))
     company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"))
+    format_fichier: Mapped[str | None] = mapped_column(String(5))
+    en_cours: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     nom: Mapped[str] = mapped_column(String(120))
     mapping: Mapped[dict[str, Any]] = mapped_column(JSONB)
     format_date: Mapped[str | None] = mapped_column(String(30))

@@ -67,6 +67,11 @@ FEUILLE_PDF = "PDF"
 MAX_PAGES_PDF = 500
 
 
+def format_fichier(content: bytes) -> str:
+    """« PDF » ou « Excel » (.xlsx comme .xls), d'après le contenu (modèles de colonnes, 03/11/2026)."""
+    return "PDF" if content.startswith(_PDF) else "Excel"
+
+
 def check_file(fichier_nom: str, content: bytes, *, pdf: bool = False) -> None:
     """`pdf` : le fichier peut aussi être un PDF (relevés bancaires seulement, 27/10/2026)."""
     extensions = (*EXTENSIONS, ".pdf") if pdf else EXTENSIONS

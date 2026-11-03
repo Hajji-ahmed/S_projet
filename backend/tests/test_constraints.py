@@ -1218,3 +1218,39 @@ def test_an_accounting_opening_balance_needs_its_date(db, world):
     sql = f"UPDATE bank_accounts SET solde_comptable_ouverture = 10 WHERE id = {world.account.id}"
 
     assert_rejected(db, "ck_bank_accounts_solde_comptable_date", sql=sql)
+
+
+# --- Modèles de colonnes par format de fichier (migration 0045) -----------------------------------
+
+
+def _modele(bank_id, format_fichier, *, en_cours=False, company_id=None):
+    from app.models import ColumnMapping
+
+    return ColumnMapping(
+        type="Banque" if bank_id else "Comptabilité",
+        bank_id=bank_id,
+        company_id=company_id,
+        format_fichier=format_fichier,
+        en_cours=en_cours,
+        nom="modèle",
+        mapping={},
+    )
+
+
+def test_a_bank_mapping_needs_a_known_format(db, world):
+    assert_rejected(db, "ck_column_mappings_format_si_banque", _modele(world.bank.id, None))
+    assert_rejected(db, "ck_column_mappings_format_fichier", _modele(world.bank.id, "CSV"))
+
+
+def test_a_sage_mapping_has_no_format(db, world):
+    modele = _modele(None, "Excel", company_id=world.company.id)
+
+    assert_rejected(db, "ck_column_mappings_format_si_banque", modele)
+
+
+def test_one_mapping_per_bank_format_and_kind_of_file(db, world):
+    save(db, _modele(world.bank.id, "Excel"))
+    save(db, _modele(world.bank.id, "PDF"))
+    save(db, _modele(world.bank.id, "Excel", en_cours=True))
+
+    assert_rejected(db, "uq_column_mappings_banque_format", _modele(world.bank.id, "PDF"))

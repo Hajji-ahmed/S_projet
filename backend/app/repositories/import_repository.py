@@ -53,13 +53,16 @@ def confirmed_file(
     return db.scalar(query)
 
 
-def latest_mapping(db: Session, bank_id: int, type_import: str) -> ColumnMapping | None:
-    """Dernier modèle de correspondance mémorisé pour une banque."""
-    query = (
-        select(ColumnMapping)
-        .where(ColumnMapping.bank_id == bank_id, ColumnMapping.type == type_import)
-        .order_by(ColumnMapping.updated_at.desc(), ColumnMapping.id.desc())
-        .limit(1)
+def latest_mapping(
+    db: Session, bank_id: int, type_import: str, format_fichier: str, en_cours: bool
+) -> ColumnMapping | None:
+    """Modèle de correspondance mémorisé pour une banque et une sorte de fichier (03/11/2026 :
+    Excel / PDF, relevé / opérations en cours ; un seul par sorte, index unique)."""
+    query = select(ColumnMapping).where(
+        ColumnMapping.bank_id == bank_id,
+        ColumnMapping.type == type_import,
+        ColumnMapping.format_fichier == format_fichier,
+        ColumnMapping.en_cours.is_(en_cours),
     )
     return db.scalar(query)
 

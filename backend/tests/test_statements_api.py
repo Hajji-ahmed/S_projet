@@ -585,6 +585,7 @@ def test_saved_bank_mapping_is_reused(client, tresorerie, account, db):
         ColumnMapping(
             type="Banque",
             bank_id=account.bank_id,
+            format_fichier="Excel",
             nom="CIH standard",
             mapping={"date_operation": "Jour", "libelle": "Texte", "credit": "Entrées"},
         ),
@@ -966,6 +967,43 @@ def test_mapping_with_a_column_without_header_is_not_saved(client, tresorerie, a
 
     assert body["modele_enregistre"] is False
     assert db.scalar(select(ColumnMapping).filter_by(bank_id=account.bank_id)) is None
+
+
+def test_excel_pdf_and_pending_files_keep_their_own_mapping(client, tresorerie, account, db):
+    """03/11/2026 : un modèle par sorte de fichier ; un PDF n'écrase plus le modèle Excel."""
+    from tests.helpers import pdf
+
+    mapping = {"date_operation": 0, "libelle": 1, "credit": 2}
+    excel = xlsx(("Relevé", UNKNOWN_HEADERS))
+    assert confirm(client, tresorerie, account.id, excel, mapping=mapping).status_code == 201
+    contenu_pdf = pdf(PDF_PAGE_1)
+    reponse_pdf = confirm(client, tresorerie, account.id, contenu_pdf, nom="releve.pdf")
+    encours = xlsx(("En cours", [["Date", "Libellé", "Crédit"], ["29/09/2026", "VIR X", 10]]))
+    reponse_encours = confirm(
+        client, tresorerie, account.id, encours, nom="encours.xlsx", en_cours=True
+    )
+
+    assert (reponse_pdf.status_code, reponse_encours.status_code) == (201, 201)
+    modeles = {
+        (m.format_fichier, m.en_cours): m
+        for m in db.scalars(select(ColumnMapping).filter_by(bank_id=account.bank_id))
+    }
+    assert {cle: m.nom for cle, m in modeles.items()} == {
+        ("Excel", False): "Relevé CIH · Excel",
+        ("PDF", False): "Relevé CIH · PDF",
+        ("Excel", True): "Opérations en cours CIH · Excel",
+    }
+    assert modeles[("Excel", False)].mapping == {
+        "date_operation": "Col1",
+        "libelle": "Col2",
+        "credit": "Col3",
+    }
+    assert modeles[("PDF", False)].mapping["libelle"] == "Libellé"
+    # Chaque sorte de fichier reprend son propre modèle
+    suivant = xlsx(("Relevé", [UNKNOWN_HEADERS[0], ["30/09/2026", "VIR RECU 3", 300]]))
+    body = analyse(client, tresorerie, account.id, suivant).json()
+    assert body["mapping_source"] == "Modèle de la banque"
+    assert body["lignes"][0]["statut"] == "Valide"
 
 
 def test_pointage_of_the_file_wins_and_is_guessed_otherwise(client, tresorerie, account, db):

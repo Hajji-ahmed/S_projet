@@ -109,7 +109,11 @@ def test_unknown_rules_are_refused(client, admin):
 def test_a_mapping_is_deleted_and_audited(client, admin, db):
     bank = db.scalar(select(Bank).where(Bank.code == "BP"))
     mapping = ColumnMapping(
-        type="Banque", bank_id=bank.id, nom="BP", mapping={"date_operation": "Date"}
+        type="Banque",
+        bank_id=bank.id,
+        format_fichier="Excel",
+        nom="BP",
+        mapping={"date_operation": "Date"},
     )
     db.add(mapping)
     db.flush()
