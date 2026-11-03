@@ -2503,6 +2503,120 @@ def test_a_bp_pending_line_is_imported_then_deleted_before_the_next_statement(
     assert apercu["lignes"][0]["remplace_date"] is None
 
 
+@pytest.fixture
+def compte_awb(db, reference) -> BankAccount:
+    company = db.scalar(select(Company).filter_by(code="SIMTIS"))
+    bank = db.scalar(select(Bank).filter_by(code="AWB"))
+    return save(db, build_account(company, bank, numero=f"RIB-AWB-{next(_numeros):06d}"))
+
+
+def _releve_awb_avec_en_cours(client, headers, compte):
+    """Relevé AWB du 24/09 : une opération définitive puis une « (*) »."""
+    releve = _releve_en_cours(
+        [
+            [date(2026, 9, 24), date(2026, 9, 24), "VIR RECU A", None, 1000, 101000],
+            [
+                date(2026, 9, 24),
+                date(2026, 9, 24),
+                "VIR.WEB RECU DE EL BRINSSI (*)",
+                None,
+                8400,
+                109400,
+            ],
+        ]
+    )
+    assert confirm(client, headers, compte.id, releve, nom="awb1.xlsx").status_code == 201
+
+
+def test_an_awb_pending_line_is_completed_by_its_final_line(client, tresorerie, compte_awb, db):
+    """03/11/2026 : chez AWB, la définitive (même montant, même libellé sans « (*) ») complète
+    l'opération en cours, sans nouvelle ligne ; un réimport du relevé la voit en doublon."""
+    from app.models import AuditLog, BankTransaction
+
+    _releve_awb_avec_en_cours(client, tresorerie, compte_awb)
+    en_cours = db.scalar(select(BankTransaction).filter_by(en_cours=True))
+    suivant = _releve_en_cours(
+        [
+            [
+                date(2026, 9, 25),
+                date(2026, 9, 26),
+                "VIR.WEB RECU DE  EL BRINSSI",
+                None,
+                8400,
+                109400,
+            ],
+            [date(2026, 9, 25), date(2026, 9, 25), "VIR RECU B", None, 600, 110000],
+        ]
+    )
+
+    apercu = analyse(client, tresorerie, compte_awb.id, suivant, nom="awb2.xlsx").json()
+    response = confirm(client, tresorerie, compte_awb.id, suivant, nom="awb2.xlsx")
+
+    assert [ligne["remplace_date"] for ligne in apercu["lignes"]] == ["2026-09-24", None]
+    assert response.status_code == 201, response.text
+    db.refresh(en_cours)
+    assert (en_cours.en_cours, en_cours.libelle) == (False, "VIR.WEB RECU DE EL BRINSSI")
+    assert (en_cours.date_operation, en_cours.date_valeur) == (date(2026, 9, 24), date(2026, 9, 26))
+    assert en_cours.statut == "Non rapprochée"
+    operations = db.scalars(select(BankTransaction).filter_by(bank_account_id=compte_awb.id)).all()
+    assert len(operations) == 3  # pas de seconde ligne de 8 400
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "remplacement_en_cours"))
+    assert audit.ancienne_valeur["libelle"] == "VIR.WEB RECU DE EL BRINSSI (*)"
+    reimport = analyse(client, tresorerie, compte_awb.id, suivant, nom="awb2-bis.xlsx").json()
+    assert [ligne["statut"] for ligne in reimport["lignes"]] == ["Doublon", "Doublon"]
+
+
+@pytest.mark.parametrize(
+    ("jour", "libelle", "montant"),
+    [
+        (date(2026, 9, 25), "VIR.WEB RECU DE AUTRE CLIENT", 8400),  # autre libellé
+        (date(2026, 9, 25), "VIR.WEB RECU DE EL BRINSSI", 8400.01),  # autre montant
+        (date(2026, 10, 5), "VIR.WEB RECU DE EL BRINSSI", 8400),  # plus de 10 jours après
+    ],
+)
+def test_an_awb_pending_line_is_kept_without_a_matching_final_line(
+    client, tresorerie, compte_awb, db, jour, libelle, montant
+):
+    from app.models import BankTransaction
+
+    _releve_awb_avec_en_cours(client, tresorerie, compte_awb)
+    suivant = _releve_en_cours([[jour, jour, libelle, None, montant, 120000]])
+
+    apercu = analyse(client, tresorerie, compte_awb.id, suivant, nom="awb2.xlsx").json()
+    assert confirm(client, tresorerie, compte_awb.id, suivant, nom="awb2.xlsx").status_code == 201
+
+    assert apercu["lignes"][0]["remplace_date"] is None
+    assert db.scalar(select(func.count()).where(BankTransaction.en_cours.is_(True))) == 1
+    total = db.scalar(select(func.count()).where(BankTransaction.bank_account_id == compte_awb.id))
+    assert total == 3
+
+
+def test_a_bp_pending_line_is_never_completed_automatically(client, tresorerie, db, reference):
+    """BP (et les autres banques) gardent la suppression à la main (21/10/2026)."""
+    from app.models import BankTransaction
+
+    compte = save(
+        db,
+        build_account(
+            db.scalar(select(Company).filter_by(code="SIMTIS")),
+            db.scalar(select(Bank).filter_by(code="BP")),
+            numero=f"RIB-BP-{next(_numeros):06d}",
+        ),
+    )
+    releve = _releve_en_cours(
+        [[date(2026, 9, 24), date(2026, 9, 24), "VIR RECU CLIENT ABC (*)", None, 5000, 106000]]
+    )
+    confirm(client, tresorerie, compte.id, releve, nom="bp1.xlsx")
+    suivant = _releve_en_cours(
+        [[date(2026, 9, 25), date(2026, 9, 25), "VIR RECU CLIENT ABC", None, 5000, 111000]]
+    )
+
+    apercu = analyse(client, tresorerie, compte.id, suivant, nom="bp2.xlsx").json()
+
+    assert apercu["lignes"][0]["remplace_date"] is None
+    assert db.scalar(select(func.count()).where(BankTransaction.en_cours.is_(True))) == 1
+
+
 def test_a_bmce_pending_file_with_starred_amounts_adds_to_the_balance_until_deleted(
     client, tresorerie, account, db
 ):

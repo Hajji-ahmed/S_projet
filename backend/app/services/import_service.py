@@ -453,9 +453,9 @@ def _line_key(line: AnalysedLine) -> tuple:
 
 # Écart de dates admis entre une opération en cours et sa définitive (20/10/2026)
 JOURS_REMPLACEMENT = 10
-# Remplacement automatique d'une opération en cours par sa définitive : retiré le 21/10/2026 (les
-# opérations en cours se suppriment à la main avant le relevé suivant) ; le code reste, inactif
-REMPLACEMENT_AUTOMATIQUE = False
+# Banques dont l'opération « (*) » du relevé est complétée par sa définitive à l'import suivant
+# (03/11/2026 : AWB). Les autres suppriment leurs opérations en cours à la main (21/10/2026).
+BANQUES_REMPLACEMENT = frozenset({"AWB"})
 
 
 def _marquer_en_cours(
@@ -464,15 +464,16 @@ def _marquer_en_cours(
     """Opérations en cours (20/10/2026) : une ligne dont le libellé finit par « (*) », ou
     toute ligne d'un fichier des opérations en cours.
 
-    Depuis le 21/10/2026 il n'y a plus de remplacement automatique (les libellés des banques
-    changent complètement, sans référence) : l'utilisateur supprime ses opérations en cours avant
-    d'importer le relevé suivant (`supprimer_en_cours`)."""
+    Depuis le 21/10/2026 l'utilisateur supprime ses opérations en cours avant d'importer le
+    relevé suivant (`supprimer_en_cours`), sauf pour les banques de `BANQUES_REMPLACEMENT`
+    (03/11/2026) : une définitive de même montant et même libellé sans « (*) », à au plus
+    `JOURS_REMPLACEMENT` jours, complète l'opération « (*) » du relevé (`_completer_en_cours`)."""
     for line in lines:
         # Fichier des opérations en cours (20/10/2026) : toutes ses lignes le sont
         line.en_cours = fichier_en_cours or est_en_cours(line.libelle)
         line.remplace_id = line.remplace_date = None
         line.remplace_avec_solde = False
-    if REMPLACEMENT_AUTOMATIQUE is False:
+    if fichier_en_cours or account.bank.code not in BANQUES_REMPLACEMENT:
         return
     candidates = [
         line
@@ -483,7 +484,12 @@ def _marquer_en_cours(
         return
     debut = min(line.date_operation for line in candidates) - timedelta(days=JOURS_REMPLACEMENT)
     fin = max(line.date_operation for line in candidates) + timedelta(days=JOURS_REMPLACEMENT)
-    libres = import_repository.operations_en_cours(db, account.id, debut, fin)
+    # Seules les opérations « (*) » d'un relevé (avec solde) : celles d'un fichier à part non
+    libres = [
+        tx
+        for tx in import_repository.operations_en_cours(db, account.id, debut, fin)
+        if tx.solde is not None
+    ]
     pris: set[int] = set()
     for line in sorted(candidates, key=lambda ligne: (ligne.date_operation, ligne.numero)):
         for tx in libres:
@@ -491,26 +497,12 @@ def _marquer_en_cours(
                 tx.id not in pris
                 and tx.montant == line.montant
                 and abs((tx.date_operation - line.date_operation).days) <= JOURS_REMPLACEMENT
-                and _meme_operation(tx, line)
+                and libelle_definitif(tx.libelle) == libelle_definitif(line.libelle)
             ):
                 pris.add(tx.id)
                 line.remplace_id, line.remplace_date = tx.id, tx.date_operation
                 line.remplace_avec_solde = tx.solde is not None
                 break
-
-
-def _reference_comparee(reference: str | None, libelle: str | None) -> str | None:
-    texte = reference or extract_reference(libelle)
-    return "".join(texte.upper().split()) if texte else None
-
-
-def _meme_operation(tx: BankTransaction, line: AnalysedLine) -> bool:
-    """Même référence des deux côtés ; sans référence d'un côté, même libellé sans « (*) »."""
-    ref_tx = _reference_comparee(tx.reference, tx.libelle)
-    ref_ligne = _reference_comparee(line.reference, line.libelle)
-    if ref_tx and ref_ligne:
-        return ref_tx == ref_ligne
-    return libelle_definitif(tx.libelle) == libelle_definitif(line.libelle)
 
 
 def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
