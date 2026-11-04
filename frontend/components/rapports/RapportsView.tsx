@@ -4,6 +4,7 @@ import {
   ArrowRight,
   Download,
   FileSpreadsheet,
+  FileText,
   GitCompareArrows,
   Landmark,
   Link2,
@@ -17,19 +18,24 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { BankPicker } from "@/components/banks/BankPicker";
 import { useCompany } from "@/components/company/CompanyProvider";
+import { AccountPicker } from "@/components/releves/AccountPicker";
 import { Button } from "@/components/ui/Button";
 import { DateInput, Field } from "@/components/ui/Field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/ui/Toast";
+import { libelleCompte } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { moisEnCours } from "@/lib/dashboard";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { periodeRapprochement } from "@/lib/reconciliation";
-import { saveFile } from "@/lib/statements";
+import { exportFilename, saveFile } from "@/lib/statements";
+import { listAccounts } from "@/services/accounts";
 import { exportLettrage } from "@/services/reconciliation";
 import { listBanks } from "@/services/banks";
 import { exportEtatRapprochement, exportNonRapproches, exportPosition } from "@/services/rapports";
+import { exportAccountStatement } from "@/services/statements";
+import type { Account } from "@/types/account";
 import type { Bank } from "@/types/bank";
 
 /** Rapports (P16.4) : exports Excel de la société active. Chaque export est audité. */
@@ -39,12 +45,17 @@ export function RapportsView() {
   const granted = user?.permissions ?? [];
   const peutPosition = hasAnyPermission(granted, [PERMISSIONS.POSITION_VIEW]);
   const peutRapprochement = hasAnyPermission(granted, [PERMISSIONS.RECONCILIATION_VIEW]);
+  // Mêmes droits que la lecture des relevés dans l'API
+  const peutReleve = hasAnyPermission(granted, [
+    PERMISSIONS.STATEMENTS_IMPORT,
+    PERMISSIONS.RECONCILIATION_VIEW,
+  ]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Rapports"
-        description={`Exports Excel${company ? ` de ${company.nom}` : ""} : position, rapprochement, lettrage, lignes non rapprochées`}
+        description={`Exports Excel${company ? ` de ${company.nom}` : ""} : position, rapprochement, lettrage, lignes non rapprochées, relevés`}
       />
       {company && (
         <div className="grid gap-5 lg:grid-cols-2">
@@ -52,6 +63,7 @@ export function RapportsView() {
           <EtatRapport companyId={company.id} actif={peutRapprochement} />
           <LettrageRapport companyId={company.id} actif={peutRapprochement} />
           <NonRapprochesRapport companyId={company.id} actif={peutRapprochement} />
+          <ReleveRapport companyId={company.id} actif={peutReleve} />
           <Rapport
             titre="Écritures de frais pour Sage"
             icon={Receipt}
@@ -297,6 +309,81 @@ function NonRapprochesRapport({ companyId, actif }: { companyId: number; actif: 
               telecharger(
                 () => exportNonRapproches(companyId, periode.from, periode.to, banque),
                 `non-rapproches-${code}-${periode.from}-${periode.to}.xlsx`,
+              )
+            }
+          >
+            {envoi ? "Préparation..." : "Télécharger"}
+          </Button>
+        </div>
+      ) : (
+        <SansDroit />
+      )}
+    </Rapport>
+  );
+}
+
+/** Relevé d'un compte (04/11/2026) : l'export au format standard de l'écran Relevés. */
+function ReleveRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
+  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
+  const [comptes, setComptes] = useState<Account[]>([]);
+  const [compteId, setCompteId] = useState<number | null>(null);
+  const { envoi, telecharger } = useTelechargement();
+
+  useEffect(() => {
+    if (!actif) return;
+    let cancelled = false;
+    listAccounts(companyId, { actif: true }).then(
+      (liste) => {
+        if (cancelled) return;
+        setComptes(liste);
+        setCompteId(null);
+      },
+      () => undefined, // sans la liste, aucun compte n'est proposé
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, actif]);
+
+  const compte = comptes.find((c) => c.id === compteId);
+  return (
+    <Rapport
+      titre="Relevé d'un compte"
+      icon={FileText}
+      description="Toutes les opérations importées d'un compte sur la période, au format standard (11 colonnes) avec le code de rapprochement, comme l'export de l'écran Relevés."
+    >
+      {actif ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="w-full max-w-[420px]">
+            <Field label="Compte" htmlFor="rapport-releve-compte">
+              <AccountPicker
+                id="rapport-releve-compte"
+                value={compteId}
+                onChange={setCompteId}
+                placeholder="Sélectionner un compte"
+                options={comptes.map((item) => ({
+                  id: item.id,
+                  bankCode: item.bank_code,
+                  logo: item.bank_logo,
+                  label: libelleCompte(item),
+                }))}
+              />
+            </Field>
+          </div>
+          <Periode id="rapport-releve" periode={periode} onChange={setPeriode} />
+          <Button
+            icon={Download}
+            disabled={envoi || !compte || !periodeValide(periode)}
+            onClick={() =>
+              compte &&
+              telecharger(
+                () => exportAccountStatement(compte.id, periode),
+                exportFilename({
+                  bank_code: compte.bank_code,
+                  devise: compte.devise,
+                  periode_debut: periode.from,
+                  periode_fin: periode.to,
+                }),
               )
             }
           >

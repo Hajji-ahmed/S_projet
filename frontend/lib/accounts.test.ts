@@ -9,6 +9,7 @@ import {
   validateAccountForm,
   type AccountFormValues,
   finNumero,
+  libelleCompte,
 } from "./accounts";
 
 const valid: AccountFormValues = {
@@ -164,5 +165,25 @@ describe("finNumero", () => {
     expect(finNumero("230 780 0001234567890123 45")).toBe("…2345");
     expect(finNumero("RIB-USD-8830")).toBe("…8830");
     expect(finNumero("123")).toBe("123");
+  });
+});
+
+describe("libelleCompte", () => {
+  const compte = {
+    bank_code: "AWB",
+    type_compte: "Courant" as const,
+    devise: "MAD",
+    libelle: "Compte courant",
+    numero: "007 780 0001234567",
+  };
+
+  it("names the bank, the currency, the label and the end of the number", () => {
+    expect(libelleCompte(compte)).toBe("AWB · MAD · Compte courant · …4567");
+  });
+
+  it("shows DH convertible instead of the currency", () => {
+    expect(libelleCompte({ ...compte, type_compte: "DH convertible" })).toBe(
+      "AWB · DH convertible · Compte courant · …4567",
+    );
   });
 });

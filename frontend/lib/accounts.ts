@@ -4,7 +4,7 @@
  * reçoit exactement ce que l'utilisateur a tapé (« 500 000,50 » → « 500000.50 »).
  */
 import { formatAmount } from "@/lib/format";
-import type { TypeCompte } from "@/types/account";
+import type { Account, TypeCompte } from "@/types/account";
 
 export const TYPE_COMPTE_OPTIONS: readonly { value: TypeCompte; label: string }[] = [
   { value: "Courant", label: "Courant" },
@@ -144,4 +144,12 @@ export function validateAccountForm(
 export function finNumero(numero: string, chiffres = 4): string {
   const compact = numero.replace(/\s+/g, "");
   return compact.length <= chiffres ? compact : `…${compact.slice(-chiffres)}`;
+}
+
+/** Libellé d'un compte dans les listes de choix : « AWB · MAD · Compte courant · …4521 ». */
+export function libelleCompte(
+  account: Pick<Account, "bank_code" | "type_compte" | "devise" | "libelle" | "numero">,
+): string {
+  const devise = account.type_compte === "DH convertible" ? "DH convertible" : account.devise;
+  return `${account.bank_code} · ${devise} · ${account.libelle} · ${finNumero(account.numero)}`;
 }
