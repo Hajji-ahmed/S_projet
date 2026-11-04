@@ -12,15 +12,8 @@ export function exportPositionPdf(companyId: number, date: string) {
   return apiDownload(`/rapports/position/pdf?${params}`);
 }
 
-/** Opérations et écritures non rapprochées, côte à côte par compte (30/10/2026). */
-export function exportNonRapproches(companyId: number, from: string, to: string, bankId?: number) {
-  const params = new URLSearchParams({ company_id: String(companyId), from, to });
-  if (bankId !== undefined) params.set("bank_id", String(bankId));
-  return apiDownload(`/rapports/non-rapproches?${params}`);
-}
-
-/** Rapprochements validés de la période : opérations et écritures côte à côte par compte
- *  (30/10/2026), d'une banque ou de toutes. */
+/** État de rapprochement (« Lignes non rapprochées » jusqu'au 04/11/2026) : opérations et
+ *  écritures non rapprochées côte à côte par compte, entre les soldes et le contrôle. */
 export function exportEtatRapprochement(
   companyId: number,
   from: string,
@@ -29,5 +22,12 @@ export function exportEtatRapprochement(
 ) {
   const params = new URLSearchParams({ company_id: String(companyId), from, to });
   if (bankId !== undefined) params.set("bank_id", String(bankId));
-  return apiDownload(`/rapports/rapprochement?${params}`);
+  return apiDownload(`/rapports/non-rapproches?${params}`);
+}
+
+/** Lettrage (rapprochements validés) de la période, d'une banque ou de toutes (04/11/2026). */
+export function exportLettrageBanque(companyId: number, from: string, to: string, bankId?: number) {
+  const params = new URLSearchParams({ company_id: String(companyId), from, to });
+  if (bankId !== undefined) params.set("bank_id", String(bankId));
+  return apiDownload(`/reconciliation/export?${params}`);
 }

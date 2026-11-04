@@ -2217,9 +2217,11 @@ def export_lettrage(
     date_to: date | None,
     acteur_id: int,
     ip: str | None,
+    bank_id: int | None = None,
 ) -> tuple[str, bytes, int]:
     """Lettrage du filtre de l'historique en classeur Excel : tous les rapprochements VALIDÉS dont
-    une opération est dans la période (et du compte, s'il est donné). Une ligne par élément,
+    une opération est dans la période (et du compte ou de la banque, s'il est donné ; la banque
+    depuis l'écran Rapports, 04/11/2026). Une ligne par élément,
     regroupées par code : les opérations du relevé, puis les écritures Sage ; chaque code
     s'équilibre (débit d'un côté = crédit de l'autre). Ligne de total en bas."""
     company = _company(db, company_id)
@@ -2227,7 +2229,11 @@ def export_lettrage(
     if date_from and date_to and (date_to - date_from).days > PERIODE_MAX_JOURS:
         raise ConflictError("La période ne peut pas dépasser 5 ans.")
     query = repo.decisions_query(
-        company.id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+        company.id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        bank_id=bank_id,
     )
     matches = repo.validated_matches(db, query)
     tx_ids = {i.bank_transaction_id for m in matches for i in m.items if i.bank_transaction_id}
@@ -2308,6 +2314,7 @@ def export_lettrage(
         entite_id=company.id,
         apres={
             "compte": bank_account_id,
+            "banque": bank_id,
             "du": date_from,
             "au": date_to,
             "rapprochements": len(matches),
@@ -2315,8 +2322,11 @@ def export_lettrage(
         ip=ip,
     )
     db.commit()
-    banque = (
-        repo.bank_code_of_account(db, bank_account_id) if bank_account_id is not None else "tous"
-    )
+    if bank_account_id is not None:
+        banque = repo.bank_code_of_account(db, bank_account_id)
+    elif bank_id is not None:
+        banque = repo.bank_code(db, bank_id) or "tous"
+    else:
+        banque = "tous"
     nom = f"lettrage-{banque}-{date_from or 'debut'}-{date_to or business_today()}.xlsx"
     return nom, buffer.getvalue(), len(matches)

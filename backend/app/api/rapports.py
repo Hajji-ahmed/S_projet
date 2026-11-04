@@ -58,25 +58,6 @@ def position_pdf(
     return _fichier(nom, contenu, PDF)
 
 
-@router.get("/rapprochement", response_class=Response, responses={200: {"content": {XLSX: {}}}})
-def etat_rapprochement(
-    request: Request,
-    company_id: Annotated[int, Query(description="Société")],
-    date_from: Annotated[date | None, Query(alias="from")] = None,
-    date_to: Annotated[date | None, Query(alias="to")] = None,
-    bank_id: Annotated[int | None, Query(description="Banque (toutes sans valeur)")] = None,
-    db: Session = Depends(get_db),
-    user: CurrentUser = Depends(require_permission(PermissionCode.RECONCILIATION_VIEW)),
-) -> Response:
-    """Rapprochements validés de la période, opérations et écritures côte à côte par compte
-    (30/10/2026)."""
-    return _fichier(
-        *rapports_service.etat_rapprochement(
-            db, company_id, date_from, date_to, bank_id, acteur_id=user.id, ip=client_ip(request)
-        )
-    )
-
-
 @router.get("/non-rapproches", response_class=Response, responses={200: {"content": {XLSX: {}}}})
 def non_rapproches(
     request: Request,
@@ -87,7 +68,8 @@ def non_rapproches(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(require_permission(PermissionCode.RECONCILIATION_VIEW)),
 ) -> Response:
-    """Opérations et écritures non rapprochées de la période, côte à côte par compte (30/10/2026)."""
+    """État de rapprochement : opérations et écritures non rapprochées de la période, côte à côte
+    par compte, entre les deux soldes et le contrôle (30/10/2026)."""
     return _fichier(
         *rapports_service.non_rapproches(
             db, company_id, date_from, date_to, bank_id, acteur_id=user.id, ip=client_ip(request)

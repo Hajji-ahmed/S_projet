@@ -612,9 +612,10 @@ def decisions_query(
     bank_account_id: int | None,
     date_from: date | None,
     date_to: date | None,
+    bank_id: int | None = None,
 ) -> Select:
     """Identifiants des correspondances décidées de la société dont l'opération est dans le filtre
-    (sans filtre de statut, ni ordre, ni pagination)."""
+    (sans filtre de statut, ni ordre, ni pagination). `bank_id` : comptes de cette banque."""
     query = (
         select(ReconciliationMatch.id)
         .join(ReconciliationMatchItem, ReconciliationMatchItem.match_id == ReconciliationMatch.id)
@@ -626,6 +627,10 @@ def decisions_query(
     )
     if bank_account_id is not None:
         query = query.where(BankTransaction.bank_account_id == bank_account_id)
+    if bank_id is not None:
+        query = query.join(BankAccount, BankAccount.id == BankTransaction.bank_account_id).where(
+            BankAccount.bank_id == bank_id
+        )
     if date_from is not None:
         query = query.where(BankTransaction.date_operation >= date_from)
     if date_to is not None:
@@ -842,6 +847,10 @@ def bank_code_of_account(db: Session, bank_account_id: int) -> str:
         .join(BankAccount, BankAccount.bank_id == Bank.id)
         .where(BankAccount.id == bank_account_id)
     ).scalar_one()
+
+
+def bank_code(db: Session, bank_id: int) -> str | None:
+    return db.scalar(select(Bank.code).where(Bank.id == bank_id))
 
 
 def _codes(db: Session, column, ids: set[int] | list[int]) -> dict[int, str]:

@@ -262,14 +262,17 @@ def export_lettrage(
     bank_account_id: int | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
+    bank_id: Annotated[int | None, Query(description="Banque (toutes sans valeur)")] = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_view),
 ) -> Response:
-    """Rapprochements validés du filtre de l'historique, en classeur Excel (14/10/2026)."""
+    """Rapprochements validés du filtre de l'historique, en classeur Excel (14/10/2026) ; filtre
+    par banque depuis l'écran Rapports (04/11/2026)."""
     nom, contenu, _ = reconciliation_service.export_lettrage(
         db,
         company_id,
         bank_account_id=bank_account_id,
+        bank_id=bank_id,
         date_from=date_from,
         date_to=date_to,
         acteur_id=user.id,

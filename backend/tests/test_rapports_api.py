@@ -69,9 +69,9 @@ def rapprocher(client, headers, operations, ecritures, id_seulement=False):
     return response.json()["id" if id_seulement else "code"]
 
 
-def test_the_reconciliation_state_puts_matched_lines_side_by_side(client, reference, db):
-    """30/10/2026 : les rapprochements validés de la période, une feuille par compte de la banque
-    choisie, opérations à gauche, écritures à droite, un bloc par code, totaux équilibrés."""
+def test_the_lettrage_can_be_limited_to_one_bank(client, reference, db):
+    """04/11/2026 (écran Rapports) : le lettrage de la banque choisie ne garde que ses
+    rapprochements validés de la période, opérations puis écritures par code."""
     make_auth_user(reference, "COMPTABLE", email="comptable@example.com")
     comptable = bearer(login(client, "comptable@example.com"))
     bp = account(db, bank_code="BP")
@@ -103,7 +103,7 @@ def test_the_reconciliation_state_puts_matched_lines_side_by_side(client, refere
     )
 
     response = client.get(
-        "/api/rapports/rapprochement",
+        "/api/reconciliation/export",
         params={
             "company_id": str(company(db).id),
             "from": "2026-09-01",
@@ -113,51 +113,28 @@ def test_the_reconciliation_state_puts_matched_lines_side_by_side(client, refere
         headers=comptable,
     )
 
-    workbook = classeur(response)
-    assert len(workbook.sheetnames) == 1
-    feuille = workbook[workbook.sheetnames[0]]
-    assert feuille.cell(row=2, column=1).value == "2 rapprochements validés"
-    assert feuille.cell(row=3, column=1).value == "Transactions bancaires"
-    assert feuille.cell(row=3, column=7).value == "Rapprochement"
-    assert feuille.cell(row=3, column=12).value == "Écritures comptables"
-    lignes = [list(r) for r in feuille.iter_rows(min_row=5, values_only=True)]
-    # Bloc 1 : le chèque, une ligne ; bloc 2 : le virement face à ses deux écritures
-    assert (lignes[0][1], lignes[0][6], lignes[0][12]) == ("CHQ 0173813", code_chq, "EAR1 173813")
-    assert (lignes[1][1], lignes[1][6], lignes[1][7], lignes[1][12]) == (
-        "VIR KARIM",
-        code_vir,
-        "1-N",
-        "REG KARIM 1",
-    )
-    assert (lignes[2][1], lignes[2][6], lignes[2][12]) == (None, None, "REG KARIM 2")
-    # Totaux : débit banque = crédit Sage, crédit banque = débit Sage
-    total = lignes[3]
-    assert total[0] == "Total" and total[11] == "Total"
-    assert (total[3], total[4]) == (1200, 3000)
-    assert (total[14], total[15]) == (3000, 1200)
-    assert feuille.cell(row=6, column=1).fill.fgColor.rgb.endswith("F5F8FA")
-    assert (
-        "etat-rapprochement-simtis-bp-20260901-20260930.xlsx"
-        in (response.headers["content-disposition"])
-    )
-    audit = db.scalar(
-        select(AuditLog).where(AuditLog.action == "export_rapport").order_by(AuditLog.id.desc())
-    )
-    assert audit.nouvelle_valeur["rapport"] == "etat_rapprochement"
-    assert audit.nouvelle_valeur["rapprochements"] == 2
+    feuille = classeur(response)["Lettrage"]
+    lignes = [list(r) for r in feuille.iter_rows(min_row=2, values_only=True)]
+    assert [(ligne[0], ligne[1], ligne[6]) for ligne in lignes[:-1]] == [
+        (code_chq, "Banque", "CHQ 0173813"),
+        (code_chq, "Sage", "EAR1 173813"),
+        (code_vir, "Banque", "VIR KARIM"),
+        (code_vir, "Sage", "REG KARIM 1"),
+        (code_vir, "Sage", "REG KARIM 2"),
+    ]
+    assert lignes[-1][0] == "Total : 2 rapprochements"
+    assert "lettrage-BP-2026-09-01-2026-09-30.xlsx" in response.headers["content-disposition"]
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_lettrage"))
+    assert audit.nouvelle_valeur["banque"] == bp.bank_id
 
-
-def test_the_reconciliation_state_without_match_says_so(client, responsable, db):
-    account(db, bank_code="BP")
-
-    response = client.get(
-        "/api/rapports/rapprochement",
+    # Sans banque : l'autre banque est dans le lettrage
+    toutes = client.get(
+        "/api/reconciliation/export",
         params={"company_id": str(company(db).id), "from": "2026-09-01", "to": "2026-09-30"},
-        headers=responsable,
+        headers=comptable,
     )
-
-    feuille = classeur(response)["Rapprochées"]
-    assert feuille["A1"].value.startswith("Aucun rapprochement validé du 01/09/2026")
+    libelles = [r[6] for r in classeur(toutes)["Lettrage"].iter_rows(min_row=2, values_only=True)]
+    assert "AUTRE BANQUE" in libelles
 
 
 def test_reports_check_the_period_and_their_permissions(client, reference, db):
@@ -174,7 +151,7 @@ def test_reports_check_the_period_and_their_permissions(client, reference, db):
     )
     assert (
         client.get(
-            "/api/rapports/rapprochement",
+            "/api/rapports/non-rapproches",
             params={"company_id": societe, "from": "2026-09-30", "to": "2026-09-01"},
             headers=treso,
         ).status_code
@@ -191,7 +168,7 @@ def test_reports_check_the_period_and_their_permissions(client, reference, db):
     )
     assert (
         client.get(
-            "/api/rapports/rapprochement", params={"company_id": societe}, headers=aucun
+            "/api/rapports/non-rapproches", params={"company_id": societe}, headers=aucun
         ).status_code
         == 403
     )
@@ -298,7 +275,7 @@ def test_unreconciled_lines_side_by_side_for_one_bank_and_period(client, respons
     assert statuts == ["En proposition", "Non rapprochée · frais", "Non rapprochée"]
     assert feuille.cell(row=5, column=9).value == "ESP TT26272F48TV"
     assert (
-        "non-rapproches-simtis-bp-2026-09-01-2026-09-30.xlsx"
+        "etat-rapprochement-simtis-bp-2026-09-01-2026-09-30.xlsx"
         in (response.headers["content-disposition"])
     )
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_rapport"))

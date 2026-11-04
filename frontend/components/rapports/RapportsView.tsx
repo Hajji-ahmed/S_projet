@@ -5,7 +5,6 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
-  GitCompareArrows,
   Landmark,
   Link2,
   Receipt,
@@ -26,14 +25,12 @@ import { useToast } from "@/components/ui/Toast";
 import { libelleCompte } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
-import { moisEnCours } from "@/lib/dashboard";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { periodeRapprochement } from "@/lib/reconciliation";
 import { exportFilename, saveFile } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
-import { exportLettrage } from "@/services/reconciliation";
 import { listBanks } from "@/services/banks";
-import { exportEtatRapprochement, exportNonRapproches, exportPosition } from "@/services/rapports";
+import { exportEtatRapprochement, exportLettrageBanque, exportPosition } from "@/services/rapports";
 import { exportAccountStatement } from "@/services/statements";
 import type { Account } from "@/types/account";
 import type { Bank } from "@/types/bank";
@@ -55,14 +52,13 @@ export function RapportsView() {
     <div className="space-y-6">
       <PageHeader
         title="Rapports"
-        description={`Exports Excel${company ? ` de ${company.nom}` : ""} : position, rapprochement, lettrage, lignes non rapprochées, relevés`}
+        description={`Exports Excel${company ? ` de ${company.nom}` : ""} : position, état de rapprochement, lettrage, relevés`}
       />
       {company && (
         <div className="grid gap-5 lg:grid-cols-2">
           <PositionRapport companyId={company.id} actif={peutPosition} />
           <EtatRapport companyId={company.id} actif={peutRapprochement} />
           <LettrageRapport companyId={company.id} actif={peutRapprochement} />
-          <NonRapprochesRapport companyId={company.id} actif={peutRapprochement} />
           <ReleveRapport companyId={company.id} actif={peutReleve} />
           <Rapport
             titre="Écritures de frais pour Sage"
@@ -214,19 +210,38 @@ function periodeValide(periode: { from: string; to: string }): boolean {
   return periode.from !== "" && periode.to !== "" && periode.from <= periode.to;
 }
 
-/** État de rapprochement (30/10/2026) : les rapprochements validés, opérations et écritures
- *  côte à côte, par compte. */
+/** Banques actives de la société, pour les filtres « Banque » des rapports. */
+function useBanques(companyId: number): Bank[] {
+  const [banques, setBanques] = useState<Bank[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listBanks(companyId).then(
+      (liste) => {
+        if (!cancelled) setBanques(liste.filter((b) => b.actif));
+      },
+      () => undefined, // sans la liste, seul « Toutes les banques » reste proposé
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId]);
+  return banques;
+}
+
+/** État de rapprochement (« Lignes non rapprochées » jusqu'au 04/11/2026) : relevé et écritures
+ *  Sage non rapprochés côte à côte, par compte, entre les deux soldes et le contrôle. */
 function EtatRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
   const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
   const [banque, setBanque] = useState<number | undefined>(undefined);
   const banques = useBanques(companyId);
   const { envoi, telecharger } = useTelechargement();
+
   const code = banques.find((b) => b.id === banque)?.code ?? "toutes";
   return (
     <Rapport
       titre="État de rapprochement"
-      icon={GitCompareArrows}
-      description="Par compte : chaque rapprochement validé de la période, ses opérations du relevé à gauche et ses écritures Sage à droite, avec son code, et les totaux de chaque côté."
+      icon={Scale}
+      description="Par compte : le solde du relevé et le solde comptable, les opérations et écritures pas encore rapprochées de la période côte à côte, puis le contrôle (soldes rectifiés et écart)."
     >
       {actif ? (
         <div className="flex flex-wrap items-end gap-3">
@@ -246,69 +261,6 @@ function EtatRapport({ companyId, actif }: { companyId: number; actif: boolean }
               telecharger(
                 () => exportEtatRapprochement(companyId, periode.from, periode.to, banque),
                 `etat-rapprochement-${code}-${periode.from}-${periode.to}.xlsx`,
-              )
-            }
-          >
-            {envoi ? "Préparation..." : "Télécharger"}
-          </Button>
-        </div>
-      ) : (
-        <SansDroit />
-      )}
-    </Rapport>
-  );
-}
-
-/** Banques actives de la société, pour les filtres « Banque » des rapports. */
-function useBanques(companyId: number): Bank[] {
-  const [banques, setBanques] = useState<Bank[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    listBanks(companyId).then(
-      (liste) => {
-        if (!cancelled) setBanques(liste.filter((b) => b.actif));
-      },
-      () => undefined, // sans la liste, seul « Toutes les banques » reste proposé
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId]);
-  return banques;
-}
-
-/** Lignes non rapprochées (30/10/2026) : relevé et écritures Sage côte à côte, par compte. */
-function NonRapprochesRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
-  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
-  const [banque, setBanque] = useState<number | undefined>(undefined);
-  const banques = useBanques(companyId);
-  const { envoi, telecharger } = useTelechargement();
-
-  const code = banques.find((b) => b.id === banque)?.code ?? "toutes";
-  return (
-    <Rapport
-      titre="Lignes non rapprochées"
-      icon={Scale}
-      description="Par compte, côte à côte comme l'écran Rapprochement : opérations du relevé et écritures Sage pas encore rapprochées de la période (en proposition et frais à comptabiliser compris)."
-    >
-      {actif ? (
-        <div className="flex flex-wrap items-end gap-3">
-          <Periode id="rapport-non-rapproches" periode={periode} onChange={setPeriode} />
-          <div className="w-[230px]">
-            <BankPicker
-              id="rapport-non-rapproches-banque"
-              banques={banques}
-              value={banque}
-              onChange={setBanque}
-            />
-          </div>
-          <Button
-            icon={Download}
-            disabled={envoi || !periodeValide(periode)}
-            onClick={() =>
-              telecharger(
-                () => exportNonRapproches(companyId, periode.from, periode.to, banque),
-                `non-rapproches-${code}-${periode.from}-${periode.to}.xlsx`,
               )
             }
           >
@@ -398,8 +350,11 @@ function ReleveRapport({ companyId, actif }: { companyId: number; actif: boolean
 }
 
 function LettrageRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
-  const [periode, setPeriode] = useState(() => moisEnCours(businessToday()));
+  const [periode, setPeriode] = useState(() => periodeRapprochement(businessToday()));
+  const [banque, setBanque] = useState<number | undefined>(undefined);
+  const banques = useBanques(companyId);
   const { envoi, telecharger } = useTelechargement();
+  const code = banques.find((b) => b.id === banque)?.code ?? "toutes";
   return (
     <Rapport
       titre="Lettrage"
@@ -409,13 +364,21 @@ function LettrageRapport({ companyId, actif }: { companyId: number; actif: boole
       {actif ? (
         <div className="flex flex-wrap items-end gap-3">
           <Periode id="rapport-lettrage" periode={periode} onChange={setPeriode} />
+          <div className="w-[230px]">
+            <BankPicker
+              id="rapport-lettrage-banque"
+              banques={banques}
+              value={banque}
+              onChange={setBanque}
+            />
+          </div>
           <Button
             icon={FileSpreadsheet}
             disabled={envoi || !periodeValide(periode)}
             onClick={() =>
               telecharger(
-                () => exportLettrage(companyId, { from: periode.from, to: periode.to }),
-                `lettrage-${periode.from}-${periode.to}.xlsx`,
+                () => exportLettrageBanque(companyId, periode.from, periode.to, banque),
+                `lettrage-${code}-${periode.from}-${periode.to}.xlsx`,
               )
             }
           >
