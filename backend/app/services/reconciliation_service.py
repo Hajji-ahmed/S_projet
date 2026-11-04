@@ -13,16 +13,13 @@ Statuts des opérations et des écritures :
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from io import BytesIO
 
-from openpyxl import Workbook
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.models import (
     AccountingEntry,
+    BankAccount,
     BankTransaction,
     Company,
     ReconciliationMatch,
@@ -30,9 +27,9 @@ from app.models import (
 )
 from app.repositories import discrepancy_repository
 from app.repositories import reconciliation_repository as repo
-from app.services import audit_service
+from app.services import audit_service, lettrage_excel
 from app.services.errors import ConflictError, NotFoundError
-from app.services.position_service import BUSINESS_TZ, business_today
+from app.services.position_service import business_today
 from app.services.reconciliation_groupes import (
     ResultatGroupes,
     explication_ensemble,
@@ -2180,32 +2177,7 @@ def rejeter_ambiguites_ecritures(
     return len(a_ecarter)
 
 
-# --- Export du lettrage (14/10/2026) ----------------------------------------------------------------
-
-LETTRAGE_HEADERS = (
-    "Code",
-    "Côté",
-    "Banque",
-    "Date",
-    "Journal",
-    "N° pièce",
-    "Libellé",
-    "Débit",
-    "Crédit",
-    "Type",
-    "Origine",
-    "Score",
-    "Validé par",
-    "Validé le",
-    # Compte en devise (14/10/2026) : le montant devise de la ligne Sage, celui rapproché
-    "Montant devise",
-)
-_LARGEURS = (16, 8, 8, 12, 9, 16, 44, 14, 14, 6, 12, 7, 20, 17, 14)
-
-
-def _heure_locale(moment: datetime | None) -> datetime | None:
-    """Excel ne connaît pas les fuseaux : l'heure du Maroc, sans fuseau."""
-    return moment.astimezone(BUSINESS_TZ).replace(tzinfo=None) if moment else None
+# --- Export du lettrage (14/10/2026, côte à côte depuis le 04/11/2026) -----------------------------
 
 
 def export_lettrage(
@@ -2219,11 +2191,10 @@ def export_lettrage(
     ip: str | None,
     bank_id: int | None = None,
 ) -> tuple[str, bytes, int]:
-    """Lettrage du filtre de l'historique en classeur Excel : tous les rapprochements VALIDÉS dont
-    une opération est dans la période (et du compte ou de la banque, s'il est donné ; la banque
-    depuis l'écran Rapports, 04/11/2026). Une ligne par élément,
-    regroupées par code : les opérations du relevé, puis les écritures Sage ; chaque code
-    s'équilibre (débit d'un côté = crédit de l'autre). Ligne de total en bas."""
+    """Lettrage du filtre en classeur Excel : tous les rapprochements VALIDÉS dont une opération
+    est dans la période (et du compte ou de la banque, s'il est donné ; la banque depuis l'écran
+    Rapports, 04/11/2026). Une feuille par compte, les opérations du relevé face à leurs écritures
+    comptables, un bloc par code (`lettrage_excel`)."""
     company = _company(db, company_id)
     _check_period(date_from, date_to)
     if date_from and date_to and (date_to - date_from).days > PERIODE_MAX_JOURS:
@@ -2240,7 +2211,6 @@ def export_lettrage(
     entry_ids = {i.accounting_entry_id for m in matches for i in m.items if i.accounting_entry_id}
     transactions = repo.transactions_with_bank(db, tx_ids)
     entries = repo.entries_with_bank(db, entry_ids)
-    noms = repo.user_names(db, {m.valide_par_id for m in matches if m.valide_par_id})
 
     def premiere_date(match: ReconciliationMatch) -> date:
         return min(
@@ -2250,61 +2220,25 @@ def export_lettrage(
         )
 
     matches.sort(key=lambda m: (premiere_date(m), m.code or "", m.id))
-
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Lettrage"
-    sheet.append(LETTRAGE_HEADERS)
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
-    total_debit = total_credit = Decimal("0.00")
+    blocs: dict[int, list[lettrage_excel.Bloc]] = {}
     for match in matches:
-        commun = [
-            match.type,
-            match.origine,
-            match.score,
-            noms.get(match.valide_par_id),
-            _heure_locale(match.valide_le),
+        operations = [
+            transactions[i.bank_transaction_id][0] for i in match.items if i.bank_transaction_id
         ]
-        operations = sorted(
-            (transactions[i.bank_transaction_id] for i in match.items if i.bank_transaction_id),
-            key=lambda row: (row[0].date_operation, row[0].id),
+        ecritures = [
+            entries[i.accounting_entry_id][0] for i in match.items if i.accounting_entry_id
+        ]
+        # Un rapprochement ne couvre qu'un compte : celui de ses opérations
+        blocs.setdefault(operations[0].bank_account_id, []).append(
+            lettrage_excel.bloc(match, operations, ecritures)
         )
-        ecritures = sorted(
-            (entries[i.accounting_entry_id] for i in match.items if i.accounting_entry_id),
-            key=lambda row: (row[0].date_ecriture, row[0].id),
-        )
-        for tx, banque in operations:
-            sheet.append(
-                [match.code, "Banque", banque, tx.date_operation, None, tx.reference, tx.libelle,
-                 tx.debit or None, tx.credit or None, *commun]
-            )  # fmt: skip
-            total_debit += tx.debit
-            total_credit += tx.credit
-        for entry, banque in ecritures:
-            sheet.append(
-                [match.code, "Sage", banque, entry.date_ecriture, entry.journal,
-                 entry.numero_piece, entry.libelle, entry.debit or None, entry.credit or None,
-                 *commun, entry.montant_devise]
-            )  # fmt: skip
-            total_debit += entry.debit
-            total_credit += entry.credit
-    sheet.append(
-        [f"Total : {len(matches)} rapprochement{'s' if len(matches) > 1 else ''}", None, None,
-         None, None, None, None, total_debit, total_credit]
-    )  # fmt: skip
-    for cell in sheet[sheet.max_row]:
-        cell.font = Font(bold=True)
-    for row in sheet.iter_rows(min_row=2):
-        row[3].number_format = "DD/MM/YYYY"
-        row[7].number_format = row[8].number_format = "#,##0.00"
-        row[13].number_format = "DD/MM/YYYY HH:MM"
-        row[14].number_format = "#,##0.00"
-    for index, largeur in enumerate(_LARGEURS, start=1):
-        sheet.column_dimensions[get_column_letter(index)].width = largeur
-    sheet.freeze_panes = "A2"
-    buffer = BytesIO()
-    workbook.save(buffer)
+    comptes = sorted(
+        (db.get(BankAccount, compte_id) for compte_id in blocs),
+        key=lambda c: (c.bank.ordre_affichage, c.bank.code, c.devise, c.numero),
+    )
+    contenu = lettrage_excel.classeur(
+        [(compte, blocs[compte.id]) for compte in comptes], date_from, date_to
+    )
 
     audit_service.log(
         db,
@@ -2329,4 +2263,4 @@ def export_lettrage(
     else:
         banque = "tous"
     nom = f"lettrage-{banque}-{date_from or 'debut'}-{date_to or business_today()}.xlsx"
-    return nom, buffer.getvalue(), len(matches)
+    return nom, contenu, len(matches)

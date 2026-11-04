@@ -113,16 +113,26 @@ def test_the_lettrage_can_be_limited_to_one_bank(client, reference, db):
         headers=comptable,
     )
 
-    feuille = classeur(response)["Lettrage"]
-    lignes = [list(r) for r in feuille.iter_rows(min_row=2, values_only=True)]
-    assert [(ligne[0], ligne[1], ligne[6]) for ligne in lignes[:-1]] == [
-        (code_chq, "Banque", "CHQ 0173813"),
-        (code_chq, "Sage", "EAR1 173813"),
-        (code_vir, "Banque", "VIR KARIM"),
-        (code_vir, "Sage", "REG KARIM 1"),
-        (code_vir, "Sage", "REG KARIM 2"),
+    workbook = classeur(response)
+    assert len(workbook.sheetnames) == 1
+    feuille = workbook.worksheets[0]
+    assert feuille.cell(row=3, column=3).value == "Banque"
+    assert feuille.cell(row=3, column=9).value == "Comptabilité"
+    assert [c.value for c in feuille[4]] == [
+        "Code", "Validé le", "Date", "Libellé", "Réf.", "Débit (DH)", "Crédit (DH)", None,
+        "Date", "N° pièce", "Libellé", "Débit (DH)", "Crédit (DH)",
+    ]  # fmt: skip
+    lignes = [list(r) for r in feuille.iter_rows(min_row=5, values_only=True)]
+    # Le chèque face à son écriture ; le virement face à la 1re écriture, la 2e seule
+    assert [(r[0], r[3], r[7], r[10]) for r in lignes[:-1]] == [
+        (code_chq, "CHQ 0173813", "⇄", "EAR1 173813"),
+        (code_vir, "VIR KARIM", "⇄", "REG KARIM 1"),
+        (None, None, None, "REG KARIM 2"),
     ]
-    assert lignes[-1][0] == "Total : 2 rapprochements"
+    total = lignes[-1]
+    assert total[0] == "Total"
+    assert (total[5], total[6], total[11], total[12]) == (1200, 3000, 3000, 1200)
+    assert feuille.cell(row=6, column=1).fill.fgColor.rgb.endswith("F5F8FA")
     assert "lettrage-BP-2026-09-01-2026-09-30.xlsx" in response.headers["content-disposition"]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_lettrage"))
     assert audit.nouvelle_valeur["banque"] == bp.bank_id
@@ -133,7 +143,9 @@ def test_the_lettrage_can_be_limited_to_one_bank(client, reference, db):
         params={"company_id": str(company(db).id), "from": "2026-09-01", "to": "2026-09-30"},
         headers=comptable,
     )
-    libelles = [r[6] for r in classeur(toutes)["Lettrage"].iter_rows(min_row=2, values_only=True)]
+    feuilles = classeur(toutes).worksheets
+    libelles = [r[3] for f in feuilles for r in f.iter_rows(min_row=5, values_only=True)]
+    assert len(feuilles) == 2
     assert "AUTRE BANQUE" in libelles
 
 

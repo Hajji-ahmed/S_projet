@@ -1221,34 +1221,33 @@ def test_the_lettrage_exports_validated_matches_grouped_and_balanced(client, com
     response = lettrage(client, comptable, db)
 
     assert response.status_code == 200, response.text
-    rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
-    assert rows[0][:9] == (
-        "Code", "Côté", "Banque", "Date", "Journal", "N° pièce", "Libellé", "Débit", "Crédit",
-    )  # fmt: skip
-    lignes = rows[1:-1]
-    # Le 1 → 1 (10/09) d'abord, puis le groupe (24/09) : ses 3 opérations puis l'écriture Sage
-    assert [(r[0], r[1], r[6], r[9]) for r in lignes] == [
-        (simple["code"], "Banque", "VIR A", "1-1"),
-        (simple["code"], "Sage", "VIR A", "1-1"),
-        (groupe["code"], "Banque", "CHEQUE N 2100843 REMIS PAR ATW", "N-1"),
-        (groupe["code"], "Banque", "COMMISSION", "N-1"),
-        (groupe["code"], "Banque", "TAXE SUR VALEUR AJOUTEE", "N-1"),
-        (groupe["code"], "Sage", "CHQ 2100843 FOURNISSEUR", "N-1"),
+    # 04/11/2026 : une feuille par compte, les opérations face à leurs écritures comptables
+    feuilles = load_workbook(BytesIO(response.content)).worksheets
+    assert len(feuilles) == 1
+    rows = list(feuilles[0].iter_rows(min_row=5, values_only=True))
+    lignes = rows[:-1]
+    # Le 1 → 1 (10/09) d'abord, puis le groupe (24/09) : le chèque face à l'écriture, les frais seuls
+    assert [(r[0], r[3], r[7], r[10]) for r in lignes] == [
+        (simple["code"], "VIR A", "⇄", "VIR A"),
+        (groupe["code"], "CHEQUE N 2100843 REMIS PAR ATW", "⇄", "CHQ 2100843 FOURNISSEUR"),
+        (None, "COMMISSION", None, None),
+        (None, "TAXE SUR VALEUR AJOUTEE", None, None),
     ]
-    for code in (simple["code"], groupe["code"]):
-        debit = sum(r[7] or 0 for r in lignes if r[0] == code)
-        credit = sum(r[8] or 0 for r in lignes if r[0] == code)
-        assert debit == credit
-    assert rows[-1][0] == "Total : 2 rapprochements"
-    assert rows[-1][7] == rows[-1][8] == 11055
+    # Totaux : débit banque = crédit comptabilité, crédit banque = débit comptabilité
+    total = rows[-1]
+    assert total[0] == "Total"
+    assert (total[5], total[6]) == (total[12], total[11])
     assert "export_lettrage" in audit_actions(db)
 
     # Hors période ou autre compte : rien
     vide = lettrage(client, comptable, db, **{"from": "2026-10-01", "to": "2026-10-31"})
     autre = lettrage(client, comptable, db, bank_account_id=str(account(db, bank_code="CIH").id))
-    for reponse in (vide, autre):
-        rows = list(load_workbook(BytesIO(reponse.content)).active.iter_rows(values_only=True))
-        assert rows[-1][0] == "Total : 0 rapprochement"
+    for reponse, periode in (
+        (vide, "01/10/2026 au 31/10/2026"),
+        (autre, "01/09/2026 au 30/09/2026"),
+    ):
+        feuille = load_workbook(BytesIO(reponse.content))["Lettrage"]
+        assert feuille["A1"].value == f"Aucun rapprochement validé du {periode}."
 
 
 def test_the_lettrage_needs_the_view_permission_and_a_valid_period(client, comptable, db):

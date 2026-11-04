@@ -196,9 +196,11 @@ def test_the_lettrage_export_lists_every_line_of_a_group(client, comptable, db):
         headers=comptable,
     )
 
-    rows = list(load_workbook(BytesIO(response.content)).active.iter_rows(values_only=True))
-    lignes = [r for r in rows[1:] if r[0] == code]
-    assert [r[1] for r in lignes] == ["Banque", "Sage", "Sage"]
-    assert sum(Decimal(str(r[7] or 0)) for r in lignes) == sum(
-        Decimal(str(r[8] or 0)) for r in lignes
+    feuille = load_workbook(BytesIO(response.content)).worksheets[0]
+    lignes = list(feuille.iter_rows(min_row=5, values_only=True))[:-1]
+    # Une opération face à deux écritures : la 2e ligne n'a que son écriture
+    assert lignes[0][0] == code
+    assert [(r[3] is not None, r[9]) for r in lignes] == [(True, "A"), (False, "B")]
+    assert sum(Decimal(str(r[5] or 0)) + Decimal(str(r[6] or 0)) for r in lignes) == sum(
+        Decimal(str(r[11] or 0)) + Decimal(str(r[12] or 0)) for r in lignes
     )
