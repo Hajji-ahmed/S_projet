@@ -475,8 +475,8 @@ def etat_controle(
     compta = None if solde_comptable is None else solde_comptable + operations
     ecart = None if banque is None or compta is None else banque - compta
     return [
-        ("Solde banque rectifié (solde du relevé + écritures non rapprochées)", banque),
-        ("Solde compta rectifié (solde comptable + opérations non rapprochées)", compta),
+        ("Solde banque", banque),
+        ("Solde compta", compta),
         ("Écart", ecart),
     ]
 

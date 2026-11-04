@@ -341,8 +341,8 @@ def test_unreconciled_lines_start_with_both_balances_and_end_at_zero(client, res
     assert lignes(feuille, 9) == ["ESP Y"]
     controle = [(r[1], r[3]) for r in feuille.iter_rows(min_row=10, max_row=12, values_only=True)]
     assert controle == [
-        ("Solde banque rectifié (solde du relevé + écritures non rapprochées)", 10700),
-        ("Solde compta rectifié (solde comptable + opérations non rapprochées)", 10700),
+        ("Solde banque", 10700),
+        ("Solde compta", 10700),
         ("Écart", 0),
     ]
 
@@ -358,7 +358,7 @@ def test_without_accounting_opening_the_balance_is_not_invented(client, responsa
     assert feuille.cell(row=4, column=11).value is None
     valeurs = {r[1]: r[3] for r in feuille.iter_rows(min_row=9, values_only=True) if r[1]}
     assert valeurs["Écart"] == "non calculable"
-    assert valeurs["Solde banque rectifié (solde du relevé + écritures non rapprochées)"] == 9000
+    assert valeurs["Solde banque"] == 9000
 
 
 def test_unreconciled_lines_cover_up_to_ten_years(client, responsable, db):
