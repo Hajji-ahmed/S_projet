@@ -5,6 +5,8 @@
     python -m app.cli recalculer-soldes --releve 12 --solde-ouverture 5000000
     python -m app.cli reprise-rapprochement --compte 1907… --banque mouvements.xlsx \
         --compta compta.xlsx --jusqu-au 2026-09-30 --motif "…" --email … [--appliquer]
+    python -m app.cli completer-echeances --societe SIMTIS --fichier "gl awb.xls" \
+        [--colonne-echeance J] --motif "…" --email … [--appliquer]
 
 Le mot de passe est généré aléatoirement et affiché UNE SEULE FOIS : il n'est stocké que haché.
 """
@@ -15,7 +17,7 @@ from datetime import date
 from pathlib import Path
 
 from app.core.db import SessionLocal
-from app.services import auth_service, import_service, reprise_service
+from app.services import auth_service, echeance_service, import_service, reprise_service
 from app.services.auth_service import AccountError
 from app.services.errors import DomainError
 from app.services.normalization_service import parse_amount
@@ -80,11 +82,37 @@ def main(argv: list[str] | None = None) -> int:
         "--appliquer", action="store_true", help="écrire (sans cette option : simulation)"
     )
 
+    echeances = commands.add_parser(
+        "completer-echeances",
+        help="remplir l'échéance vide des écritures déjà importées, depuis l'export Sage",
+    )
+    echeances.add_argument("--societe", required=True, help="code de la société (SIMTIS, SOCX)")
+    echeances.add_argument("--fichier", required=True, help="export Sage avec l'échéance")
+    echeances.add_argument("--feuille", help="feuille à lire (sinon celle de l'import)")
+    echeances.add_argument(
+        "--colonne-echeance", help="lettre de la colonne (sinon la seule titrée par une date)"
+    )
+    echeances.add_argument(
+        "--colonne",
+        dest="colonnes",
+        action="append",
+        default=[],
+        metavar="CHAMP=LETTRE",
+        help="colonne d'un champ que le modèle de la société ne reconnaît pas (journal=C) ; répétable",
+    )
+    echeances.add_argument("--motif", help="obligatoire avec --appliquer")
+    echeances.add_argument("--email", help="auteur ; obligatoire avec --appliquer")
+    echeances.add_argument(
+        "--appliquer", action="store_true", help="écrire (sans cette option : simulation)"
+    )
+
     args = parser.parse_args(argv)
     if args.command == "recalculer-soldes":
         return _recompute(args.releve, args.solde_ouverture)
     if args.command == "reprise-rapprochement":
         return _reprise(args)
+    if args.command == "completer-echeances":
+        return _echeances(args)
     password = auth_service.generate_password()
 
     try:
@@ -191,6 +219,56 @@ def _reprise(args: argparse.Namespace) -> int:
         return 1
     _afficher(bilan)
     print(f"Reprise enregistrée : rapprochement {bilan.code}.")
+    return 0
+
+
+def _afficher_echeances(bilan: echeance_service.Bilan) -> None:
+    print(f"{bilan.societe}, feuille « {bilan.feuille} », échéance en colonne {bilan.colonne}")
+    print(f"Colonnes lues : {' · '.join(bilan.correspondance)}")
+    print(
+        f"Lignes de compte bancaire lues : {bilan.lignes} ({bilan.sans_echeance} sans échéance), "
+        f"{bilan.ignorees} ignorées (autre journal ou compte, comme à l'import)"
+    )
+    print(f"Échéances à remplir : {len(bilan.a_remplir)}")
+    print(f"Déjà remplies, identiques : {bilan.identiques}")
+    print(f"Déjà remplies, différentes (gardées) : {len(bilan.differentes)}")
+    print(f"Lignes du fichier sans écriture dans SIMTIS : {len(bilan.non_trouvees)}")
+    for ligne in bilan.differentes[: echeance_service.EXEMPLES]:
+        print(f"  Différente : {ligne}")
+    for ligne in bilan.non_trouvees[: echeance_service.EXEMPLES]:
+        print(f"  Non trouvée : {ligne}")
+
+
+def _echeances(args: argparse.Namespace) -> int:
+    try:
+        content = Path(args.fichier).read_bytes()
+    except OSError as error:
+        print(f"Erreur : fichier illisible ({error})", file=sys.stderr)
+        return 1
+    colonnes = dict(item.partition("=")[::2] for item in args.colonnes)
+    options = {
+        "code_societe": args.societe,
+        "fichier_nom": Path(args.fichier).name,
+        "content": content,
+        "colonne": args.colonne_echeance,
+        "colonnes": {champ.strip(): lettre for champ, lettre in colonnes.items()},
+        "feuille": args.feuille,
+    }
+    try:
+        with SessionLocal() as db:
+            if not args.appliquer:
+                _afficher_echeances(echeance_service.analyser(db, **options))
+                print("Simulation : rien n'a été écrit (ajoutez --appliquer).")
+                return 0
+            if not args.motif or not args.email:
+                print("Erreur : --motif et --email sont obligatoires avec --appliquer.")
+                return 1
+            bilan = echeance_service.appliquer(db, **options, motif=args.motif, email=args.email)
+    except DomainError as error:
+        print(f"Erreur : {error.message}", file=sys.stderr)
+        return 1
+    _afficher_echeances(bilan)
+    print(f"Enregistré : {len(bilan.a_remplir)} échéances remplies.")
     return 0
 
 
