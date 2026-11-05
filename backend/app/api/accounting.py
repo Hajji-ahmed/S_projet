@@ -18,6 +18,7 @@ from app.schemas.accounting import (
     EcritureDetailOut,
     EcritureOut,
     EcrituresPageOut,
+    EcrituresSupprimeesIn,
     ImportComptableOut,
     LignesGardeesIn,
     MappingComptableIn,
@@ -108,12 +109,16 @@ def confirm_entries(
     lignes_choisies: Annotated[
         str | None, Form(description="JSON [numéros des lignes cochées] : seules celles-ci")
     ] = None,
+    ecritures_supprimees: Annotated[
+        str | None, Form(description="JSON [ids des écritures absentes du fichier à supprimer]")
+    ] = None,
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_import),
 ) -> ConfirmationComptableOut:
     """Enregistre l'export (même fichier, même correspondance que l'aperçu validé)."""
     kept = _json_field(LignesGardeesIn, "garder_doublons", garder_doublons)
     chosen = _json_field(LignesGardeesIn, "lignes_choisies", lignes_choisies)
+    supprimees = _json_field(EcrituresSupprimeesIn, "ecritures_supprimees", ecritures_supprimees)
     if chosen is not None and (kept is not None or ecarter_erreurs):
         raise RequestValidationError(
             [
@@ -135,6 +140,7 @@ def confirm_entries(
         garder_doublons=None if kept is None else kept.root,
         ecarter_erreurs=ecarter_erreurs,
         lignes_choisies=None if chosen is None else chosen.root,
+        ecritures_supprimees=None if supprimees is None else supprimees.root,
         acteur_id=user.id,
         ip=client_ip(request),
     )

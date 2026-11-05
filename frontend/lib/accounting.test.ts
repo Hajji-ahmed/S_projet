@@ -87,3 +87,15 @@ describe("statutEcritures (19/10/2026)", () => {
     );
   });
 });
+
+describe("accountingForm, écritures absentes à supprimer (05/11/2026)", () => {
+  it("envoie leurs ids triés, et rien quand la liste est vide", () => {
+    const file = new File(["x"], "sage.xlsx");
+    expect(
+      accountingForm(file, 3, { ecrituresSupprimees: [8, 4] }).get("ecritures_supprimees"),
+    ).toBe("[4,8]");
+    expect(
+      accountingForm(file, 3, { ecrituresSupprimees: [] }).get("ecritures_supprimees"),
+    ).toBeNull();
+  });
+});

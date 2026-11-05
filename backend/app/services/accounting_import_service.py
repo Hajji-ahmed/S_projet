@@ -6,7 +6,10 @@ Règles (décisions du 05/10/2026) :
   journal = `journal_sage` d'un compte bancaire actif de la société, et compte qui commence par le
   `compte_comptable` de ce compte bancaire (s'il est renseigné) ; les autres lignes sont ignorées ;
 - débit et crédit sont gardés tels que dans Sage ; une ligne en erreur se corrige dans Sage ;
-- doublon : ligne déjà importée pour la société, ou identique à une autre ligne du fichier.
+- doublon : ligne déjà importée pour la société, ou identique à une autre ligne du fichier ;
+- écriture absente (05/11/2026) : écriture Sage déjà en base, du même compte et du même journal
+  qu'une ligne du fichier, datée dans la période de ce compte et de ce journal dans le fichier,
+  qui n'y est plus (supprimée ou modifiée dans Sage) ; proposée à la suppression à la confirmation.
 """
 
 import re
@@ -32,6 +35,7 @@ from app.services import (
     import_file,
     position_service,
     solde_comptable_service,
+    suppression_import_service,
 )
 from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
@@ -156,6 +160,26 @@ class EntriesSummary:
 
 
 @dataclass
+class EcritureAbsente:
+    """Écriture Sage en base qui n'est plus dans le grand livre importé (05/11/2026)."""
+
+    id: int
+    bank_account_id: int
+    bank_code: str
+    journal: str | None
+    compte: str | None
+    date_ecriture: date
+    numero_piece: str | None
+    libelle: str | None
+    debit: Decimal
+    credit: Decimal
+    # Rapprochement validé qui la contient : à annuler avant de pouvoir la supprimer
+    code_rapprochement: str | None = None
+    # Le fichier a des lignes en erreur sur ce compte : elle y est peut-être, non cochée par défaut
+    a_verifier: bool = False
+
+
+@dataclass
 class AccountingAnalysis:
     company: Company
     fichier_nom: str
@@ -172,6 +196,7 @@ class AccountingAnalysis:
     resume: EntriesSummary = field(default_factory=EntriesSummary)
     # Lignes non retenues (titres, autres journaux, contreparties) et leur raison : affichées seulement
     lignes_ignorees: list[IgnoredLine] = field(default_factory=list)
+    ecritures_absentes: list[EcritureAbsente] = field(default_factory=list)
 
 
 def _company(db: Session, company_id: int) -> Company:
@@ -516,8 +541,70 @@ def analyse_entries(
     _mark_duplicates(db, company.id, lines)
     analysis.lignes = lines
     analysis.resume = _summarise(lines, ignored)
+    analysis.ecritures_absentes = _ecritures_absentes(db, company.id, lines)
+    _comptes_des_absentes(analysis.resume, analysis.ecritures_absentes)
     _soldes_avant_import(db, analysis.resume, lines, journals)
     return analysis
+
+
+def _ecritures_absentes(
+    db: Session, company_id: int, lines: list[EntryLine]
+) -> list[EcritureAbsente]:
+    """Écritures Sage en base absentes du fichier (05/11/2026). Cherchées par compte et journal du
+    fichier, entre la première et la dernière date de ce compte et de ce journal dans le fichier :
+    un export filtré sur un seul journal ou une seule période ne fait pas disparaitre le reste. Les
+    saisies manuelles et les écritures de frais SIMTIS ne viennent pas de Sage : jamais concernées."""
+    hashes = {line.hash_ligne for line in lines if line.hash_ligne}
+    periodes: dict[tuple[int, str], tuple[date, date]] = {}
+    banques: dict[int, str] = {}
+    for line in lines:
+        if not line.hash_ligne:
+            continue
+        key = (line.bank_account_id, line.journal)
+        du, au = periodes.get(key, (line.date_ecriture, line.date_ecriture))
+        periodes[key] = (min(du, line.date_ecriture), max(au, line.date_ecriture))
+        banques[line.bank_account_id] = line.bank_code
+    en_erreur = {line.bank_account_id for line in lines if line.statut == "Erreur"}
+    entries = [
+        entry
+        for (account_id, journal), (du, au) in sorted(periodes.items())
+        for entry in accounting_repository.ecritures_sage_entre(
+            db, company_id, account_id, journal, du, au
+        )
+        if entry.hash_ligne not in hashes
+    ]
+    codes = accounting_repository.codes_valides(db, [entry.id for entry in entries])
+    return [
+        EcritureAbsente(
+            id=entry.id,
+            bank_account_id=entry.bank_account_id,
+            bank_code=banques[entry.bank_account_id],
+            journal=entry.journal,
+            compte=entry.compte,
+            date_ecriture=entry.date_ecriture,
+            numero_piece=entry.numero_piece,
+            libelle=entry.libelle,
+            debit=entry.debit,
+            credit=entry.credit,
+            code_rapprochement=codes.get(entry.id),
+            a_verifier=entry.bank_account_id in en_erreur,
+        )
+        for entry in entries
+    ]
+
+
+def _comptes_des_absentes(summary: EntriesSummary, absentes: list[EcritureAbsente]) -> None:
+    """Un compte dont le fichier n'apporte que des doublons a quand même son solde après import
+    quand des écritures en sont absentes (0 écriture à importer)."""
+    connus = {total.bank_account_id for total in summary.par_compte}
+    for absente in absentes:
+        if absente.bank_account_id in connus:
+            continue
+        connus.add(absente.bank_account_id)
+        summary.par_compte.append(
+            AccountTotal(absente.bank_account_id, absente.bank_code, absente.journal or "")
+        )
+    summary.par_compte.sort(key=lambda item: (item.bank_code, item.journal))
 
 
 def _soldes_avant_import(
@@ -556,6 +643,7 @@ class EntriesImport:
     periode_debut: date | None
     periode_fin: date | None
     modele_enregistre: bool
+    nb_supprimees: int = 0
 
 
 def _save_mapping(db: Session, company: Company, analysis: AccountingAnalysis) -> bool:
@@ -591,6 +679,7 @@ def confirm_entries(
     ecarter_erreurs: bool,
     acteur_id: int,
     lignes_choisies: list[int] | None = None,
+    ecritures_supprimees: list[int] | None = None,
     ip: str | None = None,
     today: date | None = None,
 ) -> EntriesImport:
@@ -626,7 +715,8 @@ def confirm_entries(
         # `garder_doublons` n'a plus d'effet (12/10/2026) : seul un doublon déjà importé existe
         keep = set()
         lines = [line for line in analysis.lignes if line.statut == "Valide" or line.numero in keep]
-    if not lines:
+    absentes = _absentes_choisies(analysis, ecritures_supprimees or [])
+    if not lines and not absentes:
         raise ConflictError("Aucune écriture de banque à importer dans ce fichier.")
 
     company = analysis.company
@@ -645,6 +735,7 @@ def confirm_entries(
     )
     accounting_repository.add(db, batch)
     db.flush()
+    _supprimer_absentes(db, absentes, batch, acteur_id=acteur_id, ip=ip)
     for line in lines:
         accounting_repository.add(
             db,
@@ -685,6 +776,7 @@ def confirm_entries(
             "erreurs_ecartees": len(errors),
             "doublons_gardes": sorted(keep),
             "lignes_decochees": None if lignes_choisies is None else nb_ecartees,
+            "ecritures_supprimees": len(absentes),
         },
         ip=ip,
     )
@@ -702,7 +794,71 @@ def confirm_entries(
         periode_debut=summary.periode_debut,
         periode_fin=summary.periode_fin,
         modele_enregistre=modele,
+        nb_supprimees=len(absentes),
     )
+
+
+def _absentes_choisies(analysis: AccountingAnalysis, ids: list[int]) -> list[EcritureAbsente]:
+    """Écritures cochées « Supprimer » : chacune doit être absente du fichier et non rapprochée."""
+    absentes = {absente.id: absente for absente in analysis.ecritures_absentes}
+    choisies = []
+    for entry_id in sorted(set(ids)):
+        absente = absentes.get(entry_id)
+        if absente is None:
+            raise ConflictError(
+                f"Écriture n° {entry_id} : elle n'est pas absente de ce fichier, elle ne peut pas "
+                "être supprimée."
+            )
+        if absente.code_rapprochement:
+            raise ConflictError(
+                f"L'écriture du {absente.date_ecriture:%d/%m/%Y} « {absente.libelle} » est "
+                f"rapprochée ({absente.code_rapprochement}) : annulez ce rapprochement dans "
+                "l'Historique du rapprochement ou décochez-la."
+            )
+        choisies.append(absente)
+    return choisies
+
+
+def _supprimer_absentes(
+    db: Session,
+    absentes: list[EcritureAbsente],
+    batch: ImportBatch,
+    *,
+    acteur_id: int,
+    ip: str | None,
+) -> None:
+    """Supprime les écritures absentes du grand livre, comme la corbeille d'une écriture : les
+    propositions en attente qui les citent sont retirées (un rapprochement validé bloque)."""
+    if not absentes:
+        return
+    reconciliation_repository.lock_company(db, batch.company_id)
+    ids = [absente.id for absente in absentes]
+    suppression_import_service.liberer(db, [], ids)
+    accounting_repository.delete_entries(db, ids)
+    for absente in absentes:
+        audit_service.log(
+            db,
+            user_id=acteur_id,
+            action="suppression_ecriture_sage",
+            entite="accounting_entry",
+            entite_id=absente.id,
+            avant={
+                "bank_account_id": absente.bank_account_id,
+                "journal": absente.journal,
+                "compte": absente.compte,
+                "date_ecriture": absente.date_ecriture,
+                "numero_piece": absente.numero_piece,
+                "libelle": absente.libelle,
+                "debit": absente.debit,
+                "credit": absente.credit,
+            },
+            apres={
+                "motif": "Absente du grand livre Sage importé",
+                "fichier": batch.fichier_nom,
+                "import_batch_id": batch.id,
+            },
+            ip=ip,
+        )
 
 
 def _check_chosen(chosen: set[int], by_number: dict[int, "EntryLine"]) -> None:

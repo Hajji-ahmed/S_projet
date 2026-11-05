@@ -19,13 +19,16 @@ import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import {
+  absentesParDefaut,
   basculerGroupe,
   blocageImport,
   cochable,
   defaultChecked,
+  messageConfirmation,
   pageOf,
   sageLinesFor,
   soldesApresImport,
+  supprimable,
   toggleVue,
   totauxCoches,
   type VueLignes,
@@ -37,6 +40,7 @@ import type {
   AccountingMapping,
   AnalyseComptable,
   ConfirmationComptable,
+  EcritureAbsente,
   LigneComptable,
 } from "@/types/accounting";
 import type { ImportColumn } from "@/types/statement";
@@ -94,6 +98,8 @@ export function AccountingImportWizard({
   const [pageLignes, setPageLignes] = useState(1);
   // Cases cochées (08/10/2026) : seules ces lignes sont importées
   const [coches, setCoches] = useState<Set<number>>(new Set());
+  // Écritures en base absentes du grand livre (05/11/2026) : cochées, elles sont supprimées
+  const [supprimees, setSupprimees] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -109,6 +115,7 @@ export function AccountingImportWizard({
       setMapping(result.mapping);
       setFeuille(result.feuille);
       setCoches(defaultChecked(result.lignes));
+      setSupprimees(absentesParDefaut(result.ecritures_absentes ?? []));
       setStep(result.erreurs_mapping.length > 0 ? 0 : 1);
     } catch (caught) {
       setAnalysis(null);
@@ -137,6 +144,7 @@ export function AccountingImportWizard({
     cochees: toImport,
     erreursCochees: checkedErrors,
     correction: "Sage",
+    suppressions: supprimees.size,
   });
   const blocked = !analysis || blocage !== null;
 
@@ -145,6 +153,15 @@ export function AccountingImportWizard({
       const next = new Set(current);
       if (value) next.add(numero);
       else next.delete(numero);
+      return next;
+    });
+  }
+
+  function toggleSuppression(id: number, value: boolean) {
+    setSupprimees((current) => {
+      const next = new Set(current);
+      if (value) next.add(id);
+      else next.delete(id);
       return next;
     });
   }
@@ -159,6 +176,7 @@ export function AccountingImportWizard({
           mapping,
           feuille,
           lignesChoisies: [...coches],
+          ecrituresSupprimees: [...supprimees],
         }),
       );
     } catch (caught) {
@@ -348,12 +366,96 @@ export function AccountingImportWizard({
       },
       { key: "tiers", header: "Tiers", render: (line) => line.tiers ?? "-" },
     ];
+    const absentes = current.ecritures_absentes ?? [];
+    const absentesColumns: Column<EcritureAbsente>[] = [
+      {
+        key: "choix",
+        header: "Supprimer",
+        render: (item) => (
+          <input
+            type="checkbox"
+            aria-label={`Supprimer l'écriture du ${formatDate(item.date_ecriture)} ${item.libelle ?? ""}`}
+            title={
+              supprimable(item)
+                ? undefined
+                : "Rapprochée : annulez son rapprochement dans l'Historique d'abord."
+            }
+            checked={supprimees.has(item.id)}
+            disabled={!supprimable(item)}
+            onChange={(event) => toggleSuppression(item.id, event.target.checked)}
+          />
+        ),
+      },
+      {
+        key: "etat",
+        header: "État",
+        render: (item) => (
+          <span className="block min-w-[150px]">
+            {item.code_rapprochement ? (
+              <>
+                <StatusBadge status="Rapprochée" />
+                <span className="mt-1 block text-xs text-simtis-muted">
+                  {item.code_rapprochement} : à annuler d&apos;abord
+                </span>
+              </>
+            ) : (
+              <span className="text-xs text-simtis-muted">
+                {item.a_verifier
+                  ? "Le fichier a des lignes en erreur sur ce compte : à vérifier"
+                  : "Absente du grand livre"}
+              </span>
+            )}
+          </span>
+        ),
+      },
+      {
+        key: "date_ecriture",
+        header: "Date",
+        render: (item) => (
+          <span className="whitespace-nowrap">{formatDate(item.date_ecriture)}</span>
+        ),
+      },
+      { key: "journal", header: "Journal", render: (item) => item.journal ?? "-" },
+      {
+        key: "bank_code",
+        header: "Compte bancaire",
+        render: (item) => <BankLabel code={item.bank_code} logo={logos.get(item.bank_code)} />,
+      },
+      { key: "numero_piece", header: "N° pièce", render: (item) => item.numero_piece ?? "-" },
+      {
+        key: "libelle",
+        header: "Libellé",
+        render: (item) => <span className="block min-w-[200px]">{item.libelle ?? "-"}</span>,
+      },
+      {
+        key: "debit",
+        header: "Débit",
+        align: "right",
+        render: (item) => formatAmount(item.debit, "DH", { dashForZero: true }),
+      },
+      {
+        key: "credit",
+        header: "Crédit",
+        align: "right",
+        render: (item) => formatAmount(item.credit, "DH", { dashForZero: true }),
+      },
+    ];
     const filters: [VueLignes, string, number, string][] = [
       ["importer", "Lignes à importer", toImport, "text-simtis-success"],
       // Comme pour les relevés : seules les erreurs encore cochées comptent
       ["erreurs", "Lignes en erreur", checkedErrors, "text-simtis-danger"],
       ["doublons", "Doublons", summary.nb_doublons, "text-simtis-warning"],
       ["ignorees", "Lignes ignorées", summary.nb_ignorees, "text-simtis-muted"],
+      ...(absentes.length > 0
+        ? [
+            ["absentes", "Absentes du grand livre", absentes.length, "text-simtis-danger"] as [
+              VueLignes,
+              string,
+              number,
+              string,
+            ],
+          ]
+        : []),
     ];
     const shown = sageLinesFor(current.lignes, vue, coches);
     // 100 lignes par page ; les tuiles et les totaux portent sur tout le fichier
@@ -361,7 +463,13 @@ export function AccountingImportWizard({
     // Totaux des lignes cochées et solde comptable de chaque compte une fois ces lignes importées
     // (03/11/2026, au lieu du solde des seules lignes du fichier) : ils suivent les cases
     const totaux = totauxCoches(current.lignes, coches);
-    const soldes = soldesApresImport(summary.par_compte, current.lignes, coches);
+    const soldes = soldesApresImport(
+      summary.par_compte,
+      current.lignes,
+      coches,
+      absentes,
+      supprimees,
+    );
     const tiles: [string, ReactNode][] = [
       [
         "Total débit / crédit · solde comptable après import",
@@ -405,8 +513,22 @@ export function AccountingImportWizard({
           {current.fichier_nom} · seules les lignes banque des journaux de banque sont retenues
           (journal Sage de vos comptes) ; les contreparties et les autres journaux sont ignorés.
         </p>
+        {absentes.length > 0 && (
+          <Alert tone="warning">
+            {absentes.length} écriture{absentes.length > 1 ? "s" : ""} Sage déjà dans SIMTIS{" "}
+            {absentes.length > 1 ? "ne sont" : "n'est"} plus dans ce grand livre (même compte, même
+            journal, même période) : supprimée{absentes.length > 1 ? "s" : ""} ou modifiée
+            {absentes.length > 1 ? "s" : ""} dans Sage. Les écritures cochées dans « Absentes du
+            grand livre » seront supprimées à la confirmation ; décochez celles à garder.
+          </Alert>
+        )}
         {sheetPicker(current)}
-        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div
+          className={cn(
+            "mb-3 grid grid-cols-2 gap-3",
+            absentes.length > 0 ? "md:grid-cols-5" : "md:grid-cols-4",
+          )}
+        >
           {filters.map(([value, label, count, tone]) => (
             <FilterTile
               key={value}
@@ -449,7 +571,17 @@ export function AccountingImportWizard({
             ))}
           </ul>
         )}
-        {vue !== "ignorees" && (
+        {vue === "absentes" && (
+          <CheckAllButtons
+            checked={supprimees.size}
+            total={absentes.filter(supprimable).length}
+            onCheckAll={() =>
+              setSupprimees(new Set(absentes.filter(supprimable).map((item) => item.id)))
+            }
+            onUncheckAll={() => setSupprimees(new Set())}
+          />
+        )}
+        {vue !== "ignorees" && vue !== "absentes" && (
           <CheckAllButtons
             checked={coches.size}
             total={defaultChecked(current.lignes).size}
@@ -469,7 +601,15 @@ export function AccountingImportWizard({
             }
           />
         )}
-        {vue === "ignorees" ? (
+        {vue === "absentes" ? (
+          <DataTable
+            columns={absentesColumns}
+            rows={absentes}
+            getRowKey={(item) => String(item.id)}
+            isRowMuted={(item) => !supprimees.has(item.id)}
+            emptyMessage="Aucune écriture absente du grand livre."
+          />
+        ) : vue === "ignorees" ? (
           <IgnoredLinesTable lignes={current.lignes_ignorees ?? []} />
         ) : (
           <>
@@ -509,7 +649,7 @@ export function AccountingImportWizard({
               {blocage.message}
             </>
           ) : (
-            `${toImport} écriture${toImport > 1 ? "s" : ""} seront enregistrée${toImport > 1 ? "s" : ""}.`
+            messageConfirmation(toImport, supprimees.size)
           )}
         </p>
         <div className="mt-6 flex flex-wrap justify-end gap-3">

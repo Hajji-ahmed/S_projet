@@ -12,6 +12,7 @@ from app.models import (
     BankAccount,
     ColumnMapping,
     ImportBatch,
+    ReconciliationMatch,
     ReconciliationMatchItem,
     User,
 )
@@ -40,6 +41,42 @@ def existing_entry_hashes(db: Session, company_id: int, hashes: list[str]) -> se
             AccountingEntry.company_id == company_id, AccountingEntry.hash_ligne.in_(batch)
         )
         found.update(db.scalars(query))
+    return found
+
+
+def ecritures_sage_entre(
+    db: Session, company_id: int, account_id: int, journal: str, du: date, au: date
+) -> list[AccountingEntry]:
+    """Écritures venues de Sage d'un compte et d'un journal, datées du `du` au `au` inclus."""
+    query = (
+        select(AccountingEntry)
+        .where(
+            AccountingEntry.company_id == company_id,
+            AccountingEntry.bank_account_id == account_id,
+            AccountingEntry.journal == journal,
+            AccountingEntry.origine == "Sage",
+            AccountingEntry.date_ecriture.between(du, au),
+        )
+        .order_by(AccountingEntry.date_ecriture, AccountingEntry.id)
+    )
+    return list(db.scalars(query))
+
+
+def codes_valides(db: Session, entry_ids: list[int]) -> dict[int, str]:
+    """Code du rapprochement validé de chaque écriture qui en a un."""
+    found: dict[int, str] = {}
+    for start in range(0, len(entry_ids), HASH_BATCH):
+        batch = entry_ids[start : start + HASH_BATCH]
+        query = (
+            select(ReconciliationMatchItem.accounting_entry_id, ReconciliationMatch.code)
+            .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
+            .where(
+                ReconciliationMatch.statut == "Validée",
+                ReconciliationMatchItem.accounting_entry_id.in_(batch),
+            )
+        )
+        for entry_id, code in db.execute(query):
+            found[entry_id] = code or "sans code"
     return found
 
 

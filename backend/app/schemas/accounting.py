@@ -94,6 +94,29 @@ class ResumeComptableOut(BaseModel):
     par_compte: list[TotalCompteOut]
 
 
+class EcritureAbsenteOut(BaseModel):
+    """Écriture Sage en base qui n'est plus dans le grand livre importé (05/11/2026)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    bank_account_id: int
+    bank_code: str
+    journal: str | None
+    compte: str | None
+    date_ecriture: date
+    numero_piece: str | None
+    libelle: str | None
+    debit: Decimal
+    credit: Decimal
+    code_rapprochement: str | None = Field(
+        None, description="Rapprochement validé qui la contient : la suppression est refusée"
+    )
+    a_verifier: bool = Field(
+        False, description="Lignes en erreur sur ce compte dans le fichier : non cochée par défaut"
+    )
+
+
 class AnalyseComptableOut(BaseModel):
     """Aperçu d'un export Sage : rien n'est encore enregistré."""
 
@@ -114,6 +137,10 @@ class AnalyseComptableOut(BaseModel):
         default_factory=list, description="Lignes non retenues et leur raison (jamais importées)"
     )
     resume: ResumeComptableOut
+    ecritures_absentes: list[EcritureAbsenteOut] = Field(
+        default_factory=list,
+        description="Écritures Sage du même compte, journal et période absentes du fichier",
+    )
 
     @classmethod
     def from_analysis(cls, analysis: AccountingAnalysis) -> "AnalyseComptableOut":
@@ -138,11 +165,18 @@ class AnalyseComptableOut(BaseModel):
                 LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
             ],
             resume=ResumeComptableOut.model_validate(analysis.resume),
+            ecritures_absentes=[
+                EcritureAbsenteOut.model_validate(item) for item in analysis.ecritures_absentes
+            ],
         )
 
 
 class LignesGardeesIn(RootModel[list[Annotated[int, Field(ge=1)]]]):
     """Numéros des doublons internes au fichier à garder."""
+
+
+class EcrituresSupprimeesIn(RootModel[list[Annotated[int, Field(ge=1)]]]):
+    """Ids des écritures absentes du fichier à supprimer (05/11/2026)."""
 
 
 class ConfirmationComptableOut(BaseModel):
@@ -155,6 +189,7 @@ class ConfirmationComptableOut(BaseModel):
     periode_debut: date | None
     periode_fin: date | None
     modele_enregistre: bool = Field(description="Correspondance mémorisée pour la société")
+    nb_supprimees: int = Field(0, description="Écritures absentes du fichier supprimées")
 
     @classmethod
     def from_import(cls, result: EntriesImport) -> "ConfirmationComptableOut":
@@ -168,6 +203,7 @@ class ConfirmationComptableOut(BaseModel):
             periode_debut=result.periode_debut,
             periode_fin=result.periode_fin,
             modele_enregistre=result.modele_enregistre,
+            nb_supprimees=result.nb_supprimees,
         )
 
 

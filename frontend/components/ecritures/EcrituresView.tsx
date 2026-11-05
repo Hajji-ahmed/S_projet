@@ -110,7 +110,11 @@ function Ecritures({ companyId }: { companyId: number }) {
     setImporting(false);
     setResult(confirmation);
     const n = confirmation.nb_importees;
-    toast(`Export importé : ${n} écriture${n > 1 ? "s" : ""} ajoutée${n > 1 ? "s" : ""}.`);
+    const m = confirmation.nb_supprimees ?? 0;
+    const suppression = m > 0 ? `, ${m} supprimée${m > 1 ? "s" : ""}` : "";
+    toast(
+      `Export importé : ${n} écriture${n > 1 ? "s" : ""} ajoutée${n > 1 ? "s" : ""}${suppression}.`,
+    );
     reload();
   }
 
@@ -216,6 +220,13 @@ function Ecritures({ companyId }: { companyId: number }) {
                     `, du ${formatDate(result.periode_debut)} au ${formatDate(result.periode_fin)}`}
                   .
                 </p>
+                {!!result.nb_supprimees && (
+                  <p className="text-simtis-muted">
+                    {result.nb_supprimees} écriture{result.nb_supprimees > 1 ? "s" : ""} absente
+                    {result.nb_supprimees > 1 ? "s" : ""} du grand livre supprimée
+                    {result.nb_supprimees > 1 ? "s" : ""}.
+                  </p>
+                )}
                 <ul className="flex flex-wrap gap-x-5 gap-y-1">
                   {result.par_compte.map((item) => (
                     <li key={item.bank_account_id} className="flex items-center gap-2">

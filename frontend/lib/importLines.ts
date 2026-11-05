@@ -5,7 +5,7 @@
 
 import { fromCents, toCents } from "@/lib/statementLines";
 
-export type VueLignes = "toutes" | "importer" | "erreurs" | "doublons" | "ignorees";
+export type VueLignes = "toutes" | "importer" | "erreurs" | "doublons" | "ignorees" | "absentes";
 
 /** Clic sur une tuile : elle devient le filtre, ou le retire si elle l'était déjà. */
 export function toggleVue(current: VueLignes, clicked: VueLignes): VueLignes {
@@ -43,6 +43,7 @@ export function sageLinesFor<T extends { numero: number; statut: string }>(
     case "doublons":
       return lines.filter((line) => line.statut === "Doublon");
     case "ignorees":
+    case "absentes":
       return [];
     default:
       return [...lines];
@@ -84,11 +85,13 @@ export function blocageImport(etat: {
   erreursCochees: number;
   ouvertureManquante?: boolean;
   correction?: "relevé" | "Sage";
+  /** Écritures absentes du grand livre cochées « Supprimer » (Sage, 05/11/2026). */
+  suppressions?: number;
 }): BlocageImport | null {
   if (etat.dejaImporte) {
     return { raison: "deja_importe", message: "Ce fichier a déjà été importé." };
   }
-  if (etat.cochees === 0) {
+  if (etat.cochees === 0 && !etat.suppressions) {
     return { raison: "aucune", message: "Cochez au moins une ligne à importer." };
   }
   if (etat.erreursCochees > 0) {
@@ -130,6 +133,31 @@ export function totauxCoches(
   return { debit: fromCents(debit), credit: fromCents(credit), solde: fromCents(debit - credit) };
 }
 
+type Absente = {
+  id: number;
+  bank_account_id: number;
+  date_ecriture: string;
+  debit: string;
+  credit: string;
+  code_rapprochement: string | null;
+  a_verifier: boolean;
+};
+
+/** Une écriture absente rapprochée ne se supprime pas : son rapprochement s'annule d'abord. */
+export function supprimable(absente: Pick<Absente, "code_rapprochement">): boolean {
+  return absente.code_rapprochement === null;
+}
+
+/**
+ * Écritures absentes du grand livre cochées « Supprimer » par défaut (05/11/2026) : toutes celles
+ * qui se suppriment, sauf sur un compte dont le fichier a des lignes en erreur (`a_verifier`).
+ */
+export function absentesParDefaut(absentes: readonly Absente[]): Set<number> {
+  return new Set(
+    absentes.filter((item) => supprimable(item) && !item.a_verifier).map((item) => item.id),
+  );
+}
+
 export type SoldeApresImport = {
   bank_account_id: number;
   bank_code: string;
@@ -162,6 +190,8 @@ export function soldesApresImport(
     credit: string | null;
   }[],
   cochees: ReadonlySet<number>,
+  absentes: readonly Absente[] = [],
+  supprimees: ReadonlySet<number> = new Set(),
 ): SoldeApresImport[] {
   return comptes.map((compte) => {
     const base = {
@@ -185,8 +215,23 @@ export function soldesApresImport(
       if (line.debit) solde += toCents(line.debit);
       if (line.credit) solde -= toCents(line.credit);
     }
+    // Écritures absentes du fichier cochées « Supprimer » (05/11/2026) : comptées dans le solde
+    // avant import, elles en sortent
+    for (const item of absentes) {
+      if (!supprimees.has(item.id) || item.bank_account_id !== compte.bank_account_id) continue;
+      if (compte.date_ouverture && item.date_ecriture <= compte.date_ouverture) continue;
+      solde -= toCents(item.debit) - toCents(item.credit);
+    }
     return { ...base, solde: fromCents(solde), raison: null };
   });
+}
+
+/** Ce que fera « Confirmer l'import » d'un export Sage : écritures enregistrées et supprimées. */
+export function messageConfirmation(importees: number, supprimees: number): string {
+  const s = (n: number) => (n > 1 ? "s" : "");
+  const ajout = `${importees} écriture${s(importees)} ser${importees > 1 ? "ont" : "a"} enregistrée${s(importees)}`;
+  if (supprimees === 0) return `${ajout}.`;
+  return `${ajout}, ${supprimees} supprimée${s(supprimees)} (absente${s(supprimees)} du grand livre).`;
 }
 
 /** Coche ou décoche d'un clic un groupe de lignes (les erreurs), sans toucher aux autres. Depuis

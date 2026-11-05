@@ -62,6 +62,8 @@ export type AccountingOptions = {
   ecarterErreurs?: boolean;
   /** Cases cochées (08/10/2026) : seules ces lignes sont importées ; remplace les deux options. */
   lignesChoisies?: number[];
+  /** Écritures absentes du grand livre à supprimer (05/11/2026), par id. */
+  ecrituresSupprimees?: number[];
 };
 
 /** Formulaire multipart de `/accounting/import/analyse` et `/confirm`. */
@@ -93,6 +95,12 @@ export function accountingForm(
     form.append(
       "lignes_choisies",
       JSON.stringify([...options.lignesChoisies].sort((a, b) => a - b)),
+    );
+  }
+  if (options.ecrituresSupprimees?.length) {
+    form.append(
+      "ecritures_supprimees",
+      JSON.stringify([...options.ecrituresSupprimees].sort((a, b) => a - b)),
     );
   }
   return form;

@@ -1,7 +1,7 @@
 """Import d'un export Sage / SI (P10) : analyse et confirmation."""
 
 import json
-from datetime import date
+from datetime import UTC, date
 from decimal import Decimal
 from io import BytesIO
 from itertools import count
@@ -868,3 +868,193 @@ def test_a_sage_export_in_pdf_is_refused(client, comptable, db, journals):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Seuls les fichiers Excel .xlsx ou .xls sont acceptés."
+
+
+# --- Écritures absentes du grand livre (05/11/2026) ----------------------------------------------
+
+FRAIS_BQ1 = [date(2025, 9, 2), "BQ1", "5141", "P009", "FRAIS TENUE", None, 75, None, None]
+
+
+def _absentes(client, headers, db, rows):
+    body = analyse(client, headers, db, xlsx(rows)).json()
+    return body, body["ecritures_absentes"]
+
+
+def test_an_entry_removed_from_sage_is_found_absent(client, comptable, db, journals):
+    awb, _ = journals
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    frais = db.scalar(select(AccountingEntry).filter_by(numero_piece="P009"))
+
+    body, [absente] = _absentes(client, comptable, db, EXPORT)
+
+    assert (absente["id"], absente["bank_code"], absente["credit"]) == (frais.id, "AWB", "75.00")
+    assert (absente["code_rapprochement"], absente["a_verifier"]) == (None, False)
+    # Un compte sans ligne à importer a quand même son solde après import
+    assert [item["bank_code"] for item in body["resume"]["par_compte"]] == ["AWB"]
+    assert body["resume"]["par_compte"][0]["nb"] == 0
+
+
+def test_absent_entries_are_looked_for_in_the_journal_and_period_of_the_file(
+    client, comptable, db, journals
+):
+    awb, _ = journals
+    confirm(client, comptable, db, xlsx(EXPORT))
+    _ecriture(client, comptable, awb.id, date_ecriture="2025-09-02")  # saisie manuelle
+    autre_jour = [date(2025, 9, 10), "BQ1", "5141", "P010", "AGIOS", None, 9, None, None]
+    confirm(client, comptable, db, xlsx([*EXPORT, autre_jour]))
+
+    # Fichier du 02/09 sur BQ1 seulement : BQ2, le 10/09 et la saisie manuelle ne sont pas absents
+    _, absentes = _absentes(client, comptable, db, EXPORT[:3])
+
+    assert absentes == []
+
+
+def test_one_of_two_identical_lines_removed_is_found_once(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1, FRAIS_BQ1]))
+
+    _, absentes = _absentes(client, comptable, db, [*EXPORT, FRAIS_BQ1])
+
+    assert len(absentes) == 1
+
+
+def test_absent_entries_of_an_account_with_errors_are_to_check(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    erreur = [date(2025, 9, 2), "BQ1", "5141", "P011", "SANS MONTANT", None, None, None, None]
+
+    _, [absente] = _absentes(client, comptable, db, [*EXPORT, erreur])
+
+    assert absente["a_verifier"] is True
+
+
+def test_checked_absent_entries_are_deleted_at_the_confirmation(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    frais = db.scalar(select(AccountingEntry).filter_by(numero_piece="P009"))
+    nouvelle = [date(2025, 9, 4), "BQ1", "5141", "P012", "REMISE", 100, None, None, None]
+
+    response = confirm(
+        client,
+        comptable,
+        db,
+        xlsx([*EXPORT, nouvelle]),
+        lignes_choisies="[7]",
+        ecritures_supprimees=json.dumps([frais.id]),
+    )
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["nb_importees"], response.json()["nb_supprimees"]) == (1, 1)
+    assert db.get(AccountingEntry, frais.id) is None
+    [log] = db.scalars(select(AuditLog).filter_by(action="suppression_ecriture_sage")).all()
+    assert (log.entite_id, log.ancienne_valeur["credit"]) == (str(frais.id), "75.00")
+    assert log.nouvelle_valeur["fichier"] == "export.xlsx"
+    [imp] = db.scalars(
+        select(AuditLog).filter_by(action="import_ecritures").order_by(AuditLog.id.desc())
+    ).all()[:1]
+    assert imp.nouvelle_valeur["ecritures_supprimees"] == 1
+
+
+def test_an_import_with_only_deletions_is_accepted(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    frais = db.scalar(select(AccountingEntry).filter_by(numero_piece="P009"))
+
+    response = confirm(
+        client,
+        comptable,
+        db,
+        xlsx(EXPORT),
+        lignes_choisies="[]",
+        ecritures_supprimees=json.dumps([frais.id]),
+    )
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["nb_importees"], response.json()["nb_supprimees"]) == (0, 1)
+    assert db.scalar(select(func.count()).select_from(AccountingEntry)) == 2
+
+
+def test_an_entry_still_in_the_file_cannot_be_deleted(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    present = db.scalar(select(AccountingEntry).filter_by(numero_piece="P001"))
+
+    response = confirm(
+        client,
+        comptable,
+        db,
+        xlsx([*EXPORT, FRAIS_BQ1, EXPORT[-1]]),  # autre fichier, mêmes lignes banque
+        lignes_choisies="[]",
+        ecritures_supprimees=json.dumps([present.id]),
+    )
+
+    assert response.status_code == 409
+    assert "n'est pas absente de ce fichier" in response.json()["detail"]
+    assert db.get(AccountingEntry, present.id) is not None
+
+
+def _match(db, entry, statut, **over):
+    from datetime import datetime
+
+    from app.models import ReconciliationMatch, ReconciliationMatchItem, User
+
+    user = db.scalar(select(User).filter_by(email="comptable@example.com"))
+    now = datetime.now(UTC)
+    decide = {} if statut == "Proposée" else {"decide_par_id": user.id, "decide_le": now}
+    valide = {"valide_par_id": user.id, "valide_le": now} if statut == "Validée" else {}
+    match = save(
+        db,
+        ReconciliationMatch(
+            company_id=entry.company_id, type="1-1", statut=statut, **decide, **valide, **over
+        ),
+    )
+    save(
+        db,
+        ReconciliationMatchItem(
+            match_id=match.id, accounting_entry_id=entry.id, montant_affecte=Decimal("75")
+        ),
+    )
+    return match
+
+
+def test_a_reconciled_absent_entry_cannot_be_deleted(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    frais = db.scalar(select(AccountingEntry).filter_by(numero_piece="P009"))
+    _match(db, frais, "Validée", code="AWB-25-000001")
+
+    _, [absente] = _absentes(client, comptable, db, EXPORT)
+    response = confirm(
+        client,
+        comptable,
+        db,
+        xlsx(EXPORT),
+        lignes_choisies="[]",
+        ecritures_supprimees=json.dumps([frais.id]),
+    )
+
+    assert absente["code_rapprochement"] == "AWB-25-000001"
+    assert response.status_code == 409
+    assert "AWB-25-000001" in response.json()["detail"]
+    assert db.get(AccountingEntry, frais.id) is not None
+
+
+def test_pending_proposals_of_a_deleted_absent_entry_are_removed(client, comptable, db, journals):
+    from app.models import ReconciliationMatch
+
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    frais = db.scalar(select(AccountingEntry).filter_by(numero_piece="P009"))
+    match = _match(db, frais, "Proposée")
+
+    response = confirm(
+        client,
+        comptable,
+        db,
+        xlsx(EXPORT),
+        lignes_choisies="[]",
+        ecritures_supprimees=json.dumps([frais.id]),
+    )
+
+    assert response.status_code == 201, response.text
+    db.expire_all()
+    assert db.get(ReconciliationMatch, match.id) is None
+
+
+def test_deleting_absent_entries_needs_the_sage_permission(client, direction, db, journals):
+    response = confirm(client, direction, db, xlsx(EXPORT), ecritures_supprimees="[1]")
+
+    assert response.status_code == 403

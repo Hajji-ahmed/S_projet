@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  absentesParDefaut,
   basculerGroupe,
   blocageImport,
   totauxCoches,
@@ -8,7 +9,9 @@ import {
   defaultChecked,
   pageOf,
   sageLinesFor,
+  messageConfirmation,
   soldesApresImport,
+  supprimable,
   toggleVue,
 } from "./importLines";
 
@@ -207,5 +210,60 @@ describe("soldesApresImport", () => {
     const [, awb, cih] = soldesApresImport(comptes, lignes, new Set([4]));
     expect([awb.solde, awb.raison]).toEqual([null, "ouverture"]);
     expect([cih.solde, cih.raison]).toEqual([null, "apres"]);
+  });
+});
+
+describe("écritures absentes du grand livre (05/11/2026)", () => {
+  const absente = (over: Partial<Parameters<typeof absentesParDefaut>[0][number]> = {}) => ({
+    id: 1,
+    bank_account_id: 1,
+    date_ecriture: "2026-08-02",
+    debit: "0.00",
+    credit: "75.00",
+    code_rapprochement: null,
+    a_verifier: false,
+    ...over,
+  });
+
+  it("coche par défaut les écritures supprimables, sauf celles à vérifier", () => {
+    const absentes = [
+      absente(),
+      absente({ id: 2, code_rapprochement: "BP-26-000001" }),
+      absente({ id: 3, a_verifier: true }),
+    ];
+    expect(absentesParDefaut(absentes)).toEqual(new Set([1]));
+    expect(supprimable(absentes[1])).toBe(false);
+  });
+
+  it("retire du solde après import les écritures cochées, après l'ouverture", () => {
+    const compte = {
+      bank_account_id: 1,
+      bank_code: "BP",
+      journal: "5243",
+      date_solde: "2026-08-31",
+      date_ouverture: "2026-01-01",
+      solde_avant: "1000.00",
+    };
+    const absentes = [
+      absente(),
+      absente({ id: 2, debit: "10.00", credit: "0.00" }),
+      absente({ id: 3, date_ecriture: "2026-01-01", credit: "500.00" }),
+      absente({ id: 4, bank_account_id: 2, credit: "9.00" }),
+    ];
+    const [bp] = soldesApresImport([compte], [], new Set(), absentes, new Set([1, 2, 3, 4]));
+    expect(bp.solde).toBe("1065.00");
+  });
+
+  it("autorise une confirmation qui ne fait que supprimer", () => {
+    const etat = { dejaImporte: false, cochees: 0, erreursCochees: 0 };
+    expect(blocageImport({ ...etat, suppressions: 2 })).toBeNull();
+    expect(blocageImport(etat)?.raison).toBe("aucune");
+  });
+
+  it("annonce les écritures enregistrées et supprimées", () => {
+    expect(messageConfirmation(1, 0)).toBe("1 écriture sera enregistrée.");
+    expect(messageConfirmation(3, 2)).toBe(
+      "3 écritures seront enregistrées, 2 supprimées (absentes du grand livre).",
+    );
   });
 });

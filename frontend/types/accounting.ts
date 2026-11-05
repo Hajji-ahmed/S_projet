@@ -67,6 +67,24 @@ export type ResumeComptable = {
   par_compte: TotalCompte[];
 };
 
+/** Écriture Sage en base qui n'est plus dans le grand livre importé (05/11/2026). */
+export type EcritureAbsente = {
+  id: number;
+  bank_account_id: number;
+  bank_code: string;
+  journal: string | null;
+  compte: string | null;
+  date_ecriture: string;
+  numero_piece: string | null;
+  libelle: string | null;
+  debit: string;
+  credit: string;
+  /** Rapprochement validé qui la contient : à annuler avant de pouvoir la supprimer. */
+  code_rapprochement: string | null;
+  /** Lignes en erreur sur ce compte dans le fichier : non cochée par défaut. */
+  a_verifier: boolean;
+};
+
 export type AnalyseComptable = {
   company_id: number;
   fichier_nom: string;
@@ -84,6 +102,8 @@ export type AnalyseComptable = {
   /** Lignes non retenues et leur raison (autre journal, contrepartie, titre). */
   lignes_ignorees: LigneIgnoree[];
   resume: ResumeComptable;
+  /** Écritures Sage du même compte, journal et période absentes du fichier. */
+  ecritures_absentes?: EcritureAbsente[];
 };
 
 export type ConfirmationComptable = {
@@ -96,6 +116,8 @@ export type ConfirmationComptable = {
   periode_debut: string | null;
   periode_fin: string | null;
   modele_enregistre: boolean;
+  /** Écritures absentes du fichier supprimées. */
+  nb_supprimees?: number;
 };
 
 export type StatutRapprochement = "Non rapprochée" | "À vérifier" | "Rapprochée";
