@@ -98,7 +98,7 @@ export type ConfirmationComptable = {
   modele_enregistre: boolean;
 };
 
-export type StatutRapprochement = "Non rapprochée" | "À vérifier" | "Rapprochée" | "Écart";
+export type StatutRapprochement = "Non rapprochée" | "À vérifier" | "Rapprochée";
 
 export type Ecriture = {
   id: number;

@@ -36,7 +36,6 @@ MODULES = {
     "position": "Position bancaire",
     "accounting": "Écritures comptables",
     "reconciliation": "Rapprochement",
-    "discrepancies": "Écarts",
     "forecasts": "Prévisions",
     "dashboard": "Dashboard",
     "admin": "Administration",

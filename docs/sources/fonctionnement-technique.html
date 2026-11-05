@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Fonctionnement technique SIMTIS</title>
+<link rel="stylesheet" href="simtis-doc.css">
+<style>
+@page { @bottom-left { content: "SIMTIS · Fonctionnement technique détaillé"; } } @page :first { @bottom-left { content: none; } }
+pre.code {
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 8.3pt; line-height: 1.4;
+  background: #0f2f3a; color: #e6f7f7; border-radius: 10px; padding: 10px 12px;
+  white-space: pre-wrap; page-break-inside: avoid; margin: 6px 0 12px;
+}
+pre.code .c { color: #8fb8bf; }
+ol.steps { counter-reset: s; list-style: none; padding-left: 0; }
+ol.steps > li { counter-increment: s; position: relative; padding-left: 30px; margin-bottom: 7px; page-break-inside: avoid; }
+ol.steps > li::before {
+  content: counter(s); position: absolute; left: 0; top: 0; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--primary); color: #fff; font-size: 8.5pt; font-weight: 700; text-align: center; line-height: 20px;
+}
+table.chain td.n { width: 22px; text-align: center; font-weight: 700; color: var(--primary); }
+table.chain td:nth-child(2) { width: 27%; }
+table.chain td:nth-child(4) { width: 24%; color: var(--muted); }
+table.chain tr.sep td { border-top: 2px solid var(--secondary); }
+table.chain { font-size: 8.4pt; table-layout: fixed; }
+table.chain td, table.chain th { overflow-wrap: anywhere; word-break: break-word; }
+table.chain code { white-space: normal; }
+table.chain th:first-child { width: 22px; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-band"></div>
+  <div class="cover-body">
+    <div class="cover-logo"><img src="../../frontend/public/logo-simtis.png" alt="SIMTIS"></div>
+    <div class="cover-kicker">Plateforme Finance &amp; Trésorerie</div>
+    <h1>Comment SIMTIS fonctionne, techniquement</h1>
+    <div class="subtitle">Du clic dans le navigateur à la ligne dans PostgreSQL : chaque mécanisme expliqué pas à pas</div>
+  </div>
+  <div class="cover-meta">
+    <div><span>Date</span><strong>03/11/2026</strong></div>
+    <div><span>État décrit</span><strong>Commit 982f379 · migration 0045</strong></div>
+    <div><span>Public</span><strong>Développeur, exploitation</strong></div>
+  </div>
+  <div class="cover-foot">Ce document complète l'« Architecture technique V2 » (21/10/2026) : au lieu de lister les composants, il suit les données à travers l'application (connexion, import d'un relevé, import Sage, rapprochement, frais, position, rapports, déploiement). Le fichier CLAUDE.md du dépôt reste la référence de chaque règle.</div>
+</div>
+
+<section class="toc">
+  <h2>Sommaire</h2>
+  <ol>
+    <li>SIMTIS en une page</li>
+    <li>Les conteneurs et le trajet d'une requête</li>
+    <li>Le frontend Next.js</li>
+    <li>Le backend FastAPI et ses couches</li>
+    <li>Connexion, sessions et permissions</li>
+    <li>La base de données</li>
+    <li>Parcours 1 : importer un relevé bancaire</li>
+    <li>Parcours 2 : importer le grand livre Sage</li>
+    <li>Parcours 3 : le moteur de rapprochement</li>
+    <li>Parcours 4 : valider, rapprocher à la main, annuler</li>
+    <li>Parcours 5 : les frais bancaires et l'export Sage</li>
+    <li>Soldes, position bancaire et solde comptable</li>
+    <li>Dashboard, rapports et exports</li>
+    <li>Audit et historique</li>
+    <li>Tests, qualité et intégration continue</li>
+    <li>Production, déploiement automatique et sauvegardes</li>
+    <li>Flux des données entre les fichiers</li>
+    <li>Carte du code : où trouver quoi</li>
+  </ol>
+</section>
+
+<!-- 1 ------------------------------------------------------------------------------------------>
+<section class="chapter first">
+  <h2>1. SIMTIS en une page</h2>
+  <p class="lead">SIMTIS remplace les fichiers Excel de la Trésorerie (position bancaire) et de la Comptabilité (rapprochement bancaire). C'est une couche d'intégration, de contrôle et de pilotage : les données viennent des banques et de Sage, SIMTIS les normalise, les rapproche et les présente. Il ne remplace pas Sage.</p>
+  <div class="flow">
+    <div class="step"><b>Sources</b>Relevés bancaires Excel / PDF, grand livre Sage, saisies</div><div class="arrow">→</div>
+    <div class="step"><b>Import</b>Analyse, mapping des colonnes, contrôles, aperçu</div><div class="arrow">→</div>
+    <div class="step"><b>Normalisation</b>Dates, montants, libellés, hash de ligne</div><div class="arrow">→</div>
+    <div class="step"><b>Traitements</b>Position, rapprochement, frais, solde comptable</div><div class="arrow">→</div>
+    <div class="step dark"><b>Restitution</b>Dashboard, rapports Excel / PDF, export Sage</div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><strong>34</strong><span>tables PostgreSQL</span></div>
+    <div class="kpi"><strong>45</strong><span>migrations Alembic</span></div>
+    <div class="kpi"><strong>105</strong><span>points d'API</span></div>
+    <div class="kpi"><strong>~1 200</strong><span>tests (≈ 950 backend, ≈ 260 frontend)</span></div>
+  </div>
+  <h3>Trois principes qui expliquent tout le reste</h3>
+  <div class="grid2">
+    <div class="card"><h4>Le serveur décide</h4>Toutes les règles métier et tous les calculs financiers sont dans le backend. Le navigateur affiche et prépare. Il ne parle jamais à la base. Quand l'écran calcule quelque chose (un total coché, un solde recalculé), le serveur le recalcule à la confirmation et ne fait jamais confiance au chiffre envoyé.</div>
+    <div class="card"><h4>L'argent est exact</h4><code>NUMERIC(18,2)</code> en base, <code>Decimal</code> en Python, chaînes de caractères dans le JSON (<code>"500000.00"</code>), centimes en <code>BigInt</code> dans le navigateur. Jamais de <code>float</code>. Jamais de somme de deux devises.</div>
+    <div class="card"><h4>Proposer, jamais décider seul</h4>Le moteur de rapprochement propose avec un score. Seul un humain disposant de la permission valide. Une proposition, même forte, laisse les lignes « À vérifier ».</div>
+    <div class="card"><h4>Tout est tracé</h4>Chaque action sensible écrit dans <code>audit_logs</code> (qui, quand, IP, avant, après) dans la <b>même transaction</b> que la modification. La table est en ajout seul, imposé par un déclencheur PostgreSQL.</div>
+  </div>
+  <div class="box info"><strong>Deux sociétés, jamais mélangées.</strong> Simtis et Tefil (code <code>SOCX</code>). La société active est choisie dans l'en-tête (<code>useCompany()</code>). Chaque écran et chaque requête portent un <code>company_id</code>. Le moteur ne rapproche jamais deux sociétés entre elles, et chaque modification verrouille la ligne de la société concernée.</div>
+</section>
+
+<!-- 2 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>2. Les conteneurs et le trajet d'une requête</h2>
+  <div class="stack">
+    <div class="layer l1"><b>Navigateur</b><span>Edge / Chrome des PC de la Trésorerie et de la Comptabilité</span></div>
+    <div class="down">▼ HTTP (aujourd'hui) puis HTTPS · http://10.77.77.11</div>
+    <div class="layer l2"><b>Caddy</b><span>Production seulement : <code>/api/*</code> → backend, le reste → frontend · corps jusqu'à 100 Mo, délai 10 min</span></div>
+    <div class="down">▼</div>
+    <div class="layer l3"><b>Frontend Next.js 16</b><span>React 19, TypeScript, Tailwind 4 · port 3000 · build « standalone »</span></div>
+    <div class="layer l4"><b>Backend FastAPI</b><span>Python 3.11, Uvicorn (2 workers en prod) · port 8000</span></div>
+    <div class="down">▼ SQLAlchemy 2 + psycopg 3</div>
+    <div class="layer l5"><b>PostgreSQL 17</b><span>volume <code>db_data</code> · port 5434 sur le poste de développement</span></div>
+  </div>
+  <h3>Exemple : la Comptabilité clique « Valider » sur une proposition</h3>
+  <ol class="steps">
+    <li><b>Composant React.</b> Le bouton de <code>ProposalCard</code> déclenche <code>validateMatch(id)</code> dans <code>ProposalsTab</code>. Cette fonction vient de <code>frontend/services/reconciliation.ts</code> et passe par <code>apiFetch</code> (<code>frontend/lib/api.ts</code>).</li>
+    <li><b>apiFetch</b> ajoute l'en-tête <code>Authorization: Bearer &lt;jeton&gt;</code> (gardé en mémoire uniquement), envoie <code>POST /api/reconciliation/matches/{id}/validate</code>. En production, l'URL est relative (<code>/api</code>) : même origine, Caddy aiguille.</li>
+    <li><b>FastAPI</b> trouve la route dans <code>protected_router</code> (<code>app/api/router.py</code>). La dépendance <code>require_permission(RECONCILIATION_VALIDATE)</code> décode le JWT, vérifie que la session est encore ouverte, recharge les permissions <b>depuis la base</b>, puis répond 401 ou 403 si besoin.</li>
+    <li><b>Endpoint</b> (<code>app/api/reconciliation.py</code>) : quelques lignes qui passent la main à <code>reconciliation_service.validate(db, id, acteur_id=…, ip=…)</code>.</li>
+    <li><b>Service</b> : verrouille la société (<code>SELECT … FOR UPDATE</code>), verrouille la correspondance, vérifie qu'elle est « Proposée » et équilibrée (montants opposés au centime), attribue un code « BP-26-000123 » via un compteur sans trou, passe les lignes en « Rapprochée », écrit l'audit.</li>
+    <li><b>Repository</b> : les lectures et écritures SQL (<code>reconciliation_repository</code>). Une seule validation (<code>commit</code>) à la fin. Si une règle échoue, le service lève <code>ConflictError("…")</code>, rien n'est écrit.</li>
+    <li><b>Réponse</b> : <code>app/main.py</code> transforme <code>ConflictError</code> en <code>409 {"detail": "message en français"}</code>. <code>apiFetch</code> l'affiche tel quel. Sinon le schéma Pydantic <code>CorrespondanceOut</code> sérialise le résultat et l'écran se recharge.</li>
+  </ol>
+  <h3>Développement et production</h3>
+  <table>
+    <thead><tr><th></th><th>Développement (<code>docker-compose.yml</code>)</th><th>Production (<code>docker-compose.prod.yml</code>)</th></tr></thead>
+    <tbody>
+      <tr><td>Backend</td><td>code monté, <code>--reload</code>, polling des fichiers (Windows)</td><td><code>Dockerfile.prod</code> : sans dépendances de dev, utilisateur non root, 2 workers, <code>--proxy-headers</code></td></tr>
+      <tr><td>Frontend</td><td><code>next dev --webpack</code> (Turbopack ne voit pas les changements sous Windows)</td><td><code>next build --webpack</code>, sortie <code>standalone</code>, <code>NEXT_PUBLIC_API_URL=/api</code></td></tr>
+      <tr><td>Ports publiés</td><td>3000, 8000, 5434 (127.0.0.1 par défaut)</td><td>80 (et 3000) via Caddy uniquement</td></tr>
+      <tr><td>Démarrage du backend</td><td colspan="2"><code>alembic upgrade head</code> → <code>python -m app.seeds</code> → <code>uvicorn</code> : le schéma et les données de référence sont toujours à jour avant de servir.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 3 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>3. Le frontend Next.js</h2>
+  <p class="lead">Une application React organisée en quatre étages : les pages (routes), les composants (affichage), <code>services/</code> (appels à l'API) et <code>lib/</code> (règles pures testées, client HTTP).</p>
+  <table>
+    <thead><tr><th>Dossier</th><th>Contenu</th></tr></thead>
+    <tbody>
+      <tr><td><code>app/(app)/…</code></td><td>Les 11 routes protégées : dashboard, banques, comptes, releves, ecritures, rapprochement, position-bancaire, rapports, historique, administration, ecarts (masquée), plus <code>/login</code> et <code>/design-system</code>. <code>app/(app)/layout.tsx</code> monte <code>AppShell</code> (menu, en-tête, société active).</td></tr>
+      <tr><td><code>components/&lt;module&gt;/</code></td><td>Un dossier par écran (rapprochement, releves, ecritures, position, dashboard…) et <code>components/ui/</code> pour les briques communes : <code>Card</code>, <code>Button</code>, <code>DataTable</code>, <code>Modal</code>, <code>StatusBadge</code>, <code>Pagination</code>, <code>Field</code>…</td></tr>
+      <tr><td><code>services/*.ts</code></td><td>Une fonction par appel d'API (<code>analyseStatement</code>, <code>confirmStatement</code>, <code>runReconciliation</code>, <code>validateMatch</code>, <code>getBanquesTable</code>, <code>validerFrais</code>…). Elle construit l'URL et le corps, et passe toujours par <code>apiFetch</code> ou <code>apiDownload</code>.</td></tr>
+      <tr><td><code>lib/*.ts</code></td><td>Fonctions pures sans React, chacune avec son fichier <code>*.test.ts</code> (Vitest) : formats (<code>format.ts</code>), totaux en centimes (<code>importLines.ts</code>, <code>statementLines.ts</code>), panier de rapprochement (<code>reconciliation.ts</code>), formules des cellules (<code>formule.ts</code>), permissions (<code>permissions.ts</code>).</td></tr>
+      <tr><td><code>types/</code></td><td>Les types TypeScript des réponses de l'API, alignés sur les schémas Pydantic.</td></tr>
+    </tbody>
+  </table>
+  <h3>Comment l'écran parle à l'API</h3>
+  <ul>
+    <li><b><code>apiFetch</code></b> est le seul point d'appel. Il ajoute le jeton, transforme un 422 sans message métier en « Requête refusée : données invalides. », tente <b>une</b> fois <code>/api/auth/refresh</code> sur un 401, puis renvoie vers <code>/login</code> si la session est finie.</li>
+    <li><b><code>apiDownload</code></b> télécharge les exports (<code>.xlsx</code>, <code>.csv</code>, <code>.pdf</code>) avec le même jeton.</li>
+    <li>Les fichiers importés partent en <code>multipart/form-data</code>. Les lignes corrigées d'un relevé partent dans une <b>partie fichier JSON</b> (<code>lignes</code>), car un champ texte multipart est limité à 1 Mio par Starlette.</li>
+    <li>Sans <code>NEXT_PUBLIC_API_URL</code>, l'adresse de l'API est l'hôte de la page sur le port 8000 (<code>apiUrlFor</code>). Un téléphone du réseau local fonctionne donc sans configuration.</li>
+  </ul>
+  <h3>L'état de l'écran</h3>
+  <ul>
+    <li>Pas de bibliothèque d'état globale : état local React, contexte pour la société active (<code>CompanyProvider</code>) et l'utilisateur.</li>
+    <li>Préférences d'affichage dans <code>localStorage</code>, lues avec <code>useSyncExternalStore</code> et toujours protégées par <code>try/catch</code> : menu réduit (<code>simtis.menu.reduit</code>), période du rapprochement, carte « Solde comptable » repliée. Jamais de jeton ni de donnée métier.</li>
+    <li>Les filtres partageables passent dans l'URL (onglet, banque et période du dashboard).</li>
+  </ul>
+  <h3>Calculs à l'écran, revérifiés par le serveur</h3>
+  <p>Certaines valeurs sont calculées en direct pour que l'utilisateur voie l'effet de ses choix : solde après import, total des lignes cochées, écart du panier, ventilation HT / TVA, formules <code>=1200,50+350*2</code> des cellules Prévisions. Tous ces calculs travaillent en <b>centimes BigInt</b> (aucune erreur d'arrondi). Le serveur refait le calcul à la confirmation et refuse si le résultat ne colle pas.</p>
+  <h3>Design system</h3>
+  <p>Palette teal en jetons CSS (<code>app/globals.css</code>, copiée dans le skill <code>simtis-design</code>), icônes Lucide, vrais logos (<code>public/logo-simtis.png</code>, <code>public/banques/*.png</code> via <code>BankLabel</code>), graphiques Recharts. Les montants passent tous par <code>formatAmount()</code>, qui ne tronque jamais.</p>
+</section>
+
+<!-- 4 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>4. Le backend FastAPI et ses couches</h2>
+  <div class="stack">
+    <div class="layer l1"><b>api/</b><span>Endpoints minces : lire la requête, exiger une permission, appeler un service</span></div>
+    <div class="layer l2"><b>schemas/</b><span>Pydantic : validation d'entrée (<code>extra="forbid"</code>) et forme des réponses</span></div>
+    <div class="layer l3"><b>services/</b><span>Toutes les règles métier, l'orchestration, l'audit, la transaction</span></div>
+    <div class="layer l4"><b>repositories/</b><span>Requêtes SQL (SQLAlchemy), verrous, lectures en lot</span></div>
+    <div class="layer l5"><b>models/</b><span>Tables ORM, contraintes, index</span></div>
+  </div>
+  <h3>Un endpoint réel</h3>
+<pre class="code"><span class="c"># app/api/banks.py</span>
+can_manage = require_permission(PermissionCode.BANKS_MANAGE)
+
+@router.post("", response_model=BankOut, status_code=201)
+def create_bank(body: BankCreate, request: Request,
+                db: Session = Depends(get_db),
+                user: CurrentUser = Depends(can_manage)) -> BankOut:
+    summary = bank_service.create_bank(db, code=body.code, nom=body.nom, ...,
+                                       acteur_id=user.id, ip=client_ip(request))
+    return BankOut.from_summary(summary)</pre>
+  <p>Aucun <code>if</code> métier dans l'endpoint. Le service fait les contrôles, écrit, audite et valide la transaction.</p>
+  <h3>Les erreurs</h3>
+<pre class="code"><span class="c"># un service</span>
+raise ConflictError("Ce compte a déjà un relevé : son solde vient du relevé.")
+<span class="c"># app/main.py : NotFoundError → 404, ConflictError → 409, réponse {"detail": message}</span></pre>
+  <p>Le message, en français, va tel quel à l'utilisateur. Un champ inconnu ou interdit dans le corps donne 422 (Pydantic), jamais un oubli silencieux.</p>
+  <h3>Transactions et verrous</h3>
+  <ul>
+    <li><b>Une requête = une session SQLAlchemy</b> (<code>get_db</code>). Le service fait un seul <code>commit</code> à la fin. En cas d'exception, rien n'est écrit : c'est ce qui rend les opérations « tout ou rien » (validation en lot, suppression d'import, reprise).</li>
+    <li><b>Contrôler avant d'écrire.</b> Les opérations en lot vérifient toutes les lignes avant la première écriture et nomment la ligne fautive dans le 409.</li>
+    <li><b>Verrou de société.</b> Les actions de rapprochement verrouillent la ligne <code>companies</code> : deux validations simultanées ne peuvent pas prendre la même ligne. Le lancement du moteur utilise <code>FOR UPDATE NOWAIT</code> : un deuxième lancement reçoit tout de suite « Un rapprochement ou une validation est déjà en cours » au lieu d'attendre.</li>
+    <li><b>Compteurs sans trou</b> (codes de rapprochement, N° de pièce des frais) : <code>INSERT … ON CONFLICT … DO UPDATE … RETURNING</code>, atomique en une requête.</li>
+  </ul>
+  <h3>Règles pures</h3>
+  <p>Les calculs sont isolés dans des fonctions sans base de données, faciles à tester : <code>position_service</code> (formules du CDC), <code>reconciliation_scoring</code> (score), <code>reconciliation_groupes</code> (groupes N → 1), <code>normalization_service</code> (lecture des dates, montants, libellés, hash), <code>frais_service</code> (familles de frais, TVA, lignes Sage), <code>rapports_service.etat_controle</code>. Les services d'orchestration lisent la base, appellent ces fonctions, puis écrivent.</p>
+  <h3>Commandes en ligne (<code>python -m app.cli</code>)</h3>
+  <p><code>create-user</code>, <code>recalculer-soldes</code>, <code>reprise-rapprochement</code> (reprise d'un état Excel de rapprochement, en simulation par défaut, <code>--appliquer</code> pour écrire). Elles passent par les mêmes services et le même audit que l'API.</p>
+</section>
+
+<!-- 5 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>5. Connexion, sessions et permissions</h2>
+  <h3>Le mécanisme à deux jetons</h3>
+  <ol class="steps">
+    <li><b>Connexion</b> (<code>POST /api/auth/login</code>) : e-mail normalisé, mot de passe vérifié en <b>Argon2</b> (<code>pwdlib</code>). Après 5 échecs, le compte est bloqué 15 minutes.</li>
+    <li>Le serveur crée une ligne <code>user_sessions</code> (durée 12 h) et renvoie :<br>· un <b>jeton d'accès JWT</b> de 15 minutes, gardé <b>en mémoire</b> par le navigateur (jamais dans <code>localStorage</code>). Il contient l'utilisateur et l'id de session, <b>pas les permissions</b> ;<br>· un <b>jeton de session</b> dans un cookie <code>HttpOnly</code> limité au chemin <code>/api/auth</code>. En base, seul son hash est stocké.</li>
+    <li>À chaque requête, <code>get_current_user</code> décode le JWT (60 s de tolérance d'horloge, car la VM Docker Desktop recule parfois de ~26 s), vérifie que la session est encore ouverte et l'utilisateur actif, puis <b>recharge ses permissions depuis la base</b>.</li>
+    <li>Quand le jeton d'accès expire, <code>apiFetch</code> appelle <code>/api/auth/refresh</code> : le cookie prouve la session et un nouveau JWT est émis.</li>
+    <li>Déconnexion, désactivation ou réinitialisation du mot de passe ferment la session : l'accès est coupé <b>immédiatement</b>, même avec un JWT encore valide.</li>
+  </ol>
+  <h3>Permissions effectives</h3>
+  <div class="formula">permissions = permissions des rôles de l'utilisateur
+            + ajouts personnels (user_permissions.accordee = true)
+            − retraits personnels (user_permissions.accordee = false)</div>
+  <p>Rôles : Administrateur, Trésorerie, Comptable, Responsable, Direction / Consultation, plus des rôles personnalisés (<code>PERSO_…</code>). Les codes vivent dans <code>app/core/permissions.py</code> (par exemple <code>statements.import</code>, <code>accounting.import</code>, <code>reconciliation.view</code>, <code>reconciliation.validate</code>, <code>accounting.prepare</code>, <code>position.view</code>, <code>forecasts.manage</code>, <code>admin.users</code>, <code>admin.roles</code>, <code>admin.settings</code>, <code>audit.view</code>). <code>frontend/lib/permissions.ts</code> en est une copie, vérifiée par un test.</p>
+  <div class="box warn"><strong>Le menu ne protège rien.</strong> Le frontend masque les pages selon les permissions (<code>ROUTE_PERMISSIONS</code>), mais la vraie barrière est le backend. Tout nouveau routeur est ajouté à <code>protected_router</code> (401 sans jeton), et chaque endpoint exige sa permission (403). <code>tests/test_permissions.py</code> liste les routes publiques et échoue si une autre route répond sans jeton.</div>
+  <h3>Garde-fous de l'administration</h3>
+  <p>Toujours au moins un administrateur actif (verrou sur le rôle ADMIN). Un administrateur ne peut ni se désactiver, ni perdre son propre rôle ADMIN, ni retirer <code>admin.users</code> / <code>admin.roles</code> au rôle ADMIN. Un nouvel utilisateur reçoit un mot de passe à usage unique généré par le serveur, affiché une seule fois.</p>
+</section>
+
+<!-- 6 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>6. La base de données</h2>
+  <h3>Les 34 tables par domaine</h3>
+  <table>
+    <thead><tr><th>Domaine</th><th>Tables principales</th></tr></thead>
+    <tbody>
+      <tr><td>Référentiel</td><td><code>companies</code>, <code>banks</code>, <code>bank_accounts</code> (devise, type, LIGNE = <code>credit_autorise</code>, taux, journaux Sage, comptes comptables, solde comptable d'ouverture), <code>currencies</code>, <code>pointage_types</code> (74 catégories)</td></tr>
+      <tr><td>Soldes et saisies</td><td><code>bank_account_balances</code> (historique par jour, source « Saisie » ou « Relevé »), <code>saisies_devises</code>, <code>saisies_previsions</code>, <code>saisies_previsions_jour</code></td></tr>
+      <tr><td>Imports</td><td><code>import_batches</code> (un par fichier, statut Confirmé / Annulé), <code>column_mappings</code> (modèles de colonnes), <code>bank_statements</code>, <code>bank_transactions</code>, <code>balance_checks</code>, <code>accounting_entries</code></td></tr>
+      <tr><td>Rapprochement</td><td><code>reconciliation_matches</code> (type 1-1, 1-N, N-1, N-N ; statut ; code ; score ; <code>detail_score</code> JSON), <code>reconciliation_match_items</code> (les lignes, avec <code>actif</code>), <code>reconciliation_rules</code> (grille du score), <code>reconciliation_code_counters</code></td></tr>
+      <tr><td>Frais</td><td><code>frais_piece_counters</code>, <code>frais_lignes</code> (lignes modifiées à la main), <code>frais_jours_ecartes</code></td></tr>
+      <tr><td>Écarts (masqués)</td><td><code>discrepancies</code> et leur historique</td></tr>
+      <tr><td>Sécurité et audit</td><td><code>users</code>, <code>roles</code>, <code>permissions</code>, <code>role_permissions</code>, <code>user_roles</code>, <code>user_permissions</code>, <code>user_sessions</code>, <code>audit_logs</code></td></tr>
+    </tbody>
+  </table>
+  <h3>Les relations clés</h3>
+  <div class="formula">Société 1─N Compte bancaire ─N─1 Banque
+Compte 1─N Relevé (bank_statements) 1─N Opération (bank_transactions)
+Compte 1─N Écriture Sage (accounting_entries)
+Opération N─N Écriture  via  reconciliation_matches + reconciliation_match_items</div>
+  <h3>Ce que la base garantit elle-même</h3>
+  <ul>
+    <li><b>CHECK</b> : sens des montants (<code>devise_meme_sens</code>), TVA cohérente, une famille de frais seulement pour les écritures SIMTIS, format des modèles de colonnes (<code>format_si_banque</code>), date du solde comptable…</li>
+    <li><b>Index uniques partiels</b> : une seule correspondance <b>active</b> par opération et par écriture (<code>reconciliation_match_items.actif</code>) : il est physiquement impossible de rapprocher deux fois la même ligne. Un seul code par société, un seul modèle de colonnes par banque × format × « en cours ».</li>
+    <li><b>Déclencheurs</b> : <code>audit_logs</code> refuse <code>UPDATE</code> et <code>DELETE</code> ; <code>bank_accounts_journaux_uniques</code> empêche un journal Sage d'appartenir à deux comptes actifs.</li>
+  </ul>
+  <h3>Migrations et données de référence</h3>
+  <ul>
+    <li><b>Alembic</b>, 45 migrations (0045 = un modèle de colonnes par format). Une migration autogénérée est toujours relue : elle oublie les déclencheurs et les fonctions. <code>alembic check</code> ne compare pas les CHECK : chaque contrainte a son propre test dans <code>tests/test_constraints.py</code>.</li>
+    <li>Certaines migrations ne touchent que les données (re-pointage, correction du sens, clôture des écarts) et écrivent leur audit.</li>
+    <li><b>Seeds</b> (<code>python -m app.seeds</code>) : banques, sociétés, rôles, permissions, catégories, règles du score. Ils <b>créent sans jamais modifier</b> : une valeur changée par un utilisateur survit au redémarrage. Les données de démonstration (<code>--demo</code>) sont refusées en production.</li>
+  </ul>
+</section>
+
+<!-- 7 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>7. Parcours 1 : importer un relevé bancaire</h2>
+  <p class="lead">Écran <code>/releves</code>, assistant Fichier → Validation. Deux appels : <code>/analyse</code> (n'écrit rien) puis <code>/confirm</code> (écrit tout en une transaction). Le serveur est sans état entre les deux : la confirmation renvoie et réanalyse le fichier.</p>
+  <h3>Étape A : analyse (<code>POST /api/statements/import/analyse</code>)</h3>
+  <ol class="steps">
+    <li><b>Lecture du fichier</b> (<code>import_file.read_sheet</code>) : le format est reconnu par le <b>contenu</b>, pas par l'extension. Signature OLE2 → <code>.xls</code> avec <code>xlrd</code> ; <code>%PDF</code> → <code>pdfplumber</code> (tableaux tracés, sinon colonnes déduites de la position des mots, en-têtes répétés retirés) ; sinon <code>.xlsx</code> avec <code>openpyxl</code>. Limites : 20 Mo, 50 000 lignes, 500 pages.</li>
+    <li><b>Ligne d'en-tête et colonnes.</b> SIMTIS cherche la ligne d'en-tête, puis reconnaît chaque colonne par synonymes et abréviations (« DT valeur » → date de valeur, « Mnt » → montant). Le <b>modèle mémorisé</b> de la banque pour ce format (Excel ou PDF) et ce type de fichier (relevé ou opérations en cours) est appliqué en premier, puis complété par la détection. Si rien n'est reconnu, l'écran ouvre le mapping manuel.</li>
+    <li><b>Lecture de chaque ligne</b> (<code>_read_line</code>, <code>normalization_service</code>) : dates, débit / crédit ou montant signé, libellé nettoyé, référence. Les lignes SOLDE INITIAL / FINAL, totaux et titres sont <b>ignorées</b>, mais elles donnent le solde d'ouverture ou de clôture du fichier.</li>
+    <li><b>Sens sans signe.</b> Quand la colonne Montant n'a pas de signe, le sens de chaque ligne est déduit de la chaîne des soldes. Une ligne non prouvée est une erreur « Sens introuvable », jamais un crédit par défaut.</li>
+    <li><b>Hash de ligne</b> : empreinte du compte, des dates, du libellé, des montants, du solde et du rang (deux lignes identiques d'un même fichier restent deux opérations). Les hash déjà en base, cherchés par lots de 5 000, font les <b>doublons</b> : une ligne déjà importée n'est jamais cochable.</li>
+    <li><b>Soldes</b> : solde lu dans le fichier, sinon calculé (solde précédent − débit + crédit dans l'ordre chronologique) à partir d'un solde d'ouverture pris dans cet ordre : ligne SOLDE INITIAL, clôture du relevé précédent, tableau Banques, ou saisie (premier import seulement). Un solde de banque présent sur certaines lignes est contrôlé et relance le calcul.</li>
+    <li><b>Pointage</b> : valeur du fichier, sinon la <b>mémoire</b> (pointage le plus fréquent des opérations de même libellé normalisé), sinon le mot-clé le plus long du libellé parmi les 74 catégories, sinon « À choisir ».</li>
+    <li><b>Opérations en cours</b> : libellé finissant par « (*) », ou fichier séparé coché « opérations en cours ». Pour AWB, une ligne définitive de même montant, même libellé sans « (*) », à 10 jours au plus, <b>complète</b> l'opération en cours au lieu de créer une deuxième ligne.</li>
+  </ol>
+  <p>La réponse contient les lignes avec leur statut (Valide, Erreur, Doublon), les lignes ignorées, les soldes proposés et les compteurs des tuiles.</p>
+  <h3>Étape B : validation à l'écran</h3>
+  <p><code>EditablePreview</code> affiche le relevé tel qu'il sera enregistré, au format standard en 11 colonnes, 100 lignes par page. L'utilisateur corrige une ligne, la décoche, ou change le solde d'ouverture (recalcul en direct, <code>runningBalances</code>). Aucune ligne ne peut être ajoutée. Une ligne en erreur cochée bloque la confirmation.</p>
+  <h3>Étape C : confirmation (<code>POST /api/statements/import/confirm</code>)</h3>
+  <ol class="steps">
+    <li>Le fichier est renvoyé avec les lignes cochées et corrigées (partie JSON <code>lignes</code>, jusqu'à 60 Mo). Le serveur <b>réanalyse</b> et revérifie chaque ligne avec les mêmes règles. Il ne croit jamais l'écran.</li>
+    <li>Dans une seule transaction : <code>import_batches</code>, <code>bank_statements</code>, <code>bank_transactions</code> (origine Fichier / Corrigée, rang <code>ordre</code>), modèle de colonnes de la banque pour ce format, <code>balance_checks</code>, solde du jour de clôture (source « Relevé »), audit de chaque correction.</li>
+    <li>Le relevé s'ajoute au <b>relevé continu</b> du compte : la page lit toutes les opérations du compte dans l'ordre chronologique (date, relevé, <code>ordre</code>) et exporte le format standard en <code>.xlsx</code>.</li>
+  </ol>
+  <div class="box info"><strong>Défaire un import.</strong> « Supprimer cet import » est tout ou rien : refusé si une ligne est dans un rapprochement validé (le 409 nomme les codes à annuler), et seulement pour le <b>dernier</b> relevé du compte. Le lot reste avec le statut « Annulé », et le même fichier peut être réimporté.</div>
+</section>
+
+<!-- 8 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>8. Parcours 2 : importer le grand livre Sage</h2>
+  <p class="lead">Écran <code>/ecritures</code>, même pipeline que les relevés (<code>import_file</code> partagé), avec <code>accounting_import_service</code>.</p>
+  <ol class="steps">
+    <li><b>Lecture</b> du fichier <code>.xlsx</code> / <code>.xls</code> (un PDF Sage est refusé). Le modèle de colonnes est mémorisé par société, complété par la détection.</li>
+    <li><b>Filtre des lignes</b> : on ne garde que la <b>ligne banque d'un journal bancaire</b>. Le journal doit être l'un des « Journaux Sage » d'un compte (par exemple 5243 et 5543 pour BP) et le compte doit commencer par l'un de ses comptes comptables (jusqu'à 9). Les contreparties et les autres journaux sont comptés comme ignorés.</li>
+    <li><b>Montants</b> : débit / crédit restent comme dans Sage (un débit Sage est positif dans <code>montant</code>). Pour un compte EUR / USD, la colonne « Devise » est obligatoire et donne <code>montant_devise</code>, du même signe.</li>
+    <li><b>Doublons</b> : par hash de ligne et par société. Une écriture de frais créée par SIMTIS qui revient de Sage (même compte, jour, montant, N° pièce ou libellé) est reconnue comme doublon.</li>
+    <li><b>Solde comptable après import</b> : l'analyse calcule, pour chaque compte du fichier, le solde comptable avant import à la dernière date du fichier. L'écran y ajoute les lignes cochées (<code>soldesApresImport</code>, en centimes). La Comptabilité compare avec Sage avant de confirmer.</li>
+    <li><b>Confirmation</b> avec <code>lignes_choisies</code> (numéros des lignes cochées). Une ligne en erreur ou déjà importée cochée donne 409. Aucune correction dans SIMTIS : une erreur se corrige dans Sage.</li>
+  </ol>
+  <div class="box"><strong>Écritures saisies à la main.</strong> « Ajouter une écriture » (<code>POST /api/accounting/entries</code>, motif obligatoire) crée une ligne d'origine « Manuelle », traitée comme une ligne importée. Même principe côté banque avec « Ajouter une opération », rangée dans le relevé « Saisies manuelles » du compte.</div>
+</section>
+
+<!-- 9 ------------------------------------------------------------------------------------------>
+<section class="chapter">
+  <h2>9. Parcours 3 : le moteur de rapprochement</h2>
+  <p class="lead">« Lancer le rapprochement » (<code>POST /api/reconciliation/run</code>) compare les opérations bancaires libres aux écritures Sage libres d'une société, sur une période de 5 ans au plus, et enregistre des <b>propositions</b>.</p>
+  <h3>1. Qui peut être comparé à qui</h3>
+  <ul>
+    <li>Même <b>compte bancaire</b>. Jamais deux sociétés.</li>
+    <li><b>Montant exactement opposé</b> : un crédit banque est un débit Sage (<code>tx.montant == −montant_rapprochement(écriture)</code>, le montant en devise pour EUR / USD). Un montant différent n'est jamais proposé.</li>
+    <li><b>Même type d'opération</b>, lu au début du libellé : Chèque (Sage <code>EAR1°</code>, banque <code>ENCAISSEMENT CHEQUE</code>), Effet (<code>EAR°</code>, <code>LCN</code>, <code>REMISE D'EFFETS</code>), Espèces (<code>ESP</code>, <code>VERSEMENT DEPLACE</code>), Virement, Impayé, ou Autre.</li>
+    <li><b>Fenêtre de dates</b> : ± 10 jours (180 jours pour un chèque ou un effet de même numéro). Chèque et Effet comparent la date Sage à la date d'opération ; Espèces et Virement comparent l'échéance Sage à la date de valeur ou d'opération, la plus proche des deux.</li>
+    <li>Sont exclus : lignes déjà rapprochées, opérations en cours, frais bancaires (ils passent par l'écran Frais), paires déjà rejetées depuis le dernier lancement.</li>
+  </ul>
+  <h3>2. Le score (sur 100), grille dans <code>reconciliation_rules</code></h3>
+  <table>
+    <thead><tr><th>Critère</th><th class="num">Points</th><th>Règle</th></tr></thead>
+    <tbody>
+      <tr><td>Montant</td><td class="num">60 / 40</td><td>Montant opposé exact : 60 s'il a des centimes, 40 s'il est rond.</td></tr>
+      <tr><td>Date</td><td class="num">30</td><td>Dégressif sur 3 jours (30 · 22,5 · 15 · 7,5 · 0). Espèces : barème fixe 30 / 15 / 10 / 5 jusqu'à 10 jours.</td></tr>
+      <tr><td>Libellé</td><td class="num">20</td><td>Ressemblance des libellés normalisés (<code>cydifflib</code>, difflib compilé).</td></tr>
+      <tr><td>N° chèque / référence</td><td class="num">40</td><td>Clés de pièce, ou numéro commun de 5 chiffres et plus (« CHEQUE N 0173813 » ↔ « EAR1° AXK 173813 »).</td></tr>
+      <tr><td>Bonus sans référence</td><td class="num">+10</td><td>Espèces, Virement, Autre : la référence vaut 0 et chaque critère actif gagne 10.</td></tr>
+    </tbody>
+  </table>
+  <p>Proposition à partir de <b>50</b>, « forte » à partir de <b>80</b>. Les seuils et les points se modifient dans Administration &gt; Paramètres, et servent au lancement suivant.</p>
+  <h3>3. Attribuer sans conflit</h3>
+  <ol class="steps">
+    <li>Toutes les paires possibles sont triées du score le plus haut au plus bas (<code>proposer</code>). Une ligne déjà prise laisse sa place à son candidat suivant.</li>
+    <li><b>Égalité</b> au meilleur score d'une ligne : pas de proposition, les lignes sont « ambiguës » et listées dans l'onglet Propositions, où l'utilisateur choisit.</li>
+    <li>Un deuxième candidat à moins de 10 points est gardé dans <code>detail_score.second</code> : badge « Concurrente proche », jamais pré-coché.</li>
+    <li><b>Groupes N → 1</b> (<code>reconciliation_groupes</code>) : une opération principale + une commission + sa TVA de 10 % au centime, même jour, dont la somme est l'opposé d'une écriture.</li>
+    <li>Les anciennes propositions du moteur sont remplacées. Les lignes proposées passent « À vérifier » en base (affichées « Non rapprochée » avec le badge « En proposition »).</li>
+  </ol>
+  <h3>4. Pourquoi il est rapide</h3>
+  <p>Une année de Simtis représente environ 15 millions de paires dans les fenêtres de dates. Le moteur prépare chaque ligne une seule fois (texte, mots, numéros), indexe les écritures par (compte, montant opposé), écarte une paire dès qu'une borne prouve qu'elle ne peut pas atteindre 50 (<code>_candidat</code> : points sans libellé, puis bornes rapides du ratio), et ne calcule le ratio exact que pour les paires restantes. Lancement complet sur une année : environ 1 min 40 s au lieu de dizaines de minutes.</p>
+  <h3>5. Recherche élargie</h3>
+  <p>« Recherche élargie (1 an) » (<code>run-elargie</code>) cherche, au-delà de la fenêtre normale et jusqu'à 365 jours, les paires de montant opposé exact avec un numéro commun (ou, pour Espèces / Virement / Autre, un libellé ressemblant à 70 %). Une paire n'est proposée que si chaque côté n'a que ce candidat. Badge « Écart de N jours ».</p>
+</section>
+
+<!-- 10 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>10. Parcours 4 : valider, rapprocher à la main, annuler</h2>
+  <table>
+    <thead><tr><th>Action</th><th>API</th><th>Ce que fait le serveur</th></tr></thead>
+    <tbody>
+      <tr><td>Valider une proposition</td><td><code>POST …/matches/{id}/validate</code></td><td>Vérifie « Proposée » et l'équilibre au centime, attribue le code <code>BANQUE-AA-NNNNNN</code> (compteur par société, banque et année), lignes « Rapprochée », audit.</td></tr>
+      <tr><td>Valider la sélection</td><td><code>validate-batch</code></td><td>Jusqu'à 10 000 propositions, tout ou rien. L'audit note <code>en_lot</code> et <code>forte</code>.</td></tr>
+      <tr><td>Rejeter</td><td><code>reject</code>, <code>reject-batch</code></td><td>Lignes « Non rapprochée ». La paire n'est plus proposée jusqu'au prochain « Lancer le rapprochement ».</td></tr>
+      <tr><td>Rapprocher à la main</td><td><code>POST …/matches</code> avec <code>transaction_ids[]</code> + <code>ecriture_ids[]</code></td><td>1 à 50 lignes par côté, un seul compte, totaux exactement opposés, lignes libres, types compatibles. Puis correspondance validée 1-1 / 1-N / N-1 / N-N, et relance du moteur autour des lignes (ou relance ciblée depuis une carte ambiguë).</td></tr>
+      <tr><td>Aucune correspondance</td><td><code>…/aucune-ecriture</code>, <code>…/aucune-operation</code></td><td>Enregistre chaque candidat comme paire rejetée, remet la ligne « Non rapprochée », libère l'autre côté s'il n'a plus de candidat.</td></tr>
+      <tr><td>Annuler un rapprochement validé</td><td><code>DELETE …/matches/{id}</code></td><td>Motif obligatoire. Le code est gardé dans l'historique et n'est jamais réutilisé.</td></tr>
+    </tbody>
+  </table>
+  <h3>L'écran <code>/rapprochement</code></h3>
+  <ul>
+    <li>Deux volets, Transactions bancaires et Écritures comptables, avec filtres dans les en-têtes de colonnes (comme Excel) et chargement de 50 lignes de plus au défilement.</li>
+    <li>Le <b>panier</b> (<code>PanierPanel</code>) : cocher des lignes des deux côtés montre les totaux, l'écart en centimes, le type, et active « Rapprocher (n → m) » quand c'est équilibré. Règle pure <code>etatPanier</code> dans <code>lib/reconciliation.ts</code>.</li>
+    <li>Compteurs : Rapprochées, Non rapprochées, À comptabiliser (frais), Propositions en attente. Onglets Propositions (cartes, filtres Fortes / À vérifier / Éloignées / Ambiguës) et Historique (décisions, export du lettrage).</li>
+  </ul>
+  <h3>La reprise d'un état Excel</h3>
+  <p>Pour démarrer un compte qui avait déjà un rapprochement Excel : la commande <code>reprise-rapprochement</code> lit les deux listes de lignes encore <b>non</b> rapprochées à une date, les retrouve en base (libellé sans espaces ni ponctuation, montant, date à 3 jours ; pièce pour Sage), et met <b>toutes les autres</b> lignes du compte dans une seule correspondance N-N validée « Reprise ». C'est tout ou rien, et refusé si le total ne s'équilibre pas au centime. Faite en production pour BP, BMCE et AWB.</p>
+</section>
+
+<!-- 11 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>11. Parcours 5 : les frais bancaires et l'export Sage</h2>
+  <p class="lead">Les frais (timbres, commissions, TVA, agios…) ne sont pas rapprochés un par un : SIMTIS les regroupe par jour et crée l'écriture que la Comptabilité passera dans Sage. C'est la seule exception à « les écritures viennent de Sage ».</p>
+  <ol class="steps">
+    <li><b>Détection</b> (<code>reconciliation_repository.frais_bancaire</code>) : pointage (COM, DROIT, TVA, FRAIS, AGIOS…) ou libellé (DROIT(S) DE TIMBRE, COMMISSION, TAXE SUR VALEUR AJOUTEE…). VIREMENT COMMERCIAL et REMISE DOCUMENTAIRE n'en sont jamais. Ces opérations forment le compteur « À comptabiliser ».</li>
+    <li><b>Propositions calculées, jamais stockées</b> (<code>GET /api/frais</code>) : par compte et par jour, une écriture « DT D'ENREGISTREMENT » (timbres), « COM » (commissions) et « FRAIS » (frais avec TVA incluse, HT = montant ÷ 1,10 arrondi au centime). Un jour où Sage a déjà l'écriture n'est pas proposé. Un frais de plus de 200 DH va dans « Autres frais à passer à la main ».</li>
+    <li><b>Validation</b> (<code>POST /api/frais/valider</code>, <code>accounting.prepare</code>) : le serveur recalcule tout. Pour chaque jour, il crée l'écriture SIMTIS (<code>origine = 'SIMTIS'</code>, N° pièce <code>BP2610123</code> = banque, année, mois, rang, sans trou) et une correspondance validée N → 1 avec les opérations. L'utilisateur peut modifier les lignes avant (le total doit rester égal) ou écarter un jour.</li>
+    <li><b>Frais à la main</b> (<code>POST /api/frais/manuelle</code>) : libellé libre, date, TVA optionnelle (HT + TVA = total, vérifié en centimes).</li>
+    <li><b>Export pour Sage</b> (<code>GET /api/frais/export</code>) : un CSV « import paramétrable » (séparateur « ; », Windows-1252, virgule décimale, dates JJ/MM/AAAA). Chaque ligne va au crédit de son compte de charge (61671, 61714000, 61473000, 34552142 pour la TVA, agios par banque…). Les écritures sont marquées exportées : on ne peut plus les supprimer.</li>
+  </ol>
+  <p>« Exporter pour la banque » produit en plus la liste des frais de plus de 200 DH, pour les justifier auprès de la banque.</p>
+</section>
+
+<!-- 12 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>12. Soldes, position bancaire et solde comptable</h2>
+  <h3>D'où vient le solde d'un compte</h3>
+  <ul>
+    <li><b>Le relevé fait foi</b> : dès qu'un compte a une opération importée avec un solde, son solde = solde de la dernière opération, dans l'ordre <code>ORDRE_CHRONOLOGIQUE</code> (date, relevé, rang dans le fichier). Les soldes saisis sont alors ignorés et une nouvelle saisie est refusée.</li>
+    <li>Sans relevé (CIH, BMCI aujourd'hui), le solde vient de <code>bank_account_balances</code>, saisi à la main par jour (une nouvelle saisie du même jour corrige, l'audit garde l'ancien).</li>
+    <li>Les opérations en cours d'un fichier séparé s'ajoutent au solde jusqu'à l'arrivée de leur ligne définitive (<code>position_service.avec_en_cours</code>).</li>
+    <li>Une valeur jamais saisie reste <code>null</code>, jamais 0. Plusieurs comptes d'une même banque et devise s'additionnent dans la cellule, avec le détail en infobulle.</li>
+  </ul>
+  <h3>Les formules (fonctions pures de <code>position_service.py</code>)</h3>
+  <div class="formula">Crédit disponible       = Crédit autorisé (LIGNE) − Crédit utilisé
+Position disponible     = Solde bancaire + Crédit disponible
+facilité de caisse      = Solde du jour                        (décision du 02/11/2026)
+DEPASSEMENT d'un jour   = TOTAL des soldes + TOTAL des LIGNES   (négatif = ligne dépassée)
+Disponible Fc reel      = Solde du dernier jour + LIGNE ; TOTAL = DEPASSEMENT</div>
+  <h3>La page <code>/position-bancaire</code></h3>
+  <ol class="steps">
+    <li><b>Banques</b> : <code>GET /api/position/banques</code> calcule une ligne par jour, du premier solde jusqu'à la date choisie, pour le compte courant MAD de chaque banque (AWB, BMCE, BP, CIH, BMCI). Un jour sans solde réutilise le dernier connu, affiché en gris. Aucun solde avant le 01/01/2000 (garde-fou contre une année mal tapée). Les 3 derniers jours sont visibles, les autres par défilement.</li>
+    <li><b>Prévisions</b> : saisies à la main ligne par ligne, chaque ligne avec sa date. <code>PUT</code> remplace toutes les lignes de la société à partir du jour affiché, en une transaction.</li>
+    <li><b>Devises</b> : EUR et USD = soldes des comptes en devise, jamais convertis ; Exp DH convertible saisi à la main.</li>
+    <li><b>Évolution de la position</b> : courbe Recharts des 30 derniers jours, construite à partir de la même réponse, sans deuxième appel. Un jour sans TOTAL est un trou, jamais 0.</li>
+    <li>« Exporter en PDF » : même tableau Banques, A4 paysage, généré par <code>reportlab</code>.</li>
+  </ol>
+  <h3>Le solde comptable</h3>
+  <div class="formula">solde comptable(date) = solde d'ouverture saisi une fois (grand livre Sage, débit = positif)
+                      + débits − crédits des écritures du compte après la date d'ouverture, jusqu'à la date
+écart                 = solde du relevé − solde comptable        (dans la devise du compte)</div>
+  <p>Carte « Solde comptable » de <code>/ecritures</code> (<code>solde_comptable_service</code>). Sans solde d'ouverture, seuls les mouvements sont donnés, jamais un départ à 0.</p>
+</section>
+
+<!-- 13 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>13. Dashboard, rapports et exports</h2>
+  <h3>Dashboard (<code>GET /api/dashboard</code>)</h3>
+  <p>Le dashboard réutilise les règles existantes au lieu de les réécrire : soldes de <code>position_banques_service</code>, frais de <code>frais_bancaire</code>, statuts du rapprochement. Deux onglets : <b>Suivi</b> (alertes calculées, tâches en attente, taux de rapprochement par banque, dernières actions du journal) et <b>Indicateurs</b> (solde total MAD, encaissements, décaissements avec variation par rapport à la période précédente, évolution, répartition des frais). Période (5 ans au plus), banque et onglet sont dans l'URL. La cloche de l'en-tête compte les alertes du mois et se recharge à chaque changement de page.</p>
+  <h3>Rapports Excel (<code>/rapports</code>, <code>rapports_service</code>, <code>openpyxl</code>)</h3>
+  <table>
+    <thead><tr><th>Rapport</th><th>Contenu</th></tr></thead>
+    <tbody>
+      <tr><td>Position du jour</td><td>Le tableau Banques dans sa structure imposée, en Excel ou en PDF.</td></tr>
+      <tr><td>État de rapprochement</td><td>Une feuille par compte : opérations à gauche, code au milieu, écritures Sage à droite, un bloc par correspondance validée.</td></tr>
+      <tr><td>Lignes non rapprochées</td><td>Une feuille par compte, du plus ancien au plus récent, sur 10 ans au plus. Solde du relevé et solde comptable en tête, et en bas un bloc <b>Contrôle</b> : solde banque rectifié, solde compta rectifié, écart (<code>etat_controle</code>).</td></tr>
+      <tr><td>Lettrage</td><td>Chaque correspondance validée, ligne par ligne, groupée par code, avec ligne de total.</td></tr>
+    </tbody>
+  </table>
+  <p>Chaque export écrit une entrée d'audit <code>export_rapport</code>. Les dates Excel sont de vraies dates et les montants de vrais nombres.</p>
+</section>
+
+<!-- 14 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>14. Audit et historique</h2>
+<pre class="code"><span class="c"># dans un service, dans la même transaction que la modification</span>
+audit_service.log(db, user_id=user.id, action="validation_rapprochement",
+                  entite="reconciliation_match", entite_id=match.id,
+                  avant=avant, apres=apres, ip=client_ip(request))
+db.commit()   <span class="c"># la modification et sa trace partent ensemble, ou aucune des deux</span></pre>
+  <ul>
+    <li><code>audit_service</code> masque les mots de passe et les jetons, et stocke les <code>Decimal</code> en texte exact.</li>
+    <li>La table <code>audit_logs</code> est protégée par un déclencheur : aucune mise à jour ni suppression, même par erreur de code.</li>
+    <li><code>client_ip</code> lit l'IP réelle derrière Caddy (<code>X-Forwarded-For</code>, grâce à <code>--proxy-headers</code>).</li>
+    <li>Écran <code>/historique</code> (<code>audit.view</code>) : filtres par utilisateur, action, entité et période, 50 lignes par page. Le détail avant / après champ par champ est chargé seulement quand on déplie une ligne (une entrée d'import peut peser 77 Ko). Les codes d'action ont un libellé français (<code>historique_service.ACTIONS</code>).</li>
+  </ul>
+  <p>Exemples d'actions tracées : <code>import_releve</code>, <code>modification_operation</code>, <code>rapprochement_lance</code>, <code>validation_rapprochement</code>, <code>rapprochement_manuel</code>, <code>annulation_rapprochement</code>, <code>comptabilisation_timbres</code>, <code>suppression_import</code>, <code>reprise_rapprochement</code>, <code>modification_permissions</code>, <code>export_rapport</code>.</p>
+</section>
+
+<!-- 15 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>15. Tests, qualité et intégration continue</h2>
+  <div class="grid2">
+    <div class="card"><h4>Backend (pytest)</h4>
+      <ul>
+        <li>Base dédiée <code>simtis_test</code>, créée et migrée par <code>tests/conftest.py</code> : les tests exécutent les <b>vraies migrations</b>.</li>
+        <li>Chaque test tourne dans une transaction annulée à la fin.</li>
+        <li>Tests d'API de bout en bout avec <code>httpx</code> (import d'un vrai <code>.xlsx</code>, d'un <code>.xls</code> fabriqué avec <code>xlwt</code>, d'un PDF).</li>
+        <li><code>test_constraints.py</code> : une contrainte, un test qui échoue si la règle disparaît (<code>assert_rejected</code>).</li>
+        <li><code>test_migration_matches_models</code> : les modèles et la base migrée sont identiques.</li>
+        <li>Lint et format : <code>ruff</code>.</li>
+      </ul>
+    </div>
+    <div class="card"><h4>Frontend (Vitest)</h4>
+      <ul>
+        <li>Toutes les règles de <code>lib/</code> sont testées : centimes, panier, formules, filtres, périodes, permissions.</li>
+        <li><code>permissions.test.ts</code> vérifie que la copie des codes est identique au backend.</li>
+        <li>ESLint, Prettier (<code>format:check</code>), <code>tsc</code> (<code>typecheck</code>) et <code>next build</code>.</li>
+      </ul>
+    </div>
+  </div>
+  <h3>Intégration continue</h3>
+  <p><code>.github/workflows/ci.yml</code> lance à chaque push les mêmes vérifications que le poste de développement : ruff, pytest avec PostgreSQL, lint, format, typecheck, Vitest et build du frontend. <b>Le déploiement automatique attend que tous ces contrôles soient verts.</b></p>
+<pre class="code">docker compose run --rm backend ruff check .  &amp;&amp;  docker compose run --rm backend pytest
+cd frontend &amp;&amp; npm run lint &amp;&amp; npm run format:check &amp;&amp; npm run typecheck &amp;&amp; npm test &amp;&amp; npm run build</pre>
+</section>
+
+<!-- 16 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>16. Production, déploiement automatique et sauvegardes</h2>
+  <div class="flow">
+    <div class="step"><b>Poste</b>commit + push sur <code>hajji</code></div><div class="arrow">→</div>
+    <div class="step"><b>GitHub Actions</b>CI complète</div><div class="arrow">→</div>
+    <div class="step"><b>Serveur, cron 5 min</b><code>auto-deploy.sh</code> lit l'état des check-runs</div><div class="arrow">→</div>
+    <div class="step"><b>Si tout est vert</b>sauvegarde, <code>git reset --hard</code>, <code>up -d --build --wait</code></div><div class="arrow">→</div>
+    <div class="step dark"><b>Contrôle</b><code>/api/health</code>, journal <code>deploiement.log</code></div>
+  </div>
+  <ul>
+    <li><b>Serveur</b> 10.77.77.11, dossier <code>~/simtis</code> : un clone git de la branche <code>hajji</code>, lu avec une clé de déploiement en lecture seule. Rien n'entre depuis l'extérieur. On ne modifie jamais le code sur le serveur.</li>
+    <li>Au redémarrage, le backend applique les nouvelles migrations (par exemple 0045) et les seeds <b>après</b> la sauvegarde faite par le script.</li>
+    <li>Un commit dont la CI ou le déploiement échoue est noté dans <code>.deploiement-echoue</code> et n'est pas retenté. Un verrou <code>flock</code> empêche deux déploiements simultanés.</li>
+    <li><b>HTTP pour l'instant</b> (<code>Caddyfile.http</code>, <code>APP_ENV=development</code> pour que le cookie de session ne soit pas « Secure »), en attendant un nom de domaine. Le passage en HTTPS (<code>tls internal</code>) consiste à retirer trois lignes de <code>.env</code>.</li>
+    <li><b>Sauvegardes</b> : <code>~/sauvegarde-simtis.sh</code> chaque nuit à 2 h (crontab), conservées 30 jours dans <code>~/backups</code>, plus une sauvegarde avant chaque déploiement et avant chaque intervention manuelle en production (reprises, corrections de libellés).</li>
+  </ul>
+  <div class="box danger"><strong>Interdit.</strong> <code>docker compose down -v</code> : supprime le volume <code>db_data</code>, donc toute la base. Le même nom de projet et le même volume servent en développement et en production.</div>
+</section>
+
+<!-- 17 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>17. Flux des données entre les fichiers</h2>
+  <p class="lead">Pour chaque traitement important : les fichiers traversés, dans l'ordre, la fonction appelée dans chacun et la donnée qui passe au fichier suivant. Chemins relatifs à <code>frontend/</code> et <code>backend/app/</code>.</p>
+
+  <h3>17.1 Le trajet commun à toutes les requêtes</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Rôle et fonction</th><th>Donnée transmise au suivant</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>app/(app)/&lt;page&gt;/page.tsx</code></td><td>Route Next.js, monte la vue du module (<code>RelevesView</code>, <code>RapprochementView</code>…)</td><td>société active (<code>useCompany()</code>)</td></tr>
+      <tr><td class="n">2</td><td><code>components/&lt;module&gt;/*.tsx</code></td><td>Saisie et clics de l'utilisateur, état React</td><td>paramètres typés (id, période, fichier)</td></tr>
+      <tr><td class="n">3</td><td><code>services/&lt;module&gt;.ts</code></td><td>Une fonction par point d'API : construit l'URL, la requête, le <code>FormData</code></td><td>chemin + corps</td></tr>
+      <tr><td class="n">4</td><td><code>lib/api.ts</code></td><td><code>apiFetch</code> / <code>apiDownload</code> : jeton Bearer, rafraîchissement sur 401, messages d'erreur</td><td>requête HTTP (JSON ou multipart)</td></tr>
+      <tr class="sep"><td class="n">5</td><td><code>main.py</code> → <code>api/router.py</code></td><td>Application FastAPI, CORS, <code>protected_router</code> qui regroupe les routeurs des modules</td><td>requête routée</td></tr>
+      <tr><td class="n">6</td><td><code>api/deps.py</code> + <code>core/security.py</code></td><td><code>get_current_user</code> (JWT, session), <code>require_permission</code></td><td><code>CurrentUser</code> (id, permissions)</td></tr>
+      <tr><td class="n">7</td><td><code>schemas/&lt;module&gt;.py</code></td><td>Validation Pydantic du corps (<code>extra="forbid"</code>)</td><td>objet d'entrée validé</td></tr>
+      <tr><td class="n">8</td><td><code>api/&lt;module&gt;.py</code></td><td>Endpoint mince, appelle le service</td><td>arguments Python + <code>acteur_id</code>, <code>ip</code></td></tr>
+      <tr><td class="n">9</td><td><code>services/&lt;module&gt;_service.py</code></td><td>Règles métier, verrous, audit, <code>commit</code></td><td>requêtes et lignes ORM</td></tr>
+      <tr><td class="n">10</td><td><code>repositories/&lt;module&gt;_repository.py</code></td><td>SQL SQLAlchemy (<code>select</code>, <code>FOR UPDATE</code>, lots)</td><td>instruction SQL</td></tr>
+      <tr><td class="n">11</td><td><code>models/*.py</code> + <code>core/db.py</code></td><td>Tables ORM, session (<code>get_db</code>)</td><td>SQL vers PostgreSQL</td></tr>
+      <tr class="sep"><td class="n">↩</td><td><code>schemas/*Out</code> → JSON → <code>types/*.ts</code></td><td>Retour : l'objet est sérialisé par le schéma de sortie, lu par le composant avec ses types TypeScript</td><td>affichage</td></tr>
+      <tr><td class="n">!</td><td><code>services/errors.py</code> → <code>main.py</code></td><td>Erreur métier : <code>ConflictError</code> / <code>NotFoundError</code> → 409 / 404 <code>{"detail"}</code>, affichée par <code>apiFetch</code></td><td>message en français</td></tr>
+    </tbody>
+  </table>
+  <p class="small">Fichiers d'aide utilisés partout : <code>services/audit_service.py</code> (trace), <code>core/permissions.py</code> (codes), <code>core/config.py</code> (réglages), <code>models/enums.py</code> (valeurs autorisées), <code>lib/format.ts</code> (affichage des montants et des dates).</p>
+
+  <h3>17.2 Import d'un relevé : analyse</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>components/releves/ImportWizard.tsx</code></td><td>compte choisi dans <code>AccountPicker</code> + fichier</td><td><code>ImportRequest</code></td></tr>
+      <tr><td class="n">2</td><td><code>lib/statements.ts</code></td><td><code>fileProblem</code> (taille, type), <code>importForm</code></td><td><code>FormData</code> : fichier, <code>bank_account_id</code>, <code>mapping</code>, <code>en_cours</code>, <code>solde_ouverture</code></td></tr>
+      <tr><td class="n">3</td><td><code>services/statements.ts</code></td><td><code>analyseStatement</code> → <code>POST /api/statements/import/analyse</code></td><td>multipart</td></tr>
+      <tr class="sep"><td class="n">4</td><td><code>api/statements.py</code></td><td><code>analyse_statement</code> (permission <code>statements.import</code>), <code>_content</code>, <code>_mapping</code></td><td>octets du fichier, nom, options</td></tr>
+      <tr><td class="n">5</td><td><code>services/import_service.py</code></td><td><code>analyse_statement</code> : orchestration</td><td>appels ci-dessous</td></tr>
+      <tr><td class="n">6</td><td><code>services/import_file.py</code></td><td><code>check_file</code>, <code>format_fichier</code> (Excel / PDF), <code>read_sheet</code> (openpyxl, xlrd, pdfplumber → <code>lignes_pdf</code> / <code>lignes_par_mots</code>), <code>detect_header</code>, <code>columns_of</code></td><td>lignes brutes (tuples) + colonnes</td></tr>
+      <tr><td class="n">7</td><td><code>repositories/import_repository.py</code></td><td><code>latest_mapping(banque, type, format, en_cours)</code> via <code>_saved_mapping</code>, puis <code>import_file.mapping_from_headers</code></td><td><code>Mapping</code> champ → colonne</td></tr>
+      <tr><td class="n">8</td><td><code>services/normalization_service.py</code></td><td>appelé par <code>_read_line</code> : <code>parse_date</code>, <code>parse_amount</code>, <code>clean_libelle</code>, <code>extract_reference</code>, <code>balance_line_kind</code>, <code>est_en_cours</code>, <code>line_hash</code></td><td><code>AnalysedLine</code> (valeurs propres + erreurs)</td></tr>
+      <tr><td class="n">9</td><td><code>import_service</code> + <code>import_repository</code></td><td><code>Pointages.guess</code> (<code>pointages_of_company</code>), <code>_mark_duplicates</code> (<code>existing_line_hashes</code>, lots de 5 000), <code>_marquer_en_cours</code> (<code>operations_en_cours</code>, AWB), <code>_balances</code> / <code>running_balances</code> (<code>last_operation_before</code>, <code>last_known_balance</code>, <code>_opening_backwards</code>)</td><td><code>StatementAnalysis</code> complète</td></tr>
+      <tr><td class="n">10</td><td><code>schemas/statement.py</code></td><td><code>AnalyseOut.from_analysis</code></td><td>JSON : colonnes, lignes, ignorées, soldes, compteurs</td></tr>
+      <tr class="sep"><td class="n">11</td><td><code>components/releves/EditablePreview.tsx</code>, <code>FilterTile</code>, <code>IgnoredLinesTable</code></td><td>affichage et corrections, règles de <code>lib/statementLines.ts</code> (<code>runningBalances</code>, totaux en centimes) et <code>lib/importLines.ts</code> (<code>defaultChecked</code>, <code>pageOf</code>)</td><td>lignes cochées / corrigées</td></tr>
+    </tbody>
+  </table>
+  <div class="box"><strong>Rien n'est écrit en base pendant l'analyse.</strong> Seules des lectures ont lieu (modèle de colonnes, hash existants, soldes précédents, pointages connus).</div>
+
+  <h3>17.3 Import d'un relevé : confirmation</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>ImportWizard.tsx</code> → <code>services/statements.ts</code></td><td><code>confirmStatement</code> → <code>POST /api/statements/import/confirm</code></td><td>même <code>FormData</code> + partie fichier JSON <code>lignes</code></td></tr>
+      <tr><td class="n">2</td><td><code>api/statements.py</code></td><td><code>confirm_statement</code>, <code>_lines_text</code>, <code>_json_field(LignesSoumisesIn)</code></td><td>lignes soumises validées</td></tr>
+      <tr><td class="n">3</td><td><code>import_service.confirm_statement</code></td><td>réanalyse le fichier (étapes 5 à 9 ci-dessus), revérifie chaque ligne soumise avec <code>_read_line</code>, recalcule les soldes</td><td>lignes définitives</td></tr>
+      <tr><td class="n">4</td><td><code>import_service</code> → <code>import_repository.add</code></td><td>crée <code>ImportBatch</code>, <code>BankStatement</code>, <code>BankTransaction</code> (<code>ordre</code>, <code>origine</code>), <code>BalanceCheck</code>, solde du jour « Relevé » ; <code>_save_mapping</code> ; <code>_completer_en_cours</code> pour AWB</td><td>objets ORM</td></tr>
+      <tr><td class="n">5</td><td><code>services/audit_service.py</code></td><td><code>log</code> : <code>import_releve</code>, corrections, <code>remplacement_en_cours</code></td><td>lignes <code>audit_logs</code></td></tr>
+      <tr><td class="n">6</td><td><code>models/imports.py</code>, <code>models/referentiel.py</code></td><td>un seul <code>commit</code></td><td>tables <code>import_batches</code>, <code>bank_statements</code>, <code>bank_transactions</code>, <code>column_mappings</code>, <code>balance_checks</code>, <code>bank_account_balances</code></td></tr>
+      <tr class="sep"><td class="n">7</td><td><code>AccountStatementCard.tsx</code> → <code>getAccountStatement</code></td><td><code>GET /api/statements/accounts/{id}</code> → <code>import_service.account_statement</code> → <code>import_repository.account_transactions</code> (<code>ORDRE_CHRONOLOGIQUE</code>)</td><td>relevé continu du compte</td></tr>
+    </tbody>
+  </table>
+  <p><b>Effets en aval :</b> les nouvelles opérations deviennent visibles pour <code>position_repository.dernier_solde_releve</code> (solde du compte, tableau Banques, cartes), pour <code>reconciliation_repository.free_transactions</code> (moteur) et pour <code>frais_repository.frais_libres</code> (frais à comptabiliser).</p>
+
+  <h3>17.4 Import du grand livre Sage</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>components/ecritures/AccountingImportWizard.tsx</code></td><td><code>analyseEntries</code> puis <code>confirmEntries</code> (<code>services/accounting.ts</code>, <code>lib/accounting.ts</code> <code>accountingForm</code>)</td><td>fichier + <code>company_id</code> (+ <code>lignes_choisies</code>)</td></tr>
+      <tr><td class="n">2</td><td><code>api/accounting.py</code></td><td><code>analyse_entries</code> / <code>confirm_entries</code> (<code>accounting.import</code>)</td><td>octets + options</td></tr>
+      <tr><td class="n">3</td><td><code>services/accounting_import_service.py</code></td><td><code>analyse_entries</code> : <code>import_file.read_sheet</code> (sans PDF), journaux et comptes de <code>account_service.journaux_sage</code> / <code>comptes_comptables</code>, <code>_read_entry</code>, <code>_mark_duplicates</code>, <code>_mark_simtis_entries</code>, <code>_summarise</code></td><td><code>EntryLine</code> + résumé par compte</td></tr>
+      <tr><td class="n">4</td><td><code>services/solde_comptable_service.py</code> → <code>repositories/accounting_repository.py</code></td><td><code>_soldes_avant_import</code> : ouverture du compte + <code>mouvements_comptables</code> jusqu'à la dernière date du fichier</td><td><code>par_compte[].solde_avant</code></td></tr>
+      <tr><td class="n">5</td><td><code>schemas/accounting.py</code> → <code>lib/importLines.ts</code></td><td><code>TotalCompteOut</code> ; à l'écran <code>totauxCoches</code>, <code>soldesApresImport</code> (centimes BigInt)</td><td>tuile « solde comptable après import »</td></tr>
+      <tr><td class="n">6</td><td><code>accounting_import_service.confirm_entries</code></td><td>réanalyse, contrôle des lignes choisies, création <code>ImportBatch</code> + <code>AccountingEntry</code>, modèle de colonnes de la société, audit, <code>commit</code></td><td>table <code>accounting_entries</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>17.5 Lancer le rapprochement</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>components/rapprochement/RapprochementView.tsx</code></td><td><code>runReconciliation(companyId, filter)</code> (<code>services/reconciliation.ts</code>)</td><td><code>POST /api/reconciliation/run</code> : société, compte, période</td></tr>
+      <tr><td class="n">2</td><td><code>api/reconciliation.py</code></td><td>endpoint <code>run</code> (<code>reconciliation.validate</code>)</td><td>arguments</td></tr>
+      <tr><td class="n">3</td><td><code>services/reconciliation_service.py</code></td><td><code>run</code> : <code>_company(sans_attendre=True)</code> → <code>reconciliation_repository.lock_company(nowait=True)</code>, <code>_check_period</code>, <code>grille</code> (<code>all_rules</code>), <code>lever_rejets</code></td><td>société verrouillée, <code>Grille</code></td></tr>
+      <tr><td class="n">4</td><td><code>reconciliation_service._engine</code> ↔ <code>reconciliation_repository</code></td><td><code>free_transactions</code>, <code>free_entries</code>, <code>rejected_pairs</code>, <code>fee_transaction_ids</code> (frais exclus), <code>automatic_proposals_of_period</code> (anciennes propositions)</td><td>lignes ORM → <code>_operation</code> / <code>_ecriture</code></td></tr>
+      <tr><td class="n">5</td><td><code>services/reconciliation_scoring.py</code> (pur)</td><td><code>proposer</code> : <code>types_compatibles</code>, fenêtres de dates, <code>_candidat</code> (bornes), <code>score</code>, attribution du plus haut score, égalités</td><td>propositions 1 → 1 + lignes ambiguës</td></tr>
+      <tr><td class="n">6</td><td><code>services/reconciliation_groupes.py</code> (pur)</td><td><code>grouper</code> : principal + commission + TVA, <code>score_groupe</code></td><td>propositions N → 1</td></tr>
+      <tr><td class="n">7</td><td><code>reconciliation_service._enregistrer_proposition</code> → <code>reconciliation_repository</code></td><td><code>delete_matches</code> (anciennes), <code>add</code> (<code>ReconciliationMatch</code> + <code>ReconciliationMatchItem</code>), <code>set_transaction_status</code> / <code>set_entry_status</code> (« À vérifier »), <code>reset_unmatched_to_check</code></td><td>tables <code>reconciliation_matches</code>, <code>reconciliation_match_items</code>, statuts</td></tr>
+      <tr><td class="n">8</td><td><code>audit_service.log</code> + <code>_commit</code></td><td>audit <code>rapprochement_lance</code> (compteurs, rejets levés)</td><td>résumé JSON</td></tr>
+      <tr class="sep"><td class="n">9</td><td><code>ProposalsTab.tsx</code> → <code>listProposals</code>, <code>listAmbiguous</code> ; <code>TransactionsPane</code> / <code>EntriesPane</code> → <code>listTransactions</code>, <code>listEntries</code></td><td>relecture : <code>list_matches</code> → <code>_views</code> (20 lignes max par côté), <code>list_transactions</code> → <code>transactions_query</code>, <code>count_by_status</code></td><td>cartes, volets, compteurs (<code>lib/reconciliation.ts</code> : <code>filterProposals</code>, <code>defaultSelection</code>, <code>compteurStatut</code>)</td></tr>
+    </tbody>
+  </table>
+
+  <h3>17.6 Valider (une proposition, une sélection, un panier)</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>ProposalsTab.tsx</code> / <code>MatchPanel.tsx</code> / <code>PanierPanel.tsx</code></td><td><code>validateMatch</code>, <code>validateMatches</code> (<code>aValider</code>), <code>matchManually</code> (<code>etatPanier</code>)</td><td>id(s) ou <code>transaction_ids[]</code> + <code>ecriture_ids[]</code></td></tr>
+      <tr><td class="n">2</td><td><code>api/reconciliation.py</code></td><td><code>/matches/{id}/validate</code>, <code>/matches/validate-batch</code>, <code>POST /matches</code></td><td>corps validé (<code>schemas/reconciliation.py</code>)</td></tr>
+      <tr><td class="n">3</td><td><code>reconciliation_service</code></td><td><code>validate</code> / <code>validate_batch</code> / <code>match_manually</code> : <code>_locked_match</code>, <code>_validate</code> + <code>_check_amounts</code> (<code>montant_rapprochement</code>), <code>_new_code</code></td><td>contrôles passés</td></tr>
+      <tr><td class="n">4</td><td><code>reconciliation_repository.next_code_number</code></td><td><code>INSERT … ON CONFLICT … RETURNING</code> sur <code>reconciliation_code_counters</code> (société, banque, année)</td><td>code <code>BP-26-000123</code></td></tr>
+      <tr><td class="n">5</td><td><code>reconciliation_service</code> → repository</td><td><code>_decide</code> (statut Validée, <code>decide_par_id</code>), lignes « Rapprochée », <code>release_pending_matches</code> (propositions concurrentes rejetées), relance <code>_engine</code> ou <code>_relance_ciblee</code> (manuel)</td><td>lignes mises à jour</td></tr>
+      <tr><td class="n">6</td><td><code>audit_service.log</code> + <code>commit</code></td><td><code>validation_rapprochement</code> / <code>rapprochement_manuel</code></td><td><code>CorrespondanceOut</code> / <code>ValidationLotOut</code></td></tr>
+    </tbody>
+  </table>
+
+  <h3>17.7 Tableau Banques de la position</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>components/position/BanquesTable.tsx</code></td><td><code>getBanquesTable(companyId, jour)</code> (<code>services/position.ts</code>)</td><td><code>GET /api/position/banques</code></td></tr>
+      <tr><td class="n">2</td><td><code>api/position.py</code></td><td>→ <code>position_banques_service.banques_table</code> (<code>position.view</code>)</td><td>société, date</td></tr>
+      <tr><td class="n">3</td><td><code>repositories/position_repository.py</code></td><td><code>active_banks</code>, <code>current_mad_accounts</code>, <code>comptes_alimentes_par_releve</code>, <code>last_operation_soldes</code> / <code>dernier_solde_releve</code> (relevé), <code>soldes_until</code> (saisies), <code>en_cours_hors_releve</code></td><td>soldes bruts par compte et par jour</td></tr>
+      <tr><td class="n">4</td><td><code>position_banques_service._soldes</code></td><td>choisit la source (relevé sinon saisie), ajoute les opérations en cours (<code>position_service.avec_en_cours</code>)</td><td><code>BanqueColonne</code> / <code>CompteColonne</code></td></tr>
+      <tr><td class="n">5</td><td><code>services/position_service.py</code> (pur)</td><td><code>tableau_banques</code> : une ligne par jour, <code>somme_soldes</code>, <code>ligne_au</code>, TOTAL, DEPASSEMENT, Disponible Fc reel, dernier solde connu</td><td><code>TableauBanques</code></td></tr>
+      <tr><td class="n">6</td><td><code>schemas/position.py</code> → <code>BanquesTable</code> → <code>PositionView</code> (<code>onCharge</code>) → <code>PositionChart</code></td><td>affichage du tableau, puis courbe avec <code>evolutionPoints</code> (<code>lib/position.ts</code>), sans deuxième appel</td><td>tableau + graphique</td></tr>
+    </tbody>
+  </table>
+  <p class="small">La même fonction <code>banques_table</code> alimente aussi le rapport Excel <code>rapports_service.position_du_jour</code> et le PDF <code>rapports_service.position_pdf</code> (reportlab). Le dashboard réutilise la même règle de soldes par <code>position_banques_service.soldes_par_compte</code> : une seule règle de calcul pour toutes les restitutions.</p>
+
+  <h3>17.8 Frais bancaires : proposition, validation, export</h3>
+  <table class="chain">
+    <thead><tr><th>#</th><th>Fichier</th><th>Fonction</th><th>Donnée transmise</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><code>components/rapprochement/FraisCard.tsx</code></td><td><code>listFrais</code> (<code>services/frais.ts</code>) → <code>GET /api/frais</code></td><td>société, période</td></tr>
+      <tr><td class="n">2</td><td><code>api/frais.py</code> → <code>frais_service.tableau</code></td><td><code>propositions</code> : <code>frais_repository.frais_libres</code> (filtre <code>reconciliation_repository.frais_bancaire</code>), <code>jours_dans_sage</code>, <code>regrouper</code> / <code>regrouper_timbres</code>, <code>ventilation</code>, <code>lignes_gl</code>, <code>compte_charge</code> ; <code>autres_frais</code> ; <code>ecritures</code> (déjà comptabilisées)</td><td>propositions calculées (non stockées)</td></tr>
+      <tr><td class="n">3</td><td><code>FraisCard</code> / <code>EditFraisModal</code></td><td>sélection et modifications, contrôlées par <code>lib/frais.ts</code> (<code>etatLignes</code>, <code>ventilerTva</code>)</td><td><code>validerFrais(companyId, jours)</code></td></tr>
+      <tr><td class="n">4</td><td><code>frais_service.valider</code></td><td>recalcule, <code>_lignes_valides</code>, <code>frais_repository.next_piece_number</code> → <code>numero_piece</code>, crée <code>AccountingEntry</code> (origine SIMTIS) + <code>frais_lignes</code>, puis <code>reconciliation_service.create_validated</code> (N → 1)</td><td>écriture + correspondance validée + audit</td></tr>
+      <tr><td class="n">5</td><td><code>RapprochementView</code> → <code>exporterFrais</code> → <code>frais_service.exporter</code></td><td>lignes <code>lignes_ecriture</code>, <code>montant_csv</code>, encodage Windows-1252, marque <code>exportee_le</code></td><td>fichier CSV pour Sage (<code>apiDownload</code>)</td></tr>
+      <tr><td class="n">6</td><td>Retour par Sage</td><td>au prochain import Sage, <code>accounting_import_service._mark_simtis_entries</code> reconnaît l'écriture (N° pièce ou libellé)</td><td>ligne « Doublon », jamais importée deux fois</td></tr>
+    </tbody>
+  </table>
+
+  <h3>17.9 Vue d'ensemble : qui lit les données de qui</h3>
+  <table>
+    <thead><tr><th>Table</th><th>Écrite par</th><th>Lue par</th></tr></thead>
+    <tbody>
+      <tr><td><code>bank_transactions</code></td><td><code>import_service</code>, <code>saisie_manuelle_service</code>, <code>reprise_service</code> (statuts), <code>reconciliation_service</code> (statuts)</td><td>position, rapprochement, frais, dashboard, rapports, solde comptable (écart)</td></tr>
+      <tr><td><code>accounting_entries</code></td><td><code>accounting_import_service</code>, <code>frais_service</code> (SIMTIS), <code>saisie_manuelle_service</code></td><td>rapprochement, frais (jours déjà dans Sage), <code>solde_comptable_service</code>, rapports</td></tr>
+      <tr><td><code>bank_account_balances</code></td><td><code>balance_service</code> (saisie), <code>import_service</code> (clôture « Relevé »)</td><td><code>position_repository</code>, <code>balance_service.figures_for_accounts</code> (cartes banques)</td></tr>
+      <tr><td><code>column_mappings</code></td><td><code>import_service._save_mapping</code>, <code>accounting_import_service</code></td><td>analyse suivante, Administration &gt; Paramètres</td></tr>
+      <tr><td><code>reconciliation_rules</code></td><td>seeds, <code>parametres_service</code></td><td><code>reconciliation_service.grille</code> → moteur, groupes, recherche élargie</td></tr>
+      <tr><td><code>reconciliation_matches</code> / <code>_items</code></td><td><code>reconciliation_service</code>, <code>frais_service</code>, <code>reprise_service</code></td><td>écrans de rapprochement, historique, lettrage, rapports, dashboard, suppression d'import</td></tr>
+      <tr><td><code>audit_logs</code></td><td><code>audit_service.log</code> (toutes les actions)</td><td><code>historique_service</code> (<code>/historique</code>), activité du dashboard</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 18 ----------------------------------------------------------------------------------------->
+<section class="chapter">
+  <h2>18. Carte du code : où trouver quoi</h2>
+  <table>
+    <thead><tr><th>Je cherche…</th><th>Backend</th><th>Frontend</th></tr></thead>
+    <tbody>
+      <tr><td>Connexion, jetons</td><td><code>core/security.py</code>, <code>services/auth_service.py</code>, <code>api/deps.py</code></td><td><code>lib/api.ts</code>, <code>services/auth.ts</code>, <code>components/auth/</code></td></tr>
+      <tr><td>Lecture des fichiers</td><td><code>services/import_file.py</code>, <code>normalization_service.py</code></td><td><code>components/imports/</code></td></tr>
+      <tr><td>Import des relevés</td><td><code>services/import_service.py</code>, <code>repositories/import_repository.py</code></td><td><code>components/releves/</code>, <code>lib/statementLines.ts</code>, <code>lib/statements.ts</code></td></tr>
+      <tr><td>Import Sage, solde comptable</td><td><code>accounting_import_service.py</code>, <code>solde_comptable_service.py</code></td><td><code>components/ecritures/</code>, <code>lib/importLines.ts</code></td></tr>
+      <tr><td>Score du rapprochement</td><td><code>reconciliation_scoring.py</code>, <code>reconciliation_groupes.py</code></td><td></td></tr>
+      <tr><td>Actions de rapprochement</td><td><code>reconciliation_service.py</code>, <code>reconciliation_repository.py</code></td><td><code>components/rapprochement/</code>, <code>lib/reconciliation.ts</code></td></tr>
+      <tr><td>Frais bancaires</td><td><code>frais_service.py</code>, <code>frais_repository.py</code></td><td><code>FraisCard</code>, <code>lib/frais.ts</code></td></tr>
+      <tr><td>Position, soldes</td><td><code>position_service.py</code>, <code>position_banques_service.py</code>, <code>balance_service.py</code></td><td><code>components/position/</code>, <code>lib/position.ts</code></td></tr>
+      <tr><td>Dashboard, rapports</td><td><code>dashboard_service.py</code>, <code>rapports_service.py</code></td><td><code>components/dashboard/</code>, <code>components/rapports/</code></td></tr>
+      <tr><td>Administration, audit</td><td><code>admin_service.py</code>, <code>audit_service.py</code>, <code>historique_service.py</code></td><td><code>components/administration/</code>, <code>components/historique/</code></td></tr>
+      <tr><td>Reprise d'un état Excel</td><td><code>reprise_service.py</code>, <code>app/cli.py</code></td><td></td></tr>
+      <tr><td>Schéma de la base</td><td><code>models/</code>, <code>alembic/versions/</code>, <code>app/seeds/</code></td><td><code>types/</code></td></tr>
+      <tr><td>Déploiement</td><td colspan="2"><code>docker-compose*.yml</code>, <code>backend/Dockerfile.prod</code>, <code>frontend/Dockerfile.prod</code>, <code>deploy/Caddyfile*</code>, <code>deploy/auto-deploy.sh</code>, <code>.github/workflows/ci.yml</code></td></tr>
+    </tbody>
+  </table>
+  <div class="box info"><strong>Pour aller plus loin.</strong> <code>CLAUDE.md</code> à la racine décrit chaque règle et chaque décision datée. <code>docs/superpowers/specs/</code> contient les spécifications détaillées (relevés modifiables, tableau Banques, import Sage, rapprochement, écarts). Les PDF <code>docs/*_V4.pdf</code> et <code>*_V2.pdf</code> sont les versions pour le métier.</div>
+</section>
+
+</body>
+</html>

@@ -23,7 +23,7 @@ from app.services.reconciliation_scoring import AUTRE, TYPES_BANQUE, TYPES_SAGE,
 # Statuts d'une correspondance qui retiennent ses éléments
 STATUTS_ACTIFS = ("Proposée", "Validée")
 # Lignes qu'un nouveau passage du moteur ne touche jamais
-STATUTS_FIGES = ("Rapprochée", "Écart")
+STATUTS_FIGES = ("Rapprochée",)
 
 
 def statuts_du_filtre(statut: str) -> tuple[str, ...]:
@@ -453,7 +453,6 @@ def transactions_comparables(
             BankTransaction.date_operation.between(date_from, date_to),
             BankTransaction.date_valeur.between(date_from, date_to),
         ),
-        BankTransaction.statut != "Écart",
         BankTransaction.en_cours.is_(False),
         BankTransaction.id.not_in(validated_tx_ids),
     )
@@ -496,7 +495,6 @@ def candidate_transactions(
                 ),
             ),
         ),
-        BankTransaction.statut != "Écart",
         BankTransaction.en_cours.is_(False),
         BankTransaction.id.not_in(validated_tx_ids),
     )
@@ -742,7 +740,6 @@ def candidate_entries(
                     ]
                 ),
             ),
-            AccountingEntry.statut != "Écart",
             AccountingEntry.id.not_in(validated_entry_ids),
         )
     )

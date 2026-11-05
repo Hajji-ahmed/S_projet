@@ -17,7 +17,6 @@ from app.models import (
     BankAccountBalance,
     BankStatement,
     CashForecast,
-    Discrepancy,
     ExchangeRate,
     FraisJourEcarte,
     FraisLigne,
@@ -435,103 +434,17 @@ def test_a_proposal_needs_no_decision(db, world):
     save(db, ReconciliationMatch(company_id=world.company.id, type="1-1", statut="Proposée"))
 
 
-# --- Écarts --------------------------------------------------------------------------------------
+# --- Statut « Écart » retiré (04/11/2026, migration 0046) ----------------------------------------
 
 
-def discrepancy(world: World, **over) -> Discrepancy:
-    return Discrepancy(
-        **{
-            "company_id": world.company.id,
-            "type": "Montant différent",
-            "montant": Decimal("50"),
-            "date_ecart": date(2026, 9, 30),
-            **over,
-        }
-    )
-
-
-def test_closed_discrepancy_needs_a_comment(db, world):
-    closed = dict(statut="Clôturé", cloture_le=NOW, cloture_par_id=world.user.id)
-
+def test_transaction_can_no_longer_be_in_ecart(db, world):
     assert_rejected(
-        db,
-        "ck_discrepancies_cloture_avec_commentaire",
-        discrepancy(world, commentaire=None, **closed),
-    )
-    assert_rejected(
-        db,
-        "ck_discrepancies_cloture_avec_commentaire",
-        discrepancy(world, commentaire="   ", **closed),
+        db, "ck_bank_transactions_statut", build_transaction(world.statement, statut="Écart")
     )
 
 
-def test_closed_discrepancy_needs_date_and_person(db, world):
-    no_date = discrepancy(
-        world, statut="Clôturé", commentaire="Justifié", cloture_par_id=world.user.id
-    )
-    no_person = discrepancy(world, statut="Clôturé", commentaire="Justifié", cloture_le=NOW)
-
-    assert_rejected(db, "ck_discrepancies_cloture_avec_commentaire", no_date)
-    assert_rejected(db, "ck_discrepancies_cloture_avec_commentaire", no_person)
-
-
-def test_fully_documented_closure_is_accepted(db, world):
-    save(
-        db,
-        discrepancy(
-            world,
-            statut="Clôturé",
-            commentaire="Frais justifiés",
-            cloture_le=NOW,
-            cloture_par_id=world.user.id,
-        ),
-    )
-
-
-def test_open_discrepancy_needs_no_comment(db, world):
-    save(db, discrepancy(world, statut="À traiter"))
-
-
-def test_a_transaction_has_only_one_open_discrepancy(db, world):
-    tx = save(db, build_transaction(world.statement))
-    save(db, discrepancy(world, bank_transaction_id=tx.id, statut="En cours"))
-
-    assert_rejected(
-        db,
-        "uq_discrepancies_transaction_ouvert",
-        discrepancy(world, bank_transaction_id=tx.id, statut="À traiter"),
-    )
-
-
-def test_an_entry_has_only_one_open_discrepancy(db, world):
-    entry = save(db, build_entry(world.company))
-    save(db, discrepancy(world, accounting_entry_id=entry.id, statut="Traité"))
-
-    assert_rejected(
-        db,
-        "uq_discrepancies_ecriture_ouvert",
-        discrepancy(world, accounting_entry_id=entry.id),
-    )
-
-
-def test_closed_discrepancies_do_not_block_a_new_one(db, world):
-    tx = save(db, build_transaction(world.statement))
-    entry = save(db, build_entry(world.company))
-    closed = dict(
-        statut="Clôturé", commentaire="Justifié", cloture_le=NOW, cloture_par_id=world.user.id
-    )
-    save(
-        db,
-        discrepancy(world, bank_transaction_id=tx.id, accounting_entry_id=entry.id, **closed),
-        discrepancy(world, bank_transaction_id=tx.id, accounting_entry_id=entry.id, **closed),
-    )
-
-    save(db, discrepancy(world, bank_transaction_id=tx.id, accounting_entry_id=entry.id))
-
-
-def test_discrepancy_type_and_status_must_be_known(db, world):
-    assert_rejected(db, "ck_discrepancies_type", discrepancy(world, type="Autre chose"))
-    assert_rejected(db, "ck_discrepancies_statut", discrepancy(world, statut="Fermé"))
+def test_entry_can_no_longer_be_in_ecart(db, world):
+    assert_rejected(db, "ck_accounting_entries_statut", build_entry(world.company, statut="Écart"))
 
 
 def test_balance_check_status_must_be_known(db, world):

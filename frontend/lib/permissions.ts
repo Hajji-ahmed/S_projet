@@ -13,7 +13,6 @@ export const PERMISSIONS = {
   ACCOUNTING_PREPARE: "accounting.prepare",
   RECONCILIATION_VIEW: "reconciliation.view",
   RECONCILIATION_VALIDATE: "reconciliation.validate",
-  DISCREPANCIES_MANAGE: "discrepancies.manage",
   FORECASTS_MANAGE: "forecasts.manage",
   DASHBOARD_VIEW: "dashboard.view",
   ADMIN_USERS: "admin.users",
@@ -39,7 +38,6 @@ export const ROUTE_PERMISSIONS: Record<string, readonly PermissionCode[]> = {
   "/releves": [P.STATEMENTS_IMPORT, P.RECONCILIATION_VIEW],
   "/ecritures": [P.ACCOUNTING_IMPORT, P.RECONCILIATION_VIEW],
   "/rapprochement": [P.RECONCILIATION_VIEW],
-  "/ecarts": [P.RECONCILIATION_VIEW],
   "/administration": [P.ADMIN_USERS, P.ADMIN_ROLES, P.ADMIN_SETTINGS],
   "/historique": [P.AUDIT_VIEW],
 };

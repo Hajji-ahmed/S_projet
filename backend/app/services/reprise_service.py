@@ -11,7 +11,7 @@ Sage) ; SIMTIS inverse donc les deux colonnes. Une ligne sans montant est une li
 dont le montant a été vidé : elle n'est pas gardée.
 
 Tout est vérifié avant la première écriture ; au moindre problème (ligne introuvable, reprise
-déséquilibrée, ligne en écart) rien n'est écrit. Une ligne gardée qui est déjà rapprochée ou
+déséquilibrée) rien n'est écrit. Une ligne gardée qui est déjà rapprochée ou
 proposée dans SIMTIS n'est pas touchée (elle est seulement signalée).
 """
 
@@ -330,8 +330,6 @@ def analyser(
         if tx.id in gardees:
             if tx.statut != "Non rapprochée":
                 bilan.deja_rapprochees.append(f"Opération n° {tx.id} ({tx.statut}) : {tx.libelle}")
-        elif tx.statut == "Écart":
-            bilan.problemes.append(f"Opération n° {tx.id} en écart : {tx.libelle}")
         elif tx.statut != "Rapprochée" and not tx.en_cours and tx.remplacee_par_id is None:
             bilan.operations.append(tx.id)
             bilan.total_operations += tx.montant
@@ -342,8 +340,6 @@ def analyser(
                 bilan.deja_rapprochees.append(
                     f"Écriture n° {entry.id} ({entry.statut}) : {entry.libelle}"
                 )
-        elif entry.statut == "Écart":
-            bilan.problemes.append(f"Écriture n° {entry.id} en écart : {entry.libelle}")
         elif entry.statut != "Rapprochée":
             bilan.ecritures.append(entry.id)
             bilan.total_ecritures += reconciliation_service.montant_rapprochement(entry)

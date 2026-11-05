@@ -7,7 +7,6 @@ from app.api import (
     auth,
     banks,
     dashboard,
-    discrepancies,
     frais,
     health,
     historique,
@@ -38,7 +37,6 @@ protected_router.include_router(position.router)
 protected_router.include_router(statements.router)
 protected_router.include_router(accounting.router)
 protected_router.include_router(reconciliation.router)
-protected_router.include_router(discrepancies.router)
 protected_router.include_router(frais.router)
 protected_router.include_router(dashboard.router)
 protected_router.include_router(admin.router)

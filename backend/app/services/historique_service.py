@@ -100,7 +100,7 @@ ENTITES = {
     "reconciliation_match": "Rapprochement",
     "reconciliation_rule": "Paramètre de rapprochement",
     "column_mapping": "Modèle d'import",
-    "discrepancy": "Écart",
+    "discrepancy": "Écart",  # fonction retirée le 04/11/2026 : reste pour l'historique
     "rapport": "Rapport",
 }
 

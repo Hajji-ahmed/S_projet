@@ -39,7 +39,6 @@ import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
-import { ECARTS_ACTIFS } from "@/lib/features";
 import {
   basculerLigne,
   CLE_PERIODE,
@@ -103,11 +102,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
     !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
   // Comptabilisation des droits de timbre (13/10/2026)
   const canPrepare = !!user && hasAnyPermission(user.permissions, [PERMISSIONS.ACCOUNTING_PREPARE]);
-  // Tous les boutons « Signaler un écart » de la page en dépendent
-  const canManageDiscrepancies =
-    ECARTS_ACTIFS &&
-    !!user &&
-    hasAnyPermission(user.permissions, [PERMISSIONS.DISCREPANCIES_MANAGE]);
 
   // Du 1er janvier à aujourd'hui, ou la dernière période choisie sur ce poste (27/10/2026)
   const [filter, setFilter] = useState<ReconciliationFilter>(() =>
@@ -542,11 +536,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
 
       {periodeLue && !periodError && tab === "propositions" && (
         <ProposalsTab
-          companyId={companyId}
           pending={pending}
           logos={logos}
           canValidate={canValidate}
-          canManageDiscrepancies={canManageDiscrepancies}
           onChanged={reload}
           onOpen={(item) => {
             setTab("rapprochement");
@@ -688,11 +680,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
         {(operation || entry) && (
           <MatchPanel
             key={operation?.id ?? `e${entry?.id ?? ""}`}
-            companyId={companyId}
             operation={operation}
             entry={entry}
             canValidate={canValidate}
-            canManageDiscrepancies={canManageDiscrepancies}
             reloadKey={reloadKey}
             onChanged={reload}
           />

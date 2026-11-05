@@ -5,18 +5,8 @@ et vérifiés par des CHECK en base. Pour en ajouter un, modifier la liste ici p
 """
 
 # Rapprochement d'une transaction bancaire ou d'une écriture comptable
-STATUTS_RAPPROCHEMENT = ("Non rapprochée", "À vérifier", "Rapprochée", "Écart")
-
-# Écarts : À traiter → En cours → Traité → Clôturé (la clôture exige un commentaire)
-STATUTS_ECART = ("À traiter", "En cours", "Traité", "Clôturé")
-TYPES_ECART = (
-    "Banque sans écriture",
-    "Écriture sans banque",
-    "Montant différent",
-    "Date différente",
-    "Libellé ambigu",
-    "Doublon potentiel",
-)
+# (« Écart » retiré avec la fonction Écarts le 04/11/2026, migration 0046)
+STATUTS_RAPPROCHEMENT = ("Non rapprochée", "À vérifier", "Rapprochée")
 
 # Prévisions
 STATUTS_PREVISION = ("Prévu", "En attente", "Réalisé", "Reporté", "Annulé")

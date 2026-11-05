@@ -15,7 +15,6 @@ import {
   caseVerrouillee,
   matriceDe,
   parModule,
-  permissionsVisibles,
   rolesModifies,
   type Matrice,
 } from "@/lib/admin";
@@ -61,9 +60,7 @@ export function RolesTab() {
   }, [version]);
 
   const modifies = useMemo(() => (roles ? rolesModifies(roles, matrice) : []), [roles, matrice]);
-  // Module Écarts masqué tant que la fonction est mise de côté ; la matrice garde ses cases
-  const visibles = useMemo(() => permissionsVisibles(permissions), [permissions]);
-  const groupes = useMemo(() => parModule(visibles), [visibles]);
+  const groupes = useMemo(() => parModule(permissions), [permissions]);
 
   async function enregistrer() {
     setEnvoi(true);
@@ -261,7 +258,7 @@ export function RolesTab() {
       {formulaire !== null && (
         <RoleFormModal
           role={formulaire === "nouveau" ? null : formulaire}
-          permissions={visibles}
+          permissions={permissions}
           onClose={() => setFormulaire(null)}
           onSaved={(message) => {
             setFormulaire(null);

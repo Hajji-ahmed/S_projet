@@ -17,13 +17,9 @@ const STATUS_STYLES: Record<Status, string> = {
   "À vérifier": WARNING,
   "En attente": WARNING,
   "Non rapprochée": DANGER,
-  "À traiter": DANGER,
   Écart: ORANGE,
-  "En cours": ORANGE,
   Prévu: PLANNED,
   Reporté: NEUTRAL,
-  Clôturé: NEUTRAL,
-  Traité: NEUTRAL,
   Annulé: NEUTRAL,
   Inactif: NEUTRAL,
   // Lignes d'un import (spécification de la page Relevés)

@@ -34,3 +34,11 @@ Thumbs.db
 # Déploiement automatique (serveur) : dernier commit déployé / en échec
 .deploiement-ok
 .deploiement-echoue
+
+# Fichiers de travail (relevés, GL Sage, états clients) déposés à la racine :
+# données réelles, jamais dans Git (le dépôt est public). Ranger dans donnees-locales/.
+/*.xls
+/*.xlsx
+/*.xlsm
+/*.csv
+/donnees-locales/

@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from app.models import AccountingEntry, BankTransaction
 from app.repositories.import_repository import ORDRE_CHRONOLOGIQUE
 
-# Lignes non rapprochées (30/10/2026) : non rapprochée, en proposition (« À vérifier ») ou en écart
-STATUTS_NON_RAPPROCHES = ("Non rapprochée", "À vérifier", "Écart")
+# Lignes non rapprochées (30/10/2026) : non rapprochée ou en proposition (« À vérifier »)
+STATUTS_NON_RAPPROCHES = ("Non rapprochée", "À vérifier")
 
 
 def operations_non_rapprochees(

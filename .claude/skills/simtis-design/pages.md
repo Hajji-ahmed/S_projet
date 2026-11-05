@@ -150,15 +150,9 @@ Réalisé en P11 (06/10/2026, 1→1 seulement ; la sélection multiple viendra e
 - Grille `xl:grid-cols-[1fr_minmax(300px,360px)_1fr]`, empilée en dessous ; panneau central `xl:sticky`.
 - Panneau « Correspondance » (`GitCompareArrows`) : blocs Transaction / Écriture sur fond `simtis-background`, montant en 20px `primary-dark` + sens (« crédit », « débit Sage »), `ScoreBadge` (success si forte, warning sinon), détail des 5 critères, boutons pleine largeur Valider (primaire) · Rejeter (secondaire) · Choisir une autre écriture (ghost) ; Annuler le rapprochement (motif obligatoire) ; bloc « Rapprochement manuel » sur `simtis-light/40` avec écart restant (success à 0, danger sinon).
 
-## Écarts (`/ecarts`)
+## Écarts : retiré
 
-> **Mise de côté le 07/10/2026** : page, menu, boutons « Signaler un écart » et option « Écart » du filtre masqués par `ECARTS_ACTIFS = false` (`frontend/lib/features.ts`). Ce qui suit décrit l'écran tel qu'il reviendra une fois réactivé.
-
-- En-tête : bouton « Générer les écarts » (icône `Wand2`, permission `discrepancies.manage`) → fenêtre Du / Au / Compte.
-- 4 KPI : Écarts à traiter · Écarts en cours (En cours + Traité, « dont N traités » en dessous) · Écarts clôturés · Montant total (écarts ouverts, en DH ; les autres devises listées en dessous, jamais additionnées).
-- Carte « Écarts » : boutons de compte, filtres Statut · Type · Responsable · Du · Au · Recherche ; DataTable Date · Type · Banque (`BankLabel`) · Libellé · Montant · Différence · Responsable · Statut (badge) ; 50 par page.
-- Clic sur une ligne (sélectionnée en `bg-simtis-light`) : panneau latéral à droite (sticky en desktop, sous la liste en mobile) avec Type, Montant, Différence, Date, Banque, Transaction bancaire, Écriture comptable, Responsable (liste), boutons « Passer « En cours » / « Traité » », Commentaire, « Clôturer l'écart » (fenêtre, commentaire obligatoire) et l'Historique. Lien direct : `/ecarts?ecart=ID`.
-- `/rapprochement` : bouton « Signaler un écart » (icône `TriangleAlert`) dans le panneau Correspondance ; une opération en écart affiche un bandeau orange avec le lien vers son écart.
+La fonction Écarts (page `/ecarts`, bouton « Signaler un écart », statut « Écart » du rapprochement) a été **retirée du code le 04/11/2026**, après sa mise de côté du 07/10/2026 (`docs/decisions/ecarts.md`). Ne la recrée pas sans demande du métier. Le statut « Écart » du contrôle de solde des relevés n'a rien à voir et reste.
 
 ## Prévisions et Devises : pas de page dédiée
 

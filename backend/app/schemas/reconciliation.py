@@ -21,7 +21,7 @@ from app.services.reconciliation_service import (
     montant_rapprochement,
 )
 
-StatutRapprochement = Literal["Non rapprochée", "À vérifier", "Rapprochée", "Écart"]
+StatutRapprochement = Literal["Non rapprochée", "À vérifier", "Rapprochée"]
 StatutCorrespondance = Literal["Proposée", "Validée", "Rejetée", "Annulée"]
 Commentaire = Annotated[str, Field(max_length=500)]
 
@@ -96,7 +96,6 @@ class OperationOut(BaseModel):
     montant: Decimal
     statut: StatutRapprochement
     correspondance: CorrespondanceResumeOut | None = None
-    ecart_id: int | None = Field(None, description="Écart ouvert de l'opération (P12)")
     # Libellé terminé par « (*) » : en cours, jamais rapprochée (20/10/2026)
     en_cours: bool = False
 
@@ -106,7 +105,6 @@ class OperationOut(BaseModel):
         tx: BankTransaction,
         bank_code: str,
         match: ReconciliationMatch | None = None,
-        ecart_id: int | None = None,
     ) -> "OperationOut":
         resume = None
         if match is not None:
@@ -134,7 +132,6 @@ class OperationOut(BaseModel):
             montant=tx.montant,
             statut=tx.statut,
             correspondance=resume,
-            ecart_id=ecart_id,
             en_cours=tx.en_cours,
         )
 
@@ -165,10 +162,7 @@ class OperationsPageOut(BaseModel):
             par_statut={
                 statut: result.par_statut.get(statut, 0) for statut in StatutRapprochement.__args__
             },
-            operations=[
-                OperationOut.of(tx, code, match, result.ecarts.get(tx.id))
-                for tx, code, match in result.operations
-            ],
+            operations=[OperationOut.of(tx, code, match) for tx, code, match in result.operations],
         )
 
 

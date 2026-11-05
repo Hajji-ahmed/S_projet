@@ -8,7 +8,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
-import { changementsPersonne, parModule, permissionsVisibles } from "@/lib/admin";
+import { changementsPersonne, parModule } from "@/lib/admin";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { getUserPermissions, setUserPermissions } from "@/services/admin";
@@ -56,12 +56,7 @@ export function UserPermissionsModal({
     () => (permissions ? changementsPersonne(permissions, cochees) : { ajouts: [], retraits: [] }),
     [permissions, cochees],
   );
-  // Module Écarts masqué : ses cases gardent leur état et sont renvoyées telles quelles
-  const visibles = useMemo(
-    () => (permissions ? permissionsVisibles(permissions) : []),
-    [permissions],
-  );
-  const groupes = useMemo(() => parModule(visibles), [visibles]);
+  const groupes = useMemo(() => parModule(permissions ?? []), [permissions]);
   const avantAjouts = permissions?.filter((p) => p.personnalisation === true).length ?? 0;
   const avantRetraits = permissions?.filter((p) => p.personnalisation === false).length ?? 0;
   const modifie =
@@ -81,15 +76,7 @@ export function UserPermissionsModal({
 
   function revenirAuRole() {
     if (!permissions) return;
-    const montrees = new Set(visibles.map((p) => p.code));
-    setCochees(
-      (actuelles) =>
-        new Set(
-          permissions
-            .filter((p) => (montrees.has(p.code) ? p.par_roles.length > 0 : actuelles.has(p.code)))
-            .map((p) => p.code),
-        ),
-    );
+    setCochees(new Set(permissions.filter((p) => p.par_roles.length > 0).map((p) => p.code)));
   }
 
   async function enregistrer() {

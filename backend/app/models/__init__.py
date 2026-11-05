@@ -14,7 +14,6 @@ from app.models.imports import (
 from app.models.previsions import CashForecast, ForecastCategory
 from app.models.rapprochement import (
     BalanceCheck,
-    Discrepancy,
     FraisJourEcarte,
     FraisLigne,
     FraisPieceCounter,
@@ -61,7 +60,6 @@ __all__ = [
     "ColumnMapping",
     "Company",
     "Currency",
-    "Discrepancy",
     "ExchangeRate",
     "ForecastCategory",
     "ImportBatch",

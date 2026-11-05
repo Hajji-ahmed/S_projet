@@ -46,7 +46,8 @@ def test_upgrade_creates_every_model_table(empty_database):
 
     assert user_tables(engine) == set(Base.metadata.tables)
     # 30 : compteurs des codes de rapprochement (migration 0023)
-    assert len(user_tables(engine)) == 34  # 34 : + user_permissions (0037)
+    # 34 : + user_permissions (0037) ; 33 : − discrepancies (0046)
+    assert len(user_tables(engine)) == 33
     assert audit_function_exists(engine)
 
 
@@ -68,7 +69,8 @@ def test_upgrade_works_again_after_downgrade(empty_database):
     command.upgrade(config, "head")
 
     # 30 : compteurs des codes de rapprochement (migration 0023)
-    assert len(user_tables(engine)) == 34  # 34 : + user_permissions (0037)
+    # 34 : + user_permissions (0037) ; 33 : − discrepancies (0046)
+    assert len(user_tables(engine)) == 33
 
 
 def test_migration_0005_fills_only_empty_pointages(empty_database):
@@ -867,3 +869,61 @@ def test_migration_0042_amount_with_cents_is_worth_60(empty_database):
     inserer(45)
     command.upgrade(config, "0042")
     assert montant()[0] == 45
+
+
+def test_migration_0046_removes_ecarts_and_their_permission(empty_database):
+    """Décision du 04/11/2026 : la fonction Écarts est retirée ; la table, la permission (et ses
+    liens aux rôles et aux personnes) et le statut « Écart » partent."""
+    config, engine = empty_database
+    command.upgrade(config, "0045")
+    with engine.begin() as connection:
+        connection.execute(text(_DONNEES_0015.replace("'Écart'", "'Non rapprochée'")))
+        connection.execute(
+            text(
+                """
+                INSERT INTO roles (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'X', 'Rôle');
+                INSERT INTO permissions (code, description)
+                    VALUES ('discrepancies.manage', 'Écarts'), ('audit.view', 'Historique');
+                INSERT INTO role_permissions (role_id, permission_id)
+                    SELECT 1, id FROM permissions;
+                INSERT INTO user_permissions (user_id, permission_id, accordee)
+                    SELECT 1, id, true FROM permissions WHERE code = 'discrepancies.manage';
+                UPDATE discrepancies SET statut = 'Clôturé', commentaire = 'Fait',
+                    cloture_le = now(), cloture_par_id = 1;
+                """
+            )
+        )
+
+    command.upgrade(config, "0046")
+
+    with engine.connect() as connection:
+        permissions = connection.execute(
+            text(
+                "SELECT p.code FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id"
+            )
+        ).scalars()
+        personnes = connection.execute(text("SELECT count(*) FROM user_permissions")).scalar()
+    assert "discrepancies" not in user_tables(engine)
+    restantes = set(permissions)
+    assert "discrepancies.manage" not in restantes
+    assert "audit.view" in restantes
+    assert personnes == 0
+
+    command.downgrade(config, "0045")
+    assert "discrepancies" in user_tables(engine)
+
+
+def test_migration_0046_stops_while_a_line_is_in_ecart(empty_database):
+    config, engine = empty_database
+    command.upgrade(config, "0045")
+    with engine.begin() as connection:
+        connection.execute(text(_DONNEES_0015))
+        connection.execute(
+            text(
+                "UPDATE discrepancies SET statut = 'Clôturé', commentaire = 'Fait', "
+                "cloture_le = now(), cloture_par_id = 1"
+            )
+        )
+
+    with pytest.raises(Exception, match="au statut « Écart »"):
+        command.upgrade(config, "0046")

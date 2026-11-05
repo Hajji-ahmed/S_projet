@@ -37,7 +37,6 @@ ALL_PERMISSIONS = {
     "accounting.prepare",
     "reconciliation.view",
     "reconciliation.validate",
-    "discrepancies.manage",
     "forecasts.manage",
     "dashboard.view",
     "admin.users",
@@ -58,9 +57,8 @@ EXPECTED_ROLES = {
         # Comptabilisation des droits de timbre (13/10/2026)
         "accounting.prepare",
         "reconciliation.validate",
-        "discrepancies.manage",
     },
-    "RESPONSABLE": CONSULTATION | {"reconciliation.validate", "discrepancies.manage", "audit.view"},
+    "RESPONSABLE": CONSULTATION | {"reconciliation.validate", "audit.view"},
     "DIRECTION": CONSULTATION,
 }
 
@@ -82,7 +80,7 @@ def test_reference_seed_creates_the_expected_rows(db):
         # Les 74 catégories de pointage sont déjà créées par la migration 0017
         forecast_categories=7,
         # accounting.prepare est créée par la migration 0024
-        permissions=12,
+        permissions=11,
         roles=5,
         # + FENETRE_ELARGIE (20/10/2026), MONTANT_ROND et BONUS_SANS_REFERENCE (28/10/2026) ;
         # FENETRE_ESPECES retiré le 30/10/2026 (barème fixe)

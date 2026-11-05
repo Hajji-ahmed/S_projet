@@ -246,14 +246,11 @@ def periode_of_entries(db: Session, entry_ids: list[int]) -> tuple[date | None, 
 
 
 def delete_entries(db: Session, entry_ids: list[int]) -> None:
-    """Supprime des écritures importées et les écarts qui les citent."""
+    """Supprime des écritures importées."""
     if not entry_ids:
         return
     from sqlalchemy import delete
 
-    from app.models import Discrepancy
-
-    db.execute(delete(Discrepancy).where(Discrepancy.accounting_entry_id.in_(entry_ids)))
     db.execute(delete(AccountingEntry).where(AccountingEntry.id.in_(entry_ids)))
 
 

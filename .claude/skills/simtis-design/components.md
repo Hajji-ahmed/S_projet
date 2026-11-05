@@ -44,7 +44,6 @@ Composants à avoir (une seule implémentation chacun) :
 | Relevés | `/releves` | `FileSpreadsheet` |
 | Écritures comptables | `/ecritures` | `BookText` |
 | Rapprochement | `/rapprochement` | `GitCompare` |
-| Écarts | `/ecarts` | `AlertTriangle` |
 | Position bancaire | `/position-bancaire` | `TrendingUp` |
 | Prévisions | `/previsions` | `ChartLine` (ou `LineChart` selon la version) |
 | Devises | `/devises` | `CircleDollarSign` |

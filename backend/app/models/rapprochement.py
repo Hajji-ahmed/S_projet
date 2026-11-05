@@ -155,55 +155,6 @@ class BalanceCheck(TimestampMixin, Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
 
-class Discrepancy(TimestampMixin, Base):
-    """Écart à traiter. Cycle : À traiter → En cours → Traité → Clôturé (la clôture exige un commentaire)."""
-
-    __tablename__ = "discrepancies"
-    __table_args__ = (
-        check_in("statut", "statut", enums.STATUTS_ECART),
-        check_in("type", "type", enums.TYPES_ECART),
-        CheckConstraint(
-            "statut <> 'Clôturé' OR (commentaire IS NOT NULL AND btrim(commentaire) <> '' "
-            "AND cloture_le IS NOT NULL AND cloture_par_id IS NOT NULL)",
-            name="cloture_avec_commentaire",
-        ),
-        # Un seul écart ouvert par opération et par écriture (migration 0012)
-        Index(
-            "uq_discrepancies_transaction_ouvert",
-            "bank_transaction_id",
-            unique=True,
-            postgresql_where=text("statut <> 'Clôturé' AND bank_transaction_id IS NOT NULL"),
-        ),
-        Index(
-            "uq_discrepancies_ecriture_ouvert",
-            "accounting_entry_id",
-            unique=True,
-            postgresql_where=text("statut <> 'Clôturé' AND accounting_entry_id IS NOT NULL"),
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
-    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
-    type: Mapped[str] = mapped_column(String(30))
-    bank_transaction_id: Mapped[int | None] = mapped_column(
-        ForeignKey("bank_transactions.id"), index=True
-    )
-    accounting_entry_id: Mapped[int | None] = mapped_column(
-        ForeignKey("accounting_entries.id"), index=True
-    )
-    montant: Mapped[Montant]
-    difference: Mapped[Montant | None]
-    date_ecart: Mapped[date] = mapped_column(Date)
-    responsable_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    statut: Mapped[str] = mapped_column(
-        String(10), default="À traiter", server_default="À traiter", index=True
-    )
-    commentaire: Mapped[str | None] = mapped_column(Text)
-    traite_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    cloture_le: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    cloture_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-
-
 class ReconciliationCodeCounter(Base):
     """Dernier numéro de code de rapprochement donné, par société, banque et année (0023 ; par banque
     depuis 0036 : le code « BANQUE-AA-NNNNNN » est unique par société, deux comptes de la même banque

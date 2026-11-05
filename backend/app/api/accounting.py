@@ -151,7 +151,7 @@ def list_entries(
     bank_account_id: int | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
-    statut: Literal["Non rapprochée", "À vérifier", "Rapprochée", "Écart"] | None = None,
+    statut: Literal["Non rapprochée", "À vérifier", "Rapprochée"] | None = None,
     q: Annotated[str | None, Query(max_length=100, description="Libellé, pièce, tiers")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     # Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur

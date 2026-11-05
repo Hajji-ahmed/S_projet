@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { NAV_ITEMS, navItems } from "./navigation";
+import { NAV_ITEMS } from "./navigation";
 import {
   PERMISSIONS,
   ROUTE_PERMISSIONS,
@@ -16,13 +16,8 @@ import {
 const CONSULTATION = ["position.view", "reconciliation.view", "dashboard.view"];
 const ROLES = {
   tresorerie: [...CONSULTATION, "banks.manage", "statements.import", "forecasts.manage"],
-  comptable: [
-    ...CONSULTATION,
-    "accounting.import",
-    "reconciliation.validate",
-    "discrepancies.manage",
-  ],
-  responsable: [...CONSULTATION, "reconciliation.validate", "discrepancies.manage", "audit.view"],
+  comptable: [...CONSULTATION, "accounting.import", "reconciliation.validate"],
+  responsable: [...CONSULTATION, "reconciliation.validate", "audit.view"],
   direction: CONSULTATION,
   admin: Object.values(PERMISSIONS) as string[],
 };
@@ -58,10 +53,10 @@ describe("codes de permission", () => {
   });
 });
 
-describe("fonction Écarts mise de côté (07/10/2026)", () => {
-  it("le menu n'a pas « Écarts » tant que la fonction est coupée", () => {
+describe("fonction Écarts retirée (04/11/2026)", () => {
+  it("le menu n'a pas « Écarts »", () => {
     expect(NAV_ITEMS.map((item) => item.href)).not.toContain("/ecarts");
-    expect(navItems(true).map((item) => item.href)).toContain("/ecarts");
+    expect(ROUTE_PERMISSIONS["/ecarts"]).toBeUndefined();
   });
 });
 

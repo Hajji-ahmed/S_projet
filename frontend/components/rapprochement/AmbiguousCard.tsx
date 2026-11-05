@@ -1,6 +1,6 @@
 "use client";
 
-import { Ban, ExternalLink, Link2, Shuffle, TriangleAlert } from "lucide-react";
+import { Ban, ExternalLink, Link2, Shuffle } from "lucide-react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { ScoreBadge } from "@/components/rapprochement/Score";
@@ -26,13 +26,11 @@ type AmbiguousCardProps = {
   logo: string | null | undefined;
   seuilFort: string;
   canValidate: boolean;
-  canSignal: boolean;
   busy: boolean;
   /** Rapprochement de cette carte en cours (16/10/2026) : carte grisée, bouton « … ». */
   enCours?: boolean;
   /** Rapprochement manuel avec l'écriture choisie (validé d'emblée, tracé). */
   onChoose: (candidat: Candidat) => void;
-  onSignal: () => void;
   onOpen: () => void;
   /** Aucune écriture ne correspond : toutes les candidates sont écartées (15/10/2026). */
   onAucune?: () => void;
@@ -49,11 +47,9 @@ export function AmbiguousCard({
   logo,
   seuilFort,
   canValidate,
-  canSignal,
   busy,
   enCours = false,
   onChoose,
-  onSignal,
   onOpen,
   onAucune,
   selection,
@@ -108,11 +104,6 @@ export function AmbiguousCard({
           {canValidate && onAucune && (
             <Button variant="secondary" icon={Ban} disabled={busy} onClick={onAucune}>
               Aucune écriture ne correspond
-            </Button>
-          )}
-          {canSignal && (
-            <Button variant="secondary" icon={TriangleAlert} disabled={busy} onClick={onSignal}>
-              Signaler un écart
             </Button>
           )}
         </div>

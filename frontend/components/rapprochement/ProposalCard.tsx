@@ -33,12 +33,10 @@ type ProposalCardProps = {
   logo: string | null | undefined;
   checked: boolean;
   canValidate: boolean;
-  canSignal: boolean;
   busy: boolean;
   onToggle: () => void;
   onValidate: () => void;
   onReject: () => void;
-  onSignal: () => void;
   /** Ouvre l'opération dans l'onglet Rapprochement (choisir une autre écriture). */
   onOpen: () => void;
 };
@@ -46,19 +44,17 @@ type ProposalCardProps = {
 /**
  * Une proposition en grand : transaction bancaire à gauche, écriture comptable à droite, score et
  * critères au centre. Une proposition dont les montants diffèrent ne se coche ni ne se valide :
- * elle se signale comme écart.
+ * elle ne peut qu'être rejetée.
  */
 export function ProposalCard({
   item,
   logo,
   checked,
   canValidate,
-  canSignal,
   busy,
   onToggle,
   onValidate,
   onReject,
-  onSignal,
   onOpen,
 }: ProposalCardProps) {
   const ok = validable(item);
@@ -240,17 +236,11 @@ export function ProposalCard({
             Rejeter
           </Button>
         )}
-        {ok
-          ? canValidate && (
-              <Button icon={Check} disabled={busy} onClick={onValidate}>
-                Valider
-              </Button>
-            )
-          : canSignal && (
-              <Button icon={TriangleAlert} disabled={busy} onClick={onSignal}>
-                Signaler un écart
-              </Button>
-            )}
+        {ok && canValidate && (
+          <Button icon={Check} disabled={busy} onClick={onValidate}>
+            Valider
+          </Button>
+        )}
       </div>
     </article>
   );

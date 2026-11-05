@@ -7,6 +7,7 @@ Les PDF de `docs/` sont générés à partir des fichiers HTML de ce dossier :
 | `cahier-des-charges.html` | `docs/Cahier_des_charges_SIMTIS_V4.pdf` |
 | `architecture-fonctionnelle.html` | `docs/Architecture_fonctionnelle_SIMTIS_V2.pdf` |
 | `architecture-technique.html` | `docs/Architecture_technique_SIMTIS_V2.pdf` |
+| `fonctionnement-technique.html` | `docs/Fonctionnement_technique_SIMTIS.pdf` |
 
 Le style commun est dans `simtis-doc.css` (palette du design system). Pour régénérer après une
 modification, depuis la racine du dépôt :

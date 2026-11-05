@@ -15,12 +15,7 @@ export type EntriesFilter = {
   page: number;
 };
 
-export const STATUTS_RAPPROCHEMENT = [
-  "Non rapprochée",
-  "À vérifier",
-  "Rapprochée",
-  "Écart",
-] as const;
+export const STATUTS_RAPPROCHEMENT = ["Non rapprochée", "À vérifier", "Rapprochée"] as const;
 
 /**
  * Filtre Statut du volet Écritures du rapprochement (19/10/2026) : « Non rapprochée » ne montre

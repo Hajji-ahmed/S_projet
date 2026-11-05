@@ -37,8 +37,6 @@ export type Operation = {
   montant: string;
   statut: StatutRapprochement;
   correspondance: CorrespondanceResume | null;
-  /** Écart ouvert de l'opération (P12). */
-  ecart_id: number | null;
   /** Libellé terminé par « (*) » : en cours, jamais rapprochée (20/10/2026). */
   en_cours?: boolean;
 };

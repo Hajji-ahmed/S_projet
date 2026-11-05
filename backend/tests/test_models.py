@@ -46,7 +46,6 @@ def test_money_columns_are_numeric_18_2():
         ("bank_transactions", "montant"),
         ("accounting_entries", "montant"),
         ("cash_forecasts", "montant"),
-        ("discrepancies", "montant"),
     }
     tables = Base.metadata.tables
 

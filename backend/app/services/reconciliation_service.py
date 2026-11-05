@@ -7,7 +7,6 @@ Statuts des opérations et des écritures :
 - proposée ou ambiguë → « À vérifier » ;
 - validée par un utilisateur (ou rapprochée à la main) → « Rapprochée » ;
 - rejetée ou annulée → « Non rapprochée ». Une paire rejetée n'est reproposée qu'au prochain « Lancer le rapprochement ».
-« Écart » est réservé aux écarts (P12) : le moteur n'y touche pas.
 """
 
 from dataclasses import dataclass, field
@@ -25,7 +24,6 @@ from app.models import (
     ReconciliationMatch,
     ReconciliationMatchItem,
 )
-from app.repositories import discrepancy_repository
 from app.repositories import reconciliation_repository as repo
 from app.services import audit_service, lettrage_excel
 from app.services.errors import ConflictError, NotFoundError
@@ -1133,8 +1131,6 @@ def match_manually(
             "Les montants doivent être égaux, en sens opposé (un crédit en banque correspond à "
             f"un débit dans Sage) : écart de {abs(total_banque + total_sage):.2f}."
         )
-    if any("Écart" == ligne.statut for ligne in [*operations, *entries]):
-        raise ConflictError("Une ligne en écart se traite dans l'écran Écarts.")
     types = {type_operation(tx.libelle) for tx in operations} | {
         type_ecriture(entry.libelle) for entry in entries
     }
@@ -1288,8 +1284,6 @@ class TransactionsPage:
     taille: int
     par_statut: dict[str, int]
     operations: list[tuple[BankTransaction, str, ReconciliationMatch | None]]
-    # Écart ouvert de chaque opération de la page qui en a un (P12)
-    ecarts: dict[int, int]
     # Frais bancaires non rapprochés du filtre : nombre et total (12/10/2026)
     a_comptabiliser: int = 0
     total_a_comptabiliser: Decimal = Decimal(0)
@@ -1371,9 +1365,6 @@ def list_transactions(
         total_a_comptabiliser=total_frais,
         en_cours=en_cours,
         operations=[(tx, code, matches.get(tx.id)) for tx, code in rows],
-        ecarts=discrepancy_repository.open_discrepancy_by_transaction(
-            db, [tx.id for tx, _ in rows]
-        ),
     )
 
 
@@ -1701,7 +1692,7 @@ def _paire_rejetee(
 def _ecarts_operation(db: Session, tx: BankTransaction) -> list[Candidate]:
     """Écritures candidates à écarter pour l'opération ; vérifie qu'elle s'y prête (sans écrire)."""
     db.refresh(tx)
-    if tx.statut in ("Rapprochée", "Écart") or repo.active_matches_of(db, transaction_id=tx.id):
+    if tx.statut == "Rapprochée" or repo.active_matches_of(db, transaction_id=tx.id):
         raise ConflictError(
             f"L'opération « {tx.libelle} » a déjà un rapprochement ou une proposition : "
             "traitez-les d'abord."
@@ -2068,7 +2059,7 @@ def list_ambiguous_entries(
 def _ecarts_ecriture(db: Session, entry: AccountingEntry) -> list[CandidateOperation]:
     """Opérations candidates à écarter pour l'écriture ; vérifie qu'elle s'y prête (sans écrire)."""
     db.refresh(entry)
-    if entry.statut in ("Rapprochée", "Écart") or repo.active_matches_of(db, entry_id=entry.id):
+    if entry.statut == "Rapprochée" or repo.active_matches_of(db, entry_id=entry.id):
         raise ConflictError(
             f"L'écriture « {entry.libelle} » a déjà un rapprochement ou une proposition : "
             "traitez-les d'abord."

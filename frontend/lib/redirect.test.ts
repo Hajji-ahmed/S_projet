@@ -4,7 +4,7 @@ import { DEFAULT_PATH, loginPathFor, safeNextPath } from "./redirect";
 
 describe("safeNextPath", () => {
   it("suit un chemin interne, avec ses paramètres", () => {
-    expect(safeNextPath("/ecarts?statut=ouvert")).toBe("/ecarts?statut=ouvert");
+    expect(safeNextPath("/releves?statut=ouvert")).toBe("/releves?statut=ouvert");
   });
 
   it.each([
@@ -17,7 +17,7 @@ describe("safeNextPath", () => {
     ["chemin relatif", "dashboard"],
     ["retour à la ligne", "/dashboard\nSet-Cookie: x"],
     ["boucle vers la connexion", "/login"],
-    ["boucle vers la connexion avec paramètres", "/login?next=/ecarts"],
+    ["boucle vers la connexion avec paramètres", "/login?next=/releves"],
   ])("refuse : %s", (_label, value) => {
     expect(safeNextPath(value)).toBe(DEFAULT_PATH);
   });
@@ -25,7 +25,7 @@ describe("safeNextPath", () => {
 
 describe("loginPathFor", () => {
   it("mémorise la page demandée", () => {
-    expect(loginPathFor("/ecarts?statut=ouvert")).toBe("/login?next=%2Fecarts%3Fstatut%3Douvert");
+    expect(loginPathFor("/releves?statut=ouvert")).toBe("/login?next=%2Freleves%3Fstatut%3Douvert");
   });
 
   it("n'ajoute rien pour une page dangereuse", () => {

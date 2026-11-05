@@ -279,17 +279,16 @@ def transactions_by_ids(db: Session, ids: list[int]) -> list[BankTransaction]:
 
 
 def delete_transactions(db: Session, ids: list[int]) -> None:
-    """Supprime des opérations et ce qui les cite encore (prévisions, écarts, remplacements)."""
+    """Supprime des opérations et ce qui les cite encore (prévisions, remplacements)."""
     from sqlalchemy import delete, update
 
-    from app.models import CashForecast, Discrepancy
+    from app.models import CashForecast
 
     db.execute(
         update(CashForecast)
         .where(CashForecast.bank_transaction_id.in_(ids))
         .values(bank_transaction_id=None)
     )
-    db.execute(delete(Discrepancy).where(Discrepancy.bank_transaction_id.in_(ids)))
     db.execute(
         update(BankTransaction)
         .where(BankTransaction.remplacee_par_id.in_(ids))

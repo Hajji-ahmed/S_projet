@@ -37,7 +37,6 @@ import {
   periodeRapprochement,
   sensBanque,
   sensSage,
-  statutsVolet,
   toggleStatut,
   compteurStatut,
   validable,
@@ -249,13 +248,6 @@ describe("reconciliationQuery sans À vérifier", () => {
       "?company_id=1&sans_a_verifier=true&page=1",
     );
     expect(reconciliationQuery(1, { page: 1 })).toBe("?company_id=1&page=1");
-  });
-});
-
-describe("statutsVolet", () => {
-  it("ne propose « Écart » que si la fonction Écarts est active", () => {
-    expect(statutsVolet(false)).toEqual(["Non rapprochée", "Rapprochée"]);
-    expect(statutsVolet(true)).toEqual(["Non rapprochée", "Rapprochée", "Écart"]);
   });
 });
 

@@ -1,9 +1,8 @@
 /** Rapprochement 1→1 (P11) : règles pures de l'écran. Montants en texte exact, jamais en float. */
 import { formatDate } from "@/lib/balances";
-import { ECARTS_ACTIFS } from "@/lib/features";
 import { formatAmount } from "@/lib/format";
 import { fromCents, toCents } from "@/lib/statementLines";
-import type { Ecriture, StatutRapprochement } from "@/types/accounting";
+import type { Ecriture } from "@/types/accounting";
 import type { Candidat, Correspondance, Operation } from "@/types/reconciliation";
 
 export type ReconciliationFilter = {
@@ -314,17 +313,8 @@ export function sensSage(montant: string): "crédit Sage" | "débit Sage" {
   return montant.startsWith("-") ? "débit Sage" : "crédit Sage";
 }
 
-/**
- * Statuts du filtre du volet « Transactions bancaires » : « À vérifier » est dans Propositions, et
- * « Écart » seulement quand la fonction Écarts est active.
- */
-export function statutsVolet(ecartsActifs: boolean): StatutRapprochement[] {
-  return ecartsActifs
-    ? ["Non rapprochée", "Rapprochée", "Écart"]
-    : ["Non rapprochée", "Rapprochée"];
-}
-
-export const STATUTS_VOLET: string[] = [...statutsVolet(ECARTS_ACTIFS), A_COMPTABILISER];
+/** Statuts du filtre du volet « Transactions bancaires » : « À vérifier » est dans Propositions. */
+export const STATUTS_VOLET: string[] = ["Non rapprochée", "Rapprochée", A_COMPTABILISER];
 
 /**
  * Écritures possibles d'une opération (09/10/2026) : « utiles » = même montant (rapprochables) ou

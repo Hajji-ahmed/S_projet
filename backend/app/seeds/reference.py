@@ -119,17 +119,11 @@ ROLES: dict[str, tuple[str, tuple[PermissionCode, ...]]] = {
     ),
     "COMPTABLE": (
         "Comptable",
-        _CONSULTATION
-        + (
-            P.ACCOUNTING_IMPORT,
-            P.ACCOUNTING_PREPARE,
-            P.RECONCILIATION_VALIDATE,
-            P.DISCREPANCIES_MANAGE,
-        ),
+        _CONSULTATION + (P.ACCOUNTING_IMPORT, P.ACCOUNTING_PREPARE, P.RECONCILIATION_VALIDATE),
     ),
     "RESPONSABLE": (
         "Responsable",
-        _CONSULTATION + (P.RECONCILIATION_VALIDATE, P.DISCREPANCIES_MANAGE, P.AUDIT_VIEW),
+        _CONSULTATION + (P.RECONCILIATION_VALIDATE, P.AUDIT_VIEW),
     ),
     "DIRECTION": ("Direction / Consultation", _CONSULTATION),
 }

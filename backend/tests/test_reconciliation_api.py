@@ -563,7 +563,6 @@ def test_transactions_pane_counts_statuses_and_shows_the_match(client, comptable
         "Non rapprochée": 1,
         "À vérifier": 1,
         "Rapprochée": 0,
-        "Écart": 0,
     }
     proposed = next(o for o in body["operations"] if o["id"] == tx.id)
     assert proposed["correspondance"]["statut"] == "Proposée"

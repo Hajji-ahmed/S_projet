@@ -15,7 +15,6 @@ class PermissionCode(StrEnum):
     ACCOUNTING_PREPARE = "accounting.prepare"
     RECONCILIATION_VIEW = "reconciliation.view"
     RECONCILIATION_VALIDATE = "reconciliation.validate"
-    DISCREPANCIES_MANAGE = "discrepancies.manage"
     FORECASTS_MANAGE = "forecasts.manage"
     DASHBOARD_VIEW = "dashboard.view"
     ADMIN_USERS = "admin.users"
@@ -34,7 +33,6 @@ PERMISSION_DESCRIPTIONS: dict[PermissionCode, str] = {
     ),
     PermissionCode.RECONCILIATION_VIEW: "Consulter le rapprochement",
     PermissionCode.RECONCILIATION_VALIDATE: "Valider ou rejeter un rapprochement",
-    PermissionCode.DISCREPANCIES_MANAGE: "Traiter et clôturer les écarts",
     PermissionCode.FORECASTS_MANAGE: "Gérer les prévisions de trésorerie",
     PermissionCode.DASHBOARD_VIEW: "Consulter le dashboard",
     PermissionCode.ADMIN_USERS: "Administrer les utilisateurs",

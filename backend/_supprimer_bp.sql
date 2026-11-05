@@ -19,8 +19,6 @@ UNION SELECT import_batch_id FROM accounting_entries WHERE id IN (SELECT id FROM
 DELETE FROM reconciliation_matches WHERE id IN (
   SELECT match_id FROM reconciliation_match_items
   WHERE bank_transaction_id IN (SELECT id FROM tx) OR accounting_entry_id IN (SELECT id FROM ec));
-DELETE FROM discrepancies
-WHERE bank_transaction_id IN (SELECT id FROM tx) OR accounting_entry_id IN (SELECT id FROM ec);
 UPDATE cash_forecasts SET bank_transaction_id = NULL WHERE bank_transaction_id IN (SELECT id FROM tx);
 
 DELETE FROM balance_checks WHERE bank_account_id IN (SELECT id FROM c);

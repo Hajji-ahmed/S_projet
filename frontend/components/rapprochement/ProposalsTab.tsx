@@ -3,7 +3,6 @@
 import { CheckCheck, ListChecks, X } from "lucide-react";
 import { useState } from "react";
 
-import { SignalDiscrepancyModal } from "@/components/ecarts/SignalDiscrepancyModal";
 import { AmbiguousCard } from "@/components/rapprochement/AmbiguousCard";
 import { EcritureAmbigueCard } from "@/components/rapprochement/EcritureAmbigueCard";
 import { ProposalCard } from "@/components/rapprochement/ProposalCard";
@@ -54,12 +53,10 @@ import type {
 } from "@/types/reconciliation";
 
 type ProposalsTabProps = {
-  companyId: number;
   /** Propositions en attente de la période, chargées par la vue (null : en cours). */
   pending: Correspondances | null;
   logos: Map<string, string | null>;
   canValidate: boolean;
-  canManageDiscrepancies: boolean;
   /** Après une décision : la vue recharge tout et affiche le message. */
   onChanged: (message: string) => void;
   /** Ouvre la proposition dans l'onglet Rapprochement. */
@@ -76,11 +73,6 @@ type ProposalsTabProps = {
   /** Filtre « Type d'opération » de l'opération bancaire (14/10/2026) ; "" = tous. */
   typeOperation?: string;
   onTypeOperation?: (value: string) => void;
-};
-
-type LignesEcart = {
-  operation: { id: number; date: string; libelle: string; montant: string };
-  ecriture: { id: number; date: string; libelle: string; montant: string } | null;
 };
 
 /** Filtres de l'onglet ; le seuil « forte » vient du serveur (80 depuis le 08/10/2026). */
@@ -160,11 +152,9 @@ function plural(n: number, word: string): string {
  * d'office ; une faible ne l'est que par l'utilisateur, après vérification (décision du 07/10/2026).
  */
 export function ProposalsTab({
-  companyId,
   pending,
   logos,
   canValidate,
-  canManageDiscrepancies,
   onChanged,
   onOpen,
   ambigues,
@@ -209,7 +199,6 @@ export function ProposalsTab({
     fortes?: number;
   } | null>(null);
   const [comment, setComment] = useState("");
-  const [signaling, setSignaling] = useState<LignesEcart | null>(null);
   // Cartes ambiguës déjà rapprochées (16/10/2026) : masquées aussitôt, sans attendre le
   // rechargement des listes ; la liste rechargée ne les contient plus
   const [masqueesOps, setMasqueesOps] = useState<{ source: unknown; ids: Set<number> }>({
@@ -379,7 +368,6 @@ export function ProposalsTab({
                 logo={logos.get(item.operation.bank_code)}
                 checked={selected.has(item.id)}
                 canValidate={canValidate}
-                canSignal={canManageDiscrepancies}
                 busy={busy}
                 onToggle={() =>
                   setIds((ids) => {
@@ -393,22 +381,6 @@ export function ProposalsTab({
                   setComment("");
                   setRejecting(item);
                 }}
-                onSignal={() =>
-                  setSignaling({
-                    operation: {
-                      id: item.operation.id,
-                      date: item.operation.date_operation,
-                      libelle: item.operation.libelle,
-                      montant: item.operation.montant,
-                    },
-                    ecriture: {
-                      id: item.ecriture.id,
-                      date: item.ecriture.date_ecriture,
-                      libelle: item.ecriture.libelle,
-                      montant: item.ecriture.montant,
-                    },
-                  })
-                }
                 onOpen={() => onOpen(item)}
               />
             </li>
@@ -420,24 +392,12 @@ export function ProposalsTab({
                 logo={logos.get(item.operation.bank_code)}
                 seuilFort={ambigues.seuil_fort}
                 canValidate={canValidate}
-                canSignal={canManageDiscrepancies}
                 busy={busy}
                 enCours={enCours === `op-${item.operation.id}`}
                 onChoose={(candidat) =>
                   rapprocherAmbigue("op", item.operation.id, () =>
                     matchManually(item.operation.id, candidat.ecriture.id, undefined, true),
                   )
-                }
-                onSignal={() =>
-                  setSignaling({
-                    operation: {
-                      id: item.operation.id,
-                      date: item.operation.date_operation,
-                      libelle: item.operation.libelle,
-                      montant: item.operation.montant,
-                    },
-                    ecriture: null,
-                  })
                 }
                 onOpen={() => onOpenOperation(item.operation)}
                 onAucune={() => setAucune(item)}
@@ -846,19 +806,6 @@ export function ProposalsTab({
           />
         </Field>
       </Modal>
-
-      {signaling && (
-        <SignalDiscrepancyModal
-          companyId={companyId}
-          operation={signaling.operation}
-          ecriture={signaling.ecriture}
-          onClose={() => setSignaling(null)}
-          onCreated={(ecart) => {
-            setSignaling(null);
-            onChanged(`Écart n° ${ecart.id} « ${ecart.type} » signalé.`);
-          }}
-        />
-      )}
     </div>
   );
 }
