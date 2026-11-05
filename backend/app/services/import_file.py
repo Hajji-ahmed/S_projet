@@ -127,8 +127,12 @@ def _read_xlsx(content: bytes, feuille: str | None, unite: str) -> tuple[list[st
     try:
         names = list(workbook.sheetnames)
         name = _sheet_name(names, feuille)
+        sheet = workbook[name]
+        # Certains exports (JasperReports de BP, 05/11/2026) annoncent une taille fausse
+        # (`<dimension ref="A1"/>`) que la lecture seule croirait : on lit les lignes présentes.
+        sheet.reset_dimensions()
         rows: list[tuple] = []
-        for row in workbook[name].iter_rows(values_only=True):
+        for row in sheet.iter_rows(values_only=True):
             rows.append(tuple(row))
             _too_long(rows, unite)
     finally:

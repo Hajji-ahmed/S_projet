@@ -58,6 +58,7 @@ from app.services.normalization_service import (
     file_hash,
     guess_pointage,
     is_blank,
+    is_dash,
     is_solde_au,
     label_key,
     libelle_definitif,
@@ -743,7 +744,7 @@ def _opening_backwards(
 def _no_amount(value: object) -> bool:
     """Cellule de montant vide, à zéro (0, « 0,00 ») ou tiret : ce que les banques écrivent
     dans Débit / Crédit sur une ligne de solde."""
-    if is_blank(value) or str(value).strip() in {"-", "–", "—"}:
+    if is_blank(value) or is_dash(value):
         return True
     try:
         return parse_amount(value) == 0

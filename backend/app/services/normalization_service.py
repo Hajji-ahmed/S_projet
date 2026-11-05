@@ -48,9 +48,19 @@ def is_blank(value: object) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+# Tiret seul : ce que les banques écrivent dans une cellule sans valeur (montant d'une ligne de
+# solde, date de valeur d'une opération en cours « (*) » chez BP, 05/11/2026).
+TIRETS = frozenset({"-", "–", "—"})
+
+
+def is_dash(value: object) -> bool:
+    return isinstance(value, str) and value.strip() in TIRETS
+
+
 def parse_date(value: object) -> date | None:
-    """Date d'une cellule : date Excel, texte jj/mm/aaaa, jj/mm/aa, aaaa-mm-jj, ou numéro de série."""
-    if is_blank(value):
+    """Date d'une cellule : date Excel, texte jj/mm/aaaa, jj/mm/aa, aaaa-mm-jj, ou numéro de série.
+    Une cellule vide ou un tiret seul n'a pas de date."""
+    if is_blank(value) or is_dash(value):
         return None
     if isinstance(value, datetime):
         return value.date()

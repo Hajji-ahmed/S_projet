@@ -450,6 +450,21 @@ def test_invalid_lines_are_reported_with_their_reasons(client, tresorerie, accou
     assert body["resume"]["total_debit"] == "10.00"  # seules les lignes valides comptent
 
 
+def test_dash_value_date_is_empty_and_dash_operation_date_is_missing(client, tresorerie, account):
+    """Relevé BP (05/11/2026) : les opérations en cours « (*) » ont « - » en date de valeur."""
+    rows = [
+        HEADER,
+        ["24/09/2026", "-", "CHEQUE A ENCAISSER (*)", None, "30 000,00", None],
+        ["-", "-", "SANS DATE", 10, None, None],
+    ]
+
+    body = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
+
+    reasons = {line["numero"]: (line["statut"], line["motifs"]) for line in body["lignes"]}
+    assert reasons[2] == ("Valide", [])
+    assert reasons[3] == ("Erreur", ["Date d'opération manquante."])
+
+
 def test_identical_lines_in_the_file_are_two_operations(client, tresorerie, account):
     """12/10/2026 : deux frais identiques le même jour sont deux opérations, pas un doublon."""
     rows = [HEADER, *[["24/09/2026", None, "FRAIS SMS", 10, None, None]] * 2]

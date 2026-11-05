@@ -1,5 +1,7 @@
 """Lecture commune d'un classeur d'import (relevés et exports comptables)."""
 
+import re
+import zipfile
 from datetime import date, datetime
 from io import BytesIO
 
@@ -143,6 +145,25 @@ def test_xls_sheet_is_chosen_by_name():
     assert (names, name, rows[1]) == (["Résumé", "Opérations"], "Opérations", ("01/09/2025", "VIR"))
     with pytest.raises(ConflictError, match="Feuille introuvable"):
         read_sheet(content, "Absente")
+
+
+def test_xlsx_with_a_wrong_dimension_is_read_entirely():
+    """Export JasperReports de BP (05/11/2026) : la feuille annonce `<dimension ref="A1"/>`
+    alors qu'elle a des milliers de lignes ; le mode lecture seule d'openpyxl la croyait vide."""
+    content = xlsx([["Date", "Libellé", "Crédit"], ["04-11-2026", "CHEQUE", "30 000,00"]])
+    source = zipfile.ZipFile(BytesIO(content))
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = re.sub(rb'<dimension ref="[^"]*" ?/>', b'<dimension ref="A1"/>', data)
+                assert b'<dimension ref="A1"/>' in data
+            target.writestr(item, data)
+
+    _, _, rows = read_sheet(buffer.getvalue(), None)
+
+    assert rows == [("Date", "Libellé", "Crédit"), ("04-11-2026", "CHEQUE", "30 000,00")]
 
 
 def test_unreadable_xls_gives_a_clear_message():

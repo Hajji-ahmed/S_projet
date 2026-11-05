@@ -81,6 +81,12 @@ def test_unreadable_date_is_refused(value):
         parse_date(value)
 
 
+@pytest.mark.parametrize("value", ["-", " - ", "–", "—"])
+def test_dash_date_is_empty(value):
+    """BP (05/11/2026) : une opération en cours « (*) » a « - » en date de valeur."""
+    assert parse_date(value) is None
+
+
 def test_headers_are_compared_without_case_accents_or_punctuation():
     assert normalize_header("Date d'opération") == "date d operation"
     assert normalize_header("  DÉBIT (MAD) ") == "debit mad"
