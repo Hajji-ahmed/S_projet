@@ -12,10 +12,15 @@ import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { Field, Select, TextInput } from "@/components/ui/Field";
+import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { ApiError } from "@/lib/api";
-import { businessToday, currencySuffix, normalizeSignedAmountInput } from "@/lib/balances";
+import {
+  businessToday,
+  currencySuffix,
+  formatDate,
+  normalizeSignedAmountInput,
+} from "@/lib/balances";
 import { libelleCompte } from "@/lib/accounts";
 import { cn } from "@/lib/cn";
 import {
@@ -25,7 +30,7 @@ import {
   lineMotifs,
   type LineDraft,
 } from "@/lib/statementLines";
-import { assignField, fieldsByColumn, fileProblem } from "@/lib/statements";
+import { assignField, fieldsByColumn, fileProblem, jourSuivant } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
 import { listPointageTypes } from "@/services/referentiel";
 import { analyseStatement, confirmStatement } from "@/services/statements";
@@ -59,6 +64,9 @@ function Alert({ tone, children }: { tone: "danger" | "warning"; children: React
     </div>
   );
 }
+
+type Periode = { du: string; au: string };
+const SANS_PERIODE: Periode = { du: "", au: "" };
 
 type ImportWizardProps = {
   companyId: number;
@@ -99,6 +107,9 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   const [editingColumns, setEditingColumns] = useState(false);
   // Fichier sans soldes : solde d'ouverture du calcul, tel que saisi (pré-rempli par la proposition)
   const [ouvertureText, setOuvertureText] = useState("");
+  // Période appliquée (05/11/2026) et dates en cours de saisie (« AAAA-MM-JJ », vide = sans borne)
+  const [periode, setPeriode] = useState<Periode>(SANS_PERIODE);
+  const [periodeSaisie, setPeriodeSaisie] = useState<Periode>(SANS_PERIODE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,10 +146,16 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   async function run(
     chosenFile: File,
     chosenAccount: number,
-    options: { mapping?: ColumnMapping; feuille?: string; enCours?: boolean } = {},
+    options: {
+      mapping?: ColumnMapping;
+      feuille?: string;
+      enCours?: boolean;
+      periode?: Periode;
+    } = {},
   ) {
     setBusy(true);
     setError(null);
+    const choisie = options.periode ?? periode;
     try {
       const result = await analyseStatement({
         file: chosenFile,
@@ -146,7 +163,11 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
         mapping: options.mapping,
         feuille: options.feuille,
         enCours: options.enCours ?? enCours,
+        periodeDebut: choisie.du || undefined,
+        periodeFin: choisie.au || undefined,
       });
+      setPeriode(choisie);
+      setPeriodeSaisie(choisie);
       const read = result.lignes.map(draftFromLine);
       setAnalysis(result);
       setOuvertureText(amountToInput(result.solde_ouverture_propose));
@@ -171,7 +192,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   function chooseAccount(id: number) {
     setAccountId(id);
     setAnalysis(null);
-    if (file) void run(file, id);
+    if (file) void run(file, id, { periode: SANS_PERIODE });
   }
 
   function chooseFile(chosen: File) {
@@ -179,7 +200,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
     setFileError(problem);
     setFile(problem ? null : chosen);
     setAnalysis(null);
-    if (!problem && accountId !== null) void run(chosen, accountId);
+    if (!problem && accountId !== null) void run(chosen, accountId, { periode: SANS_PERIODE });
   }
 
   function changeDraft(next: LineDraft) {
@@ -247,6 +268,9 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
             mapping,
             feuille,
             enCours,
+            // Même période que l'aperçu : le serveur recalcule le solde d'ouverture sur elle
+            periodeDebut: periode.du || undefined,
+            periodeFin: periode.au || undefined,
             // Solde verrouillé (banque ou relevé précédent) : le serveur le retrouve seul
             soldeOuverture:
               analysis.soldes_calcules && analysis.solde_ouverture_modifiable !== false
@@ -447,6 +471,77 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
     );
   }
 
+  /** Période à importer (05/11/2026) : le serveur ignore les opérations hors période et calcule
+   *  le solde d'ouverture depuis le début de la période. Chaque choix relance l'analyse. */
+  function periodPicker(current: Analysis) {
+    const appliquer = (choisie: Periode) =>
+      file &&
+      accountId !== null &&
+      void run(file, accountId, { mapping, feuille, periode: choisie });
+    const inversee =
+      !!periodeSaisie.du && !!periodeSaisie.au && periodeSaisie.du > periodeSaisie.au;
+    const inchangee = periodeSaisie.du === periode.du && periodeSaisie.au === periode.au;
+    const filtree = !!periode.du || !!periode.au;
+    const derniere = current.derniere_operation_importee;
+    return (
+      <div className="mb-4 flex flex-wrap items-end gap-4 rounded-[12px] border border-simtis-border bg-simtis-background px-4 py-3">
+        <div className="w-[170px]">
+          <Field label="Période du" htmlFor="releve-periode-du">
+            <DateInput
+              id="releve-periode-du"
+              value={periodeSaisie.du}
+              disabled={busy}
+              onChange={(event) => setPeriodeSaisie({ ...periodeSaisie, du: event.target.value })}
+            />
+          </Field>
+        </div>
+        <div className="w-[170px]">
+          <Field
+            label="au"
+            htmlFor="releve-periode-au"
+            error={inversee ? "Avant la date de début." : undefined}
+          >
+            <DateInput
+              id="releve-periode-au"
+              value={periodeSaisie.au}
+              invalid={inversee}
+              disabled={busy}
+              onChange={(event) => setPeriodeSaisie({ ...periodeSaisie, au: event.target.value })}
+            />
+          </Field>
+        </div>
+        <div className="flex flex-wrap gap-2 pb-0.5">
+          <Button
+            variant="secondary"
+            disabled={busy || inversee || inchangee}
+            onClick={() => appliquer(periodeSaisie)}
+          >
+            Appliquer
+          </Button>
+          {derniere && (
+            <Button
+              variant="secondary"
+              disabled={busy || (periode.du === jourSuivant(derniere) && !periode.au)}
+              onClick={() => appliquer({ du: jourSuivant(derniere), au: "" })}
+            >
+              Après le dernier relevé ({formatDate(derniere)})
+            </Button>
+          )}
+          {filtree && (
+            <Button variant="ghost" disabled={busy} onClick={() => appliquer(SANS_PERIODE)}>
+              Toute la période
+            </Button>
+          )}
+        </div>
+        <p className="w-full text-sm text-simtis-muted">
+          {filtree
+            ? "Seules les opérations de cette période sont importées ; les autres sont dans « Lignes ignorées ». Le solde d'ouverture part du début de la période."
+            : "Tout le fichier est proposé. Choisissez une période pour n'importer qu'une partie des opérations (par exemple un export qui reprend des mois déjà importés)."}
+        </p>
+      </div>
+    );
+  }
+
   // --- Étape 2 : validation (aperçu au format standard, modifiable) ------------------------------
 
   function stepValidation(current: Analysis) {
@@ -461,6 +556,7 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
           importer.
         </p>
         {sheetPicker(current)}
+        {periodPicker(current)}
         {current.soldes_calcules && (
           <div className="mb-4 flex flex-wrap items-end gap-4 rounded-[12px] border border-simtis-border bg-simtis-background px-4 py-3">
             <div className="w-full max-w-[240px]">

@@ -9,6 +9,7 @@ import {
   fileProblem,
   formatDateTime,
   importForm,
+  jourSuivant,
   moveIndex,
   periodQuery,
   showFirst,
@@ -126,6 +127,14 @@ describe("importForm", () => {
     expect(form.get("ecarter_erreurs")).toBe("true");
   });
 
+  it("envoie la période choisie, rien quand elle est vide", () => {
+    const form = importForm({ file, accountId: 7, periodeDebut: "2026-10-01" });
+
+    expect(form.get("periode_debut")).toBe("2026-10-01");
+    expect(form.has("periode_fin")).toBe(false);
+    expect(importForm({ file, accountId: 7 }).has("periode_debut")).toBe(false);
+  });
+
   it("n'envoie pas de liste vide de doublons gardés", () => {
     const form = importForm({ file, accountId: 7 }, { garderDoublons: [], ecarterErreurs: false });
 
@@ -225,5 +234,13 @@ describe("commentaireAEnregistrer", () => {
     expect(commentaireAEnregistrer("Vu", " Vu ")).toBeUndefined();
     expect(commentaireAEnregistrer("Vu", "Vu avec Salma")).toBe("Vu avec Salma");
     expect(commentaireAEnregistrer("Vu", "")).toBeNull();
+  });
+});
+
+describe("jourSuivant", () => {
+  it("donne le lendemain, y compris en fin de mois et d'année", () => {
+    expect(jourSuivant("2026-09-30")).toBe("2026-10-01");
+    expect(jourSuivant("2026-12-31")).toBe("2027-01-01");
+    expect(jourSuivant("2028-02-28")).toBe("2028-02-29");
   });
 });

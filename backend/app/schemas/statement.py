@@ -176,6 +176,11 @@ class AnalyseOut(BaseModel):
     lignes_ignorees: list["LigneIgnoreeOut"] = Field(
         default_factory=list, description="Lignes non retenues et leur raison (jamais importées)"
     )
+    periode_debut: date | None = Field(None, description="Période choisie (05/11/2026) : début")
+    periode_fin: date | None = Field(None, description="Période choisie : fin")
+    derniere_operation_importee: date | None = Field(
+        None, description="Dernière opération déjà importée du compte, hors opérations en cours"
+    )
     resume: ResumeOut
 
     @classmethod
@@ -210,6 +215,9 @@ class AnalyseOut(BaseModel):
             lignes_ignorees=[
                 LigneIgnoreeOut.model_validate(line) for line in analysis.lignes_ignorees
             ],
+            periode_debut=analysis.periode_debut,
+            periode_fin=analysis.periode_fin,
+            derniere_operation_importee=analysis.derniere_operation_importee,
             resume=ResumeOut.model_validate(analysis.resume),
         )
 

@@ -213,6 +213,11 @@ class StatementAnalysis:
     solde_ouverture_choisi: Decimal | None = None
     # Fichier des opérations en cours (20/10/2026)
     en_cours: bool = False
+    # Période choisie à l'étape Validation (05/11/2026) : les lignes hors période sont ignorées
+    periode_debut: date | None = None
+    periode_fin: date | None = None
+    # Dernière opération déjà importée du compte (hors « (*) ») : raccourci « Après le dernier relevé »
+    derniere_operation_importee: date | None = None
 
 
 # --- Lecture du classeur et correspondance (module commun `import_file`) --------------------------
@@ -510,6 +515,46 @@ def _marquer_en_cours(
                 line.remplace_id, line.remplace_date = tx.id, tx.date_operation
                 line.remplace_avec_solde = tx.solde is not None
                 break
+
+
+def _lignes_de_la_periode(
+    analysis: StatementAnalysis, lines: list[AnalysedLine], rows: list[tuple]
+) -> list[AnalysedLine]:
+    """Lignes datées dans la période choisie (05/11/2026) ; les autres rejoignent les lignes
+    ignorées. Une date illisible reste en erreur. Une ligne SOLDE INITIAL (ou FINAL) du fichier ne
+    vaut plus quand la période coupe des lignes avant (ou après) : elle n'encadre plus les lignes
+    gardées."""
+    debut, fin = analysis.periode_debut, analysis.periode_fin
+    raison = (
+        "Hors de la période choisie ("
+        + " ".join(
+            part
+            for part in (
+                f"du {debut:%d/%m/%Y}" if debut else None,
+                f"au {fin:%d/%m/%Y}" if fin else None,
+            )
+            if part
+        )
+        + ")"
+    )
+    gardees = []
+    for line in lines:
+        jour = line.date_operation
+        avant = jour is not None and debut is not None and jour < debut
+        apres = jour is not None and fin is not None and jour > fin
+        if not (avant or apres):
+            gardees.append(line)
+            continue
+        if avant:
+            analysis.solde_initial_fichier = None
+        if apres:
+            analysis.solde_final_fichier = None
+        # `numero` est le numéro de la ligne Excel (1 = première ligne lue)
+        analysis.lignes_ignorees.append(
+            import_file.ignored_line(line.numero, raison, rows[line.numero - 1])
+        )
+    analysis.lignes_ignorees.sort(key=lambda ignoree: ignoree.numero)
+    return gardees
 
 
 def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
@@ -825,11 +870,16 @@ def analyse_statement(
     today: date | None = None,
     solde_ouverture: Decimal | None = None,
     en_cours: bool = False,
+    periode_debut: date | None = None,
+    periode_fin: date | None = None,
 ) -> StatementAnalysis:
     """Analyse un relevé pour un compte. Ne modifie pas la base.
 
     `en_cours` (20/10/2026) : fichier des opérations en cours d'une banque qui les envoie à part ;
     toutes ses lignes sont en cours, ses soldes sont ignorés.
+
+    `periode_debut` / `periode_fin` (05/11/2026) : seules les opérations datées dans la période sont
+    retenues ; les autres sont ignorées, et le solde d'ouverture part du début de la période.
 
     Fichier sans soldes : `solde_ouverture` (saisi à l'étape Validation) remplace le solde
     d'ouverture proposé, et les soldes de l'aperçu en sont calculés."""
@@ -839,6 +889,8 @@ def analyse_statement(
             f"Le compte {account.bank.code} {account.devise} est inactif : réactivez-le d'abord."
         )
     import_file.check_file(fichier_nom, content, pdf=True)
+    if periode_debut and periode_fin and periode_debut > periode_fin:
+        raise ConflictError("Période : la date de début est après la date de fin.")
 
     feuilles, feuille, rows = import_file.read_sheet(content, feuille, unite="relevé", pdf=True)
     header_index = import_file.detect_header(rows, STATEMENT_FIELDS)
@@ -875,6 +927,9 @@ def analyse_statement(
         erreurs_mapping=mapping_errors(mapping, len(columns)),
         format_fichier=import_file.format_fichier(content),
         fichier_en_cours=en_cours,
+        periode_debut=periode_debut,
+        periode_fin=periode_fin,
+        derniere_operation_importee=import_repository.last_operation_date(db, account.id),
     )
     if analysis.erreurs_mapping:
         return analysis  # pas de lecture des lignes tant que la correspondance est incomplète
@@ -926,6 +981,9 @@ def analyse_statement(
         for line in lines:
             line.solde = None
         analysis.solde_initial_fichier = analysis.solde_final_fichier = None
+    if periode_debut or periode_fin:
+        lines = _lignes_de_la_periode(analysis, lines, rows)
+        ignored = len(analysis.lignes_ignorees)
     _mark_duplicates(db, account, lines)
     _marquer_en_cours(db, account, lines, en_cours)
     analysis.lignes = lines
@@ -1313,6 +1371,8 @@ def confirm_statement(
     today: date | None = None,
     solde_ouverture: Decimal | None = None,
     en_cours: bool = False,
+    periode_debut: date | None = None,
+    periode_fin: date | None = None,
 ) -> StatementImport:
     """Enregistre un relevé : le fichier est analysé à nouveau, puis ses lignes retenues sont importées.
 
@@ -1330,6 +1390,8 @@ def confirm_statement(
         today=today,
         solde_ouverture=solde_ouverture,
         en_cours=en_cours,
+        periode_debut=periode_debut,
+        periode_fin=periode_fin,
     )
     account = analysis.account
     if analysis.erreurs_mapping:
@@ -1455,6 +1517,9 @@ def confirm_statement(
             "total_credit": total_credit,
             "periode_debut": statement.periode_debut,
             "periode_fin": statement.periode_fin,
+            "periode_choisie": (
+                {"du": periode_debut, "au": periode_fin} if periode_debut or periode_fin else None
+            ),
             "solde_ouverture": statement.solde_ouverture,
             "solde_cloture": statement.solde_cloture,
             "controle_solde": controle.statut if controle else None,

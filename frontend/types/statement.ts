@@ -106,6 +106,11 @@ export type Analysis = {
   solde_ouverture_modifiable?: boolean;
   /** La colonne Solde recopiait le montant de chaque ligne : ignorée (12/10/2026). */
   solde_colonne_ignoree?: boolean;
+  /** Période appliquée (05/11/2026) ; null : tout le fichier. */
+  periode_debut?: string | null;
+  periode_fin?: string | null;
+  /** Dernière opération déjà importée du compte, hors opérations en cours « (*) ». */
+  derniere_operation_importee?: string | null;
   resume: AnalysisSummary;
 };
 
@@ -224,6 +229,9 @@ export type ImportRequest = {
   soldeOuverture?: string;
   /** Fichier des opérations en cours d'une banque qui les envoie à part (20/10/2026). */
   enCours?: boolean;
+  /** Période choisie à l'étape Validation (05/11/2026), « AAAA-MM-JJ » : le reste est ignoré. */
+  periodeDebut?: string;
+  periodeFin?: string;
 };
 
 /** Une ligne du fichier telle que l'aperçu modifiable l'envoie (corrigée ou non). Pas d'ajout. */

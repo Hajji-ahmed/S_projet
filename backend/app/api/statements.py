@@ -318,6 +318,15 @@ EnCoursForm = Annotated[
 ]
 
 
+PeriodeDebutForm = Annotated[
+    date | None,
+    Form(description="Période choisie (AAAA-MM-JJ) : opérations datées à partir de ce jour"),
+]
+PeriodeFinForm = Annotated[
+    date | None, Form(description="Période choisie (AAAA-MM-JJ) : opérations jusqu'à ce jour")
+]
+
+
 def _opening(raw: str | None) -> Decimal | None:
     """Solde d'ouverture saisi ; illisible → 422."""
     if raw is None or not raw.strip():
@@ -345,6 +354,8 @@ def analyse_statement(
     feuille: FeuilleForm = None,
     solde_ouverture: SoldeOuvertureForm = None,
     en_cours: EnCoursForm = False,
+    periode_debut: PeriodeDebutForm = None,
+    periode_fin: PeriodeFinForm = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_import),
 ) -> AnalyseOut:
@@ -361,6 +372,8 @@ def analyse_statement(
         feuille=feuille or None,
         solde_ouverture=_opening(solde_ouverture),
         en_cours=en_cours,
+        periode_debut=periode_debut,
+        periode_fin=periode_fin,
     )
     return AnalyseOut.from_analysis(analysis)
 
@@ -380,6 +393,8 @@ def confirm_statement(
     ] = False,
     solde_ouverture: SoldeOuvertureForm = None,
     en_cours: EnCoursForm = False,
+    periode_debut: PeriodeDebutForm = None,
+    periode_fin: PeriodeFinForm = None,
     lignes: Annotated[
         UploadFile | None,
         File(
@@ -422,5 +437,7 @@ def confirm_statement(
         ip=client_ip(request),
         solde_ouverture=_opening(solde_ouverture),
         en_cours=en_cours,
+        periode_debut=periode_debut,
+        periode_fin=periode_fin,
     )
     return ConfirmationOut.from_import(result)

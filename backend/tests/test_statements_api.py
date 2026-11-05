@@ -2151,6 +2151,104 @@ def test_the_opening_comes_from_the_last_imported_operation(client, tresorerie, 
     assert body["lignes"][0]["solde_apercu"] == "5200.00"
 
 
+# --- Période choisie à l'étape Validation (05/11/2026) --------------------------------------------
+
+LONG_EXPORT = [
+    ["Date", "Libellé", "Débit", "Crédit"],
+    ["15/08/2026", "VIR ANCIEN", None, 100],
+    ["01/09/2026", "VIR", None, 10],
+    ["05/09/2026", "CHQ 12", 50, None],
+    ["06/09/2026", "VIR CLIENT", None, 200],
+    ["10/09/2026", "VIR TARDIF", None, 30],
+]
+
+
+def test_lines_outside_the_period_are_ignored_and_the_opening_follows_the_period(
+    client, tresorerie, account, db
+):
+    """Export BP qui reprend des années déjà importées, sans soldes : la période choisie écarte
+    l'ancien, et le solde d'ouverture est le solde de clôture qui précède la période."""
+    first = [["Date", "Libellé", "Crédit", "Solde"], ["01/09/2026", "VIR", 10, 4200]]
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", first)))
+    content = xlsx(("Relevé", LONG_EXPORT))
+    periode = {"periode_debut": "2026-09-02", "periode_fin": "2026-09-06"}
+
+    body = analyse(client, tresorerie, account.id, content, **periode).json()
+
+    assert [line["libelle"] for line in body["lignes"]] == ["CHQ 12", "VIR CLIENT"]
+    assert [(line["numero"], line["raison"]) for line in body["lignes_ignorees"]] == [
+        (number, "Hors de la période choisie (du 02/09/2026 au 06/09/2026)") for number in (2, 3, 6)
+    ]
+    assert body["resume"]["nb_ignorees"] == 3
+    assert (body["periode_debut"], body["periode_fin"]) == ("2026-09-02", "2026-09-06")
+    assert body["derniere_operation_importee"] == "2026-09-01"
+    assert body["solde_ouverture_propose"] == "4200.00"
+    assert body["solde_ouverture_source"] == "Solde de clôture du relevé précédent, le 01/09/2026"
+
+    response = confirm(client, tresorerie, account.id, content, solde_ouverture=None, **periode)
+
+    assert response.status_code == 201, response.text
+    saved = transactions(db, account)
+    assert [(tx.libelle, tx.solde) for tx in saved[1:]] == [
+        ("CHQ 12", Decimal("4150.00")),
+        ("VIR CLIENT", Decimal("4350.00")),
+    ]
+    audit = db.scalar(
+        select(AuditLog).filter_by(action="import_releve").order_by(AuditLog.id.desc()).limit(1)
+    )
+    assert audit.nouvelle_valeur["periode_choisie"] == {"du": "2026-09-02", "au": "2026-09-06"}
+
+
+def test_without_a_period_every_line_is_read(client, tresorerie, account):
+    body = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", LONG_EXPORT)), solde_ouverture="0"
+    ).json()
+
+    assert len(body["lignes"]) == 5 and body["lignes_ignorees"] == []
+    assert (body["periode_debut"], body["periode_fin"], body["derniere_operation_importee"]) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_a_period_that_ends_before_it_starts_is_refused(client, tresorerie, account):
+    content = xlsx(("Relevé", LONG_EXPORT))
+
+    reversed_period = analyse(
+        client,
+        tresorerie,
+        account.id,
+        content,
+        periode_debut="2026-09-06",
+        periode_fin="2026-09-02",
+    )
+    unreadable = analyse(client, tresorerie, account.id, content, periode_debut="hier")
+
+    assert reversed_period.status_code == 409
+    assert (
+        reversed_period.json()["detail"] == "Période : la date de début est après la date de fin."
+    )
+    assert unreadable.status_code == 422
+
+
+def test_a_period_that_cuts_the_start_drops_the_file_opening_line(client, tresorerie, account):
+    rows = [
+        ["Date", "Libellé", "Débit", "Crédit"],
+        [None, "SOLDE INITIAL", None, 1000],
+        ["01/09/2026", "VIR", None, 10],
+        ["05/09/2026", "CHQ 12", 50, None],
+    ]
+
+    body = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), periode_debut="2026-09-02"
+    ).json()
+
+    # La ligne SOLDE INITIAL encadrait le 01/09, écarté : elle ne donne plus le solde d'ouverture
+    assert body["solde_ouverture_source"] != "Ligne SOLDE INITIAL du fichier"
+    assert [line["libelle"] for line in body["lignes"]] == ["CHQ 12"]
+
+
 def test_the_opening_comes_from_a_saved_balance_otherwise(client, tresorerie, account, db):
     save(
         db,

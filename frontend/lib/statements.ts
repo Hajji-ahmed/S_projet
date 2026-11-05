@@ -72,6 +72,8 @@ export function importForm(request: ImportRequest, options?: ConfirmOptions): Fo
   if (request.feuille) form.append("feuille", request.feuille);
   if (request.soldeOuverture) form.append("solde_ouverture", request.soldeOuverture);
   if (request.enCours) form.append("en_cours", "true");
+  if (request.periodeDebut) form.append("periode_debut", request.periodeDebut);
+  if (request.periodeFin) form.append("periode_fin", request.periodeFin);
   if (options && "lignes" in options) {
     // Aperçu modifiable : les lignes remplacent garder_doublons / ecarter_erreurs. Envoyées comme
     // un fichier JSON : le serveur limite un champ de formulaire à 1 Mo (environ 3 700 lignes).
@@ -87,6 +89,13 @@ export function importForm(request: ImportRequest, options?: ConfirmOptions): Fo
     form.append("ecarter_erreurs", String(options.ecarterErreurs));
   }
   return form;
+}
+
+/** Lendemain d'une date « AAAA-MM-JJ » (raccourci « Après le dernier relevé », 05/11/2026). Calcul
+ *  en UTC : le fuseau du poste ne déplace jamais le jour. */
+export function jourSuivant(iso: string): string {
+  const [annee, mois, jour] = iso.split("-").map(Number);
+  return new Date(Date.UTC(annee, mois - 1, jour + 1)).toISOString().slice(0, 10);
 }
 
 /** Nom du fichier exporté, identique à celui de l'API : « releve_CIH_MAD_2026-09-24_2026-09-26.xlsx ». */

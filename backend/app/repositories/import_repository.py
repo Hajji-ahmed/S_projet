@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -240,6 +240,16 @@ def last_operation_before(
         .limit(1)
     ).first()
     return None if row is None else (row[0], row[1])
+
+
+def last_operation_date(db: Session, account_id: int) -> date | None:
+    """Date de la dernière opération importée du compte, hors opérations en cours « (*) »."""
+    return db.scalar(
+        select(func.max(BankTransaction.date_operation)).where(
+            BankTransaction.bank_account_id == account_id,
+            BankTransaction.en_cours.is_(False),
+        )
+    )
 
 
 def operations_en_cours(
