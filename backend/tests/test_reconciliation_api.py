@@ -1,6 +1,6 @@
 """Rapprochement 1→1 (P11) : lancement, décisions, lectures, permissions et audit."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from itertools import count
 
@@ -1631,12 +1631,14 @@ def test_discarding_operations_frees_the_entries_left_without_candidates(
     assert sorted(audit.nouvelle_valeur["ecritures_liberees"]) == sorted(e.id for e in ecrs)
 
 
-def test_a_fee_is_never_proposed_alone_and_stays_to_be_booked(client, comptable, direction, db):
-    """15/10/2026 : les frais et leur TVA se comptabilisent dans SIMTIS. Une commission face à
-    une écriture « COM » du même montant n'est pas proposée ; elle reste « À comptabiliser »."""
+def test_a_fee_is_not_proposed_alone_against_an_entry_that_is_not_a_fee(
+    client, comptable, direction, db
+):
+    """15/10/2026 : les frais se comptabilisent dans SIMTIS. Une commission face à un virement
+    Sage du même montant n'est pas proposée ; elle reste « À comptabiliser »."""
     compte = account(db)
     commission = operation(db, compte, montant="-50", libelle="COMMISSION")
-    ecriture(db, compte, montant="50", libelle="COM", numero_piece="C1", tiers=None)
+    ecriture(db, compte, montant="50", libelle="VIR FOURNISSEUR X", numero_piece="C1", tiers=None)
 
     run(client, comptable, db)
 
@@ -1651,6 +1653,42 @@ def test_a_fee_is_never_proposed_alone_and_stays_to_be_booked(client, comptable,
         headers=direction,
     ).json()
     assert page["a_comptabiliser"] == 1
+
+
+def test_a_fee_alone_is_proposed_against_a_sage_fee_entry_of_the_same_amount(
+    client, comptable, direction, db
+):
+    """05/11/2026 : « FRAIS RECUPERES PAR LA BANQUE » déjà passé dans Sage en « INTERET CREDOC »
+    du même montant : proposé 1 → 1 (jamais validé seul), il quitte « À comptabiliser ». Trois
+    frais de 255 face à trois écritures de 255 de jours différents : chacun avec celle de son jour."""
+    compte = account(db)
+    jours = [JOUR - timedelta(days=12), JOUR - timedelta(days=5), JOUR]
+    frais = [operation(db, compte, "-255", j, "FRAIS RECUPERES PAR LA BANQUE") for j in jours]
+    credocs = [
+        ecriture(db, compte, "255", j, f"INTERET CREDOC/TF26{i}", numero_piece=f"BP{i}", tiers=None)
+        for i, j in enumerate(jours)
+    ]
+    agios = operation(db, compte, "-111524.95", JOUR + timedelta(days=2), "INTERETS DEBITEURS")
+    agios_bp = ecriture(db, compte, "111524.95", JOUR, "AGIOS BP AU 30/09", tiers=None)
+
+    run(client, comptable, db)
+
+    proposees = client.get(
+        "/api/reconciliation/proposals", params={"company_id": company(db).id}, headers=direction
+    ).json()["correspondances"]
+    paires = {(p["operation"]["id"], p["ecriture"]["id"]) for p in proposees}
+    attendues = {(f.id, c.id) for f, c in zip(frais, credocs, strict=True)} | {
+        (agios.id, agios_bp.id)
+    }
+    assert paires == attendues
+    assert all(p["type"] == "1-1" for p in proposees)
+    assert statuses(db, *frais, agios) == ["À vérifier"] * 4
+    page = client.get(
+        "/api/reconciliation/transactions",
+        params={"company_id": company(db).id, **PERIODE},
+        headers=direction,
+    ).json()
+    assert page["a_comptabiliser"] == 0
 
 
 # --- Rapprochement depuis les ambiguës : relance ciblée (16/10/2026) ------------------------------

@@ -31,6 +31,7 @@ from app.services.position_service import business_today
 from app.services.reconciliation_groupes import (
     ResultatGroupes,
     explication_ensemble,
+    frais_seul_couvert,
     grouper,
     score_ensemble,
     type_ensemble,
@@ -467,6 +468,21 @@ def _engine(
         if p in equilibrees or (p.operation_id not in groupe_tx and p.ecriture_id not in groupe_ec)
     ]
 
+    # 3 bis. Frais seuls face à une écriture Sage de frais (05/11/2026) : « FRAIS RECUPERES PAR LA
+    # BANQUE » ↔ « INTERET CREDOC », sur ce que le 1 → 1 et les groupes laissent libre
+    pris_ec = (
+        {p.ecriture_id for p in resultat.propositions} | groupe_ec | resultat.ecritures_ambigues
+    )
+    frais_seuls = _frais_seuls(
+        [by_tx[i] for i in sorted(frais_ids - groupe_tx)],
+        [e for e in entries if e.id not in pris_ec and e.origine != "SIMTIS"],
+        regles,
+        repo.rejected_pairs(db, company.id),
+    )
+    resultat.propositions.extend(frais_seuls.propositions)
+    resultat.operations_ambigues |= frais_seuls.operations_ambigues
+    resultat.ecritures_ambigues |= frais_seuls.ecritures_ambigues
+
     # 4. Chaque proposition est enregistrée, en attente d'une décision humaine
     for proposition in resultat.propositions:
         _enregistrer_proposition(
@@ -514,6 +530,39 @@ def _engine(
     repo.set_entry_status(db, a_verifier_ec, "À vérifier")
     db.flush()
     return _Moteur(resultat, len(transactions), len(entries), len(anciennes), groupes)
+
+
+def _frais_seuls(
+    frais: list[BankTransaction],
+    entries: list[AccountingEntry],
+    regles: Grille,
+    paires_rejetees: set[tuple[int, int]] | frozenset[tuple[int, int]],
+) -> Resultat:
+    """Propositions 1 → 1 d'un frais seul face à une écriture Sage de frais (05/11/2026) : même
+    compte, montant exactement opposé, au plus `fenetre_jours` (`frais_seul_couvert`), puis le
+    score et les égalités habituels de `proposer`, montant par montant (jamais un montant voisin)."""
+    ecritures = [_ecriture(entry) for entry in entries]
+    par_montant: dict[tuple[int | None, Decimal], list[Ecriture]] = {}
+    for ecriture in ecritures:
+        par_montant.setdefault((ecriture.bank_account_id, -ecriture.montant), []).append(ecriture)
+    operations: dict[tuple[int | None, Decimal], list[Operation]] = {}
+    for tx in frais:
+        cle = (tx.bank_account_id, tx.montant)
+        if cle in par_montant:
+            operations.setdefault(cle, []).append(_operation(tx))
+    resultat = Resultat()
+    for cle, ops in operations.items():
+        candidates = [
+            ecriture
+            for ecriture in par_montant[cle]
+            if any(frais_seul_couvert(op, ecriture, regles) for op in ops)
+        ]
+        partiel = proposer(ops, candidates, regles, paires_rejetees)
+        resultat.propositions.extend(partiel.propositions)
+        resultat.operations_ambigues |= partiel.operations_ambigues
+        resultat.ecritures_ambigues |= partiel.ecritures_ambigues
+    resultat.propositions.sort(key=lambda item: (item.operation_id, item.ecriture_id))
+    return resultat
 
 
 def _enregistrer_proposition(

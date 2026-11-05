@@ -11,6 +11,7 @@ Le moteur ne fait que proposer : un humain valide chaque groupe. Prudence : aucu
 montants), et une opération n'entre que dans un groupe.
 """
 
+import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -342,6 +343,31 @@ FAMILLES_PAR_ECRITURE = (
 )
 
 
+# Écriture Sage de frais ou d'intérêts (05/11/2026) : un frais SEUL du relevé ne se rapproche que
+# d'une telle écriture (début du libellé normalisé). « EAP1° CHQ … STE.BIS COM » n'en est pas une.
+_ECRITURE_DE_FRAIS = re.compile(
+    r"^(INTERETS?|AGIOS|FRAIS|COM|COMMISSIONS?|TVA|TAXE|DT D ENREGISTREMENT"
+    r"|DROITS? DE TIMBRE)\b"
+)
+
+
+def est_ecriture_de_frais(libelle: str | None) -> bool:
+    """L'écriture Sage est un frais ou des intérêts bancaires (INTERET CREDOC, AGIOS BP, COM…)."""
+    return bool(_ECRITURE_DE_FRAIS.match(_plain(libelle)))
+
+
+def frais_seul_couvert(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool:
+    """Un frais seul face à une écriture Sage de frais (05/11/2026) : même compte, montant
+    exactement opposé, au plus `fenetre_jours` d'écart."""
+    return (
+        operation.bank_account_id == ecriture.bank_account_id
+        and operation.montant == -ecriture.montant
+        and operation.montant != 0
+        and est_ecriture_de_frais(ecriture.libelle)
+        and ecart_jours(operation, ecriture) <= grille.fenetre_jours
+    )
+
+
 def _familles_admises(ecriture: Ecriture) -> set[str] | None:
     texte = _plain(ecriture.libelle)
     for prefixe, familles in FAMILLES_PAR_ECRITURE:
@@ -365,8 +391,11 @@ def operations_couvertes(
     d'une opération principale avec ses frais (10 000 + commission 50 + TVA 10 = 10 060), même
     ambigu, couvre un frais. Les frais à contrôler (`cibles`) ne sont jamais l'opération
     principale. Une paire rejetée par un utilisateur ne couvre rien. `ecart_seul` n'est plus
-    utilisé (un frais seul face à une écriture n'est plus couvert)."""
+    utilisé. Depuis le 05/11/2026, un frais seul est aussi couvert par une écriture Sage de frais
+    du même montant à `fenetre_jours` près (`frais_seul_couvert` : « FRAIS RECUPERES PAR LA
+    BANQUE » ↔ « INTERET CREDOC ») ; le groupe passe avant."""
     operations = list(operations)
+    ecritures = list(ecritures)
     frais_ids = cibles or frozenset()
     par_compte_jour: dict[tuple[int | None, date], list[Operation]] = {}
     for op in operations:
@@ -396,10 +425,8 @@ def operations_couvertes(
                 principales.setdefault((cle[0], cle[1], op.montant), []).append(op)
 
     couvertes: dict[int, int] = {}
-    if not paires_du_jour:
-        return couvertes
     fenetre = grille.fenetre_jours
-    for ecriture in ecritures:
+    for ecriture in ecritures if paires_du_jour else ():
         if ecriture.montant == 0:
             continue
         compte = ecriture.bank_account_id
@@ -427,6 +454,20 @@ def operations_couvertes(
                             continue
                         for op in ops:
                             couvertes.setdefault(op.id, ecriture.id)
+
+    # Frais seul face à une écriture Sage de frais (05/11/2026), après les groupes
+    seuls: dict[tuple[int | None, Decimal], list[Operation]] = {}
+    for op in operations:
+        a_controler = op.id in cibles if cibles is not None else famille_frais(op.libelle)
+        if a_controler and op.id not in couvertes:
+            seuls.setdefault((op.bank_account_id, op.montant), []).append(op)
+    if seuls:
+        for ecriture in ecritures:
+            for op in seuls.get((ecriture.bank_account_id, -ecriture.montant), ()):
+                if (op.id, ecriture.id) not in paires_rejetees and frais_seul_couvert(
+                    op, ecriture, grille
+                ):
+                    couvertes.setdefault(op.id, ecriture.id)
     return couvertes
 
 

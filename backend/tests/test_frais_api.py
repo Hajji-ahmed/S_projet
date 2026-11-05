@@ -919,23 +919,31 @@ def virement_et_frais(db, compte, jour=JOUR):
 
 
 def test_fees_inside_a_sage_entry_are_neither_proposed_nor_booked(client, comptable, db):
-    """Seul le groupe « opération principale + frais » couvre un frais (15/10/2026) : un frais
-    seul face à une écriture du même montant se comptabilise dans SIMTIS."""
+    """Le groupe « opération principale + frais » couvre ses frais (15/10/2026), et un frais seul
+    face à une écriture Sage de frais du même montant à `fenetre_jours` près aussi (05/11/2026) ;
+    face à une écriture qui n'est pas un frais, il se comptabilise dans SIMTIS."""
     compte = bp(db)
     _, commission, tva = virement_et_frais(db, compte)
     agios = operation(db, compte, "-30", JOUR, "AGIOS BANCAIRES")
+    frais = operation(db, compte, "-40", JOUR, "FRAIS DE TENUE DE COMPTE")
     ecriture(db, compte, "10055", JOUR, "VIR FOURNISSEUR X")
     ecriture(db, compte, "30", date(2026, 4, 25), "AGIOS AVRIL")
+    ecriture(db, compte, "40", JOUR, "VIR CLIENT Y")
 
     body = lire(client, comptable, db, None).json()
     automatique = valider(client, comptable, db, (compte, JOUR), famille="commissions")
 
     assert body["propositions"] == []
     inclus = {item["id"]: item["ecriture"]["libelle"] for item in body["frais_inclus"]}
-    assert inclus == {commission.id: "VIR FOURNISSEUR X", tva.id: "VIR FOURNISSEUR X"}
-    assert [item["id"] for item in body["autres_frais"]] == [agios.id]
+    assert inclus == {
+        commission.id: "VIR FOURNISSEUR X",
+        tva.id: "VIR FOURNISSEUR X",
+        agios.id: "AGIOS AVRIL",
+    }
+    assert [item["id"] for item in body["autres_frais"]] == [frais.id]
     assert automatique.status_code == 409
-    assert manuelle(client, comptable, db, [agios]).status_code == 200
+    assert manuelle(client, comptable, db, [agios]).status_code == 409
+    assert manuelle(client, comptable, db, [frais]).status_code == 200
 
 
 def test_a_rejected_pair_or_an_unrelated_entry_does_not_block_a_fee(client, comptable, db):
@@ -948,7 +956,7 @@ def test_a_rejected_pair_or_an_unrelated_entry_does_not_block_a_fee(client, comp
     agios = operation(db, compte, "-30", JOUR, "AGIOS BANCAIRES")
     rejetee = ecriture(db, compte, "30", JOUR, "AGIOS AVRIL")
     ecriture(db, autre, "30", JOUR, "AGIOS AWB")  # autre compte
-    ecriture(db, compte, "30", date(2026, 4, 28), "AGIOS MAI")  # 5 jours d'écart
+    ecriture(db, compte, "30", date(2026, 5, 4), "AGIOS MAI")  # 11 jours : hors fenêtre
     db.add(
         ReconciliationMatch(
             company_id=compte.company_id,

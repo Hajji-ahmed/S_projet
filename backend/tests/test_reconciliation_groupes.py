@@ -3,7 +3,10 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from app.services.reconciliation_groupes import (
+    est_ecriture_de_frais,
     famille_frais,
     grouper,
     operations_couvertes,
@@ -210,14 +213,51 @@ def test_a_principal_and_its_fees_are_covered_by_the_sage_entry():
     assert operations_couvertes(ops, [vir], GRILLE_PAR_DEFAUT, {(2, 10)}) == {}
 
 
-def test_a_fee_alone_is_no_longer_covered_by_an_entry():
-    """15/10/2026 : un frais seul face à une écriture du même montant n'est plus « déjà dans
-    Sage » : il se comptabilise dans SIMTIS."""
-    agios = op(1, "-30", "AGIOS BANCAIRES")
+@pytest.mark.parametrize(
+    ("libelle", "attendu"),
+    [
+        ("INTERET CREDOC/TF2620358411", True),
+        ("INTERETS CMT", True),
+        ("AGIOS BP AU 30/09/226", True),
+        ("COM", True),
+        ("COMMISSION RTGS", True),
+        ("FRAIS DE REFINANCEMENT/DI 7824", True),
+        ("TVA COM", True),
+        ("DT D'ENREGISTREMENT", True),
+        ("EAP1° CHQ 5100983 STE.BIS COM S.A.R.L", False),
+        ("VIR FOURNISSEUR X", False),
+        ("EAR1° AHC 1300289 HASSAN", False),
+        ("COMPENSATION", False),
+        (None, False),
+    ],
+)
+def test_a_sage_fee_entry_is_recognised_by_its_label(libelle, attendu):
+    assert est_ecriture_de_frais(libelle) is attendu
 
-    assert (
-        operations_couvertes(
-            [agios], [ec(10, "30", "AGIOS", jour=date(2026, 4, 23))], GRILLE_PAR_DEFAUT
-        )
-        == {}
-    )
+
+def test_a_fee_alone_is_covered_by_a_sage_fee_entry_of_the_same_amount():
+    """05/11/2026 : « FRAIS RECUPERES PAR LA BANQUE » ↔ « INTERET CREDOC » du même montant, à
+    `fenetre_jours` (10) près, est déjà dans Sage (le 15/10/2026, un frais seul ne l'était plus)."""
+    frais = op(1, "-255", "FRAIS RECUPERES PAR LA BANQUE")
+    credoc = ec(10, "255", "INTERET CREDOC/TF2620358411", jour=date(2026, 5, 1))
+
+    assert operations_couvertes([frais], [credoc], GRILLE_PAR_DEFAUT) == {1: 10}
+    # À 11 jours, face à une écriture qui n'est pas un frais, d'un autre montant, d'un autre
+    # compte ou par une paire rejetée : rien n'est couvert
+    loin = ec(11, "255", "INTERET CREDOC", jour=date(2026, 5, 2))
+    cheque = ec(12, "255", "EAP1° CHQ 5100983 STE.BIS COM")
+    autre_montant = ec(13, "255.01", "INTERET CREDOC")
+    autre_compte = ec(14, "255", "INTERET CREDOC", compte=2)
+    for ecriture in (loin, cheque, autre_montant, autre_compte):
+        assert operations_couvertes([frais], [ecriture], GRILLE_PAR_DEFAUT) == {}
+    assert operations_couvertes([frais], [credoc], GRILLE_PAR_DEFAUT, {(1, 10)}) == {}
+
+
+def test_only_the_fees_to_check_are_covered_alone():
+    """Avec `cibles`, seuls ces frais ; sans, toute opération dont le libellé est un frais."""
+    virement = op(1, "-30", "VIREMENT EMIS X")
+    agios = op(2, "-30", "AGIOS BANCAIRES")
+    entree = ec(10, "30", "AGIOS AVRIL")
+
+    assert operations_couvertes([virement, agios], [entree], GRILLE_PAR_DEFAUT) == {2: 10}
+    assert operations_couvertes([agios], [entree], GRILLE_PAR_DEFAUT, cibles=set()) == {}
