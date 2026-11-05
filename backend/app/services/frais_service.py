@@ -120,8 +120,6 @@ COMPTE_TIMBRE = "61671"
 COMPTE_COMMISSION = "61714000"
 COMPTE_FRAIS_BANCAIRES = "61473000"  # FRAIS COMMISSIONS BANCAIRE
 COMPTE_TVA = "34552142"  # TVA BANQUE 10 %
-COMPTE_FRAIS_ESCOMPTE = "63117000"
-COMPTE_FRAIS_REFINANCEMENT = "63119500"
 COMPTES_AGIOS = {
     "BMCE": "63111000",
     "BP": "63112000",
@@ -129,6 +127,33 @@ COMPTES_AGIOS = {
     "BMCI": "63116000",
     "CIH": "63116300",
 }
+
+# Comptes de charge des frais et intérêts bancaires (05/11/2026, liste du plan comptable donnée par
+# le métier) : (numéro, intitulé, banque réservée). Une écriture manuelle dont le libellé commence
+# par l'intitulé va sur ce compte ; on peut aussi le choisir dans la saisie.
+COMPTES_FRAIS: tuple[tuple[str, str, str | None], ...] = (
+    ("61473000", "FRAIS COMMISSIONS BANCAIRE", None),
+    ("63110001", "INTERET CREDOC", None),
+    ("63110002", "INTERET RELANCE", None),
+    ("63110004", "INTERET CMT / OXYGENE", None),
+    ("63111000", "AGIOS B.M.C.E", "BMCE"),
+    ("63112000", "AGIOS BP", "BP"),
+    ("63113000", "AGIOS AWB", "AWB"),
+    ("63115200", "INTERET DE RETARD/ OP FINANCIERE", None),
+    ("63116000", "AGIOS BMCI", "BMCI"),
+    ("63116300", "AGIOS CIH", "CIH"),
+    ("63117000", "FRAIS D'ESCOMPTE", None),
+    ("63118000", "INTERETS CREDIT ENLEVEMENT", None),
+    ("63119400", "INTERET CRED SPOT", None),
+    ("63119410", "INTERET ACNE/MCNE", None),
+    ("63119420", "INTERETS CREDIT AFFACTURAGE", None),
+    ("63119500", "FRAIS DE REFINANCEMENT", None),
+    ("63119700", "INTERET CMT", None),
+    ("63119710", "INTERETS CMT BP 10.728 KMAD", "BP"),
+    ("63119800", "INTERETS EMPRUNTS GROUPE", None),
+    ("63119901", "COMPTE D'ATTENTE / INTERETS", None),
+    ("63180000", "CHARGES D'INTERET EXER ANTERIEURS", None),
+)
 COMPTE_PAR_TYPE = {
     "timbre": COMPTE_TIMBRE,
     "frais_recuperes_timbre": COMPTE_TIMBRE,
@@ -974,8 +999,9 @@ def _nouvelle_piece(db: Session, company_id: int, account: BankAccount, jour: da
 
 def compte_charge(type_ligne: str | None, libelle_ecriture: str, banque: str) -> str | None:
     """Compte général Sage d'une ligne de frais (16/10/2026) : la TVA sur 34552142, chaque type
-    automatique sur le sien ; une écriture manuelle par son libellé (AGIOS selon la banque, FRAIS
-    D'ESCOMPTE, FRAIS DE REFINANCEMENT, COM / COMMISSION), sinon les frais bancaires."""
+    automatique sur le sien ; une écriture manuelle par son libellé (AGIOS selon la banque, puis
+    l'intitulé d'un compte de `COMPTES_FRAIS` (05/11/2026), COM / COMMISSION), sinon les frais
+    bancaires."""
     if est_ligne_tva(type_ligne):
         return COMPTE_TVA
     if type_ligne in COMPTE_PAR_TYPE:
@@ -984,13 +1010,40 @@ def compte_charge(type_ligne: str | None, libelle_ecriture: str, banque: str) ->
     premier = texte.split()[0] if texte else ""
     if premier == "AGIOS":
         return COMPTES_AGIOS.get(banque)
-    if texte.startswith("FRAIS D ESCOMPTE"):
-        return COMPTE_FRAIS_ESCOMPTE
-    if texte.startswith("FRAIS DE REFINANCEMENT"):
-        return COMPTE_FRAIS_REFINANCEMENT
+    if compte := compte_du_libelle(libelle_ecriture, banque):
+        return compte
     if premier in ("COM", "COMMISSION", "COMMISSIONS"):
         return COMPTE_COMMISSION
     return COMPTE_FRAIS_BANCAIRES
+
+
+def _cle_intitule(texte: str | None) -> str:
+    """« Intérêts crédit affacturage » → « INTERET CREDIT AFFACTURAGE » : sans ponctuation ni
+    accents, INTERETS = INTERET."""
+    mots = _sans_ponctuation(texte).split()
+    return " ".join("INTERET" if mot == "INTERETS" else mot for mot in mots)
+
+
+def comptes_frais(banque: str | None = None) -> list[tuple[str, str]]:
+    """(numéro, intitulé) des comptes de frais proposés pour un compte de cette banque (tous sans
+    banque) ; un compte réservé à une banque n'est proposé que pour elle (05/11/2026)."""
+    return [
+        (numero, intitule)
+        for numero, intitule, reservee in COMPTES_FRAIS
+        if banque is None or reservee in (None, banque)
+    ]
+
+
+def compte_du_libelle(libelle: str, banque: str) -> str | None:
+    """Compte de la liste dont l'intitulé commence le libellé (05/11/2026), le plus long gagnant
+    (« INTERET CMT / OXYGENE » avant « INTERET CMT ») ; None si aucun."""
+    texte = _cle_intitule(libelle)
+    trouves = [
+        (len(cle), numero)
+        for numero, intitule in comptes_frais(banque)
+        if (cle := _cle_intitule(intitule)) and (texte == cle or texte.startswith(cle + " "))
+    ]
+    return max(trouves)[1] if trouves else None
 
 
 def lignes_gl(account: BankAccount, details: list[Detail], total: Decimal) -> list[LigneGL]:
@@ -1359,11 +1412,13 @@ def comptabiliser_manuellement(
     montant_tva: Decimal | None,
     acteur_id: int,
     ip: str | None,
+    compte: str | None = None,
 ) -> AccountingEntry:
     """Une écriture saisie à la main pour des frais d'un même compte, créée et rapprochée d'emblée.
 
     Le total est recalculé sur les opérations (jamais repris de l'écran). Avec de la TVA, le frais
-    hors taxe est le total moins la TVA saisie, ou la ventilation au taux donné.
+    hors taxe est le total moins la TVA saisie, ou la ventilation au taux donné. `compte` : compte
+    de charge choisi dans `COMPTES_FRAIS` (05/11/2026), sinon celui du libellé.
     """
     texte = _libelle_manuel(libelle)
     ids = sorted(set(transaction_ids))
@@ -1405,6 +1460,10 @@ def comptabiliser_manuellement(
         raise ConflictError(
             f"Compte {account.bank.code} {account.devise} : renseignez son compte comptable et "
             "son journal des frais (écran Comptes)."
+        )
+    if compte is not None and compte not in dict(comptes_frais(account.bank.code)):
+        raise ConflictError(
+            f"Le compte {compte} n'est pas un compte de frais proposé pour {account.bank.code}."
         )
     somme = sum((tx.montant for tx in operations), ZERO)
     if somme == 0:
@@ -1456,6 +1515,20 @@ def comptabiliser_manuellement(
         acteur_id=acteur_id,
     )
     entry.numero_piece = _nouvelle_piece(db, company_id, account, entry.date_ecriture)
+    lignes = lignes_manuelle(None, montant, montant_tva, texte, account.bank.code)
+    if compte is not None and compte != lignes[0].compte:
+        # Compte choisi autre que celui du libellé : lignes enregistrées, la TVA reste la sienne
+        for ordre, ligne in enumerate(lignes, start=1):
+            db.add(
+                FraisLigne(
+                    accounting_entry_id=entry.id,
+                    ordre=ordre,
+                    compte=ligne.compte if est_ligne_tva(ligne.type) else compte,
+                    libelle=texte_ligne(texte, ligne)[:LIBELLE_MAX],
+                    montant=ligne.credit or ligne.debit,
+                    sens=SENS_CREDIT if ligne.credit else SENS_DEBIT,
+                )
+            )
     audit_service.log(
         db,
         user_id=acteur_id,
@@ -1467,6 +1540,7 @@ def comptabiliser_manuellement(
             "frais_ht": total - (montant_tva or ZERO),
             "montant_tva": montant_tva,
             "taux_tva": entry.taux_tva,
+            "compte_charge": compte or lignes[0].compte,
         },
         ip=ip,
     )

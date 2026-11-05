@@ -1,18 +1,24 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
-import { DateInput, Field, NumberInput, TextInput } from "@/components/ui/Field";
+import { DateInput, Field, NumberInput, Select, TextInput } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { normalizeAmountInput } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
 import { formatAmount } from "@/lib/format";
-import { LIBELLES_SUGGERES, sommeMontants, ventilerTva } from "@/lib/frais";
+import {
+  comptesDeLaBanque,
+  compteDuLibelle,
+  sommeMontants,
+  suggestionsLibelles,
+  ventilerTva,
+} from "@/lib/frais";
 import { fromCents, toCents } from "@/lib/statementLines";
-import { comptabiliserManuellement } from "@/services/frais";
-import type { AutreFrais } from "@/types/frais";
+import { comptabiliserManuellement, listComptesFrais } from "@/services/frais";
+import type { AutreFrais, CompteFrais } from "@/types/frais";
 
 type ManualFeeModalProps = {
   companyId: number;
@@ -33,7 +39,8 @@ function montant(saisie: string): string | null {
 /**
  * Écriture saisie à la main pour des frais d'un même compte (13/10/2026) : libellé, date et, si le
  * montant contient de la TVA, le frais hors taxe et la TVA séparés. À monter seulement à
- * l'ouverture : son état repart de zéro.
+ * l'ouverture : son état repart de zéro. Le compte de charge suit le libellé (« INTERET CRED SPOT »
+ * → 63119400) ou se choisit dans la liste des comptes de frais (05/11/2026).
  */
 export function ManualFeeModal({ companyId, operations, onClose, onDone }: ManualFeeModalProps) {
   const somme = sommeMontants(operations.map((tx) => tx.montant));
@@ -46,7 +53,11 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
       .sort()
       .at(-1) ?? "";
 
+  const banque = operations[0]?.bank_code ?? "";
   const [libelle, setLibelle] = useState("");
+  const [comptes, setComptes] = useState<CompteFrais[]>([]);
+  // null : le compte suit le libellé
+  const [compteChoisi, setCompteChoisi] = useState<string | null>(null);
   const [date, setDate] = useState(derniereDate);
   const [avecTva, setAvecTva] = useState(false);
   const [taux, setTaux] = useState(TAUX_PAR_DEFAUT);
@@ -54,6 +65,22 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
   const [tva, setTva] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let actif = true;
+    listComptesFrais()
+      .then((liste) => {
+        if (actif) setComptes(liste);
+      })
+      // Sans la liste, le serveur choisit le compte d'après le libellé
+      .catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, []);
+
+  const comptesProposes = comptesDeLaBanque(comptes, banque);
+  const compte = compteChoisi ?? compteDuLibelle(libelle, banque, comptes) ?? "";
 
   function appliquerTaux(valeur: string) {
     setTaux(valeur);
@@ -115,6 +142,7 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
         date,
         taux_tva: avecTva ? taux.trim().replace(",", ".") : null,
         montant_tva: avecTva ? tvaExacte : null,
+        ...(compte ? { compte } : {}),
       });
       onDone(`Écriture ${result.codes[0]} comptabilisée et rapprochée.`);
     } catch (failure) {
@@ -167,10 +195,27 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
           />
         </Field>
         <datalist id="frais-manuel-suggestions">
-          {LIBELLES_SUGGERES.map((suggestion) => (
+          {suggestionsLibelles(comptesProposes).map((suggestion) => (
             <option key={suggestion} value={suggestion} />
           ))}
         </datalist>
+
+        <Field
+          label="Compte de charge"
+          htmlFor="frais-manuel-compte"
+          hint="Suit le libellé ; la TVA va toujours sur 34552142."
+        >
+          <Select
+            id="frais-manuel-compte"
+            value={compte}
+            placeholder="D'après le libellé (COM 61714000, sinon 61473000)"
+            options={comptesProposes.map((item) => ({
+              value: item.numero,
+              label: `${item.numero} · ${item.intitule}`,
+            }))}
+            onChange={(event) => setCompteChoisi(event.target.value || null)}
+          />
+        </Field>
 
         <Field label="Date" htmlFor="frais-manuel-date" required>
           <DateInput

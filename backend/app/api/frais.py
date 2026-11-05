@@ -15,6 +15,7 @@ from app.core.db import get_db
 from app.core.permissions import PermissionCode
 from app.schemas.frais import (
     AutreFraisOut,
+    CompteFraisOut,
     EcarterIn,
     EcritureFraisOut,
     FraisInclusOut,
@@ -123,6 +124,16 @@ def exporter(
         media_type=CSV,
         headers={"Content-Disposition": f'attachment; filename="{nom}"'},
     )
+
+
+@router.get("/comptes", response_model=list[CompteFraisOut])
+def comptes(_user: CurrentUser = Depends(can_view)) -> list[CompteFraisOut]:
+    """Comptes de charge des frais bancaires (05/11/2026), à choisir pour une écriture manuelle ;
+    `banque` : compte réservé à cette banque."""
+    return [
+        CompteFraisOut(numero=numero, intitule=intitule, banque=banque)
+        for numero, intitule, banque in frais_service.COMPTES_FRAIS
+    ]
 
 
 @router.get("", response_model=TimbresOut)
@@ -244,6 +255,7 @@ def comptabiliser_manuellement(
         date_ecriture=body.date_ecriture,
         taux_tva=body.taux_tva,
         montant_tva=body.montant_tva,
+        compte=body.compte,
         acteur_id=user.id,
         ip=client_ip(request),
     )

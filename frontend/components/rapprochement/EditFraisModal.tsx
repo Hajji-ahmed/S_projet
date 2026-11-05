@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Plus, RotateCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { DateInput, Field, NumberInput, Select, TextInput } from "@/components/ui/Field";
@@ -9,9 +9,15 @@ import { Modal } from "@/components/ui/Modal";
 import { normalizeAmountInput } from "@/lib/accounts";
 import { businessToday, formatDate } from "@/lib/balances";
 import { formatAmount } from "@/lib/format";
-import { etatLignes, lignesSaisies } from "@/lib/frais";
+import { comptesDeLaBanque, etatLignes, lignesSaisies } from "@/lib/frais";
 import { fromCents, toCents } from "@/lib/statementLines";
-import type { LigneSaisie, ModificationFrais, PropositionTimbres } from "@/types/frais";
+import { listComptesFrais } from "@/services/frais";
+import type {
+  CompteFrais,
+  LigneSaisie,
+  ModificationFrais,
+  PropositionTimbres,
+} from "@/types/frais";
 
 type Saisie = { compte: string; libelle: string; montant: string; sens: LigneSaisie["sens"] };
 
@@ -52,6 +58,20 @@ export function EditFraisModal({
     })),
   );
   const [lignesModifiees, setLignesModifiees] = useState(modification?.lignes !== undefined);
+  // Comptes de frais proposés sur chaque ligne (05/11/2026) ; la saisie reste libre
+  const [comptes, setComptes] = useState<CompteFrais[]>([]);
+
+  useEffect(() => {
+    let actif = true;
+    listComptesFrais()
+      .then((liste) => {
+        if (actif) setComptes(liste);
+      })
+      .catch(() => undefined);
+    return () => {
+      actif = false;
+    };
+  }, []);
 
   const propres: LigneSaisie[] = lignes.map((ligne) => ({
     ...ligne,
@@ -189,6 +209,8 @@ export function EditFraisModal({
                       aria-label={`Compte de la ligne ${index + 1}`}
                       value={ligne.compte}
                       maxLength={20}
+                      list="frais-modif-comptes"
+                      autoComplete="off"
                       className="min-w-[110px]"
                       onChange={(event) => changerLigne(index, "compte", event.target.value)}
                     />
@@ -235,6 +257,12 @@ export function EditFraisModal({
               ))}
             </tbody>
           </table>
+          <datalist id="frais-modif-comptes">
+            {comptesDeLaBanque(comptes, item.bank_code).map((compte) => (
+              <option key={compte.numero} value={compte.numero} label={compte.intitule} />
+            ))}
+            <option value="34552142" label="TVA BANQUE 10 %" />
+          </datalist>
         </div>
         <p className="text-sm tabular-nums">
           Lignes {formatAmount(etat.somme, "DH")} · opérations {formatAmount(item.total, "DH")} ·

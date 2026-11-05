@@ -800,6 +800,114 @@ def test_manual_booking_needs_the_permission(client, direction, db):
     assert manuelle(client, direction, db, [rtgs]).status_code == 403
 
 
+# --- Comptes de charge des frais (05/11/2026) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("libelle", "banque", "attendu"),
+    [
+        ("INTERET CREDOC", "BP", "63110001"),
+        ("Intérêts crédoc mars", "BP", "63110001"),
+        ("INTERET RELANCE", "AWB", "63110002"),
+        ("INTERET CMT / OXYGENE", "BP", "63110004"),
+        ("INTERET CMT", "BP", "63119700"),
+        ("INTERETS CMT FEVRIER", "AWB", "63119700"),
+        ("INTERET DE RETARD/ OP FINANCIERE", "CIH", "63115200"),
+        ("INTERET CREDIT ENLEVEMENT", "BP", "63118000"),
+        ("INTERET CRED SPOT", "BMCE", "63119400"),
+        ("INTERET ACNE/MCNE", "BP", "63119410"),
+        ("INTERETS CREDIT AFFACTURAGE", "BP", "63119420"),
+        ("INTERETS CMT BP 10.728 KMAD", "BP", "63119710"),
+        # Réservé à BP : ailleurs, l'intitulé plus court « INTERET CMT »
+        ("INTERETS CMT BP 10.728 KMAD", "AWB", "63119700"),
+        ("INTERETS EMPRUNTS GROUPE", "BP", "63119800"),
+        ("COMPTE D'ATTENTE / INTERETS", "BP", "63119901"),
+        ("CHARGES D'INTERET EXER ANTERIEURS", "BP", "63180000"),
+        ("FRAIS D'ESCOMPTE", "BP", "63117000"),
+        ("FRAIS DE REFINANCEMENT", "BP", "63119500"),
+        # Inchangés : AGIOS selon la banque, COM, sinon les frais bancaires
+        ("AGIOS BP", "BMCE", "63111000"),
+        ("COM RTGS", "BP", "61714000"),
+        ("INTERETS DEBITEURS", "BP", "61473000"),
+        ("INTERET CREDOCX", "BP", "61473000"),
+    ],
+)
+def test_a_manual_entry_goes_to_the_account_named_by_its_label(libelle, banque, attendu):
+    assert frais_service.compte_charge("frais", libelle, banque) == attendu
+    # La TVA reste sur son compte
+    assert frais_service.compte_charge("tva", libelle, banque) == "34552142"
+
+
+def test_the_fee_accounts_are_listed_with_their_reserved_bank(client, direction):
+    response = client.get("/api/frais/comptes", headers=direction)
+
+    assert response.status_code == 200
+    comptes = {c["numero"]: c for c in response.json()}
+    assert len(comptes) == 21
+    assert comptes["63119400"] == {
+        "numero": "63119400",
+        "intitule": "INTERET CRED SPOT",
+        "banque": None,
+    }
+    assert comptes["63119710"]["banque"] == "BP"
+    assert "63119710" not in dict(frais_service.comptes_frais("AWB"))
+    assert "63119710" in dict(frais_service.comptes_frais("BP"))
+
+
+def test_a_manual_entry_takes_the_account_chosen_in_the_list(client, comptable, db):
+    compte = bp(db)
+    frais = operation(db, compte, "-165", JOUR, RTGS)
+
+    response = manuelle(
+        client, comptable, db, [frais], libelle="INTERETS", compte="63119400", taux_tva="10"
+    )
+
+    assert response.status_code == 200, response.text
+    code = response.json()["codes"][0]
+    ecrite = lire(client, comptable, db, None).json()["ecritures"][0]
+    assert [(ligne["compte"], ligne["credit"]) for ligne in ecrite["lignes"]] == [
+        ("63119400", "150.00"),
+        ("34552142", "15.00"),
+    ]
+    rows = lignes_csv(exporter(client, comptable, db))
+    assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+        (code, "63119400", "INTERETS", "150,00", "Crédit"),
+        (code, "34552142", "TVA INTERETS", "15,00", "Crédit"),
+    ]
+    audit = db.scalar(select(AuditLog).filter_by(action="comptabilisation_manuelle"))
+    assert audit.nouvelle_valeur["compte_charge"] == "63119400"
+
+
+def test_the_account_of_the_label_needs_no_saved_lines(client, comptable, db):
+    compte = bp(db)
+    frais = operation(db, compte, "-165", JOUR, RTGS)
+
+    response = manuelle(client, comptable, db, [frais], libelle="INTERET CREDOC", compte="63110001")
+
+    assert response.status_code == 200, response.text
+    ecrite = lire(client, comptable, db, None).json()["ecritures"][0]
+    assert ecrite["modifiee"] is False
+    assert [ligne["compte"] for ligne in ecrite["lignes"]] == ["63110001"]
+
+
+@pytest.mark.parametrize("compte_choisi", ["99999999", "34552142"])
+def test_a_manual_entry_refuses_an_account_out_of_the_list(client, comptable, db, compte_choisi):
+    compte = account(db, bank_code="AWB")
+    compte.journal_sage = "5241"
+    compte.journal_frais = "5241"
+    compte.compte_comptable = "55410001"
+    db.flush()
+    frais = operation(db, compte, "-165", JOUR, RTGS)
+
+    response = manuelle(client, comptable, db, [frais], compte=compte_choisi)
+    reserve = manuelle(client, comptable, db, [frais], compte="63119710")
+
+    assert response.status_code == 409
+    assert reserve.status_code == 409
+    assert "AWB" in reserve.json()["detail"]
+    assert statuses(db, frais) == ["Non rapprochée"]
+
+
 # --- Frais déjà inclus dans une écriture Sage (13/10/2026) ---------------------------------------
 
 

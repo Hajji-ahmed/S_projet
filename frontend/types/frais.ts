@@ -140,6 +140,13 @@ export type Timbres = {
   ecartes?: JourEcarte[];
 };
 
+/** Compte de charge des frais bancaires (05/11/2026) ; `banque` : réservé à cette banque. */
+export type CompteFrais = {
+  numero: string;
+  intitule: string;
+  banque: string | null;
+};
+
 export type ValidationTimbres = {
   nb_ecritures: number;
   codes: string[];

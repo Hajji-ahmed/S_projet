@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   cleJour,
+  compteDuLibelle,
+  comptesDeLaBanque,
   etatLignes,
   libelleModifie,
   lignesSaisies,
   selectionTimbres,
   sommeMontants,
+  suggestionsLibelles,
   ventilerTva,
 } from "@/lib/frais";
-import type { PropositionTimbres } from "@/types/frais";
+import type { CompteFrais, PropositionTimbres } from "@/types/frais";
 
 const jour = (bank_account_id: number, date: string, total: string, famille = "timbres") =>
   ({ famille, bank_account_id, date, total }) as PropositionTimbres;
@@ -111,5 +114,42 @@ describe("propositions modifiées (19/10/2026)", () => {
     ]);
     expect(libelleModifie(tva, "COM", "COM RTGS")).toBe("TVA COM RTGS");
     expect(libelleModifie({ ...tva, libelle: "COM" }, "COM", "COM RTGS")).toBe("COM RTGS");
+  });
+});
+
+describe("comptes de charge des frais (05/11/2026)", () => {
+  const comptes: CompteFrais[] = [
+    { numero: "63110004", intitule: "INTERET CMT / OXYGENE", banque: null },
+    { numero: "63112000", intitule: "AGIOS BP", banque: "BP" },
+    { numero: "63113000", intitule: "AGIOS AWB", banque: "AWB" },
+    { numero: "63119400", intitule: "INTERET CRED SPOT", banque: null },
+    { numero: "63119700", intitule: "INTERET CMT", banque: null },
+    { numero: "63119710", intitule: "INTERETS CMT BP 10.728 KMAD", banque: "BP" },
+  ];
+
+  it("réserve un compte à sa banque", () => {
+    expect(comptesDeLaBanque(comptes, "AWB").map((c) => c.numero)).toEqual([
+      "63110004",
+      "63113000",
+      "63119400",
+      "63119700",
+    ]);
+  });
+
+  it("donne le compte de l'intitulé le plus long qui commence le libellé, comme le serveur", () => {
+    expect(compteDuLibelle("Intérêts cred spot mars", "BP", comptes)).toBe("63119400");
+    expect(compteDuLibelle("INTERET CMT / OXYGENE", "BP", comptes)).toBe("63110004");
+    expect(compteDuLibelle("INTERETS CMT BP 10.728 KMAD", "BP", comptes)).toBe("63119710");
+    expect(compteDuLibelle("INTERETS CMT BP 10.728 KMAD", "AWB", comptes)).toBe("63119700");
+    expect(compteDuLibelle("AGIOS BANCAIRES", "AWB", comptes)).toBe("63113000");
+    expect(compteDuLibelle("INTERETS DEBITEURS", "BP", comptes)).toBeNull();
+    expect(compteDuLibelle("INTERET CMTX", "BP", comptes)).toBeNull();
+  });
+
+  it("propose les libellés usuels puis les intitulés, sans doublon", () => {
+    const suggestions = suggestionsLibelles(comptes);
+    expect(suggestions[0]).toBe("AGIOS");
+    expect(suggestions).toContain("INTERET CRED SPOT");
+    expect(new Set(suggestions).size).toBe(suggestions.length);
   });
 });

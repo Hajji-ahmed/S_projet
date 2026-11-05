@@ -1,6 +1,12 @@
 import { apiDownload, apiFetch } from "@/lib/api";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
-import type { FamilleFrais, ModificationFrais, Timbres, ValidationTimbres } from "@/types/frais";
+import type {
+  CompteFrais,
+  FamilleFrais,
+  ModificationFrais,
+  Timbres,
+  ValidationTimbres,
+} from "@/types/frais";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -57,12 +63,19 @@ export function comptabiliserManuellement(body: {
   date: string;
   taux_tva: string | null;
   montant_tva: string | null;
+  /** Compte de charge choisi (05/11/2026) ; absent : d'après le libellé. */
+  compte?: string;
 }) {
   return apiFetch<ValidationTimbres>("/frais/manuelle", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
   });
+}
+
+/** Comptes de charge des frais bancaires (05/11/2026), à choisir pour une écriture manuelle. */
+export function listComptesFrais() {
+  return apiFetch<CompteFrais[]>("/frais/comptes");
 }
 
 type JourChoisi = { famille: FamilleFrais; bank_account_id: number; date: string };

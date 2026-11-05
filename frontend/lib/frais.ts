@@ -1,5 +1,5 @@
 import { fromCents, toCents } from "@/lib/statementLines";
-import type { LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
+import type { CompteFrais, LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
 
 /** Identifiant d'une écriture proposée : sa famille, un compte et un jour. */
 export function cleJour(
@@ -33,6 +33,61 @@ export const LIBELLES_SUGGERES = [
   "INTERET CREDOC",
   "INTERETS DEBITEURS",
 ];
+
+/** Libellés proposés : les libellés usuels puis les intitulés des comptes de frais (05/11/2026). */
+export function suggestionsLibelles(comptes: CompteFrais[]): string[] {
+  return [...new Set([...LIBELLES_SUGGERES, ...comptes.map((compte) => compte.intitule)])];
+}
+
+/** Comptes de frais proposés pour un compte de cette banque : un compte réservé (63119710 « CMT
+ * BP ») ne l'est que pour sa banque. */
+export function comptesDeLaBanque(comptes: CompteFrais[], banque: string): CompteFrais[] {
+  return comptes.filter((compte) => compte.banque === null || compte.banque === banque);
+}
+
+/** « Intérêts crédit affacturage » → « INTERET CREDIT AFFACTURAGE » : comme le serveur, sans
+ * accents ni ponctuation, INTERETS = INTERET. */
+function cleIntitule(texte: string): string {
+  return texte
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((mot) => (mot === "INTERETS" ? "INTERET" : mot))
+    .join(" ");
+}
+
+/**
+ * Compte de frais que le serveur donne à ce libellé (`frais_service.compte_charge`, 05/11/2026) :
+ * AGIOS → celui de la banque, sinon l'intitulé le plus long qui commence le libellé ; null sinon
+ * (le serveur garde alors COM 61714000 ou les frais bancaires 61473000).
+ */
+export function compteDuLibelle(
+  libelle: string,
+  banque: string,
+  comptes: CompteFrais[],
+): string | null {
+  const texte = cleIntitule(libelle);
+  const candidats = comptesDeLaBanque(comptes, banque);
+  if (texte.split(" ")[0] === "AGIOS")
+    return (
+      candidats.find((compte) => compte.banque === banque && compte.intitule.startsWith("AGIOS"))
+        ?.numero ?? null
+    );
+  let trouve: { longueur: number; numero: string } | null = null;
+  for (const compte of candidats) {
+    const cle = cleIntitule(compte.intitule);
+    if (
+      cle &&
+      (texte === cle || texte.startsWith(`${cle} `)) &&
+      cle.length > (trouve?.longueur ?? -1)
+    )
+      trouve = { longueur: cle.length, numero: compte.numero };
+  }
+  return trouve?.numero ?? null;
+}
 
 /** Somme exacte (signée) des montants, en texte « -165.00 ». */
 export function sommeMontants(montants: string[]): string {
