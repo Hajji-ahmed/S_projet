@@ -10,6 +10,7 @@ import {
   pageOf,
   sageLinesFor,
   messageConfirmation,
+  numerosEnCours,
   soldesApresImport,
   supprimable,
   toggleVue,
@@ -104,6 +105,28 @@ describe("blocageImport", () => {
     expect(blocageImport({ ...ok, erreursCochees: 1, correction: "Sage" })?.message).toBe(
       "1 ligne cochée en erreur : corrigez l'export dans Sage ou décochez-la.",
     );
+  });
+});
+
+describe("opérations en cours « (*) » (07/11/2026)", () => {
+  const lines = [
+    { numero: 1, statut: "Valide", doublon_de: null },
+    { numero: 2, statut: "Valide", doublon_de: null, en_cours: true },
+    { numero: 3, statut: "Doublon", doublon_de: null, en_cours: true },
+    { numero: 4, statut: "Erreur", doublon_de: null, en_cours: true },
+  ];
+
+  it("laisse les lignes en cours décochées avec sansEnCours, jamais une ligne déjà importée", () => {
+    expect([...defaultChecked(lines, { sansEnCours: true })]).toEqual([1]);
+  });
+
+  it("coche les lignes en cours comme les autres sans l'option", () => {
+    expect([...defaultChecked(lines)]).toEqual([1, 2, 4]);
+    expect([...defaultChecked(lines, { sansEnCours: false })]).toEqual([1, 2, 4]);
+  });
+
+  it("liste les lignes en cours cochables", () => {
+    expect(numerosEnCours(lines)).toEqual([2, 4]);
   });
 });
 

@@ -12,7 +12,12 @@ export function toggleVue(current: VueLignes, clicked: VueLignes): VueLignes {
   return current === clicked ? "toutes" : clicked;
 }
 
-type LigneCochable = { numero: number; statut: string; doublon_de: number | null };
+type LigneCochable = {
+  numero: number;
+  statut: string;
+  doublon_de: number | null;
+  en_cours?: boolean;
+};
 
 /** Une ligne déjà importée (doublon sans ligne d'origine dans le fichier) ne se coche jamais. */
 export function cochable(line: LigneCochable): boolean {
@@ -23,9 +28,23 @@ export function cochable(line: LigneCochable): boolean {
  * Cases cochées par défaut (08/10/2026) : toutes les lignes cochables, valides, en erreur et
  * doublons internes au fichier. Une ligne en erreur cochée bloque la confirmation tant qu'elle
  * n'est pas corrigée (relevés) ou décochée. Sert aussi au bouton « Tout cocher ».
+ * `sansEnCours` (07/11/2026) : les opérations en cours « (*) » du relevé restent décochées.
  */
-export function defaultChecked(lines: readonly LigneCochable[]): Set<number> {
-  return new Set(lines.filter(cochable).map((line) => line.numero));
+export function defaultChecked(
+  lines: readonly LigneCochable[],
+  options: { sansEnCours?: boolean } = {},
+): Set<number> {
+  return new Set(
+    lines
+      .filter((line) => cochable(line) && !(options.sansEnCours && line.en_cours))
+      .map((line) => line.numero),
+  );
+}
+
+/** Lignes cochables marquées « (*) » (opérations en cours), pour la case « Ne pas importer les
+ *  opérations en cours » de l'import d'un relevé (07/11/2026). */
+export function numerosEnCours(lines: readonly LigneCochable[]): number[] {
+  return lines.filter((line) => cochable(line) && line.en_cours).map((line) => line.numero);
 }
 
 /** Lignes d'un export Sage à montrer selon la tuile choisie (« importer » : lignes cochées ;

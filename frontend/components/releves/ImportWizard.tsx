@@ -7,7 +7,7 @@ import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountPicker } from "@/components/releves/AccountPicker";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import { EditablePreview, alreadyImported } from "@/components/releves/EditablePreview";
-import { basculerGroupe, blocageImport, defaultChecked } from "@/lib/importLines";
+import { basculerGroupe, blocageImport, defaultChecked, numerosEnCours } from "@/lib/importLines";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -91,6 +91,8 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   const [file, setFile] = useState<File | null>(null);
   // Fichier des opérations en cours d'une banque qui les envoie à part (20/10/2026)
   const [enCours, setEnCours] = useState(false);
+  // Relevé : ses opérations en cours « (*) » ne sont pas importées, case cochée par défaut (07/11/2026)
+  const [sansEnCours, setSansEnCours] = useState(true);
   const [fileError, setFileError] = useState<string | null>(null);
   const [pointages, setPointages] = useState<PointageType[]>([]);
 
@@ -177,7 +179,10 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
       setDrafts(read);
       // Cochées par défaut (08/10/2026) : valides, en erreur et doublons internes ; jamais une
       // ligne déjà importée. Une ligne en erreur cochée bloque jusqu'à sa correction.
-      setChecked(defaultChecked(result.lignes));
+      // Opérations en cours « (*) » d'un relevé : décochées (07/11/2026), jamais pour un fichier
+      // d'opérations en cours, dont toutes les lignes le sont.
+      setSansEnCours(true);
+      setChecked(defaultChecked(result.lignes, { sansEnCours: !(options.enCours ?? enCours) }));
       setEditing(null);
       setEditingColumns(false);
       setStep(result.erreurs_mapping.length > 0 ? 0 : 1);
@@ -228,6 +233,9 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
   }
 
   const lines = new Map(analysis?.lignes.map((line) => [line.numero, line]) ?? []);
+  // Opérations en cours « (*) » du relevé (07/11/2026) ; un fichier d'opérations en cours n'est pas concerné
+  const enCoursFichier = enCours ? [] : numerosEnCours(analysis?.lignes ?? []);
+  const excluEnCours = !enCours && sansEnCours;
   const toImport = drafts.filter(
     (draft) => checked.has(draft.numero) && !alreadyImported(lines.get(draft.numero)),
   );
@@ -609,10 +617,35 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
             )}
           </div>
         )}
+        {!enCours && enCoursFichier.length > 0 && (
+          <label className="mb-4 flex items-start gap-2 rounded-[12px] border border-simtis-border bg-simtis-background px-4 py-3 text-sm text-simtis-text">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-simtis-primary"
+              checked={sansEnCours}
+              disabled={busy}
+              onChange={(event) => {
+                const suivant = event.target.checked;
+                setSansEnCours(suivant);
+                setChecked((value) => basculerGroupe(value, enCoursFichier, !suivant));
+              }}
+            />
+            <span>
+              Ne pas importer les opérations en cours « (*) » ({enCoursFichier.length}{" "}
+              {enCoursFichier.length > 1 ? "lignes" : "ligne"})
+              <span className="block text-xs text-simtis-muted">
+                Elles ne font pas partie du solde : décochées, elles ne sont ni enregistrées ni
+                comptées dans le solde du relevé.
+              </span>
+            </span>
+          </label>
+        )}
         <CheckAllButtons
           checked={checked.size}
-          total={defaultChecked(current.lignes).size}
-          onCheckAll={() => setChecked(defaultChecked(current.lignes))}
+          total={defaultChecked(current.lignes, { sansEnCours: excluEnCours }).size}
+          onCheckAll={() =>
+            setChecked(defaultChecked(current.lignes, { sansEnCours: excluEnCours }))
+          }
           onUncheckAll={() => setChecked(new Set())}
           selection={checked}
           groupes={[
