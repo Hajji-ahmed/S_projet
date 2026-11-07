@@ -200,7 +200,8 @@ def test_the_lettrage_export_lists_every_line_of_a_group(client, comptable, db):
     lignes = list(feuille.iter_rows(min_row=5, values_only=True))[:-1]
     # Une opération face à deux écritures : la 2e ligne n'a que son écriture
     assert lignes[0][0] == code
-    assert [(r[3] is not None, r[9]) for r in lignes] == [(True, "A"), (False, "B")]
+    # Comptabilité à gauche (N° pièce en D), opération à droite (libellé en J), 07/11/2026
+    assert [(r[9] is not None, r[3]) for r in lignes] == [(True, "A"), (False, "B")]
     assert sum(Decimal(str(r[5] or 0)) + Decimal(str(r[6] or 0)) for r in lignes) == sum(
         Decimal(str(r[11] or 0)) + Decimal(str(r[12] or 0)) for r in lignes
     )

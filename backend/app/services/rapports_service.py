@@ -318,7 +318,9 @@ COLONNES_RELEVE = (("Date", 10), ("Libellé", 52), ("Réf.", 14), ("Débit", 15)
                    ("St.", 18))  # fmt: skip
 COLONNES_SAGE = (("Date", 10), ("Libellé", 52), ("Pce", 18), ("Débit", 15), ("Crédit", 15),
                  ("St.", 18))  # fmt: skip
-DEBUT_SAGE = len(COLONNES_RELEVE) + 2
+# Comptabilité à gauche, relevé à droite (07/11/2026), une colonne vide entre les deux
+DEBUT_SAGE = 1
+DEBUT_RELEVE = len(COLONNES_SAGE) + 2
 
 
 def statut_affiche(statut: str, frais: bool = False, rapprochee_le: date | None = None) -> str:
@@ -351,12 +353,12 @@ def _feuille_compte(
         f"état de rapprochement du {date_from:%d/%m/%Y} au {date_to:%d/%m/%Y}",
     ).font = TITRE
     sheet.cell(
-        row=2, column=1, value=f"Transactions bancaires ({len(operations)})"
+        row=2, column=DEBUT_RELEVE, value=f"Transactions bancaires ({len(operations)})"
     ).font = SOUS_TITRE
     sheet.cell(
         row=2, column=DEBUT_SAGE, value=f"Écritures comptables ({len(ecritures)})"
     ).font = SOUS_TITRE
-    for debut, colonnes in ((1, COLONNES_RELEVE), (DEBUT_SAGE, COLONNES_SAGE)):
+    for debut, colonnes in ((DEBUT_SAGE, COLONNES_SAGE), (DEBUT_RELEVE, COLONNES_RELEVE)):
         for index, (titre, largeur) in enumerate(colonnes):
             montant = titre in ("Débit", "Crédit")
             cellule = sheet.cell(
@@ -366,7 +368,7 @@ def _feuille_compte(
             cellule.fill = EN_TETE
             cellule.alignment = Alignment(horizontal="right" if montant else "left")
             sheet.column_dimensions[get_column_letter(debut + index)].width = largeur
-    sheet.column_dimensions[get_column_letter(len(COLONNES_RELEVE) + 1)].width = 3
+    sheet.column_dimensions[get_column_letter(DEBUT_RELEVE - 1)].width = 3
     sheet.freeze_panes = "A4"
 
     def ligne(rang: int, debut: int, valeurs: list, proposition: bool) -> None:
@@ -385,8 +387,8 @@ def _feuille_compte(
     banque = soldes.solde_bancaire
     compta = soldes.solde if compte.devise == "MAD" else soldes.solde_devise
     for debut, libelle, solde, debit_si_negatif in (
-        (1, "Solde du relevé", banque, True),
         (DEBUT_SAGE, "Solde comptable", compta, False),
+        (DEBUT_RELEVE, "Solde du relevé", banque, True),
     ):
         sheet.cell(row=4, column=debut, value=date_to).number_format = "DD/MM/YY"
         sheet.cell(row=4, column=debut + 1, value=f"{libelle} au {date_to:%d/%m/%Y}")
@@ -405,7 +407,7 @@ def _feuille_compte(
     for rang, op in enumerate(operations, start=5):
         ligne(
             rang,
-            1,
+            DEBUT_RELEVE,
             [
                 op.date_operation,
                 op.libelle,
@@ -431,7 +433,7 @@ def _feuille_compte(
             ec.statut == "À vérifier",
         )
     fin = 5 + max(len(operations), len(ecritures)) + 1
-    for debut, lignes in ((1, operations), (DEBUT_SAGE, ecritures)):
+    for debut, lignes in ((DEBUT_SAGE, ecritures), (DEBUT_RELEVE, operations)):
         sheet.cell(row=fin, column=debut, value="Total").font = GRAS
         for decalage, champ in ((3, "debit"), (4, "credit")):
             total = sum((getattr(x, champ) for x in lignes), Decimal("0"))
@@ -450,7 +452,9 @@ def _feuille_compte(
     sheet.cell(
         row=rang, column=1, value=f"Contrôle au {date_to:%d/%m/%Y} (en {unite}, signe du relevé)"
     ).font = SOUS_TITRE
-    for libelle, valeur in controle:
+    # Affichage : Solde compta avant Solde banque (07/11/2026), calcul inchangé
+    ordre = {"Solde compta": 0, "Solde banque": 1, "Écart": 2}
+    for libelle, valeur in sorted(controle, key=lambda ligne: ordre[ligne[0]]):
         rang += 1
         sheet.cell(row=rang, column=2, value=libelle).font = GRAS
         cellule = sheet.cell(

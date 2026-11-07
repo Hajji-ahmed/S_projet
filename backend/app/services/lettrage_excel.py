@@ -44,11 +44,12 @@ GRAS = Font(bold=True)
 
 # (titre de la bande, première colonne, colonnes (nom, largeur))
 RAPPROCHEMENT = ("Rapprochement", 1, (("Code", 16), ("Validé le", 15)))
-BANQUE = ("Banque", 3, (("Date", 10), ("Libellé", 46), ("Réf.", 14), ("Débit", 15),
-                        ("Crédit", 15)))  # fmt: skip
-COLONNE_FLECHE = 8
-COMPTABILITE = ("Comptabilité", 9, (("Date", 10), ("N° pièce", 14), ("Libellé", 46),
+# Comptabilité à gauche, banque à droite (07/11/2026)
+COMPTABILITE = ("Comptabilité", 3, (("Date", 10), ("N° pièce", 14), ("Libellé", 46),
                                     ("Débit", 15), ("Crédit", 15)))  # fmt: skip
+COLONNE_FLECHE = 8
+BANQUE = ("Banque", 9, (("Date", 10), ("Libellé", 46), ("Réf.", 14), ("Débit", 15),
+                        ("Crédit", 15)))  # fmt: skip
 DERNIERE_COLONNE = 13
 PREMIERE_LIGNE = 5
 
@@ -140,7 +141,7 @@ def _periode(date_from: date | None, date_to: date | None) -> str:
 
 
 def _en_tetes(sheet: Worksheet, unite: str) -> None:
-    for titre, debut, colonnes in (RAPPROCHEMENT, BANQUE, COMPTABILITE):
+    for titre, debut, colonnes in (RAPPROCHEMENT, COMPTABILITE, BANQUE):
         fin = debut + len(colonnes) - 1
         for colonne in range(debut, fin + 1):
             sheet.cell(row=3, column=colonne).fill = SECTION
@@ -236,7 +237,9 @@ def feuille(
         case.fill = EN_TETE
         case.font = GRAS
     sheet.cell(row=rang, column=1, value="Total")
-    for colonne, valeur in zip((6, 7, 12, 13), totaux, strict=True):
+    # Débit / crédit en 4e et 5e colonnes de chaque bande
+    colonnes = (BANQUE[1] + 3, BANQUE[1] + 4, COMPTABILITE[1] + 3, COMPTABILITE[1] + 4)
+    for colonne, valeur in zip(colonnes, totaux, strict=True):
         sheet.cell(row=rang, column=colonne, value=valeur).number_format = FORMAT_MONTANT
 
 

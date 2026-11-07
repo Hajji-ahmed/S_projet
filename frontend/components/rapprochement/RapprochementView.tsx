@@ -641,7 +641,22 @@ function Rapprochement({ companyId }: { companyId: number }) {
               onPleinEcran={() => setPleinEcran(!pleinEcran)}
             />
           </div>
+          {/* Comptabilité à gauche, relevé à droite (07/11/2026) */}
           <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-3 xl:grid-cols-2">
+            <EntriesPane
+              key={`ec-${filterKey}`}
+              pleinEcran={pleinEcran}
+              companyId={companyId}
+              filter={filter}
+              reloadKey={reloadKey}
+              selectedId={entry?.id ?? null}
+              coches={{
+                ids: panierEcr.map((e) => e.id),
+                onToggle: (row) => setPanierEcr((l) => basculerLigne(l, row)),
+              }}
+              onSelect={setEntry}
+              onLoaded={handleEntries}
+            />
             <TransactionsPane
               key={`tx-${filterKey}`}
               pleinEcran={pleinEcran}
@@ -657,20 +672,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
               onLoaded={handleOperations}
               statut={statut}
               onStatutChange={setStatut}
-            />
-            <EntriesPane
-              key={`ec-${filterKey}`}
-              pleinEcran={pleinEcran}
-              companyId={companyId}
-              filter={filter}
-              reloadKey={reloadKey}
-              selectedId={entry?.id ?? null}
-              coches={{
-                ids: panierEcr.map((e) => e.id),
-                onToggle: (row) => setPanierEcr((l) => basculerLigne(l, row)),
-              }}
-              onSelect={setEntry}
-              onLoaded={handleEntries}
             />
           </div>
         </div>
