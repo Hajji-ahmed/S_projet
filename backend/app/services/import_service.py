@@ -114,6 +114,10 @@ FIELD_CODES = tuple(item.code for item in STATEMENT_FIELDS)
 FIELD_LABELS = {item.code: item.libelle for item in STATEMENT_FIELDS}
 
 
+# Libellé d'un mouvement de relevé qui n'en a pas (07/11/2026)
+LIBELLE_ABSENT = "(SANS LIBELLÉ)"
+
+
 @dataclass
 class AnalysedLine:
     numero: int  # numéro de la ligne dans Excel
@@ -324,9 +328,9 @@ def _read_line(
     except ValueError as error:
         line.motifs.append(f"Date de valeur : {error}")
 
-    line.libelle = clean_libelle(cells.get("libelle"))
-    if line.libelle is None:
-        line.motifs.append("Libellé manquant.")
+    # Mouvement sans libellé (07/11/2026) : importé avec un texte visible, jamais une erreur ;
+    # ce texte entre dans l'empreinte, donc un second import du fichier le voit en doublon
+    line.libelle = clean_libelle(cells.get("libelle")) or LIBELLE_ABSENT
 
     unreadable = len(line.motifs)
     if mapping.get("montant") is not None:

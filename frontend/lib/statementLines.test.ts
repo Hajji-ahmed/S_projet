@@ -50,7 +50,8 @@ describe("checkDraft", () => {
     expect(checkDraft({ ...base, date_operation: "2026-10-03" }, TODAY)).toContain(
       "Date d'opération dans le futur.",
     );
-    expect(checkDraft({ ...base, libelle: "  " }, TODAY)).toContain("Libellé manquant.");
+    // Libellé vide accepté (07/11/2026) : le serveur le remplace
+    expect(checkDraft({ ...base, libelle: "  " }, TODAY)).toEqual([]);
     expect(checkDraft({ ...base, credit: "" }, TODAY)).toContain("Ni débit ni crédit.");
     expect(checkDraft({ ...base, debit: "5" }, TODAY)).toContain(
       "Débit et crédit renseignés sur la même ligne.",

@@ -440,14 +440,17 @@ def test_invalid_lines_are_reported_with_their_reasons(client, tresorerie, accou
 
     reasons = {line["numero"]: (line["statut"], line["motifs"]) for line in body["lignes"]}
     assert reasons[2][0] == "Erreur" and "Date illisible" in reasons[2][1][0]
-    assert reasons[3] == ("Erreur", ["Libellé manquant."])
+    # Sans libellé : importée avec « (SANS LIBELLÉ) » (07/11/2026), plus une erreur
+    assert reasons[3] == ("Valide", [])
+    libelles = {line["numero"]: line["libelle"] for line in body["lignes"]}
+    assert libelles[3] == "(SANS LIBELLÉ)"
     assert reasons[4] == ("Erreur", ["Débit et crédit renseignés sur la même ligne."])
     assert reasons[5] == ("Erreur", ["Ni débit ni crédit."])
     assert reasons[6][0] == "Erreur" and reasons[6][1][0].startswith("Débit : Montant illisible")
     assert reasons[7] == ("Erreur", ["Date d'opération dans le futur."])
     assert reasons[8] == ("Valide", [])
-    assert (body["resume"]["nb_erreurs"], body["resume"]["nb_valides"]) == (6, 1)
-    assert body["resume"]["total_debit"] == "10.00"  # seules les lignes valides comptent
+    assert (body["resume"]["nb_erreurs"], body["resume"]["nb_valides"]) == (5, 2)
+    assert body["resume"]["total_debit"] == "20.00"  # seules les lignes valides comptent
 
 
 def test_dash_value_date_is_empty_and_dash_operation_date_is_missing(client, tresorerie, account):
@@ -715,6 +718,19 @@ def transactions(db, account) -> list[BankTransaction]:
 def day_balance(db, account, jour=CLOSING_DAY) -> BankAccountBalance | None:
     query = select(BankAccountBalance).filter_by(bank_account_id=account.id, date_solde=jour)
     return db.scalar(query)
+
+
+def test_a_movement_without_label_is_imported_once(client, tresorerie, account, db):
+    """07/11/2026 : un mouvement sans libellé est importé avec « (SANS LIBELLÉ) » ; ce texte
+    entre dans l'empreinte, donc le même fichier réimporté le voit en doublon."""
+    contenu = xlsx(("Relevé", [HEADER, ["24/09/2026", None, None, 10, None, None]]))
+
+    reponse = confirm(client, tresorerie, account.id, contenu)
+
+    assert reponse.status_code == 201, reponse.text
+    assert [tx.libelle for tx in transactions(db, account)] == ["(SANS LIBELLÉ)"]
+    encore = analyse(client, tresorerie, account.id, contenu).json()
+    assert [line["statut"] for line in encore["lignes"]] == ["Doublon"]
 
 
 def test_confirmation_saves_the_statement(client, tresorerie, account, db):

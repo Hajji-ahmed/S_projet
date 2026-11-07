@@ -81,7 +81,7 @@ export function checkDraft(draft: LineDraft, today: string): string[] {
   if (draft.date_valeur && !ISO_DATE.test(draft.date_valeur)) {
     motifs.push("Date de valeur illisible.");
   }
-  if (!draft.libelle.trim()) motifs.push("Libellé manquant.");
+  // Libellé vide accepté (07/11/2026) : le serveur enregistre « (SANS LIBELLÉ) »
 
   const debitText = draft.debit.trim();
   const creditText = draft.credit.trim();
