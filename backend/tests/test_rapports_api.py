@@ -374,6 +374,72 @@ def test_unreconciled_lines_cover_up_to_ten_years(client, responsable, db):
     assert onze_ans.json()["detail"] == "La période ne peut pas dépasser 10 ans."
 
 
+# --- Rapprochements à cheval sur « Au » (07/11/2026) ----------------------------------------------
+
+
+@pytest.fixture
+def comptable(client, reference):
+    make_auth_user(reference, "COMPTABLE", email="comptable@example.com")
+    return bearer(login(client, "comptable@example.com"))
+
+
+def controle(feuille) -> dict:
+    return {r[1]: r[3] for r in feuille.iter_rows(min_row=5, values_only=True) if r[1]}
+
+
+def test_a_match_closed_after_the_end_date_is_still_pending_at_that_date(
+    client, responsable, comptable, db
+):
+    """Cas AWB-26-000025 : virement au relevé le 28/09, saisi dans Sage le 01/10. Au 30/09 il est
+    en suspens (listé, écart 0) ; au 01/10 il est rapproché (rien à lister)."""
+    bp = account(db, bank_code="BP")
+    bp.date_solde_comptable = date(2026, 8, 31)
+    bp.solde_comptable_ouverture = Decimal("1000.00")
+    vir = operation(db, bp, montant="10000", jour=date(2026, 9, 28), libelle="VIR EL BRINSSI",
+                    solde=Decimal("11000"))  # fmt: skip
+    sage = ecriture(db, bp, montant="-10000", jour=date(2026, 10, 1), libelle="VIR 4000585157")
+    db.flush()
+    rapprocher(client, comptable, [vir], [sage])
+
+    au_30 = classeur(non_rapproches(client, responsable, db, bp)).active
+
+    assert lignes(au_30, 2) == ["VIR EL BRINSSI"]
+    assert lignes(au_30, 6) == ["Rapprochée le 01/10/26"]
+    assert lignes(au_30, 9) == []
+    valeurs = controle(au_30)
+    assert (valeurs["Solde banque"], valeurs["Solde compta"], valeurs["Écart"]) == (
+        11000,
+        11000,
+        0,
+    )
+
+    au_01 = classeur(non_rapproches(client, responsable, db, bp, au="2026-10-01")).active
+    assert au_01.title == "État de rapprochement"
+
+
+def test_an_entry_matched_with_a_later_operation_is_listed(client, responsable, comptable, db):
+    bp = account(db, bank_code="BP")
+    bp.date_solde_comptable = date(2026, 8, 31)
+    bp.solde_comptable_ouverture = Decimal("0.00")
+    # Rapprochement entièrement dans la période : jamais listé
+    chq = operation(db, bp, montant="-300", jour=date(2026, 9, 5), libelle="CHQ 1",
+                    solde=Decimal("-300"))  # fmt: skip
+    e_chq = ecriture(db, bp, montant="300", jour=date(2026, 9, 5), libelle="EAR CHQ 1")
+    esp = ecriture(db, bp, montant="-5000", jour=date(2026, 9, 30), libelle="ESP 56203522")
+    depot = operation(db, bp, montant="5000", jour=date(2026, 10, 2), libelle="VERSEMENT ESPECE",
+                      solde=Decimal("4700"))  # fmt: skip
+    db.flush()
+    rapprocher(client, comptable, [chq], [e_chq])
+    rapprocher(client, comptable, [depot], [esp])
+
+    feuille = classeur(non_rapproches(client, responsable, db, bp)).active
+
+    assert lignes(feuille, 2) == []
+    assert lignes(feuille, 9) == ["ESP 56203522"]
+    assert lignes(feuille, 13) == ["Rapprochée le 02/10/26"]
+    assert controle(feuille)["Écart"] == 0
+
+
 @pytest.mark.parametrize(
     ("releve", "comptable", "attendu"),
     [

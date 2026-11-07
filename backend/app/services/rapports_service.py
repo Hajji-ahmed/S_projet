@@ -321,9 +321,13 @@ COLONNES_SAGE = (("Date", 10), ("Libellé", 52), ("Pce", 18), ("Débit", 15), ("
 DEBUT_SAGE = len(COLONNES_RELEVE) + 2
 
 
-def statut_affiche(statut: str, frais: bool = False) -> str:
-    """« À vérifier » se lit « En proposition » comme à l'écran ; un frais est signalé."""
-    texte = "En proposition" if statut == "À vérifier" else statut
+def statut_affiche(statut: str, frais: bool = False, rapprochee_le: date | None = None) -> str:
+    """« À vérifier » se lit « En proposition » comme à l'écran ; un frais est signalé ; une ligne
+    rapprochée après la fin de la période se lit « Rapprochée le JJ/MM/AA » (07/11/2026)."""
+    if rapprochee_le is not None:
+        texte = f"Rapprochée le {rapprochee_le:%d/%m/%y}"
+    else:
+        texte = "En proposition" if statut == "À vérifier" else statut
     return f"{texte} · frais" if frais else texte
 
 
@@ -336,6 +340,7 @@ def _feuille_compte(
     date_from: date,
     date_to: date,
     soldes: SoldeComptable,
+    apres: tuple[dict[int, date], dict[int, date]] = ({}, {}),
 ) -> None:
     sheet.sheet_view.showGridLines = False
     unite = "DH" if compte.devise == "MAD" else compte.devise
@@ -407,7 +412,7 @@ def _feuille_compte(
                 op.reference,
                 op.debit or None,
                 op.credit or None,
-                statut_affiche(op.statut, op.id in frais_ids),
+                statut_affiche(op.statut, op.id in frais_ids, apres[0].get(op.id)),
             ],
             op.statut == "À vérifier",
         )
@@ -421,7 +426,7 @@ def _feuille_compte(
                 ec.numero_piece,
                 ec.debit or None,
                 ec.credit or None,
-                statut_affiche(ec.statut),
+                statut_affiche(ec.statut, rapprochee_le=apres[1].get(ec.id)),
             ],
             ec.statut == "À vérifier",
         )
@@ -453,12 +458,18 @@ def _feuille_compte(
         )
         cellule.font = GRAS
         cellule.number_format = FORMAT_MONTANT
-    sheet.cell(
-        row=rang + 1,
-        column=2,
-        value=f"Les lignes datées avant le {date_from:%d/%m/%Y} ne sont pas listées : l'écart "
-        "n'est complet que si « Du » couvre tout l'historique du compte.",
-    ).font = Font(italic=True, color="5F6B73")
+    for decalage, note in enumerate(
+        (
+            f"Les lignes datées avant le {date_from:%d/%m/%Y} ne sont pas listées : l'écart "
+            "n'est complet que si « Du » couvre tout l'historique du compte.",
+            f"« Rapprochée le … » : rapprochée avec une ligne datée après le {date_to:%d/%m/%Y}, "
+            "donc encore en suspens à cette date.",
+        ),
+        start=1,
+    ):
+        sheet.cell(row=rang + decalage, column=2, value=note).font = Font(
+            italic=True, color="5F6B73"
+        )
 
 
 def etat_controle(
@@ -525,10 +536,15 @@ def non_rapproches(
     pris: set[str] = set()
     nombres: dict[str, int] = {}
     for compte in comptes:
+        # Une ligne rapprochée avec une ligne datée après « Au » est encore en suspens à cette
+        # date (07/11/2026) : elle est listée, sinon l'écart compterait le décalage
+        apres = rapports_repository.rapprochees_apres(db, compte.id, date_from, date_to)
         operations = rapports_repository.operations_non_rapprochees(
-            db, compte.id, date_from, date_to
+            db, compte.id, date_from, date_to, apres[0]
         )
-        ecritures = rapports_repository.ecritures_non_rapprochees(db, compte.id, date_from, date_to)
+        ecritures = rapports_repository.ecritures_non_rapprochees(
+            db, compte.id, date_from, date_to, apres[1]
+        )
         if not operations and not ecritures:
             continue
         # Frais bancaires (règle de « À comptabiliser ») : signalés dans la colonne St.
@@ -543,6 +559,7 @@ def non_rapproches(
             date_from,
             date_to,
             solde_comptable_service.solde_du_compte(db, compte, date_to),
+            apres,
         )
         nombres[nom] = len(operations) + len(ecritures)
     if not workbook.sheetnames:
