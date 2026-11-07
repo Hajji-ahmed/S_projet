@@ -44,13 +44,13 @@ GRAS = Font(bold=True)
 
 # (titre de la bande, première colonne, colonnes (nom, largeur))
 RAPPROCHEMENT = ("Rapprochement", 1, (("Code", 16), ("Validé le", 15)))
-# Comptabilité à gauche, banque à droite (07/11/2026)
+# Comptabilité à gauche, banque à droite (07/11/2026) ; échéance après Crédit (même jour)
 COMPTABILITE = ("Comptabilité", 3, (("Date", 10), ("N° pièce", 14), ("Libellé", 46),
-                                    ("Débit", 15), ("Crédit", 15)))  # fmt: skip
-COLONNE_FLECHE = 8
-BANQUE = ("Banque", 9, (("Date", 10), ("Libellé", 46), ("Réf.", 14), ("Débit", 15),
-                        ("Crédit", 15)))  # fmt: skip
-DERNIERE_COLONNE = 13
+                                    ("Débit", 15), ("Crédit", 15), ("Échéance", 11)))  # fmt: skip
+COLONNE_FLECHE = 9
+BANQUE = ("Banque", 10, (("Date", 10), ("Libellé", 46), ("Réf.", 14), ("Débit", 15),
+                         ("Crédit", 15)))  # fmt: skip
+DERNIERE_COLONNE = 14
 PREMIERE_LIGNE = 5
 
 
@@ -218,7 +218,7 @@ def feuille(
                 debit, credit = debit_credit(ecriture, compte.devise)
                 _ecrire(sheet, ligne, COMPTABILITE[1], [ecriture.date_ecriture,
                         ecriture.numero_piece, ecriture.libelle, debit or None,
-                        credit or None])  # fmt: skip
+                        credit or None, ecriture.echeance])  # fmt: skip
                 totaux[2] += debit
                 totaux[3] += credit
             if operation is not None and ecriture is not None:

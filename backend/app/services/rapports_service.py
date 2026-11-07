@@ -316,8 +316,9 @@ EN_TETE_ECRAN = Font(bold=True, color="004F54")
 TRAIT = Border(bottom=Side(style="thin", color="D9E3E8"))
 COLONNES_RELEVE = (("Date", 10), ("Libellé", 52), ("Réf.", 14), ("Débit", 15), ("Crédit", 15),
                    ("St.", 18))  # fmt: skip
+# Échéance après Crédit (07/11/2026), côté Sage seulement
 COLONNES_SAGE = (("Date", 10), ("Libellé", 52), ("Pce", 18), ("Débit", 15), ("Crédit", 15),
-                 ("St.", 18))  # fmt: skip
+                 ("Échéance", 11), ("St.", 18))  # fmt: skip
 # Comptabilité à gauche, relevé à droite (07/11/2026), une colonne vide entre les deux
 DEBUT_SAGE = 1
 DEBUT_RELEVE = len(COLONNES_SAGE) + 2
@@ -375,7 +376,7 @@ def _feuille_compte(
         for index, valeur in enumerate(valeurs):
             cellule = sheet.cell(row=rang, column=debut + index, value=valeur)
             cellule.border = TRAIT
-            if index == 0:
+            if index == 0 or isinstance(valeur, date):
                 cellule.number_format = "DD/MM/YY"
             elif index in (3, 4):
                 cellule.number_format = FORMAT_MONTANT
@@ -386,19 +387,19 @@ def _feuille_compte(
     # relevé débiteur (négatif) au Débit ; Sage débiteur (positif) au Débit
     banque = soldes.solde_bancaire
     compta = soldes.solde if compte.devise == "MAD" else soldes.solde_devise
-    for debut, libelle, solde, debit_si_negatif in (
-        (DEBUT_SAGE, "Solde comptable", compta, False),
-        (DEBUT_RELEVE, "Solde du relevé", banque, True),
+    for debut, libelle, solde, debit_si_negatif, nb in (
+        (DEBUT_SAGE, "Solde comptable", compta, False, len(COLONNES_SAGE)),
+        (DEBUT_RELEVE, "Solde du relevé", banque, True, len(COLONNES_RELEVE)),
     ):
         sheet.cell(row=4, column=debut, value=date_to).number_format = "DD/MM/YY"
         sheet.cell(row=4, column=debut + 1, value=f"{libelle} au {date_to:%d/%m/%Y}")
         if solde is None:
-            sheet.cell(row=4, column=debut + 5, value="non renseigné")
+            sheet.cell(row=4, column=debut + nb - 1, value="non renseigné")
         elif solde != 0:
             au_debit = (solde < 0) == debit_si_negatif
             cellule = sheet.cell(row=4, column=debut + (3 if au_debit else 4), value=abs(solde))
             cellule.number_format = FORMAT_MONTANT
-        for index in range(len(COLONNES_RELEVE)):
+        for index in range(nb):
             cellule = sheet.cell(row=4, column=debut + index)
             cellule.font = GRAS
             cellule.fill = EN_TETE
@@ -428,6 +429,7 @@ def _feuille_compte(
                 ec.numero_piece,
                 ec.debit or None,
                 ec.credit or None,
+                ec.echeance,
                 statut_affiche(ec.statut, rapprochee_le=apres[1].get(ec.id)),
             ],
             ec.statut == "À vérifier",

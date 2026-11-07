@@ -212,6 +212,16 @@ export function EntriesPane({
       ),
       render: (row) => montantVolet(row.credit),
     },
+    // Échéance après Crédit (07/11/2026) : lue dans Sage ou saisie avec l'écriture
+    {
+      key: "echeance",
+      header: "Éch.",
+      render: (row) => (
+        <span className="whitespace-nowrap tabular-nums" title={formatDate(row.echeance)}>
+          {row.echeance ? dateCourte(row.echeance) : "-"}
+        </span>
+      ),
+    },
   ];
   // Colonne « Devise » seulement si la page contient un compte en devise (28/10/2026)
   const colonneDevise: Column<Ecriture>[] = [

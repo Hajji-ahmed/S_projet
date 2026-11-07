@@ -188,6 +188,8 @@ def test_the_lettrage_export_lists_every_line_of_a_group(client, comptable, db):
         ecriture(db, compte, montant="-400", numero_piece="A"),
         ecriture(db, compte, montant="-500", numero_piece="B"),
     ]
+    ecrs[0].echeance = date(2026, 10, 15)
+    db.flush()
     code = grouper(client, comptable, [tx], ecrs).json()["code"]
 
     response = client.get(
@@ -200,8 +202,10 @@ def test_the_lettrage_export_lists_every_line_of_a_group(client, comptable, db):
     lignes = list(feuille.iter_rows(min_row=5, values_only=True))[:-1]
     # Une opération face à deux écritures : la 2e ligne n'a que son écriture
     assert lignes[0][0] == code
-    # Comptabilité à gauche (N° pièce en D), opération à droite (libellé en J), 07/11/2026
-    assert [(r[9] is not None, r[3]) for r in lignes] == [(True, "A"), (False, "B")]
+    # Comptabilité à gauche (N° pièce en D), opération à droite (libellé en K), 07/11/2026
+    assert [(r[10] is not None, r[3]) for r in lignes] == [(True, "A"), (False, "B")]
+    # Échéance après Crédit, en H (07/11/2026)
+    assert lignes[0][7].date() == date(2026, 10, 15) and lignes[1][7] is None
     assert sum(Decimal(str(r[5] or 0)) + Decimal(str(r[6] or 0)) for r in lignes) == sum(
-        Decimal(str(r[11] or 0)) + Decimal(str(r[12] or 0)) for r in lignes
+        Decimal(str(r[12] or 0)) + Decimal(str(r[13] or 0)) for r in lignes
     )

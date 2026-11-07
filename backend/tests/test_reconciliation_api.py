@@ -1226,8 +1226,8 @@ def test_the_lettrage_exports_validated_matches_grouped_and_balanced(client, com
     rows = list(feuilles[0].iter_rows(min_row=5, values_only=True))
     lignes = rows[:-1]
     # Le 1 → 1 (10/09) d'abord, puis le groupe (24/09) : le chèque face à l'écriture, les frais seuls
-    # Comptabilité en C–G, banque en I–M (07/11/2026) : (code, opération, ⇄, écriture)
-    assert [(r[0], r[9], r[7], r[4]) for r in lignes] == [
+    # Comptabilité en C–H, banque en J–N (07/11/2026) : (code, opération, ⇄, écriture)
+    assert [(r[0], r[10], r[8], r[4]) for r in lignes] == [
         (simple["code"], "VIR A", "⇄", "VIR A"),
         (groupe["code"], "CHEQUE N 2100843 REMIS PAR ATW", "⇄", "CHQ 2100843 FOURNISSEUR"),
         (None, "COMMISSION", None, None),
@@ -1236,7 +1236,7 @@ def test_the_lettrage_exports_validated_matches_grouped_and_balanced(client, com
     # Totaux : débit banque = crédit comptabilité, crédit banque = débit comptabilité
     total = rows[-1]
     assert total[0] == "Total"
-    assert (total[11], total[12]) == (total[6], total[5])
+    assert (total[12], total[13]) == (total[6], total[5])
     assert "export_lettrage" in audit_actions(db)
 
     # Hors période ou autre compte : rien

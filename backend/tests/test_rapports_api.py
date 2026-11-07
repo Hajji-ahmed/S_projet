@@ -118,14 +118,14 @@ def test_the_lettrage_can_be_limited_to_one_bank(client, reference, db):
     feuille = workbook.worksheets[0]
     # Comptabilité à gauche, banque à droite (07/11/2026)
     assert feuille.cell(row=3, column=3).value == "Comptabilité"
-    assert feuille.cell(row=3, column=9).value == "Banque"
+    assert feuille.cell(row=3, column=10).value == "Banque"
     assert [c.value for c in feuille[4]] == [
-        "Code", "Validé le", "Date", "N° pièce", "Libellé", "Débit (DH)", "Crédit (DH)", None,
-        "Date", "Libellé", "Réf.", "Débit (DH)", "Crédit (DH)",
+        "Code", "Validé le", "Date", "N° pièce", "Libellé", "Débit (DH)", "Crédit (DH)",
+        "Échéance", None, "Date", "Libellé", "Réf.", "Débit (DH)", "Crédit (DH)",
     ]  # fmt: skip
     lignes = [list(r) for r in feuille.iter_rows(min_row=5, values_only=True)]
     # Le chèque face à son écriture ; le virement face à la 1re écriture, la 2e seule
-    assert [(r[0], r[4], r[7], r[9]) for r in lignes[:-1]] == [
+    assert [(r[0], r[4], r[8], r[10]) for r in lignes[:-1]] == [
         (code_chq, "EAR1 173813", "⇄", "CHQ 0173813"),
         (code_vir, "REG KARIM 1", "⇄", "VIR KARIM"),
         (None, "REG KARIM 2", None, None),
@@ -133,7 +133,7 @@ def test_the_lettrage_can_be_limited_to_one_bank(client, reference, db):
     total = lignes[-1]
     assert total[0] == "Total"
     # Débit / crédit comptabilité, puis débit / crédit banque
-    assert (total[5], total[6], total[11], total[12]) == (3000, 1200, 1200, 3000)
+    assert (total[5], total[6], total[12], total[13]) == (3000, 1200, 1200, 3000)
     assert feuille.cell(row=6, column=1).fill.fgColor.rgb.endswith("F5F8FA")
     assert "lettrage-BP-2026-09-01-2026-09-30.xlsx" in response.headers["content-disposition"]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_lettrage"))
@@ -146,7 +146,7 @@ def test_the_lettrage_can_be_limited_to_one_bank(client, reference, db):
         headers=comptable,
     )
     feuilles = classeur(toutes).worksheets
-    libelles = [r[9] for f in feuilles for r in f.iter_rows(min_row=5, values_only=True)]
+    libelles = [r[10] for f in feuilles for r in f.iter_rows(min_row=5, values_only=True)]
     assert len(feuilles) == 2
     assert "AUTRE BANQUE" in libelles
 
@@ -241,7 +241,7 @@ def test_pdf_amounts_are_written_the_french_way(valeur, texte):
 
 
 def lignes(feuille, colonne: int) -> list[str]:
-    """Libellés d'un côté de la feuille (colonne 2 = Sage, 9 = relevé, depuis le 07/11/2026), sous l'en-tête et la
+    """Libellés d'un côté de la feuille (colonne 2 = Sage, 10 = relevé, depuis le 07/11/2026), sous l'en-tête et la
     ligne des soldes, jusqu'au total."""
     valeurs = []
     for row in feuille.iter_rows(min_row=5, values_only=True):
@@ -281,12 +281,12 @@ def test_unreconciled_lines_side_by_side_for_one_bank_and_period(client, respons
     workbook = classeur(response)
     assert len(workbook.sheetnames) == 1
     feuille = workbook[workbook.sheetnames[0]]
-    # Comptabilité à gauche (A–F), relevé à droite (H–M) (07/11/2026)
+    # Comptabilité à gauche (A–G, échéance en F), relevé à droite (I–N) (07/11/2026)
     assert feuille.cell(row=2, column=1).value == "Écritures comptables (1)"
-    assert feuille.cell(row=2, column=8).value == "Transactions bancaires (3)"
+    assert feuille.cell(row=2, column=9).value == "Transactions bancaires (3)"
     # Du plus ancien au plus récent (02/11/2026), rapprochées, en cours et hors période exclues
-    assert lignes(feuille, 9) == ["VIR KARIM", "COMMISSION", "VERSEMENT DEPLACE PAR X"]
-    statuts = [row[12] for row in feuille.iter_rows(min_row=5, max_row=7, values_only=True)]
+    assert lignes(feuille, 10) == ["VIR KARIM", "COMMISSION", "VERSEMENT DEPLACE PAR X"]
+    statuts = [row[13] for row in feuille.iter_rows(min_row=5, max_row=7, values_only=True)]
     assert statuts == ["En proposition", "Non rapprochée · frais", "Non rapprochée"]
     assert feuille.cell(row=5, column=2).value == "ESP TT26272F48TV"
     assert (
@@ -330,7 +330,8 @@ def test_unreconciled_lines_start_with_both_balances_and_end_at_zero(client, res
     # Sage : débit = entrée en banque ; la 2e écriture n'est pas encore au relevé
     lettree = ecriture(db, bp, montant="-500", jour=date(2026, 9, 10))
     lettree.statut = "Rapprochée"
-    ecriture(db, bp, montant="-200", jour=date(2026, 9, 29), libelle="ESP Y")
+    esp = ecriture(db, bp, montant="-200", jour=date(2026, 9, 29), libelle="ESP Y")
+    esp.echeance = date(2026, 10, 15)
     db.flush()
 
     feuille = classeur(non_rapproches(client, responsable, db, bp)).active
@@ -338,10 +339,11 @@ def test_unreconciled_lines_start_with_both_balances_and_end_at_zero(client, res
     # Solde du relevé créditeur (Crédit), solde comptable débiteur dans Sage (Débit)
     assert feuille.cell(row=4, column=2).value == "Solde comptable au 30/09/2026"
     assert feuille.cell(row=4, column=4).value == 1700
-    assert feuille.cell(row=4, column=9).value == "Solde du relevé au 30/09/2026"
-    assert feuille.cell(row=4, column=12).value == 10500
+    assert feuille.cell(row=4, column=10).value == "Solde du relevé au 30/09/2026"
+    assert feuille.cell(row=4, column=13).value == 10500
     assert lignes(feuille, 2) == ["ESP Y"]
-    assert lignes(feuille, 9) == ["VERSEMENT X"]
+    assert feuille.cell(row=5, column=6).value.date() == date(2026, 10, 15)  # échéance
+    assert lignes(feuille, 10) == ["VERSEMENT X"]
     # Solde compta avant Solde banque à l'affichage (07/11/2026), même calcul
     controle = [(r[1], r[3]) for r in feuille.iter_rows(min_row=10, max_row=12, values_only=True)]
     assert controle == [
@@ -358,7 +360,7 @@ def test_without_accounting_opening_the_balance_is_not_invented(client, responsa
 
     feuille = classeur(non_rapproches(client, responsable, db, bp)).active
 
-    assert feuille.cell(row=4, column=6).value == "non renseigné"
+    assert feuille.cell(row=4, column=7).value == "non renseigné"
     assert feuille.cell(row=4, column=4).value is None
     valeurs = {r[1]: r[3] for r in feuille.iter_rows(min_row=9, values_only=True) if r[1]}
     assert valeurs["Écart"] == "non calculable"
@@ -373,7 +375,7 @@ def test_unreconciled_lines_cover_up_to_ten_years(client, responsable, db):
     neuf_ans = non_rapproches(client, responsable, db, bp, du="2017-01-20", au="2026-09-30")
     onze_ans = non_rapproches(client, responsable, db, bp, du="2015-09-01", au="2026-09-30")
 
-    assert lignes(classeur(neuf_ans).active, 9) == ["VIR ABC"]
+    assert lignes(classeur(neuf_ans).active, 10) == ["VIR ABC"]
     assert onze_ans.status_code == 409
     assert onze_ans.json()["detail"] == "La période ne peut pas dépasser 10 ans."
 
@@ -407,8 +409,8 @@ def test_a_match_closed_after_the_end_date_is_still_pending_at_that_date(
 
     au_30 = classeur(non_rapproches(client, responsable, db, bp)).active
 
-    assert lignes(au_30, 9) == ["VIR EL BRINSSI"]
-    assert lignes(au_30, 13) == ["Rapprochée le 01/10/26"]
+    assert lignes(au_30, 10) == ["VIR EL BRINSSI"]
+    assert lignes(au_30, 14) == ["Rapprochée le 01/10/26"]
     assert lignes(au_30, 2) == []
     valeurs = controle(au_30)
     assert (valeurs["Solde banque"], valeurs["Solde compta"], valeurs["Écart"]) == (
@@ -438,9 +440,9 @@ def test_an_entry_matched_with_a_later_operation_is_listed(client, responsable, 
 
     feuille = classeur(non_rapproches(client, responsable, db, bp)).active
 
-    assert lignes(feuille, 9) == []
+    assert lignes(feuille, 10) == []
     assert lignes(feuille, 2) == ["ESP 56203522"]
-    assert lignes(feuille, 6) == ["Rapprochée le 02/10/26"]
+    assert lignes(feuille, 7) == ["Rapprochée le 02/10/26"]
     assert controle(feuille)["Écart"] == 0
 
 
