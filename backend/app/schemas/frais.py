@@ -360,8 +360,8 @@ class ManuelleIn(BaseModel):
     # TVA séparée : son montant, sinon calculée au taux donné
     taux_tva: TauxTva | None = None
     montant_tva: MontantTva | None = None
-    # Compte de charge choisi dans la liste des comptes de frais (05/11/2026) ; absent : selon le
-    # libellé
+    # Compte de charge choisi dans la liste des comptes de frais (05/11/2026) ou saisi à la main
+    # (« Autre », 07/11/2026) ; absent : selon le libellé
     compte: Annotated[str, Field(min_length=1, max_length=20)] | None = None
 
 

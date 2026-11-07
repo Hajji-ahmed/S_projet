@@ -843,7 +843,9 @@ def test_the_fee_accounts_are_listed_with_their_reserved_bank(client, direction)
 
     assert response.status_code == 200
     comptes = {c["numero"]: c for c in response.json()}
-    assert len(comptes) == 21
+    assert len(comptes) == 22
+    # Le compte des commissions est dans la liste (07/11/2026)
+    assert comptes["61714000"] == {"numero": "61714000", "intitule": "COMMISSIONS", "banque": None}
     assert comptes["63119400"] == {
         "numero": "63119400",
         "intitule": "INTERET CRED SPOT",
@@ -890,8 +892,10 @@ def test_the_account_of_the_label_needs_no_saved_lines(client, comptable, db):
     assert [ligne["compte"] for ligne in ecrite["lignes"]] == ["63110001"]
 
 
-@pytest.mark.parametrize("compte_choisi", ["99999999", "34552142"])
-def test_a_manual_entry_refuses_an_account_out_of_the_list(client, comptable, db, compte_choisi):
+@pytest.mark.parametrize("compte_choisi", ["12a", "123", "1234 5678", "123456789012345678901"])
+def test_a_manual_entry_refuses_a_malformed_account(client, comptable, db, compte_choisi):
+    """« Autre » (07/11/2026) : 4 à 20 chiffres ; un compte réservé à une autre banque reste
+    refusé."""
     compte = account(db, bank_code="AWB")
     compte.journal_sage = "5241"
     compte.journal_frais = "5241"
@@ -902,10 +906,29 @@ def test_a_manual_entry_refuses_an_account_out_of_the_list(client, comptable, db
     response = manuelle(client, comptable, db, [frais], compte=compte_choisi)
     reserve = manuelle(client, comptable, db, [frais], compte="63119710")
 
-    assert response.status_code == 409
+    assert response.status_code in (409, 422)
     assert reserve.status_code == 409
     assert "AWB" in reserve.json()["detail"]
     assert statuses(db, frais) == ["Non rapprochée"]
+
+
+def test_a_manual_entry_takes_an_account_typed_by_hand(client, comptable, db):
+    """« Autre » (07/11/2026) : un compte hors liste, saisi à la main, est accepté ; la TVA reste
+    sur 34552142 et l'audit le signale."""
+    compte = bp(db)
+    frais = operation(db, compte, "-165", JOUR, RTGS)
+
+    response = manuelle(client, comptable, db, [frais], compte="44110000", taux_tva="10")
+
+    assert response.status_code == 200, response.text
+    ecrite = lire(client, comptable, db, None).json()["ecritures"][0]
+    assert [(ligne["compte"], ligne["credit"]) for ligne in ecrite["lignes"]] == [
+        ("44110000", "150.00"),
+        ("34552142", "15.00"),
+    ]
+    audit = db.scalar(select(AuditLog).filter_by(action="comptabilisation_manuelle"))
+    assert audit.nouvelle_valeur["compte_charge"] == "44110000"
+    assert audit.nouvelle_valeur["compte_libre"] is True
 
 
 # --- Frais déjà inclus dans une écriture Sage (13/10/2026) ---------------------------------------

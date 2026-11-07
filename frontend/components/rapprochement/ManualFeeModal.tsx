@@ -10,8 +10,10 @@ import { normalizeAmountInput } from "@/lib/accounts";
 import { ApiError } from "@/lib/api";
 import { formatAmount } from "@/lib/format";
 import {
+  AUTRE_COMPTE,
   comptesDeLaBanque,
-  compteDuLibelle,
+  compteParDefaut,
+  compteValide,
   sommeMontants,
   suggestionsLibelles,
   ventilerTva,
@@ -40,7 +42,7 @@ function montant(saisie: string): string | null {
  * Écriture saisie à la main pour des frais d'un même compte (13/10/2026) : libellé, date et, si le
  * montant contient de la TVA, le frais hors taxe et la TVA séparés. À monter seulement à
  * l'ouverture : son état repart de zéro. Le compte de charge suit le libellé (« INTERET CRED SPOT »
- * → 63119400) ou se choisit dans la liste des comptes de frais (05/11/2026).
+ * → 63119400) ou se choisit dans la liste des comptes de frais (05/11/2026), ou se saisit (« Autre », 07/11/2026).
  */
 export function ManualFeeModal({ companyId, operations, onClose, onDone }: ManualFeeModalProps) {
   const somme = sommeMontants(operations.map((tx) => tx.montant));
@@ -56,8 +58,9 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
   const banque = operations[0]?.bank_code ?? "";
   const [libelle, setLibelle] = useState("");
   const [comptes, setComptes] = useState<CompteFrais[]>([]);
-  // null : le compte suit le libellé
+  // null : le compte suit le libellé ; AUTRE_COMPTE : numéro saisi dans `compteLibre` (07/11/2026)
   const [compteChoisi, setCompteChoisi] = useState<string | null>(null);
+  const [compteLibre, setCompteLibre] = useState("");
   const [date, setDate] = useState(derniereDate);
   const [avecTva, setAvecTva] = useState(false);
   const [taux, setTaux] = useState(TAUX_PAR_DEFAUT);
@@ -80,7 +83,10 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
   }, []);
 
   const comptesProposes = comptesDeLaBanque(comptes, banque);
-  const compte = compteChoisi ?? compteDuLibelle(libelle, banque, comptes) ?? "";
+  // Le compte réellement utilisé est toujours affiché (07/11/2026)
+  const autre = compteChoisi === AUTRE_COMPTE;
+  const selection = compteChoisi ?? compteParDefaut(libelle, banque, comptes);
+  const compte = autre ? compteLibre.trim() : selection;
 
   function appliquerTaux(valeur: string) {
     setTaux(valeur);
@@ -122,7 +128,12 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
           : null;
   const tauxValide = ventilerTva(total, taux) !== null;
   const pret =
-    libelle.trim() !== "" && date !== "" && !erreurTva && (!avecTva || tauxValide) && !busy;
+    libelle.trim() !== "" &&
+    date !== "" &&
+    !erreurTva &&
+    (!avecTva || tauxValide) &&
+    (!autre || compteValide(compteLibre)) &&
+    !busy;
 
   const lignes = avecTva
     ? [
@@ -203,19 +214,43 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
         <Field
           label="Compte de charge"
           htmlFor="frais-manuel-compte"
-          hint="Suit le libellé ; la TVA va toujours sur 34552142."
+          hint="Suit le libellé, modifiable ; la TVA va toujours sur 34552142."
         >
           <Select
             id="frais-manuel-compte"
-            value={compte}
-            placeholder="D'après le libellé (COM 61714000, sinon 61473000)"
-            options={comptesProposes.map((item) => ({
-              value: item.numero,
-              label: `${item.numero} · ${item.intitule}`,
-            }))}
+            value={selection}
+            placeholder={selection === "" ? "Choisir un compte" : undefined}
+            options={[
+              ...comptesProposes.map((item) => ({
+                value: item.numero,
+                label: `${item.numero} · ${item.intitule}`,
+              })),
+              { value: AUTRE_COMPTE, label: "Autre…" },
+            ]}
             onChange={(event) => setCompteChoisi(event.target.value || null)}
           />
         </Field>
+        {autre && (
+          <Field
+            label="N° de compte"
+            htmlFor="frais-manuel-compte-libre"
+            required
+            error={
+              compteLibre.trim() !== "" && !compteValide(compteLibre)
+                ? "De 4 à 20 chiffres, sans espace."
+                : undefined
+            }
+          >
+            <TextInput
+              id="frais-manuel-compte-libre"
+              inputMode="numeric"
+              value={compteLibre}
+              placeholder="Ex. 44110000"
+              invalid={compteLibre.trim() !== "" && !compteValide(compteLibre)}
+              onChange={(event) => setCompteLibre(event.target.value)}
+            />
+          </Field>
+        )}
 
         <Field label="Date" htmlFor="frais-manuel-date" required>
           <DateInput

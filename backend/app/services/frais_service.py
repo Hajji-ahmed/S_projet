@@ -133,6 +133,8 @@ COMPTES_AGIOS = {
 # par l'intitulé va sur ce compte ; on peut aussi le choisir dans la saisie.
 COMPTES_FRAIS: tuple[tuple[str, str, str | None], ...] = (
     ("61473000", "FRAIS COMMISSIONS BANCAIRE", None),
+    # Compte des commissions (COM), aussi choisissable dans la liste depuis le 07/11/2026
+    (COMPTE_COMMISSION, "COMMISSIONS", None),
     ("63110001", "INTERET CREDOC", None),
     ("63110002", "INTERET RELANCE", None),
     ("63110004", "INTERET CMT / OXYGENE", None),
@@ -154,6 +156,8 @@ COMPTES_FRAIS: tuple[tuple[str, str, str | None], ...] = (
     ("63119901", "COMPTE D'ATTENTE / INTERETS", None),
     ("63180000", "CHARGES D'INTERET EXER ANTERIEURS", None),
 )
+# Compte de charge saisi à la main (« Autre », 07/11/2026) : des chiffres seulement
+COMPTE_LIBRE = re.compile(r"\d{4,20}")
 COMPTE_PAR_TYPE = {
     "timbre": COMPTE_TIMBRE,
     "frais_recuperes_timbre": COMPTE_TIMBRE,
@@ -1418,7 +1422,8 @@ def comptabiliser_manuellement(
 
     Le total est recalculé sur les opérations (jamais repris de l'écran). Avec de la TVA, le frais
     hors taxe est le total moins la TVA saisie, ou la ventilation au taux donné. `compte` : compte
-    de charge choisi dans `COMPTES_FRAIS` (05/11/2026), sinon celui du libellé.
+    de charge choisi dans `COMPTES_FRAIS` (05/11/2026) ou saisi (« Autre », 4 à 20 chiffres,
+    07/11/2026), sinon celui du libellé.
     """
     texte = _libelle_manuel(libelle)
     ids = sorted(set(transaction_ids))
@@ -1461,10 +1466,18 @@ def comptabiliser_manuellement(
             f"Compte {account.bank.code} {account.devise} : renseignez son compte comptable et "
             "son journal des frais (écran Comptes)."
         )
-    if compte is not None and compte not in dict(comptes_frais(account.bank.code)):
-        raise ConflictError(
-            f"Le compte {compte} n'est pas un compte de frais proposé pour {account.bank.code}."
-        )
+    compte_libre = compte is not None and compte not in dict(comptes_frais(account.bank.code))
+    if compte_libre:
+        # « Autre » (07/11/2026) : un numéro saisi à la main, jamais un compte de la liste réservé
+        # à une autre banque
+        if compte in {numero for numero, _, _ in COMPTES_FRAIS}:
+            raise ConflictError(
+                f"Le compte {compte} n'est pas un compte de frais proposé pour {account.bank.code}."
+            )
+        if not COMPTE_LIBRE.fullmatch(compte):
+            raise ConflictError(
+                f"Compte « {compte} » : un numéro de compte a de 4 à 20 chiffres, sans espace."
+            )
     somme = sum((tx.montant for tx in operations), ZERO)
     if somme == 0:
         raise ConflictError("Les opérations cochées s'annulent : il n'y a rien à comptabiliser.")
@@ -1541,6 +1554,7 @@ def comptabiliser_manuellement(
             "montant_tva": montant_tva,
             "taux_tva": entry.taux_tva,
             "compte_charge": compte or lignes[0].compte,
+            "compte_libre": compte_libre,
         },
         ip=ip,
     )

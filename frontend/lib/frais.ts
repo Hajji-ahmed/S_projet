@@ -89,6 +89,30 @@ export function compteDuLibelle(
   return trouve?.numero ?? null;
 }
 
+/** Compte des commissions (COM) et des autres frais bancaires (16/10/2026). */
+export const COMPTE_COMMISSION = "61714000";
+export const COMPTE_FRAIS_BANCAIRES = "61473000";
+/** Valeur du choix « Autre… » de la liste des comptes de charge (07/11/2026). */
+export const AUTRE_COMPTE = "autre";
+
+/** Compte de charge que SIMTIS prend sans choix (07/11/2026), comme le serveur
+ * (`frais_service.compte_charge`) : AGIOS selon la banque, puis l'intitulé d'un compte de la liste,
+ * puis COM / COMMISSION → 61714000, sinon 61473000. "" : AGIOS d'une banque sans compte d'agios. */
+export function compteParDefaut(libelle: string, banque: string, comptes: CompteFrais[]): string {
+  const premier = cleIntitule(libelle).split(" ")[0];
+  const duLibelle = compteDuLibelle(libelle, banque, comptes);
+  if (premier === "AGIOS") return duLibelle ?? "";
+  if (duLibelle) return duLibelle;
+  return ["COM", "COMMISSION", "COMMISSIONS"].includes(premier)
+    ? COMPTE_COMMISSION
+    : COMPTE_FRAIS_BANCAIRES;
+}
+
+/** Compte saisi à la main (« Autre », 07/11/2026) : 4 à 20 chiffres, comme le serveur. */
+export function compteValide(compte: string): boolean {
+  return /^\d{4,20}$/.test(compte.trim());
+}
+
 /** Somme exacte (signée) des montants, en texte « -165.00 ». */
 export function sommeMontants(montants: string[]): string {
   return fromCents(montants.reduce((total, montant) => total + toCents(montant), BigInt(0)));

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   cleJour,
   compteDuLibelle,
+  compteParDefaut,
+  compteValide,
   comptesDeLaBanque,
   etatLignes,
   libelleModifie,
@@ -144,6 +146,31 @@ describe("comptes de charge des frais (05/11/2026)", () => {
     expect(compteDuLibelle("AGIOS BANCAIRES", "AWB", comptes)).toBe("63113000");
     expect(compteDuLibelle("INTERETS DEBITEURS", "BP", comptes)).toBeNull();
     expect(compteDuLibelle("INTERET CMTX", "BP", comptes)).toBeNull();
+  });
+
+  it("donne toujours le compte que le serveur prendra (07/11/2026)", () => {
+    const avecCom = [
+      ...comptes,
+      { numero: "63116300", intitule: "AGIOS CIH", banque: "CIH" },
+      { numero: "63110001", intitule: "INTERET CREDOC", banque: null },
+      { numero: "61714000", intitule: "COMMISSIONS", banque: null },
+    ];
+    expect(compteParDefaut("COM RTGS", "BP", avecCom)).toBe("61714000");
+    expect(compteParDefaut("Commission tenue", "BP", avecCom)).toBe("61714000");
+    expect(compteParDefaut("AGIOS", "CIH", avecCom)).toBe("63116300");
+    expect(compteParDefaut("AGIOS", "BMCI", avecCom)).toBe("");
+    expect(compteParDefaut("INTERET CREDOC", "BP", avecCom)).toBe("63110001");
+    expect(compteParDefaut("FRAIS DIVERS", "BP", avecCom)).toBe("61473000");
+    expect(compteParDefaut("COMPENSATION", "BP", avecCom)).toBe("61473000");
+  });
+
+  it("accepte un compte saisi de 4 à 20 chiffres (07/11/2026)", () => {
+    expect(compteValide("44110000")).toBe(true);
+    expect(compteValide(" 6147 ")).toBe(true);
+    expect(compteValide("123")).toBe(false);
+    expect(compteValide("12a4")).toBe(false);
+    expect(compteValide("1234 5678")).toBe(false);
+    expect(compteValide("1".repeat(21))).toBe(false);
   });
 
   it("propose les libellés usuels puis les intitulés, sans doublon", () => {
