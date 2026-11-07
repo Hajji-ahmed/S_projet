@@ -504,6 +504,12 @@ def date_comparee(ecriture: Ecriture) -> date:
     return ecriture.date_ecriture
 
 
+def jusqu_au(ecriture: Ecriture, au: date) -> bool:
+    """L'écriture peut être proposée pour une période qui finit le `au` (07/11/2026) : ni sa date
+    ni la date comparée (l'échéance d'espèces ou d'un virement) ne tombent après."""
+    return ecriture.date_ecriture <= au and date_comparee(ecriture) <= au
+
+
 def ecart_jours(operation: Operation, ecriture: Ecriture) -> int:
     """Écart, en jours, entre la date Sage comparée et la date bancaire : pour des espèces ou un
     virement, la plus proche de la date de valeur et de la date d'opération ; pour les autres types

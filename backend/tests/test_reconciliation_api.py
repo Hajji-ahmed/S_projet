@@ -1893,3 +1893,56 @@ def test_a_line_in_proposal_stays_listed_as_not_reconciled(client, comptable, di
     assert [op["id"] for op in operations.json()["operations"]] == [tx.id]
     assert [ec["id"] for ec in ecritures.json()["ecritures"]] == [entry.id]
     assert operations.json()["par_statut"]["À vérifier"] == 1
+
+
+# --- Rien après « Au » (07/11/2026) ---------------------------------------------------------------
+
+
+def test_an_entry_after_the_end_date_is_never_proposed(client, comptable, db):
+    """Opération du 28/09, écriture du 01/10 : rien jusqu'au 30/09, proposée jusqu'au 01/10 ; un
+    virement d'échéance 01/10 non plus jusqu'au 30/09 ; la recherche élargie ne regarde pas après."""
+    compte = account(db)
+    cheque = operation(
+        db, compte, montant="20000", jour=date(2026, 9, 28),
+        libelle="ENCAISSEMENT CHEQUE N 0174512",
+    )  # fmt: skip
+    entree = ecriture(
+        db, compte, montant="-20000", jour=date(2026, 10, 1), libelle="EAR1° 174512 X",
+        numero_piece="P1",
+    )  # fmt: skip
+    virement = operation(db, compte, montant="700", jour=date(2026, 9, 30), libelle="VIR ABC")
+    vir_sage = ecriture(
+        db, compte, montant="-700", jour=date(2026, 9, 29), libelle="Virement ABC",
+        numero_piece="P2", echeance=date(2026, 10, 1),
+    )  # fmt: skip
+
+    # Recherche élargie : un chèque dont l'écriture vient 2 mois après « Au »
+    loin_tx = operation(
+        db, compte, montant="31000", jour=date(2026, 9, 15),
+        libelle="ENCAISSEMENT CHEQUE N 0188877",
+    )  # fmt: skip
+    loin_ec = ecriture(
+        db, compte, montant="-31000", jour=date(2026, 11, 30), libelle="EAR1° 188877 Y",
+        numero_piece="P3",
+    )  # fmt: skip
+
+    assert run(client, comptable, db).status_code == 200
+    assert statuses(db, cheque, entree, virement, vir_sage) == ["Non rapprochée"] * 4
+    elargie = client.post(
+        "/api/reconciliation/run-elargie",
+        json={"company_id": company(db).id, **PERIODE},
+        headers=comptable,
+    )
+    assert elargie.json()["nb_propositions"] == 0
+    assert statuses(db, loin_tx, loin_ec) == ["Non rapprochée"] * 2
+    # Jusqu'au 30/11, la recherche élargie la trouve
+    plus_loin = client.post(
+        "/api/reconciliation/run-elargie",
+        json={"company_id": company(db).id, "du": "2026-09-01", "au": "2026-11-30"},
+        headers=comptable,
+    )
+    assert plus_loin.json()["nb_propositions"] >= 1
+    assert statuses(db, loin_tx, loin_ec) == ["À vérifier"] * 2
+
+    assert run(client, comptable, db, au="2026-10-01").status_code == 200
+    assert statuses(db, cheque, entree, virement, vir_sage) == ["À vérifier"] * 4

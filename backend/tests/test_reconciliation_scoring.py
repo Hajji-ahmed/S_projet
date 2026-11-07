@@ -11,6 +11,7 @@ from app.services.reconciliation_scoring import (
     _peut_atteindre,
     comparable,
     ecart_jours,
+    jusqu_au,
     numeros,
     proposer,
     proposer_elargi,
@@ -657,3 +658,19 @@ def test_the_engine_gives_the_same_score_as_score_for_cash_and_transfers():
 
     assert proposition.score == score(virement, entree)
     assert proposition.score.detail["montant"] == Decimal("50.00")
+
+
+# --- Rien après « Au » (07/11/2026) ---------------------------------------------------------------
+
+
+def test_an_entry_after_the_end_of_the_period_is_never_compared():
+    au = date(2026, 9, 30)
+
+    assert jusqu_au(ec(jour=au), au)
+    assert not jusqu_au(ec(jour=date(2026, 10, 1)), au)
+    # Virement comparé par son échéance : après « Au », exclu même daté avant
+    assert not jusqu_au(
+        ec(jour=date(2026, 9, 29), libelle="VIR CLIENT ABC", echeance=date(2026, 10, 1)), au
+    )
+    # Chèque comparé par sa date : une échéance après « Au » ne compte pas
+    assert jusqu_au(ec(jour=date(2026, 9, 29), echeance=date(2026, 10, 5)), au)

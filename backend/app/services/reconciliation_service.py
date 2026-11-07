@@ -47,6 +47,7 @@ from app.services.reconciliation_scoring import (
     _candidat,
     _ecart_si_comparable,
     comparable,
+    jusqu_au,
     meme_montant,
     proposer,
     proposer_elargi,
@@ -319,7 +320,10 @@ def run_elargi(
     transactions = repo.free_transactions(db, account_ids, date_from, date_to)
     frais = repo.fee_transaction_ids(db, [tx.id for tx in transactions])
     transactions = [tx for tx in transactions if tx.id not in frais]
-    entries = repo.free_entries(db, company.id, account_ids, date_from - lecture, date_to + lecture)
+    # Rien après « Au » (07/11/2026) : seulement l'année d'avant
+    entries = _jusqu_au(
+        repo.free_entries(db, company.id, account_ids, date_from - lecture, date_to), date_to
+    )
     by_tx = {tx.id: tx for tx in transactions}
     by_entry = {entry.id: entry for entry in entries}
     propositions = proposer_elargi(
@@ -402,10 +406,11 @@ def _engine(
     """Refait les propositions automatiques en attente des comptes sur la période (sans commit) :
     les correspondances validées, rejetées ou manuelles ne sont jamais modifiées."""
     db.flush()
-    # Écritures lues jusqu'à la fenêtre des n° (chèques, effets), la plus large (12/10/2026)
+    # Écritures lues jusqu'à la fenêtre des n° (chèques, effets), la plus large (12/10/2026), avant
+    # « Du » seulement : aucune écriture datée après « Au » n'est comparée (07/11/2026)
     lecture = max(regles.fenetre_jours, regles.fenetre_numero_jours)
     entry_from = date_from - timedelta(days=lecture)
-    entry_to = date_to + timedelta(days=lecture)
+    entry_to = date_to
 
     # 1. Les propositions en attente de la période sont refaites
     anciennes = [
@@ -430,7 +435,9 @@ def _engine(
 
     # 2. Le moteur compare ce qui reste libre
     transactions = repo.free_transactions(db, account_ids, date_from, date_to)
-    entries = repo.free_entries(db, company.id, account_ids, entry_from, entry_to)
+    entries = _jusqu_au(
+        repo.free_entries(db, company.id, account_ids, entry_from, entry_to), date_to
+    )
     by_tx = {tx.id: tx for tx in transactions}
     by_entry = {entry.id: entry for entry in entries}
     # Les frais bancaires et leur TVA se comptabilisent dans SIMTIS (15/10/2026) : jamais
@@ -530,6 +537,12 @@ def _engine(
     repo.set_entry_status(db, a_verifier_ec, "À vérifier")
     db.flush()
     return _Moteur(resultat, len(transactions), len(entries), len(anciennes), groupes)
+
+
+def _jusqu_au(entries: list[AccountingEntry], au: date) -> list[AccountingEntry]:
+    """Écritures qui ne tombent pas après « Au » (07/11/2026), échéance comparée comprise : une
+    écriture du 01/10 n'est jamais proposée pour une période qui finit le 30/09."""
+    return [entry for entry in entries if jusqu_au(_ecriture(entry), au)]
 
 
 def _frais_seuls(
