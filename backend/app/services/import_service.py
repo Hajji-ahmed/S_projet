@@ -686,6 +686,171 @@ def running_balances(
     return solde
 
 
+# --- Lignes ajoutées à des jours déjà importés : soldes enchaînés (09/11/2026) ---------------------
+
+
+@dataclass
+class Etape:
+    """Une opération dans l'enchaînement des soldes : son montant, le solde écrit par la banque
+    (gardé, le calcul repart de lui) et `ignoree` pour une opération sans solde (en cours d'un
+    fichier séparé) ou sans montant lisible."""
+
+    montant: Decimal | None
+    solde_banque: Decimal | None = None
+    ignoree: bool = False
+
+
+def soldes_enchaines(depart: Decimal, etapes: list[Etape]) -> list[Decimal | None]:
+    """Solde après chaque étape, depuis `depart` : solde précédent + montant, sauf un solde écrit
+    par la banque, gardé et repris. `None` pour une étape ignorée. Fonction pure."""
+    solde, resultats = depart, []
+    for etape in etapes:
+        if etape.ignoree or (etape.montant is None and etape.solde_banque is None):
+            resultats.append(None)
+            continue
+        solde = etape.solde_banque if etape.solde_banque is not None else solde + etape.montant
+        resultats.append(solde)
+    return resultats
+
+
+def _etape_existante(tx: BankTransaction) -> Etape:
+    """Opération déjà en base : un solde non calculé vient de la banque ; sans solde, ignorée."""
+    if tx.solde is None:
+        return Etape(tx.montant, ignoree=True)
+    return Etape(tx.montant, None if tx.solde_calcule else tx.solde)
+
+
+def _apercu_avec_la_suite(
+    db: Session, account: BankAccount, valid: list[AnalysedLine], opening: Decimal
+) -> Decimal | None:
+    """Aperçu quand des opérations déjà en base suivent le premier jour des lignes nouvelles : elles
+    s'intercalent par jour (celles en base d'abord) et comptent dans les soldes affichés. Retourne
+    le solde de clôture, ou None quand rien ne suit (le calcul simple suffit)."""
+    nouvelles = [line for line in _chronological(valid) if line.date_operation is not None]
+    if not nouvelles:
+        return None
+    premier = min(line.date_operation for line in nouvelles)
+    suite = import_repository.operations_depuis(db, account.id, premier + timedelta(days=1))
+    if not suite:
+        return None
+    par_jour: dict[date, list[AnalysedLine]] = defaultdict(list)
+    for line in nouvelles:
+        par_jour[line.date_operation].append(line)
+    existantes: dict[date, list[BankTransaction]] = defaultdict(list)
+    for tx in suite:
+        existantes[tx.date_operation].append(tx)
+    ordre: list[AnalysedLine | BankTransaction] = []
+    for jour in sorted(set(par_jour) | set(existantes)):
+        ordre += existantes.get(jour, []) + par_jour.get(jour, [])
+    etapes = [
+        _etape_existante(item)
+        if isinstance(item, BankTransaction)
+        else Etape(item.montant, item.solde if not item.solde_calcule else None)
+        for item in ordre
+    ]
+    soldes = soldes_enchaines(opening, etapes)
+    for item, solde in zip(ordre, soldes, strict=True):
+        if isinstance(item, AnalysedLine) and not (
+            item.solde is not None and not item.solde_calcule
+        ):
+            item.solde_apercu = solde
+    connus = [solde for solde in soldes if solde is not None]
+    return connus[-1] if connus else None
+
+
+def _recalculer_suite(
+    db: Session,
+    account: BankAccount,
+    statement: BankStatement,
+    acteur_id: int | None,
+    ip: str | None,
+) -> None:
+    """Après l'enregistrement d'un relevé sans soldes : recalcule les soldes des opérations déjà en
+    base qui suivent sa première ligne (la banque a ajouté des lignes à des jours déjà importés),
+    puis les soldes d'ouverture et de clôture des relevés touchés et leurs soldes du jour (source
+    « Relevé »), avec un audit `recalcul_soldes`. Le solde du jour de clôture du nouveau relevé
+    est enregistré ensuite par `_closing_balance`."""
+    lignes = import_repository.statement_transactions_in_order(db, statement.id)
+    if not lignes or lignes[0].solde is None:
+        return
+    operations = import_repository.operations_depuis(db, account.id, lignes[0].date_operation)
+    debut = next(i for i, tx in enumerate(operations) if tx.statement_id == statement.id)
+    suite = operations[debut:]
+    soldes = soldes_enchaines(
+        lignes[0].solde - lignes[0].montant, [_etape_existante(tx) for tx in suite]
+    )
+    modifiees = []
+    for tx, solde in zip(suite, soldes, strict=True):
+        if solde is None or tx.solde == solde:
+            continue
+        if tx.statement_id != statement.id:
+            modifiees.append(tx)
+        tx.solde = solde
+    # Clôture du nouveau relevé : sa dernière opération, des opérations en base ont pu la suivre
+    statement.solde_cloture = next(
+        (tx.solde for tx in reversed(lignes) if tx.solde is not None), statement.solde_cloture
+    )
+    if not modifiees:
+        db.flush()
+        return
+    releves, avant_releves, apres_releves = {tx.statement_id for tx in modifiees}, [], []
+    for releve_id in sorted(releves):
+        releve = import_repository.get_statement(db, releve_id)
+        ordonnees = [
+            tx
+            for tx in import_repository.statement_transactions_in_order(db, releve_id)
+            if tx.solde is not None
+        ]
+        avant_releves.append(
+            {
+                "id": releve_id,
+                "solde_ouverture": releve.solde_ouverture,
+                "solde_cloture": releve.solde_cloture,
+            }
+        )
+        if ordonnees:
+            releve.solde_ouverture = ordonnees[0].solde - ordonnees[0].montant
+            releve.solde_cloture = ordonnees[-1].solde
+        apres_releves.append(
+            {
+                "id": releve_id,
+                "solde_ouverture": releve.solde_ouverture,
+                "solde_cloture": releve.solde_cloture,
+            }
+        )
+    # Soldes du jour : la dernière opération du jour (le jour de clôture du nouveau relevé : après)
+    dernier_du_jour = {tx.date_operation: tx.solde for tx in suite if tx.solde is not None}
+    avant_jours, apres_jours = [], []
+    for jour, solde in sorted(dernier_du_jour.items()):
+        if jour == statement.periode_fin:
+            continue
+        existant = balance_repository.get(db, account.id, jour)
+        if existant is None or existant.source != "Relevé" or existant.solde == solde:
+            continue
+        avant_jours.append({"date": jour, "solde": existant.solde})
+        existant.solde, existant.saisi_par_id = solde, acteur_id
+        apres_jours.append({"date": jour, "solde": solde})
+    db.flush()
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="recalcul_soldes",
+        entite="bank_account",
+        entite_id=account.id,
+        avant={
+            "operations": len(modifiees),
+            "releves": avant_releves,
+            "soldes_du_jour": avant_jours,
+        },
+        apres={
+            "bank_statement_id": statement.id,
+            "releves": apres_releves,
+            "soldes_du_jour": apres_jours,
+        },
+        ip=ip,
+    )
+
+
 @dataclass
 class Ouverture:
     """Solde d'ouverture proposé, d'où il vient, et un avertissement s'il est à vérifier."""
@@ -1030,6 +1195,9 @@ def analyse_statement(
         if opening is not None:
             valid = [line for line in lines if line.statut == "Valide"]
             closing = running_balances(valid, opening, apercu=True) if valid else None
+            # Opérations déjà en base après le premier jour du fichier (09/11/2026)
+            suite = _apercu_avec_la_suite(db, account, valid, opening) if valid else None
+            closing = suite if suite is not None else closing
         analysis.resume = _summarise(lines, ignored, opening, closing)
         # Ces soldes ne viennent pas d'une ligne SOLDE INITIAL / SOLDE FINAL du fichier
         analysis.resume.solde_ouverture_fichier = analysis.solde_initial_fichier is not None
@@ -1503,6 +1671,10 @@ def confirm_statement(
             "Ce relevé vient d'être importé par ailleurs : relancez l'analyse."
         ) from error
 
+    if analysis.soldes_calcules and not en_cours:
+        # Lignes ajoutées à des jours déjà importés : la suite en base est recalculée (09/11/2026)
+        _recalculer_suite(db, account, statement, acteur_id, ip)
+        balances.solde_cloture = statement.solde_cloture
     controle, solde_du_jour = _closing_balance(
         db, account, statement, balances, fichier_nom, acteur_id, ip
     )

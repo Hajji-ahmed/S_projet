@@ -2203,6 +2203,99 @@ def test_a_file_that_adds_lines_to_an_imported_day_opens_on_that_day_closing(
         ("FRAIS C", Decimal("5680.00")),
         ("VIR D", Decimal("6080.00")),
     ]
+    assert db.scalar(select(AuditLog).filter_by(action="recalcul_soldes")) is None
+
+
+SEPT_1 = [
+    ["Date", "Libellé", "Débit", "Crédit"],
+    ["01/09/2026", "VIR A", None, 1000],
+    ["02/09/2026", "CHQ B", 300, None],
+    ["03/09/2026", "VIR C", None, 200],
+]
+
+
+def test_lines_added_to_several_imported_days_recompute_the_following_balances(
+    client, tresorerie, account, db
+):
+    """Relevé CIH du 09/11/2026 : la banque ajoute après coup des lignes à plusieurs jours déjà
+    importés. L'aperçu et l'enregistrement enchaînent les soldes avec les opérations en base, et
+    les soldes déjà enregistrés des jours suivants sont recalculés."""
+    assert confirm(client, tresorerie, account.id, xlsx(("Relevé", SEPT_1)), solde_ouverture="5000")
+    suite = [
+        *SEPT_1,
+        ["01/09/2026", "FRAIS X", 20, None],
+        ["02/09/2026", "FRAIS Y", 10, None],
+        ["04/09/2026", "VIR Z", None, 100],
+    ]
+    content = xlsx(("Relevé", suite))
+
+    body = analyse(client, tresorerie, account.id, content).json()
+
+    assert body["solde_ouverture_propose"] == "6000.00"
+    nouvelles = [line for line in body["lignes"] if line["statut"] == "Valide"]
+    assert [(line["libelle"], line["solde_apercu"]) for line in nouvelles] == [
+        ("FRAIS X", "5980.00"),
+        ("FRAIS Y", "5670.00"),
+        ("VIR Z", "5970.00"),
+    ]
+    assert body["resume"]["solde_cloture"] == "5970.00"
+
+    response = confirm(client, tresorerie, account.id, content, solde_ouverture=None)
+
+    assert response.status_code == 201, response.text
+    assert [(tx.libelle, tx.solde) for tx in transactions(db, account)] == [
+        ("VIR A", Decimal("6000.00")),
+        ("CHQ B", Decimal("5680.00")),
+        ("VIR C", Decimal("5870.00")),
+        ("FRAIS X", Decimal("5980.00")),
+        ("FRAIS Y", Decimal("5670.00")),
+        ("VIR Z", Decimal("5970.00")),
+    ]
+    premier, second = db.scalars(
+        select(BankStatement).filter_by(bank_account_id=account.id).order_by(BankStatement.id)
+    ).all()
+    assert (premier.solde_ouverture, premier.solde_cloture) == (
+        Decimal("5000.00"),
+        Decimal("5870.00"),
+    )
+    assert (second.solde_ouverture, second.solde_cloture) == (
+        Decimal("6000.00"),
+        Decimal("5970.00"),
+    )
+    assert day_balance(db, account, date(2026, 9, 3)).solde == Decimal("5870.00")
+    assert day_balance(db, account, date(2026, 9, 4)).solde == Decimal("5970.00")
+    [entry] = db.scalars(select(AuditLog).filter_by(action="recalcul_soldes")).all()
+    assert entry.entite == "bank_account"
+    assert entry.ancienne_valeur["operations"] == 2
+    assert entry.nouvelle_valeur["releves"] == [
+        {"id": premier.id, "solde_ouverture": "5000.00", "solde_cloture": "5870.00"}
+    ]
+
+
+def test_the_recompute_keeps_a_balance_written_by_the_bank(client, tresorerie, account, db):
+    """Une opération en base dont le solde vient de la banque n'est pas recalculée : le calcul
+    repart d'elle, comme à l'import d'un fichier à la colonne Solde remplie à moitié."""
+    first = [
+        ["Date", "Libellé", "Débit", "Crédit", "Solde"],
+        ["01/09/2026", "VIR A", None, 1000, 6000],
+        ["02/09/2026", "CHQ B", 300, None, 5700],
+    ]
+    assert confirm(client, tresorerie, account.id, xlsx(("Relevé", first)))
+    # Même export, une ligne ajoutée après coup sans solde : SIMTIS le calcule
+    suite = [*first, ["01/09/2026", "FRAIS X", 20, None, None]]
+    content = xlsx(("Relevé", suite))
+
+    body = analyse(client, tresorerie, account.id, content).json()
+    response = confirm(client, tresorerie, account.id, content, solde_ouverture=None)
+
+    assert body["resume"]["solde_cloture"] == "5700.00"
+    assert response.status_code == 201, response.text
+    assert [(tx.libelle, tx.solde) for tx in transactions(db, account)] == [
+        ("VIR A", Decimal("6000.00")),
+        ("CHQ B", Decimal("5700.00")),
+        ("FRAIS X", Decimal("5980.00")),
+    ]
+    assert db.scalar(select(AuditLog).filter_by(action="recalcul_soldes")) is None
 
 
 # --- Période choisie à l'étape Validation (05/11/2026) --------------------------------------------

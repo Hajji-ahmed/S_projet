@@ -210,6 +210,18 @@ def statement_transactions_in_order(db: Session, statement_id: int) -> list[Bank
     return list(db.scalars(query))
 
 
+def operations_depuis(db: Session, account_id: int, jour: date) -> list[BankTransaction]:
+    """Opérations du compte à partir de `jour` inclus, dans l'ordre chronologique (09/11/2026)."""
+    query = (
+        select(BankTransaction)
+        .where(
+            BankTransaction.bank_account_id == account_id, BankTransaction.date_operation >= jour
+        )
+        .order_by(*ORDRE_CHRONOLOGIQUE)
+    )
+    return list(db.scalars(query))
+
+
 def first_balance_from(db: Session, account_id: int, day: date) -> tuple[date, Decimal] | None:
     """Premier solde du jour enregistré (tableau Banques) à partir de `day` inclus : (jour, solde)."""
     row = db.execute(
