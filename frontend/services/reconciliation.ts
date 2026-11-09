@@ -11,6 +11,7 @@ import type {
   Correspondances,
   Historique,
   OperationsPage,
+  PaireImpaye,
   RunElargiResult,
   RunResult,
   StatutCorrespondance,
@@ -117,6 +118,25 @@ export function rejectMatch(id: number, commentaire?: string) {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ commentaire: commentaire?.trim() || null }),
+  });
+}
+
+/** Impayés ↔ écritures d'origine (09/11/2026) ; validation et rejet en lot : routes communes. */
+export function listPairesImpayes(
+  companyId: number,
+  statut: "Proposée" | "Validée",
+  bankAccountId?: number,
+) {
+  const params = new URLSearchParams({ company_id: String(companyId), statut });
+  if (bankAccountId !== undefined) params.set("bank_account_id", String(bankAccountId));
+  return apiFetch<{ paires: PaireImpaye[] }>(`/reconciliation/impayes-origines?${params}`);
+}
+
+export function cancelPaireImpaye(id: number, motif: string) {
+  return apiFetch<PaireImpaye>(`/reconciliation/impayes-origines/${id}`, {
+    method: "DELETE",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ motif }),
   });
 }
 

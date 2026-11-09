@@ -365,6 +365,8 @@ def test_match_type_must_be_known(db, world):
         "ck_reconciliation_matches_type",
         ReconciliationMatch(company_id=world.company.id, type="2-2"),
     )
+    # Impayé ↔ écriture d'origine (migration 0047)
+    save(db, ReconciliationMatch(company_id=world.company.id, type="E-E"))
 
 
 def test_match_score_is_between_0_and_100(db, world):

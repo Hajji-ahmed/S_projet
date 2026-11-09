@@ -16,6 +16,7 @@ from app.services.reconciliation_service import (
     CandidateOperation,
     HistoryPage,
     MatchView,
+    PaireView,
     RunResult,
     TransactionsPage,
     montant_rapprochement,
@@ -45,6 +46,9 @@ class RunOut(BaseModel):
     nb_operations_ambigues: int
     nb_ecritures_ambigues: int
     nb_groupes: int = Field(0, description="Groupes N → 1 proposés (12/10/2026)")
+    nb_annulations: int = Field(
+        0, description="Impayés ↔ écritures d'origine proposés (09/11/2026)"
+    )
 
     @classmethod
     def from_result(cls, result: RunResult) -> "RunOut":
@@ -250,6 +254,43 @@ class CorrespondanceOut(BaseModel):
             operation=OperationOut.of(view.transaction, view.bank_code),
             ecriture=EcritureOut(**EcritureOut.fields_of(view.entry, view.entry_bank_code)),
         )
+
+
+class PaireOut(BaseModel):
+    """Un impayé et l'écriture d'origine qu'il annule (type « E-E », 09/11/2026)."""
+
+    id: int
+    code: str | None = None
+    statut: StatutCorrespondance
+    ecart_jours: int | None = Field(None, description="Jours entre l'origine et l'impayé")
+    commentaire: str | None
+    valide_par: str | None
+    valide_le: datetime | None
+    decide_par: str | None
+    decide_le: datetime | None
+    impaye: EcritureOut
+    origine: EcritureOut
+
+    @classmethod
+    def from_view(cls, view: PaireView) -> "PaireOut":
+        match = view.match
+        return cls(
+            id=match.id,
+            code=match.code,
+            statut=match.statut,
+            ecart_jours=(match.detail_score or {}).get("ecart_jours"),
+            commentaire=match.commentaire,
+            valide_par=view.valide_par,
+            valide_le=match.valide_le,
+            decide_par=view.decide_par,
+            decide_le=match.decide_le,
+            impaye=EcritureOut(**EcritureOut.fields_of(view.impaye, view.bank_code)),
+            origine=EcritureOut(**EcritureOut.fields_of(view.origine, view.bank_code)),
+        )
+
+
+class PairesOut(BaseModel):
+    paires: list[PaireOut]
 
 
 class CorrespondancesOut(BaseModel):

@@ -15,7 +15,8 @@ STATUTS_PREVISION = ("Prévu", "En attente", "Réalisé", "Reporté", "Annulé")
 STATUTS_CONTROLE_SOLDE = ("Conforme", "Écart", "À vérifier")
 
 # Rapprochement : cardinalité et origine de la proposition
-TYPES_CORRESPONDANCE = ("1-1", "1-N", "N-1", "N-N")
+# « E-E » : un impayé Sage et l'écriture d'origine qu'il annule, sans opération de banque (09/11/2026)
+TYPES_CORRESPONDANCE = ("1-1", "1-N", "N-1", "N-N", "E-E")
 # « Frais » : écriture de frais bancaires comptabilisée par SIMTIS (13/10/2026)
 # « Reprise » : état de rapprochement repris d'Excel, tout le reste rapproché d'un coup (27/10/2026)
 ORIGINES_CORRESPONDANCE = ("Automatique", "Manuelle", "Frais", "Reprise")

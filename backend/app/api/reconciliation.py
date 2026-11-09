@@ -27,6 +27,8 @@ from app.schemas.reconciliation import (
     ManuelIn,
     OperationOut,
     OperationsPageOut,
+    PaireOut,
+    PairesOut,
     RejetIn,
     RejetLotIn,
     RunIn,
@@ -484,3 +486,39 @@ def cancel(
         db, match_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
     )
     return _out(db, match_id)
+
+
+# --- Impayés ↔ écritures d'origine (09/11/2026) --------------------------------------------------
+# Validation et rejet en lot : `/matches/validate-batch` et `/matches/reject-batch`, communs.
+
+
+@router.get("/impayes-origines", response_model=PairesOut)
+def list_paires(
+    company_id: int,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+    statut: StatutCorrespondance = "Proposée",
+    bank_account_id: int | None = None,
+) -> PairesOut:
+    """Impayés proposés (ou rapprochés) avec l'écriture d'origine qu'ils annulent."""
+    views = reconciliation_service.list_paires(
+        db, company_id, statut=statut, bank_account_id=bank_account_id
+    )
+    return PairesOut(paires=[PaireOut.from_view(view) for view in views])
+
+
+@router.delete("/impayes-origines/{match_id}", response_model=PaireOut)
+def cancel_paire(
+    match_id: int,
+    body: AnnulationIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_validate),
+) -> PaireOut:
+    """Annule un impayé rapproché avec son origine (motif obligatoire) : les deux écritures
+    redeviennent « Non rapprochée »."""
+    reconciliation_service.get_paire_view(db, match_id)
+    reconciliation_service.cancel(
+        db, match_id, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    return PaireOut.from_view(reconciliation_service.get_paire_view(db, match_id))

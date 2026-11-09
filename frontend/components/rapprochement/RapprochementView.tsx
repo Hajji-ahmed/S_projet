@@ -25,6 +25,7 @@ import { AccountButton } from "@/components/ecritures/EntriesCard";
 import { EntriesPane } from "@/components/rapprochement/EntriesPane";
 import { FraisCard } from "@/components/rapprochement/FraisCard";
 import { HistoryTab } from "@/components/rapprochement/HistoryTab";
+import { ImpayesOriginesCard } from "@/components/rapprochement/ImpayesOriginesCard";
 import { MatchPanel } from "@/components/rapprochement/MatchPanel";
 import { PanierPanel } from "@/components/rapprochement/PanierPanel";
 import { ProposalsTab } from "@/components/rapprochement/ProposalsTab";
@@ -333,6 +334,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
       if (result.nb_groupes) {
         parts.push(`${plural(result.nb_groupes, "groupe")} de plusieurs opérations`);
       }
+      if (result.nb_annulations) {
+        parts.push(`${plural(result.nb_annulations, "impayé")} avec son écriture d'origine`);
+      }
       if (result.nb_operations_ambigues > 0) {
         parts.push(`${plural(result.nb_operations_ambigues, "opération")} ambiguë(s) à vérifier`);
       }
@@ -559,6 +563,16 @@ function Rapprochement({ companyId }: { companyId: number }) {
             setStatut("");
             setOperation(selected);
           }}
+        />
+      )}
+
+      {periodeLue && !periodError && tab === "propositions" && (
+        <ImpayesOriginesCard
+          companyId={companyId}
+          bankAccountId={filter.bankAccountId}
+          canValidate={canValidate}
+          reloadKey={reloadKey}
+          onChanged={reload}
         />
       )}
 

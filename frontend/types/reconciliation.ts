@@ -126,6 +126,24 @@ export type RunResult = {
   /** Groupes N → 1 proposés (12/10/2026). */
   nb_groupes?: number;
   nb_ecritures_ambigues: number;
+  /** Impayés ↔ écritures d'origine proposés (09/11/2026). */
+  nb_annulations?: number;
+};
+
+/** Un impayé Sage et l'écriture d'origine qu'il annule (type « E-E », 09/11/2026). */
+export type PaireImpaye = {
+  id: number;
+  code: string | null;
+  statut: StatutCorrespondance;
+  /** Jours entre l'origine et l'impayé. */
+  ecart_jours: number | null;
+  commentaire: string | null;
+  valide_par: string | null;
+  valide_le: string | null;
+  decide_par: string | null;
+  decide_le: string | null;
+  impaye: Ecriture;
+  origine: Ecriture;
 };
 
 /** Résultat de la recherche élargie (20/10/2026). */

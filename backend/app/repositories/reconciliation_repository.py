@@ -197,6 +197,56 @@ def set_entry_status(db: Session, ids: set[int] | list[int], statut: str) -> Non
         db.execute(update(AccountingEntry).where(AccountingEntry.id.in_(ids)).values(statut=statut))
 
 
+def automatic_entry_pairs(
+    db: Session, account_ids: list[int], date_from: date, date_to: date
+) -> list[ReconciliationMatch]:
+    """Propositions automatiques « E-E » (impayé ↔ écriture d'origine, 09/11/2026) encore en attente
+    dont une écriture du compte est datée entre les deux dates."""
+    query = (
+        select(ReconciliationMatch)
+        .join(ReconciliationMatchItem, ReconciliationMatchItem.match_id == ReconciliationMatch.id)
+        .join(AccountingEntry, AccountingEntry.id == ReconciliationMatchItem.accounting_entry_id)
+        .where(
+            ReconciliationMatch.type == "E-E",
+            ReconciliationMatch.statut == "Proposée",
+            ReconciliationMatch.origine == "Automatique",
+            AccountingEntry.bank_account_id.in_(account_ids),
+            AccountingEntry.date_ecriture >= date_from,
+            AccountingEntry.date_ecriture <= date_to,
+        )
+        .options(selectinload(ReconciliationMatch.items))
+    )
+    return list(db.scalars(query).unique())
+
+
+def entry_pairs(
+    db: Session, company_id: int, *, statut: str, bank_account_id: int | None
+) -> list[ReconciliationMatch]:
+    """Correspondances « E-E » de la société au statut demandé, les plus récentes d'abord."""
+    query = (
+        select(ReconciliationMatch)
+        .where(
+            ReconciliationMatch.company_id == company_id,
+            ReconciliationMatch.type == "E-E",
+            ReconciliationMatch.statut == statut,
+        )
+        .options(selectinload(ReconciliationMatch.items))
+        .order_by(ReconciliationMatch.id.desc())
+    )
+    if bank_account_id is not None:
+        query = query.where(
+            ReconciliationMatch.id.in_(
+                select(ReconciliationMatchItem.match_id)
+                .join(
+                    AccountingEntry,
+                    AccountingEntry.id == ReconciliationMatchItem.accounting_entry_id,
+                )
+                .where(AccountingEntry.bank_account_id == bank_account_id)
+            )
+        )
+    return list(db.scalars(query))
+
+
 def reset_unmatched_to_check(
     db: Session,
     company_id: int,

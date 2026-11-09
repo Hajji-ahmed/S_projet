@@ -28,6 +28,7 @@ from app.repositories import reconciliation_repository as repo
 from app.services import audit_service, lettrage_excel
 from app.services.errors import ConflictError, NotFoundError
 from app.services.position_service import business_today
+from app.services.reconciliation_annulations import PaireAnnulation, paires_annulation
 from app.services.reconciliation_groupes import (
     ResultatGroupes,
     explication_ensemble,
@@ -206,6 +207,8 @@ class RunResult:
     nb_ecritures_ambigues: int
     # Groupes N → 1 proposés (12/10/2026)
     nb_groupes: int = 0
+    # Impayés ↔ écritures d'origine proposés (09/11/2026)
+    nb_annulations: int = 0
 
 
 def run(
@@ -246,6 +249,7 @@ def run(
         nb_operations_ambigues=len(moteur.resultat.operations_ambigues),
         nb_ecritures_ambigues=len(moteur.resultat.ecritures_ambigues),
         nb_groupes=len(moteur.groupes.groupes),
+        nb_annulations=moteur.nb_annulations,
     )
     audit_service.log(
         db,
@@ -393,6 +397,7 @@ class _Moteur:
     nb_ecritures: int
     nb_remplacees: int
     groupes: ResultatGroupes = field(default_factory=ResultatGroupes)
+    nb_annulations: int = 0
 
 
 def _engine(
@@ -425,6 +430,14 @@ def _engine(
     anciennes_ec = {
         i.accounting_entry_id for m in anciennes for i in m.items if i.accounting_entry_id
     }
+    # Impayés ↔ écritures d'origine (09/11/2026) : refaits quand l'impayé est dans la période
+    anciennes_paires = [
+        match
+        for match in repo.automatic_entry_pairs(db, account_ids, entry_from, entry_to)
+        if date_from <= _date_impaye(db, match) <= date_to
+    ]
+    anciennes_ec |= {i.accounting_entry_id for m in anciennes_paires for i in m.items}
+    anciennes = [*anciennes, *anciennes_paires]
     repo.delete_matches(db, [match.id for match in anciennes])
     repo.set_transaction_status(db, anciennes_tx, "Non rapprochée")
     repo.set_entry_status(db, anciennes_ec, "Non rapprochée")
@@ -533,10 +546,56 @@ def _engine(
         a_verifier_tx.update(groupe.operation_ids)
         a_verifier_ec.add(entry.id)
 
+    # 5. Impayé ↔ écriture d'origine (09/11/2026), seulement sur les écritures que le
+    # rapprochement avec la banque laisse libres
+    restes = [
+        entry
+        for entry in entries
+        if entry.id not in a_verifier_ec and entry.id not in groupe_ec and entry.origine != "SIMTIS"
+    ]
+    paires = paires_annulation([_ecriture(entry) for entry in restes], du=date_from, au=date_to)
+    for paire in paires:
+        _enregistrer_paire(
+            db, company, by_entry[paire.impaye_id], by_entry[paire.origine_id], paire
+        )
+        a_verifier_ec.update((paire.impaye_id, paire.origine_id))
+
     repo.set_transaction_status(db, a_verifier_tx, "À vérifier")
     repo.set_entry_status(db, a_verifier_ec, "À vérifier")
     db.flush()
-    return _Moteur(resultat, len(transactions), len(entries), len(anciennes), groupes)
+    return _Moteur(resultat, len(transactions), len(entries), len(anciennes), groupes, len(paires))
+
+
+def _date_impaye(db: Session, match: ReconciliationMatch) -> date:
+    """Date d'une paire « E-E » : celle de l'impayé, la plus récente des deux écritures."""
+    return max(db.get(AccountingEntry, i.accounting_entry_id).date_ecriture for i in match.items)
+
+
+def _enregistrer_paire(
+    db: Session,
+    company: Company,
+    impaye: AccountingEntry,
+    origine: AccountingEntry,
+    paire: PaireAnnulation,
+) -> None:
+    repo.add(
+        db,
+        ReconciliationMatch(
+            company_id=company.id,
+            type="E-E",
+            statut="Proposée",
+            origine="Automatique",
+            detail_score={"annulation": True, "ecart_jours": paire.ecart_jours},
+            items=[
+                ReconciliationMatchItem(
+                    accounting_entry_id=entry.id,
+                    montant_affecte=abs(montant_rapprochement(entry)),
+                    actif=True,
+                )
+                for entry in (impaye, origine)
+            ],
+        ),
+    )
 
 
 def _jusqu_au(entries: list[AccountingEntry], au: date) -> list[AccountingEntry]:
@@ -834,19 +893,24 @@ def _validate(
     match.valide_le = match.decide_le
     tx_ids, entry_ids = _members(match)
     if match.code is None:
-        match.code = _new_code(db, min(tx_ids))
+        # Impayé ↔ origine (09/11/2026) : pas d'opération, le compte est celui des écritures
+        compte = (
+            db.get(BankTransaction, min(tx_ids)).bank_account_id
+            if tx_ids
+            else db.get(AccountingEntry, min(entry_ids)).bank_account_id
+        )
+        match.code = _new_code(db, compte)
     db.flush()
     repo.set_transaction_status(db, tx_ids, "Rapprochée")
     repo.set_entry_status(db, entry_ids, "Rapprochée")
 
 
-def _new_code(db: Session, transaction_id: int) -> str:
-    """Code unique du rapprochement (13/10/2026) : « BP-26-000123 », un compteur par compte
-    bancaire et par année de validation (date du Maroc)."""
-    tx = db.get(BankTransaction, transaction_id)
+def _new_code(db: Session, bank_account_id: int) -> str:
+    """Code unique du rapprochement (13/10/2026) : « BP-26-000123 », un compteur par société,
+    banque du compte et année de validation (date du Maroc)."""
     annee = business_today().year
-    numero = repo.next_code_number(db, tx.bank_account_id, annee)
-    banque = repo.bank_code_of_account(db, tx.bank_account_id)
+    numero = repo.next_code_number(db, bank_account_id, annee)
+    banque = repo.bank_code_of_account(db, bank_account_id)
     return f"{banque}-{annee % 100:02d}-{numero:06d}"
 
 
@@ -887,6 +951,11 @@ def create_validated(
     _validate(db, match, acteur_id)
     return match
 
+
+IMPAYE_ORIGINE = (
+    "Ce rapprochement relie un impayé à son écriture d'origine : il se traite dans la carte "
+    "« Impayés ↔ écritures d'origine »."
+)
 
 ECRITURE_SIMTIS = (
     "Cette écriture a été comptabilisée par SIMTIS : supprimez-la depuis « À comptabiliser » "
@@ -1557,6 +1626,8 @@ def get_match_view(db: Session, match_id: int) -> MatchView:
     match = repo.get_match(db, match_id)
     if match is None:
         raise NotFoundError("Correspondance introuvable.")
+    if match.type == "E-E":
+        raise ConflictError(IMPAYE_ORIGINE)
     return _views(db, [match], grille(db))[0]
 
 
@@ -2317,3 +2388,68 @@ def export_lettrage(
         banque = "tous"
     nom = f"lettrage-{banque}-{date_from or 'debut'}-{date_to or business_today()}.xlsx"
     return nom, contenu, len(matches)
+
+
+# --- Impayés ↔ écritures d'origine (09/11/2026) ----------------------------------------------------
+
+
+@dataclass
+class PaireView:
+    match: ReconciliationMatch
+    impaye: AccountingEntry
+    origine: AccountingEntry
+    bank_code: str | None
+    valide_par: str | None
+    decide_par: str | None
+
+
+def _paire_views(db: Session, matches: list[ReconciliationMatch]) -> list[PaireView]:
+    entries = repo.entries_with_bank(
+        db, {i.accounting_entry_id for m in matches for i in m.items if i.accounting_entry_id}
+    )
+    names = repo.user_names(
+        db,
+        {m.valide_par_id for m in matches if m.valide_par_id}
+        | {m.decide_par_id for m in matches if m.decide_par_id},
+    )
+    views = []
+    for match in matches:
+        lignes = [entries[i.accounting_entry_id] for i in match.items]
+        # L'impayé est la plus récente des deux écritures (l'origine est datée avant ou le même jour)
+        lignes.sort(key=lambda ligne: (ligne[0].date_ecriture, ligne[0].id))
+        (origine, code), (impaye, _) = lignes[0], lignes[-1]
+        if type_ecriture(origine.libelle) == "Impayé" and type_ecriture(impaye.libelle) != "Impayé":
+            origine, impaye = impaye, origine
+        views.append(
+            PaireView(
+                match=match,
+                impaye=impaye,
+                origine=origine,
+                bank_code=code,
+                valide_par=names.get(match.valide_par_id) if match.valide_par_id else None,
+                decide_par=names.get(match.decide_par_id) if match.decide_par_id else None,
+            )
+        )
+    views.sort(key=lambda view: (-view.impaye.date_ecriture.toordinal(), -view.match.id))
+    return views
+
+
+def list_paires(
+    db: Session,
+    company_id: int,
+    *,
+    statut: str = "Proposée",
+    bank_account_id: int | None = None,
+) -> list[PaireView]:
+    """Impayés rapprochés (ou proposés) avec leur écriture d'origine, les plus récents d'abord."""
+    company = _company(db, company_id)
+    return _paire_views(
+        db, repo.entry_pairs(db, company.id, statut=statut, bank_account_id=bank_account_id)
+    )
+
+
+def get_paire_view(db: Session, match_id: int) -> PaireView:
+    match = repo.get_match(db, match_id)
+    if match is None or match.type != "E-E":
+        raise NotFoundError("Rapprochement impayé ↔ écriture d'origine introuvable.")
+    return _paire_views(db, [match])[0]
