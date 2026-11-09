@@ -3,7 +3,7 @@
 Règles :
 - Devises : une grille par société et par date ; l'enregistrer remplace la grille de cette date ;
 - Prévisions : chaque ligne a sa date (30/10/2026) ; l'écran montre et remplace les lignes datées
-  du jour choisi ou plus tard ;
+  du jour choisi ou plus tard ; une ligne datée avant est ajoutée à sa date (09/11/2026) ;
 - une cellule vide n'est pas enregistrée, jamais remplacée par 0 ; rien n'est calculé (pas de TOTAL
   automatique) en attendant P9 (devises) et P14 (prévisions) ;
 - seules les colonnes des banques actives se saisissent ; les valeurs d'une banque désactivée sont
@@ -196,19 +196,15 @@ def _date(jour: date) -> str:
 
 
 def _numeroter(
-    depuis: date, lignes: list[LignePrevision]
+    lignes: list[LignePrevision], rangs_existants: Mapping[date, int]
 ) -> tuple[dict[PrevisionCell, str | Decimal], dict[tuple[date, int], dict[str, Decimal | None]]]:
     """Cellules et montants sans banque voulus, par (date, rang). Une ligne entièrement vide est
-    ignorée ; les autres sont numérotées dans l'ordre d'envoi, à partir de 1 pour chaque date."""
+    ignorée ; les autres sont numérotées dans l'ordre d'envoi, à partir de 1 pour chaque date, ou
+    après `rangs_existants` (lignes d'une date antérieure à la page, ajoutées le 09/11/2026)."""
     cells: dict[PrevisionCell, str | Decimal] = {}
     days: dict[tuple[date, int], dict[str, Decimal | None]] = {}
-    rangs: dict[date, int] = {}
+    rangs: dict[date, int] = dict(rangs_existants)
     for item in lignes:
-        if item.jour < depuis:
-            raise ConflictError(
-                f"Une ligne du {_date(item.jour)} est antérieure à la date affichée "
-                f"({_date(depuis)})."
-            )
         if item.jour < PREMIERE_DATE_SOLDE:
             raise ConflictError(f"Date invalide : {_date(item.jour)}.")
         libelle = _text(item.libelle)
@@ -247,10 +243,15 @@ def save_previsions(
     ip: str | None = None,
 ) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
     """Remplace toutes les lignes datées `depuis` ou plus tard par `lignes` (décision du
-    30/10/2026) : une ligne absente est supprimée, les lignes plus anciennes ne bougent pas."""
+    30/10/2026) : une ligne absente est supprimée, les lignes plus anciennes ne bougent pas.
+    Une ligne datée avant `depuis` est ajoutée à la suite des lignes déjà enregistrées à sa date
+    (décision du 09/11/2026) : rien n'est remplacé ni supprimé avant `depuis`."""
     company = _company(db, company_id)
     banks = _active_banks(db, {bank_id for item in lignes for bank_id in item.banques})
-    wanted, wanted_days = _numeroter(depuis, lignes)
+    passees = {item.jour for item in lignes if PREMIERE_DATE_SOLDE <= item.jour < depuis}
+    wanted, wanted_days = _numeroter(
+        lignes, saisie_repository.dernier_rang_previsions(db, company.id, passees)
+    )
     existing = {
         (row.jour, row.ligne, row.bank_id): row
         for row in saisie_repository.list_previsions(db, company.id, depuis)

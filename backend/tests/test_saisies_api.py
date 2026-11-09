@@ -418,13 +418,54 @@ def test_empty_added_line_is_not_saved(client, tresorerie, db):
     assert keys(body) == [(LATER.isoformat(), 1, "A")]
 
 
-def test_line_before_the_chosen_date_gives_409(client, tresorerie, db):
+def test_line_before_the_chosen_date_is_added_after_that_dates_lines(client, tresorerie, db):
+    """Décision du 09/11/2026 : une ligne passée s'ajoute à sa date, rien n'y est remplacé."""
+    veille = DAY - timedelta(days=1)
+    put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {"jour": veille.isoformat(), "libelle": "Ancienne"},
+            {"jour": veille.isoformat(), "douane": "5"},
+        ],
+        jour=veille,
+    )
+
     response = put_previsions(
-        client, db, tresorerie, [{"jour": (DAY - timedelta(days=1)).isoformat(), "libelle": "A"}]
+        client,
+        db,
+        tresorerie,
+        [
+            {"jour": DAY.isoformat(), "libelle": "Du jour"},
+            {"jour": veille.isoformat(), "libelle": "Oubliée", "encaissement": "7"},
+        ],
+    )
+
+    assert response.status_code == 200
+    assert keys(response.json()) == [(DAY.isoformat(), 1, "Du jour")]
+    lignes = client.get(PREVISIONS, params=params(db, jour=veille), headers=tresorerie).json()
+    assert keys(lignes)[:3] == [
+        (veille.isoformat(), 1, "Ancienne"),
+        (veille.isoformat(), 2, None),
+        (veille.isoformat(), 3, "Oubliée"),
+    ]
+    assert line(lignes, 3)["encaissement"] == "7.00"
+    entry = audit(db, "saisie_previsions")[-1]
+    assert entry.nouvelle_valeur[f"{veille:%d/%m/%Y} · Ligne 3 · libellé"] == "Oubliée"
+
+
+def test_line_before_the_chosen_date_respects_99_lines(client, tresorerie, db):
+    veille = DAY - timedelta(days=1)
+    lignes = [{"jour": veille.isoformat(), "libelle": f"L{n}"} for n in range(99)]
+    put_previsions(client, db, tresorerie, lignes, jour=veille)
+
+    response = put_previsions(
+        client, db, tresorerie, [{"jour": veille.isoformat(), "libelle": "Une de trop"}]
     )
 
     assert response.status_code == 409
-    assert "antérieure" in response.json()["detail"]
+    assert "99 lignes" in response.json()["detail"]
 
 
 def test_mistyped_year_gives_409(client, tresorerie, db):

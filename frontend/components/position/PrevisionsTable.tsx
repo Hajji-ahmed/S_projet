@@ -61,6 +61,8 @@ type PrevisionsTableProps = {
  * gauche sur les lignes de la même date ; un libellé et un montant par banque, puis Encaissement,
  * Escompte et Douane. Le tableau montre les lignes datées du jour choisi ou plus tard ; la Trésorerie
  * ajoute une ligne (à une nouvelle date ou sous une date existante) ou la supprime, puis enregistre.
+ * Une ligne datée avant le jour choisi s'ajoute à sa date (décision du 09/11/2026) et n'est plus
+ * visible après l'enregistrement : un message dit quelle date choisir pour la revoir.
  * Rien n'y est calculé.
  */
 export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsTableProps) {
@@ -70,14 +72,41 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
   const groupes = groupesParDate(lignesPrevisions(grid.draft));
   const pleine = (date: string) =>
     (groupes.find((groupe) => groupe.jour === date)?.lignes.length ?? 0) >= LIGNES_PAR_DATE_MAX;
-  const dateValide = nouvelleDate >= jour && !pleine(nouvelleDate);
+  const dateValide = nouvelleDate !== "" && !pleine(nouvelleDate);
 
   async function save() {
     const parsed = draftToPrevisionsInput(
       grid.draft,
       banks.map((bank) => bank.id),
     );
-    if (await grid.submit(parsed)) toast("Tableau Prévisions enregistré.");
+    const passees = parsed.ok
+      ? [
+          ...new Set(
+            parsed.value.lignes
+              .filter(
+                (ligne) =>
+                  ligne.jour < jour &&
+                  (ligne.libelle !== null ||
+                    ligne.banques.length > 0 ||
+                    ligne.encaissement !== null ||
+                    ligne.escompte !== null ||
+                    ligne.douane !== null),
+              )
+              .map((ligne) => ligne.jour),
+          ),
+        ].sort()
+      : [];
+    if (!(await grid.submit(parsed))) return;
+    if (passees.length === 0) {
+      toast("Tableau Prévisions enregistré.");
+      return;
+    }
+    const dates = passees.map(formatDate).join(", ");
+    toast(
+      passees.length === 1
+        ? `Tableau Prévisions enregistré. Ligne du ${dates} ajoutée : choisissez le ${dates} en haut de page pour la voir.`
+        : `Tableau Prévisions enregistré. Lignes ajoutées aux dates ${dates} : choisissez une de ces dates en haut de page pour les voir.`,
+    );
   }
 
   function ajouter(date: string) {
@@ -241,7 +270,6 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
                 <DateInput
                   id="prevision-nouvelle-date"
                   value={nouvelleDate}
-                  min={jour}
                   onChange={(event) => setNouvelleDate(event.target.value)}
                   invalid={nouvelleDate !== "" && !dateValide}
                   className="w-[170px]"
@@ -255,11 +283,6 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
               >
                 Ajouter une ligne
               </Button>
-              {nouvelleDate !== "" && nouvelleDate < jour && (
-                <span className="text-sm text-simtis-danger-fg">
-                  La date doit être le {formatDate(jour)} ou plus tard.
-                </span>
-              )}
             </div>
           )}
           {canEdit && (
