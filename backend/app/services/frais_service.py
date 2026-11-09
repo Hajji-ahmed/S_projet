@@ -351,18 +351,62 @@ def details_par_type(lignes: list[tuple[BankTransaction, str]]) -> list[Detail]:
     return [par_type[code] for code in TYPES if code in par_type]
 
 
+def tva_attendue(commission: Decimal) -> Decimal:
+    """TVA de 10 % d'une commission (montant positif), arrondie au centime comme la banque."""
+    return (commission * TAUX_TVA_FRAIS / 100).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
+    """« TAXE SUR VALEUR AJOUTEE » qui n'entrent pas dans l'écriture « COM » (09/11/2026).
+
+    Par compte et par jour, chaque TVA (dans l'ordre du relevé) prend une « COMMISSION » encore
+    libre dont la TVA de 10 % vaut exactement son montant ; une commission ne prend qu'une TVA.
+    Restent à la main : une TVA sans commission (celle d'un INTERET REMISE LCN A L'ESCOMPTE…) et
+    celle d'une commission de plus de `SEUIL_MANUEL`, qui suit sa commission."""
+    par_jour: dict[tuple[int, date], list[BankTransaction]] = {}
+    for tx in operations:
+        if tx.montant < 0 and type_commission(tx.libelle) in ("commission", "tva"):
+            par_jour.setdefault((tx.bank_account_id, tx.date_operation), []).append(tx)
+    a_la_main: set[int] = set()
+    for lignes in par_jour.values():
+        lignes.sort(key=lambda tx: (tx.ordre or 0, tx.id))
+        libres: dict[Decimal, list[BankTransaction]] = {}
+        for tx in lignes:
+            if type_commission(tx.libelle) == "commission":
+                libres.setdefault(tva_attendue(-tx.montant), []).append(tx)
+        for tx in lignes:
+            if type_commission(tx.libelle) != "tva":
+                continue
+            candidates = libres.get(-tx.montant)
+            if not candidates:
+                a_la_main.add(tx.id)
+                continue
+            commission = candidates.pop(0)
+            if -commission.montant > SEUIL_MANUEL:
+                a_la_main.add(tx.id)
+    return a_la_main
+
+
 def regrouper(
     famille: Famille,
     operations: list[BankTransaction],
     jours_dans_sage: set[tuple[int, date]] | None = None,
+    hors_famille: set[int] | None = None,
 ) -> list[JourFrais]:
     """Un groupe par (compte, jour) : seulement des frais débités de la famille ; un jour déjà
-    passé dans Sage est écarté. Trié par jour puis compte."""
+    passé dans Sage est écarté. Trié par jour puis compte. `hors_famille` : opérations du libellé
+    de la famille qui se passent pourtant à la main (TVA sans sa commission, 09/11/2026)."""
     jours_dans_sage = jours_dans_sage or set()
+    hors_famille = hors_famille or set()
     groupes: dict[tuple[int, date], JourFrais] = {}
     for tx in operations:
         code = famille.type_de(tx.libelle)
-        if tx.montant >= 0 or code is None or au_dessus_du_seuil(famille, tx.montant):
+        if (
+            tx.montant >= 0
+            or code is None
+            or au_dessus_du_seuil(famille, tx.montant)
+            or tx.id in hors_famille
+        ):
             continue
         cle = (tx.bank_account_id, tx.date_operation)
         if cle in jours_dans_sage:
@@ -421,19 +465,34 @@ def _jours(
     ecartes = {
         (a, j) for a, j, f in _ecartes(db, account_ids, date_from, date_to) if f == famille.code
     }
+    libres = frais_repository.frais_libres(db, account_ids, date_from, date_to, famille.libelle_sql)
     return regrouper(
         famille,
-        [
-            tx
-            for tx in frais_repository.frais_libres(
-                db, account_ids, date_from, date_to, famille.libelle_sql
-            )
-            if tx.id not in inclus
-        ],
+        [tx for tx in libres if tx.id not in inclus],
         frais_repository.jours_dans_sage(
             db, company_id, account_ids, date_from, date_to, famille.ecriture_sql
         )
         | ecartes,
+        # Association TVA ↔ commission sur toutes les opérations libres, avant de retirer les frais
+        # inclus dans Sage (09/11/2026)
+        tva_a_la_main(libres) if famille is COMMISSIONS else None,
+    )
+
+
+def _tva_a_la_main(
+    db: Session, company_id: int, account_ids: list[int], date_from: date, date_to: date
+) -> set[int]:
+    """TVA libres de la période qui se passent à la main (sans commission associée). Un jour où
+    Sage a déjà son écriture « COM » n'est pas concerné : sa TVA y est déjà, la passer à la main
+    la compterait deux fois."""
+    libres = frais_repository.frais_libres(
+        db, account_ids, date_from, date_to, COMMISSIONS.libelle_sql
+    )
+    dans_sage = frais_repository.jours_dans_sage(
+        db, company_id, account_ids, date_from, date_to, COMMISSIONS.ecriture_sql
+    )
+    return tva_a_la_main(
+        [tx for tx in libres if (tx.bank_account_id, tx.date_operation) not in dans_sage]
     )
 
 
@@ -468,8 +527,13 @@ def famille_automatique(libelle: str | None, montant: Decimal | None) -> str | N
     )
 
 
-def a_la_main(tx: BankTransaction, ecartes: set[tuple[int, date, str]]) -> bool:
-    """Frais qui se passe à la main : pas d'une famille automatique, ou d'une journée écartée."""
+def a_la_main(
+    tx: BankTransaction, ecartes: set[tuple[int, date, str]], tva_main: set[int] | None = None
+) -> bool:
+    """Frais qui se passe à la main : pas d'une famille automatique, d'une journée écartée, ou une
+    TVA sans sa commission (`tva_main`, 09/11/2026)."""
+    if tva_main and tx.id in tva_main:
+        return True
     code = famille_automatique(tx.libelle, tx.montant)
     return code is None or (tx.bank_account_id, tx.date_operation, code) in ecartes
 
@@ -486,10 +550,11 @@ def _frais_a_controler(
         for tx in jour.operations
     ]
     ecartes = _ecartes(db, account_ids, date_from, date_to)
+    tva_main = _tva_a_la_main(db, company_id, account_ids, date_from, date_to)
     manuels = [
         tx
         for tx, _ in frais_repository.autres_frais(db, account_ids, date_from, date_to)
-        if a_la_main(tx, ecartes)
+        if a_la_main(tx, ecartes, tva_main)
     ]
     return automatiques + manuels
 
@@ -1297,6 +1362,7 @@ def autres_frais(
     if inclus is None:
         inclus = frais_inclus(db, company_id, list(accounts), date_from, date_to)
     ecartes = _ecartes(db, list(accounts), date_from, date_to)
+    tva_main = _tva_a_la_main(db, company_id, list(accounts), date_from, date_to)
     return [
         AutreFrais(
             tx,
@@ -1305,7 +1371,7 @@ def autres_frais(
             pointage,
         )
         for tx, pointage in frais_repository.autres_frais(db, list(accounts), date_from, date_to)
-        if a_la_main(tx, ecartes) and tx.id not in inclus
+        if a_la_main(tx, ecartes, tva_main) and tx.id not in inclus
     ]
 
 
@@ -1447,8 +1513,10 @@ def comptabiliser_manuellement(
     for tx in operations:
         if tx.id in inclus:
             raise ConflictError(_message_inclus(tx, inclus[tx.id]))
-    ecartes = _ecartes(db, sorted({tx.bank_account_id for tx in operations}), debut, fin)
-    automatiques = [tx for tx in operations if not a_la_main(tx, ecartes)]
+    comptes_operations = sorted({tx.bank_account_id for tx in operations})
+    ecartes = _ecartes(db, comptes_operations, debut, fin)
+    tva_main = _tva_a_la_main(db, company_id, comptes_operations, debut, fin)
+    automatiques = [tx for tx in operations if not a_la_main(tx, ecartes, tva_main)]
     if automatiques:
         raise ConflictError(
             f"« {automatiques[0].libelle} » se comptabilise en automatique (droits de timbre, "
