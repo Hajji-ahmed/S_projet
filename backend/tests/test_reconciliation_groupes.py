@@ -53,6 +53,12 @@ def test_fee_families_are_read_from_the_label():
     assert famille_frais("COMMISSION") == "commission"
     assert famille_frais("INTERET REMISE LCN A L'ESCOMPTE") == "interet"
     assert famille_frais("ENCAISSEMENT CHEQUE N 1550018") is None
+    # Autres banques (09/11/2026)
+    assert famille_frais("FRAIS DE TIMBRE/DOMICILIATION TITRE IMPORTATION REF : 78") == "timbre"
+    assert famille_frais("FRAIS TIMBRE DU MOIS 0926") == "timbre"
+    assert famille_frais("TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J1") == "commission"
+    assert famille_frais("TVA 10% SUR COMMISSION TRF26J1") == "tva"
+    assert famille_frais("FRAIS SWIFT CREDOC IMPORT") == "frais"
 
 
 def test_cheque_plus_commission_plus_tva_is_one_entry():

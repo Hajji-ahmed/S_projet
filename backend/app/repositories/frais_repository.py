@@ -19,14 +19,19 @@ from app.repositories import reconciliation_repository
 
 # Lectures larges en base ; les règles exactes sont dans `frais_service` (`type_timbre`,
 # `type_commission`)
-LIBELLE_TIMBRE_SQL = r"^\s*DROITS?\s+DE\s+TIMBRE"
-LIBELLE_COMMISSION_SQL = r"^\s*(COMMISSION|TAXE\s+SUR\s+VALEUR\s+AJOUTEE|TVA\s+COM\s+EFFET)"
+LIBELLE_TIMBRE_SQL = r"^\s*(DROITS?\s+DE\s+TIMBRE|FRAIS\s+(DE\s+)?TIMBRE)"
+# Autres banques (09/11/2026) : TRANSFERT EMIS, COMMISSION…, TVA… SUR COMMISSION, COM FRAIS…
+LIBELLE_COMMISSION_SQL = (
+    r"^\s*(COMMISSION|TAXE\s+SUR\s+VALEUR\s+AJOUTEE|TVA\s|TRANSFERT\s+EMIS|COM\s+FRAIS)"
+)
 # Écriture Sage d'un jour : « DT D'ENREGISTREMENT » (apostrophe droite ou non), « COM »
 ECRITURE_TIMBRE_SQL = r"^\s*DT\s+D.?\s*ENREGISTREMENT"
 ECRITURE_COMMISSION_SQL = r"^\s*COM\s*$"
 # Frais bancaires à TVA comprise (14/10/2026) : écriture Sage « FRAIS » du jour
 # Les commissions à TVA comprise sont lues avec les autres commissions (écriture « COM »)
-LIBELLE_FRAIS_SQL = r"^\s*FRAIS\W+R.CUP.R.S\W+PAR\W+LA\W+BANQUE"
+LIBELLE_FRAIS_SQL = (
+    r"^\s*FRAIS\W+(R.CUP.R.S\W+PAR\W+LA\W+BANQUE|SWIFT\W+CREDOC|ENCAISSEMENT\W+DE\W+CH)"
+)
 ECRITURE_FRAIS_SQL = r"^\s*FRAIS\s*$"
 STATUTS_LIBRES = ("Non rapprochée", "À vérifier")
 

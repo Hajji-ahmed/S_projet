@@ -51,6 +51,10 @@ MAX_FRAIS_TRIPLETS = 20
 FAMILLES_FRAIS: tuple[tuple[str, str], ...] = (
     ("DROITS DE TIMBRE", "timbre"),
     ("DROIT DE TIMBRE", "timbre"),
+    # Autres banques (09/11/2026), avant « FRAIS » : timbres de domiciliation, timbre du mois
+    ("FRAIS DE TIMBRE", "timbre"),
+    ("FRAIS TIMBRE", "timbre"),
+    ("TRANSFERT EMIS COMMISSION", "commission"),
     ("COMMISSION", "commission"),
     ("COM ", "commission"),
     ("TAXE SUR VALEUR AJOUTEE", "tva"),

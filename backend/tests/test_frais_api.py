@@ -1533,3 +1533,103 @@ def test_a_day_with_a_sage_com_entry_keeps_its_vat_out_of_the_manual_list(client
 
     assert tableau["propositions"] == []
     assert tva_interet.id not in {a["id"] for a in tableau["autres_frais"]}
+
+
+# --- Frais des autres banques, comme BP (09/11/2026) ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("libelle", "timbre", "commission", "frais"),
+    [
+        ("FRAIS DE TIMBRE/DOMICILIATION TITRE IMPORTATION REF : 7801926005299", True, None, None),
+        ("FRAIS DE TIMBRE DOMICILIATION TITRES D'IMPORTATIONS", True, None, None),
+        ("FRAIS TIMBRE DU MOIS 0926", True, None, None),
+        ("DROIT DE TIMBRE SUR OPERATION", True, None, None),
+        ("TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J148345", False, "commission", None),
+        ("TVA 10% SUR COMMISSION TRF26J148345", False, "tva", None),
+        ("COMMISSION SUR VIREMENT SRBM POUR COMPTE AWB", False, "commission", None),
+        ("TVA COMMISSION SUR VIREMENT SRBM POUR COMPTE AWB", False, "tva", None),
+        ("COMMISSION REJET PAIEMENT LCN NUM 3 A L'ESCOMPTE", False, "commission_lcn", None),
+        ("COM FRAIS REGLEMENT 1 LCN", False, "commission_lcn", None),
+        ("COM FRAIS / 3 LCN PAYEES", False, "commission_lcn", None),
+        ("COM FRAIS / 1 LCN IMPAYEES", False, "commission_lcn", None),
+        ("COMMISSION DOMICILIATION TITRES D'IMPORTATIONS", False, "commission_domiciliation", None),
+        ("COMMISSION DE TENUE DE COMPTE", False, "commission_tenue", None),
+        ("FRAIS SWIFT CREDOC IMPORT EN FAVEUR DE X", False, None, "frais_swift"),
+        ("FRAIS ENCAISSEMENT DE CHEQUES", False, None, "frais_cheques"),
+        # Restent à la main
+        ("AGIOS ESCOMPTE LCN N 2600114", False, None, None),
+        ("TVA 10% SUR COMMISSION REF ILC26A0001", False, None, None),
+        ("PRELEVEMENT DE LA TVA SUR L'ENSEMBLE DES FRAIS & COMMISSIONS", False, None, None),
+        ("CREDOC IMPORT COMMISSION OUVERTURE ILC26A0001", False, None, None),
+        ("COM.ADOBE", False, None, None),
+        ("FRAIS DE TENUE DE COMPTE", False, None, None),
+    ],
+)
+def test_fees_of_the_other_banks_are_recognised(libelle, timbre, commission, frais):
+    assert (est_timbre(libelle), type_commission(libelle), type_frais_tva(libelle)) == (
+        timbre,
+        commission,
+        frais,
+    )
+
+
+def details(proposition):
+    return [(d["type"], d["nb_operations"], d["total"]) for d in proposition["details"]]
+
+
+def test_a_bmce_day_is_booked_like_bp(client, comptable, db):
+    """Commission et TVA sur deux lignes, associées par les 10 % ; timbre de domiciliation ; une
+    commission de plus de 200 DH passe à la main avec sa TVA."""
+    compte = account(db, bank_code="BMCE")
+    operation(db, compte, "-50", JOUR, "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J148345")
+    operation(db, compte, "-5", JOUR, "TVA 10% SUR COMMISSION TRF26J148345")
+    operation(db, compte, "-150", JOUR, "COMMISSION SUR VIREMENT SRBM POUR COMPTE AWB")
+    operation(db, compte, "-15", JOUR, "TVA COMMISSION SUR VIREMENT SRBM POUR COMPTE AWB")
+    operation(db, compte, "-50", JOUR, "FRAIS DE TIMBRE/DOMICILIATION TITRE IMPORTATION REF : 78")
+    grande = operation(db, compte, "-423.20", JOUR, "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF9")
+    tva_grande = operation(db, compte, "-42.32", JOUR, "TVA 10% SUR COMMISSION TRF9")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    par_famille = {p["famille"]: p for p in tableau["propositions"]}
+    assert set(par_famille) == {"timbres", "commissions"}
+    assert (par_famille["timbres"]["libelle"], par_famille["timbres"]["total"]) == (
+        "DT D'ENREGISTREMENT",
+        "50.00",
+    )
+    assert (par_famille["commissions"]["libelle"], par_famille["commissions"]["total"]) == (
+        "COM",
+        "220.00",
+    )
+    assert details(par_famille["commissions"]) == [
+        ("commission", 2, "200.00"),
+        ("tva", 2, "20.00"),
+    ]
+    assert {a["id"] for a in tableau["autres_frais"]} == {grande.id, tva_grande.id}
+
+
+def test_awb_fees_with_vat_inside_are_split_and_its_escompte_stays_by_hand(client, comptable, db):
+    compte = account(db, bank_code="AWB")
+    operation(db, compte, "-22", JOUR, "COMMISSION REJET PAIEMENT LCN NUM 3100482 A L'ESCOMPTE")
+    operation(db, compte, "-39.60", JOUR, "FRAIS SWIFT CREDOC IMPORT EN FAVEUR DE X")
+    operation(db, compte, "-28", JOUR, "FRAIS TIMBRE DU MOIS 0926")
+    agios = operation(db, compte, "-73.15", JOUR, "AGIOS ESCOMPTE LCN N 2600114")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    par_famille = {p["famille"]: p for p in tableau["propositions"]}
+    assert details(par_famille["commissions"]) == [
+        ("commission_lcn", 1, "20.00"),
+        ("commission_lcn_tva", 1, "2.00"),
+    ]
+    assert details(par_famille["frais"]) == [
+        ("frais_swift", 1, "36.00"),
+        ("frais_swift_tva", 1, "3.60"),
+    ]
+    assert [(g["compte"], g["credit"]) for g in par_famille["frais"]["lignes"]][:2] == [
+        ("61473000", "36.00"),
+        ("34552142", "3.60"),
+    ]
+    assert par_famille["timbres"]["total"] == "28.00"
+    assert [a["id"] for a in tableau["autres_frais"]] == [agios.id]

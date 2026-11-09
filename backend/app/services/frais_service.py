@@ -90,12 +90,22 @@ CSV_ENCODAGE = "cp1252"
 ZERO = Decimal("0.00")
 
 # Libellés reconnus, sur le libellé en majuscules aux espaces réduits
-_TIMBRE = re.compile(r"^DROITS? DE TIMBRE\b")
+# Droits de timbre ; les autres banques (09/11/2026) : « FRAIS DE TIMBRE/DOMICILIATION TITRE
+# IMPORTATION » (BMCE, BMCI), « FRAIS DE TIMBRE DOMICILIATION TITRES… », « FRAIS TIMBRE DU MOIS »
+# (AWB)
+_TIMBRE = re.compile(
+    r"^(DROITS? DE TIMBRE\b|FRAIS DE TIMBRE ?/? ?DOMICILIATION\b|FRAIS TIMBRE DU MOIS\b)"
+)
 _COMMISSIONS = (
     ("commission", re.compile(r"^COMMISSION$")),
     ("tva", re.compile(r"^TAXE SUR VALEUR AJOUTEE$")),
     ("commission_effet", re.compile(r"^COMMISSION EFFET N\b.*\bREMIS PAR\b")),
     ("tva_commission_effet", re.compile(r"^TVA COM EFFET N\b.*\bREMIS PAR\b")),
+    # Autres banques (09/11/2026), commission et TVA sur deux lignes comme chez BP (BMCE, BMCI)
+    ("commission", re.compile(r"^TRANSFERT EMIS,? COMMISSION DE TRANSFERT\b")),
+    ("commission", re.compile(r"^COMMISSION SUR VIREMENT SRBM\b")),
+    ("tva", re.compile(r"^TVA 10 ?% SUR COMMISSION TRF")),
+    ("tva", re.compile(r"^TVA COMMISSION SUR VIREMENT SRBM\b")),
 )
 # Frais à TVA comprise de 10 % (14/10/2026), sur le libellé sans ponctuation ni accents
 # Le début du libellé décide de l'écriture du jour : COMMISSION… → « COM », FRAIS… → « FRAIS »
@@ -103,9 +113,19 @@ _COMMISSIONS_TVA = (
     ("commission_rtgs", re.compile(r"^COMMISSION VIR RTGS\b")),
     ("commission_prelevement", re.compile(r"^COMMISSION REGLEMENT PRELEVEMENT\b")),
     ("commission_bancaire", re.compile(r"^COMMISSION BANCAIRE\b")),
-    ("commission_tenue", re.compile(r"^COMMISSION TENUE DE COMPTE\b")),
+    # « DE TENUE » chez AWB (09/11/2026)
+    ("commission_tenue", re.compile(r"^COMMISSION (DE )?TENUE DE COMPTE\b")),
+    # Autres banques (09/11/2026) : AWB, CIH
+    ("commission_lcn", re.compile(r"^COMMISSION REJET PAIEMENT LCN\b")),
+    ("commission_lcn", re.compile(r"^COM FRAIS (REGLEMENT \d+ LCN|\d+ LCN (PAYEES|IMPAYEES))\b")),
+    ("commission_domiciliation", re.compile(r"^COMMISSION DOMICILIATION TITRES?\b")),
 )
-_FRAIS_RECUPERES = (("frais_recuperes", re.compile(r"^FRAIS RECUPERES PAR LA BANQUE\b")),)
+_FRAIS_RECUPERES = (
+    ("frais_recuperes", re.compile(r"^FRAIS RECUPERES PAR LA BANQUE\b")),
+    # Autres banques (09/11/2026) : AWB, CIH
+    ("frais_swift", re.compile(r"^FRAIS SWIFT CREDOC IMPORT\b")),
+    ("frais_cheques", re.compile(r"^FRAIS ENCAISSEMENT DE CHEQUES\b")),
+)
 _FRAIS_TVA = _COMMISSIONS_TVA + _FRAIS_RECUPERES
 TAUX_TVA_FRAIS = Decimal("10")
 # Décision du 19/10/2026 : une opération de frais de plus de 200 DH (hors droits de timbre) n'est
@@ -168,6 +188,11 @@ COMPTE_PAR_TYPE = {
     "commission_bancaire": COMPTE_FRAIS_BANCAIRES,
     "commission_tenue": COMPTE_FRAIS_BANCAIRES,
     "frais_recuperes": COMPTE_FRAIS_BANCAIRES,
+    # Autres banques (09/11/2026), TVA comprise comme les commissions RTGS de BP
+    "commission_lcn": COMPTE_FRAIS_BANCAIRES,
+    "commission_domiciliation": COMPTE_FRAIS_BANCAIRES,
+    "frais_swift": COMPTE_FRAIS_BANCAIRES,
+    "frais_cheques": COMPTE_FRAIS_BANCAIRES,
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
@@ -193,9 +218,22 @@ TYPES = {
     "commission_bancaire_tva": ("TVA commission bancaire", "compte_tva", "compte de TVA"),
     "commission_tenue": ("Commission tenue de compte", "compte_commission", "compte de charge"),
     "commission_tenue_tva": ("TVA commission tenue de compte", "compte_tva", "compte de TVA"),
+    # Autres banques (09/11/2026)
+    "commission_lcn": ("Commission LCN", "compte_commission", "compte de charge"),
+    "commission_lcn_tva": ("TVA commission LCN", "compte_tva", "compte de TVA"),
+    "commission_domiciliation": (
+        "Commission domiciliation",
+        "compte_commission",
+        "compte de charge",
+    ),
+    "commission_domiciliation_tva": ("TVA commission domiciliation", "compte_tva", "compte de TVA"),
     "frais_recuperes": ("Frais récupérés", "compte_commission", "compte de charge"),
     "frais_recuperes_tva": ("TVA frais récupérés", "compte_tva", "compte de TVA"),
     "frais_recuperes_timbre": ("Timbre frais récupérés", "compte_timbre", "compte de timbre"),
+    "frais_swift": ("Frais SWIFT credoc", "compte_commission", "compte de charge"),
+    "frais_swift_tva": ("TVA frais SWIFT credoc", "compte_tva", "compte de TVA"),
+    "frais_cheques": ("Frais encaissement chèques", "compte_commission", "compte de charge"),
+    "frais_cheques_tva": ("TVA frais encaissement chèques", "compte_tva", "compte de TVA"),
 }
 
 
