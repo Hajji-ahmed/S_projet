@@ -19,6 +19,19 @@ export type CelluleBanque = {
   reprise: boolean;
   /** Plusieurs comptes dans la cellule (23/10/2026) : solde de chacun ; vide sinon. */
   detail?: { numero: string; solde: string }[];
+  /** Tableau Banques (09/11/2026) : chaque compte de la cellule et l'opération du relevé qui donne
+   * son solde (`operation_id` `null` pour un solde saisi à la main) ; vide ailleurs. */
+  comptes?: CompteCellule[];
+};
+
+export type CompteCellule = {
+  bank_account_id: number;
+  numero: string;
+  solde: string;
+  date_solde: string;
+  operation_id: number | null;
+  date_operation: string | null;
+  solde_operation: string | null;
 };
 
 export type LigneBanques = {

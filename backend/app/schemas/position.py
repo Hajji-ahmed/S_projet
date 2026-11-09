@@ -36,6 +36,19 @@ class DetailCompteOut(BaseModel):
     solde: Decimal
 
 
+class CompteCelluleOut(BaseModel):
+    """Un compte de la cellule et l'opération du relevé qui donne son solde (09/11/2026) ;
+    `operation_id` est `None` pour un solde saisi à la main."""
+
+    bank_account_id: int
+    numero: str
+    solde: Decimal
+    date_solde: dt.date
+    operation_id: int | None
+    date_operation: dt.date | None
+    solde_operation: Decimal | None
+
+
 class CelluleOut(BaseModel):
     bank_id: int
     valeur: Decimal | None
@@ -43,6 +56,8 @@ class CelluleOut(BaseModel):
     reprise: bool
     # Plusieurs comptes dans la cellule (23/10/2026) : solde de chacun ; vide sinon
     detail: list[DetailCompteOut] = []
+    # Tableau Banques (09/11/2026) : chaque compte de la cellule, vide ailleurs
+    comptes: list[CompteCelluleOut] = []
 
     @classmethod
     def of(cls, c: Cellule) -> "CelluleOut":
@@ -52,6 +67,18 @@ class CelluleOut(BaseModel):
             date_solde=c.date_solde,
             reprise=c.reprise,
             detail=[DetailCompteOut(numero=n, solde=s) for n, s in c.detail],
+            comptes=[
+                CompteCelluleOut(
+                    bank_account_id=x.bank_account_id,
+                    numero=x.numero,
+                    solde=x.solde,
+                    date_solde=x.date_solde,
+                    operation_id=x.operation_id,
+                    date_operation=x.date_operation,
+                    solde_operation=x.solde_operation,
+                )
+                for x in c.comptes
+            ],
         )
 
 

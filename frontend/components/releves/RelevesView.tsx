@@ -10,7 +10,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { BankLabel, logosByCode } from "@/components/banks/BankLabel";
@@ -34,7 +35,9 @@ import {
   IMPORTS_AFFICHES,
   accountsWithStatements,
   formatDateTime,
+  lireLienReleve,
   showFirst,
+  type LienReleve,
 } from "@/lib/statements";
 import { listBanks } from "@/services/banks";
 import { listStatements, supprimerReleve } from "@/services/statements";
@@ -52,11 +55,15 @@ function period(start: string | null, end: string | null) {
  */
 export function RelevesView() {
   const { company } = useCompany();
+  // Ligne ouverte depuis un solde du tableau Banques (09/11/2026) : « ?compte=&date=&ligne= »
+  const params = useSearchParams();
+  // Même objet tant que l'adresse ne change pas : le relevé n'est pas rechargé à chaque rendu
+  const lien = useMemo(() => lireLienReleve(params), [params]);
   // Changer de société repart d'une page vierge : rien ne se mélange entre deux sociétés
-  return company ? <Releves key={company.id} companyId={company.id} /> : null;
+  return company ? <Releves key={company.id} companyId={company.id} lien={lien} /> : null;
 }
 
-function Releves({ companyId }: { companyId: number }) {
+function Releves({ companyId, lien }: { companyId: number; lien: LienReleve | null }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const canImport = !!user && hasAnyPermission(user.permissions, [PERMISSIONS.STATEMENTS_IMPORT]);
@@ -66,7 +73,7 @@ function Releves({ companyId }: { companyId: number }) {
   const [statements, setStatements] = useState<Statement[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
-  const [chosenAccount, setChosenAccount] = useState<number | null>(null);
+  const [chosenAccount, setChosenAccount] = useState<number | null>(lien?.compte ?? null);
   const [logos, setLogos] = useState<Map<string, string | null>>(new Map());
   // Nombre d'imports affichés dans le journal : les plus anciens restent masqués jusqu'au clic
   const [shownImports, setShownImports] = useState(IMPORTS_AFFICHES);
@@ -262,6 +269,7 @@ function Releves({ companyId }: { companyId: number }) {
           logos={logos}
           reloadKey={reloadKey}
           canEdit={canImport}
+          cible={lien && lien.compte === selectedId ? lien : null}
         />
       )}
 

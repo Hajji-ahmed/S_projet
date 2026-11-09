@@ -120,6 +120,32 @@ export function periodQuery(period: Period): string {
   return params.size ? `?${params}` : "";
 }
 
+/**
+ * Ligne de relevé ouverte depuis un solde du tableau Banques (09/11/2026) : le compte, le jour de
+ * l'opération (« AAAA-MM-JJ ») et l'opération qui donne le solde.
+ */
+export type LienReleve = { compte: number; date: string; ligne: number };
+
+/** Adresse de la page Relevés ouverte sur cette ligne. */
+export function lienReleve(lien: LienReleve): string {
+  const params = new URLSearchParams({
+    compte: String(lien.compte),
+    date: lien.date,
+    ligne: String(lien.ligne),
+  });
+  return `/releves?${params}`;
+}
+
+/** Lit `?compte=&date=&ligne=` ; `null` si un paramètre manque ou est invalide. */
+export function lireLienReleve(params: { get(name: string): string | null }): LienReleve | null {
+  const compte = Number(params.get("compte"));
+  const ligne = Number(params.get("ligne"));
+  const date = params.get("date") ?? "";
+  const entier = (value: number) => Number.isInteger(value) && value > 0;
+  if (!entier(compte) || !entier(ligne) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return { compte, date, ligne };
+}
+
 /** Comptes qui ont au moins un relevé importé, une fois chacun, triés par banque puis devise. */
 export function accountsWithStatements<
   T extends { bank_account_id: number; bank_code: string; devise: string },

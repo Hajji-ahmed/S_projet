@@ -82,7 +82,14 @@ def banques_table(db: Session, company_id: int, jour: date | None) -> TableauBan
         position_repository.current_mad_accounts(db, company.id), key=lambda a: a.id
     ):
         par_banque[account.bank_id].append(account)
-    soldes = _soldes(db, [a.id for comptes in par_banque.values() for a in comptes], date_fin)
+    account_ids = [a.id for comptes in par_banque.values() for a in comptes]
+    soldes = _soldes(db, account_ids, date_fin)
+    # Opération qui donne chaque solde du relevé : la cellule ouvre sa ligne (09/11/2026)
+    operations: dict[int, list[tuple[date, Decimal, int]]] = defaultdict(list)
+    for account_id, jour, solde, operation_id in position_repository.last_operations(
+        db, account_ids, date_fin
+    ):
+        operations[account_id].append((jour, solde, operation_id))
 
     colonnes = []
     for bank in position_repository.active_banks(db):
@@ -103,7 +110,14 @@ def banques_table(db: Session, company_id: int, jour: date | None) -> TableauBan
                 if comptes
                 else (),
                 comptes=tuple(
-                    CompteColonne(a.numero, soldes[a.id], a.credit_autorise) for a in comptes
+                    CompteColonne(
+                        a.numero,
+                        soldes[a.id],
+                        a.credit_autorise,
+                        bank_account_id=a.id,
+                        operations=tuple(operations[a.id]),
+                    )
+                    for a in comptes
                 ),
             )
         )

@@ -2,7 +2,7 @@
 
 import { EnCoursBadge } from "@/components/releves/EnCoursBadge";
 import { ChevronUp, Download, ListOrdered, PenLine, Plus, Trash2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
@@ -28,6 +28,7 @@ import {
   exportFilename,
   saveFile,
   showLast,
+  type LienReleve,
   type Period,
 } from "@/lib/statements";
 import { fromCents, toCents } from "@/lib/statementLines";
@@ -61,7 +62,12 @@ type AccountStatementCardProps = {
   reloadKey: number;
   /** Modification des champs métier (permission statements.import : Trésorerie). */
   canEdit: boolean;
+  /** Ligne ouverte depuis un solde du tableau Banques (09/11/2026) : le relevé s'ouvre sur son
+   * jour, la ligne est surlignée et amenée à l'écran. */
+  cible?: LienReleve | null;
 };
+
+const ID_LIGNE_CIBLE = "releve-ligne-du-solde";
 
 /**
  * Relevé continu d'un compte : toutes ses opérations importées, quel que soit le fichier, au
@@ -74,9 +80,12 @@ export function AccountStatementCard({
   logos,
   reloadKey,
   canEdit,
+  cible = null,
 }: AccountStatementCardProps) {
   const { toast } = useToast();
-  const [period, setPeriod] = useState<Period>({});
+  // Amenée à l'écran une seule fois, au premier chargement
+  const cibleMontree = useRef(false);
+  const [period, setPeriod] = useState<Period>(cible ? { from: cible.date, to: cible.date } : {});
   const [data, setData] = useState<AccountStatement | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [retryKey, setRetryKey] = useState(0);
@@ -127,8 +136,10 @@ export function AccountStatementCard({
       (result) => {
         if (cancelled) return;
         setData(result);
-        // Autre compte, autre période ou nouvel import : retour aux dernières opérations
-        setShown(OPERATIONS_AFFICHEES);
+        // Autre compte, autre période ou nouvel import : retour aux dernières opérations, assez
+        // pour montrer la ligne ouverte depuis le tableau Banques
+        const rang = cible ? result.operations.findIndex((row) => row.id === cible.ligne) : -1;
+        setShown(Math.max(OPERATIONS_AFFICHEES, rang >= 0 ? result.operations.length - rang : 0));
         setASupprimer(new Set());
         setState("ready");
       },
@@ -139,7 +150,15 @@ export function AccountStatementCard({
     return () => {
       cancelled = true;
     };
-  }, [selectedId, period, reloadKey, retryKey]);
+  }, [selectedId, period, reloadKey, retryKey, cible]);
+
+  useEffect(() => {
+    if (state !== "ready" || !cible || cibleMontree.current) return;
+    const ligne = document.getElementById(ID_LIGNE_CIBLE);
+    if (!ligne) return;
+    cibleMontree.current = true;
+    ligne.scrollIntoView({ block: "center" });
+  }, [state, data, cible]);
 
   // Pointage et commentaire modifiés directement dans le tableau, enregistrés aussitôt (10/10/2026)
   async function saveInline(
@@ -268,7 +287,14 @@ export function AccountStatementCard({
     {
       key: "date_operation",
       header: "Date d'opération",
-      render: (row) => <span className="whitespace-nowrap">{formatDate(row.date_operation)}</span>,
+      render: (row) => (
+        <span
+          id={row.id === cible?.ligne ? ID_LIGNE_CIBLE : undefined}
+          className="scroll-mt-24 whitespace-nowrap"
+        >
+          {formatDate(row.date_operation)}
+        </span>
+      ),
     },
     {
       key: "date_valeur",
@@ -593,6 +619,7 @@ export function AccountStatementCard({
             rows={visible.rows}
             getRowKey={(row) => String(row.id)}
             emptyMessage="Aucune opération sur cette période."
+            isRowSelected={cible ? (row) => row.id === cible.ligne : undefined}
           />
         </>
       )}

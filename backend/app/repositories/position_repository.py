@@ -75,6 +75,16 @@ def last_operation_soldes(
     """(compte, date d'opération, solde) de la dernière opération de chaque jour qui a un solde,
     jusqu'à `date_fin` incluse. « Dernière » = ordre chronologique du relevé continu (date,
     relevé, rang dans le relevé), jamais l'ordre des lignes du fichier."""
+    return [
+        (account_id, jour, solde)
+        for account_id, jour, solde, _ in last_operations(db, account_ids, date_fin)
+    ]
+
+
+def last_operations(
+    db: Session, account_ids: list[int], date_fin: date
+) -> list[tuple[int, date, Decimal, int]]:
+    """Comme `last_operation_soldes`, avec l'id de l'opération (lien vers le relevé, 09/11/2026)."""
     if not account_ids:
         return []
     query = (
@@ -82,6 +92,7 @@ def last_operation_soldes(
             BankTransaction.bank_account_id,
             BankTransaction.date_operation,
             BankTransaction.solde,
+            BankTransaction.id,
         )
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
@@ -98,7 +109,7 @@ def last_operation_soldes(
             BankTransaction.id.desc(),
         )
     )
-    return [(row[0], row[1], row[2]) for row in db.execute(query)]
+    return [(row[0], row[1], row[2], row[3]) for row in db.execute(query)]
 
 
 def comptes_alimentes_par_releve(db: Session, account_ids: list[int]) -> set[int]:

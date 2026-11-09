@@ -10,6 +10,8 @@ import {
   formatDateTime,
   importForm,
   jourSuivant,
+  lienReleve,
+  lireLienReleve,
   moveIndex,
   periodQuery,
   showFirst,
@@ -242,5 +244,28 @@ describe("jourSuivant", () => {
     expect(jourSuivant("2026-09-30")).toBe("2026-10-01");
     expect(jourSuivant("2026-12-31")).toBe("2027-01-01");
     expect(jourSuivant("2028-02-28")).toBe("2028-02-29");
+  });
+});
+
+describe("lien vers une ligne du relevé (09/11/2026)", () => {
+  it("aller et retour par l'adresse", () => {
+    const adresse = lienReleve({ compte: 12, date: "2026-11-08", ligne: 345 });
+
+    expect(adresse).toBe("/releves?compte=12&date=2026-11-08&ligne=345");
+    expect(lireLienReleve(new URL(adresse, "http://x").searchParams)).toEqual({
+      compte: 12,
+      date: "2026-11-08",
+      ligne: 345,
+    });
+  });
+
+  it("refuse une adresse incomplète ou invalide", () => {
+    const lire = (query: string) => lireLienReleve(new URLSearchParams(query));
+
+    expect(lire("")).toBeNull();
+    expect(lire("compte=12&date=2026-11-08")).toBeNull();
+    expect(lire("compte=abc&date=2026-11-08&ligne=1")).toBeNull();
+    expect(lire("compte=12&date=08/11/2026&ligne=1")).toBeNull();
+    expect(lire("compte=-1&date=2026-11-08&ligne=1")).toBeNull();
   });
 });

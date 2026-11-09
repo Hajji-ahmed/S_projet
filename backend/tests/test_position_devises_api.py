@@ -76,6 +76,7 @@ def test_eur_and_usd_balances_without_conversion(client, direction, db):
         "date_solde": "2025-09-30",
         "reprise": False,
         "detail": [],
+        "comptes": [],  # lien vers le relevé : tableau Banques seulement (09/11/2026)
     }
     assert cell(body, "EUR", "CIH")["reprise"] is True
     assert cell(body, "EUR", "BP")["valeur"] is None

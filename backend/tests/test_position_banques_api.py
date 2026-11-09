@@ -101,6 +101,18 @@ def test_validated_example_through_the_api(client, direction, db):
         "date_solde": "2025-09-30",
         "reprise": False,
         "detail": [],
+        "comptes": [
+            {
+                "bank_account_id": awb.id,
+                "numero": awb.numero,
+                "solde": "-200000.00",
+                "date_solde": "2025-09-30",
+                # Solde saisi à la main : aucune ligne de relevé à ouvrir
+                "operation_id": None,
+                "date_operation": None,
+                "solde_operation": None,
+            }
+        ],
     }
     assert cell(body, jour, "BMCE")["valeur"] == "100000.00"
     assert cell(body, jour, "BP")["valeur"] is None
@@ -156,12 +168,13 @@ def test_balance_row_without_solde_does_not_count(client, direction, db):
 
     body = get(client, direction, db, J29).json()
 
-    assert cell(body, body["jours"][-1], "AWB") | {"bank_id": 0} == {
+    assert cell(body, body["jours"][-1], "AWB") | {"bank_id": 0, "comptes": []} == {
         "bank_id": 0,
         "valeur": "1000.00",
         "date_solde": "2025-09-28",
         "reprise": True,
         "detail": [],
+        "comptes": [],
     }
 
 
@@ -201,12 +214,13 @@ def test_last_operation_of_the_day_gives_the_balance(client, direction, db):
 
     j29, j30 = body["jours"]
     assert cell(body, j29, "AWB")["valeur"] == "5.00"
-    assert cell(body, j30, "AWB") | {"bank_id": 0} == {
+    assert cell(body, j30, "AWB") | {"bank_id": 0, "comptes": []} == {
         "bank_id": 0,
         "valeur": "20.00",
         "date_solde": "2025-09-30",
         "reprise": False,
         "detail": [],
+        "comptes": [],
     }
     assert cell(body, body["disponible"], "AWB")["valeur"] == "120.00"
 
@@ -327,3 +341,69 @@ def test_a_single_account_has_no_detail(client, direction, db):
     body = get(client, direction, db).json()
 
     assert cell(body, body["jours"][-1], "AWB")["detail"] == []
+
+
+# --- Lien vers la ligne du relevé (09/11/2026) ---------------------------------------------------
+
+
+def statement_lines(db, compte: BankAccount, *rows: tuple[date, str | None]) -> list[int]:
+    """Comme `operations`, en rendant l'id de chaque opération."""
+    statement = save(db, BankStatement(bank_account_id=compte.id))
+    return [
+        save(
+            db,
+            build_transaction(
+                statement,
+                date_operation=jour,
+                solde=None if solde is None else Decimal(solde),
+            ),
+        ).id
+        for jour, solde in rows
+    ]
+
+
+def test_each_cell_points_to_the_statement_line_of_its_balance(client, direction, db):
+    """La cellule donne l'opération qui fait le solde : la dernière du jour qui a un solde ; un jour
+    repris pointe sur l'opération de la vraie date."""
+    awb = account(db, "AWB", credit_autorise=Decimal("0.00"))
+    _, j28_fin, j30_fin, _ = statement_lines(
+        db, awb, (J28, "1"), (J28, "2"), (J30, "3"), (J30, None)
+    )
+
+    body = get(client, direction, db).json()
+
+    j28, j29, j30 = (cell(body, jour, "AWB")["comptes"] for jour in body["jours"])
+    assert j30 == [
+        {
+            "bank_account_id": awb.id,
+            "numero": awb.numero,
+            "solde": "3.00",
+            "date_solde": "2025-09-30",
+            "operation_id": j30_fin,
+            "date_operation": "2025-09-30",
+            "solde_operation": "3.00",
+        }
+    ]
+    assert j28[0]["operation_id"] == j28_fin
+    assert j29[0]["operation_id"] == j28_fin  # jour repris : la ligne du 28
+    assert j29[0]["date_operation"] == "2025-09-28"
+    # Disponible Fc reel n'ouvre aucune ligne
+    assert cell(body, body["disponible"], "AWB")["comptes"] == []
+
+
+def test_each_account_of_a_cell_has_its_own_statement_line(client, direction, db):
+    """Une banque à deux comptes : chaque compte avec son solde et sa ligne ; un compte sans relevé
+    n'a pas de ligne."""
+    un = account(db, "BP", numero="BP-UN-0001")
+    deux = account(db, "BP", numero="BP-DEUX-0002")
+    [ligne_un] = statement_lines(db, un, (J29, "100"))
+    balance(db, deux, J30, "50")
+
+    body = get(client, direction, db).json()
+
+    comptes = cell(body, body["jours"][-1], "BP")["comptes"]
+    assert [(c["numero"], c["solde"], c["operation_id"]) for c in comptes] == [
+        ("BP-UN-0001", "100.00", ligne_un),
+        ("BP-DEUX-0002", "50.00", None),
+    ]
+    assert comptes[0]["date_operation"] == "2025-09-29"

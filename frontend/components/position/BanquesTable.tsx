@@ -1,8 +1,10 @@
 "use client";
 
 import { ChevronDown, ChevronUp, Landmark } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
+import { useAuth } from "@/components/auth/AuthProvider";
 import { BankLabel } from "@/components/banks/BankLabel";
 import {
   largeurMin,
@@ -15,8 +17,11 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { LoadingState } from "@/components/ui/LoadingState";
+import { finNumero } from "@/lib/accounts";
+import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
+import { canAccess } from "@/lib/permissions";
 import {
   JOURS_AFFICHES,
   formatJour,
@@ -25,8 +30,14 @@ import {
   signTone,
   type Tone,
 } from "@/lib/position";
+import { lienReleve } from "@/lib/statements";
 import { getBanquesTable } from "@/services/position";
-import type { BanquesTable as Table, CelluleBanque, LigneBanques } from "@/types/position";
+import type {
+  BanquesTable as Table,
+  CelluleBanque,
+  CompteCellule,
+  LigneBanques,
+} from "@/types/position";
 
 type LoadState = "loading" | "error" | "ready";
 
@@ -226,7 +237,7 @@ function Grid({ table }: { table: Table }) {
                 <th scope="row" className={ROW_HEAD}>
                   facilité de caisse <span className="tabular-nums">{formatJour(day.date)}</span>
                 </th>
-                <LineCells line={day} />
+                <LineCells line={day} liens />
               </tr>
             ))}
           </tbody>
@@ -257,12 +268,29 @@ function Grid({ table }: { table: Table }) {
   );
 }
 
-function LineCells({ line, colored = false }: { line: LigneBanques; colored?: boolean }) {
+function LineCells({
+  line,
+  colored = false,
+  liens = false,
+}: {
+  line: LigneBanques;
+  colored?: boolean;
+  /** Lignes « facilité de caisse » : un solde ouvre sa ligne du relevé (09/11/2026). */
+  liens?: boolean;
+}) {
+  const { user } = useAuth();
+  // Le lien n'est montré qu'à qui peut ouvrir la page Relevés (l'API reste le vrai contrôle)
+  const ouvrir = liens && !!user && canAccess(user.permissions, "/releves");
   const tone = (value: string | null) => (colored ? TONES[signTone(value)] : "");
   return (
     <>
       {line.cellules.map((cellule) => (
-        <AmountCell key={cellule.bank_id} cellule={cellule} className={tone(cellule.valeur)} />
+        <AmountCell
+          key={cellule.bank_id}
+          cellule={cellule}
+          className={tone(cellule.valeur)}
+          liens={ouvrir}
+        />
       ))}
       <td className={cn(NUMBER, tone(line.total))}>{formatAmount(line.total)}</td>
       <td className={cn(NUMBER, tone(line.depassement))}>{formatAmount(line.depassement)}</td>
@@ -270,16 +298,163 @@ function LineCells({ line, colored = false }: { line: LigneBanques; colored?: bo
   );
 }
 
-/** Montant d'une banque ; un solde repris d'un jour précédent est grisé et daté. */
-function AmountCell({ cellule, className }: { cellule: CelluleBanque; className: string }) {
+const LIEN =
+  "cursor-pointer underline-offset-4 decoration-1 hover:underline focus-visible:underline";
+
+/** Lien vers la ligne du relevé d'un compte, `null` pour un solde saisi à la main. */
+function lienCompte(compte: CompteCellule): string | null {
+  if (compte.operation_id === null || compte.date_operation === null) return null;
+  return lienReleve({
+    compte: compte.bank_account_id,
+    date: compte.date_operation,
+    ligne: compte.operation_id,
+  });
+}
+
+/** Infobulle du lien : la date de la ligne, et l'écart des opérations en cours (20/10/2026). */
+function titreLien(compte: CompteCellule): string {
+  const parties = [`Voir la ligne du relevé du ${formatDate(compte.date_operation)}`];
+  if (compte.solde_operation !== null && compte.solde_operation !== compte.solde) {
+    parties.push(`solde de la ligne ${formatAmount(compte.solde_operation)} + opérations en cours`);
+  }
+  return parties.join(" · ");
+}
+
+/**
+ * Montant d'une banque ; un solde repris d'un jour précédent est grisé et daté. Sur une ligne
+ * « facilité de caisse », un solde qui vient d'un relevé ouvre sa ligne dans la page Relevés
+ * (09/11/2026) ; avec plusieurs comptes, un menu propose le solde de chacun.
+ */
+function AmountCell({
+  cellule,
+  className,
+  liens,
+}: {
+  cellule: CelluleBanque;
+  className: string;
+  liens: boolean;
+}) {
   const note = noteCellule(cellule);
-  if (!note) {
-    return <td className={cn(NUMBER, className)}>{formatAmount(cellule.valeur)}</td>;
+  const comptes = liens ? (cellule.comptes ?? []) : [];
+  const ouvrables = comptes.filter((compte) => lienCompte(compte) !== null);
+  let montant: ReactNode = formatAmount(cellule.valeur);
+  if (comptes.length === 1 && ouvrables.length === 1) {
+    montant = (
+      <Link href={lienCompte(comptes[0])!} className={LIEN} title={titreLien(comptes[0])}>
+        {montant}
+      </Link>
+    );
+  } else if (comptes.length > 1 && ouvrables.length > 0) {
+    montant = <CompteMenu comptes={comptes}>{montant}</CompteMenu>;
   }
   return (
-    <td className={cn(NUMBER, cellule.reprise && "text-simtis-muted", className)} title={note}>
-      {formatAmount(cellule.valeur)}
-      <span className="sr-only"> ({note})</span>
+    <td
+      className={cn(NUMBER, cellule.reprise && "text-simtis-muted", className)}
+      title={ouvrables.length === 0 ? (note ?? undefined) : undefined}
+    >
+      {montant}
+      {note && <span className="sr-only"> ({note})</span>}
     </td>
+  );
+}
+
+/**
+ * Cellule qui additionne plusieurs comptes : le clic ouvre la liste des comptes avec leur solde,
+ * chacun vers sa ligne du relevé. Le menu est en position fixe pour ne pas être coupé par le cadre
+ * qui défile ; il se ferme au clic dehors, sur Échap ou au défilement.
+ */
+function CompteMenu({ comptes, children }: { comptes: CompteCellule[]; children: ReactNode }) {
+  const [place, setPlace] = useState<{ top: number; right: number } | null>(null);
+  const bouton = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!place) return;
+    const fermer = () => setPlace(null);
+    const dehors = (event: MouseEvent) => {
+      const cible = event.target as Node;
+      if (!menu.current?.contains(cible) && !bouton.current?.contains(cible)) fermer();
+    };
+    const touche = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        fermer();
+        bouton.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", dehors);
+    document.addEventListener("keydown", touche);
+    window.addEventListener("scroll", fermer, true);
+    window.addEventListener("resize", fermer);
+    return () => {
+      document.removeEventListener("mousedown", dehors);
+      document.removeEventListener("keydown", touche);
+      window.removeEventListener("scroll", fermer, true);
+      window.removeEventListener("resize", fermer);
+    };
+  }, [place]);
+
+  function basculer() {
+    if (place) {
+      setPlace(null);
+      return;
+    }
+    const rect = bouton.current?.getBoundingClientRect();
+    if (rect) setPlace({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+  }
+
+  return (
+    <>
+      <button
+        ref={bouton}
+        type="button"
+        onClick={basculer}
+        aria-haspopup="menu"
+        aria-expanded={place !== null}
+        title={`Somme de ${comptes.length} comptes : choisir le relevé à ouvrir`}
+        className={cn(LIEN, "tabular-nums")}
+      >
+        {children}
+      </button>
+      {place && (
+        <div
+          ref={menu}
+          role="menu"
+          style={{ top: place.top, right: place.right }}
+          className="fixed z-30 min-w-56 rounded-[10px] border border-simtis-border bg-simtis-card p-1 text-left text-sm font-normal text-simtis-text shadow-simtis-hover"
+        >
+          {comptes.map((compte) => {
+            const href = lienCompte(compte);
+            const contenu = (
+              <>
+                <span>{finNumero(compte.numero)}</span>
+                <span className="tabular-nums">{formatAmount(compte.solde)}</span>
+              </>
+            );
+            const ligne = "flex items-center justify-between gap-4 rounded-md px-3 py-2";
+            return href ? (
+              <Link
+                key={compte.bank_account_id}
+                href={href}
+                role="menuitem"
+                title={titreLien(compte)}
+                className={cn(ligne, "hover:bg-simtis-light focus-visible:bg-simtis-light")}
+              >
+                {contenu}
+              </Link>
+            ) : (
+              <span
+                key={compte.bank_account_id}
+                role="menuitem"
+                aria-disabled="true"
+                title="Solde saisi à la main : aucune ligne de relevé"
+                className={cn(ligne, "text-simtis-muted")}
+              >
+                {contenu}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }

@@ -142,6 +142,26 @@ class CompteColonne:
     numero: str
     soldes: tuple[tuple[date, Decimal], ...]
     ligne: Decimal = Decimal("0.00")
+    bank_account_id: int | None = None
+    # Compte alimenté par un relevé : (jour, solde, opération) de la dernière opération de chaque
+    # jour, pour ouvrir la ligne du relevé depuis la cellule (09/11/2026) ; vide sinon
+    operations: tuple[tuple[date, Decimal, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class CompteCellule:
+    """Un compte d'une cellule « facilité de caisse » (09/11/2026) : son solde retenu au jour de la
+    ligne et, s'il vient d'un relevé, l'opération qui le donne (la dernière opération connue à ce
+    jour, dans l'ordre du relevé). Le solde peut différer de celui de l'opération quand des
+    opérations en cours d'un fichier à part s'y ajoutent."""
+
+    bank_account_id: int
+    numero: str
+    solde: Decimal
+    date_solde: date
+    operation_id: int | None = None
+    date_operation: date | None = None
+    solde_operation: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +192,8 @@ class Cellule:
     reprise: bool
     # Plusieurs comptes dans la cellule (23/10/2026) : (numéro, solde) de chacun, pour l'infobulle
     detail: tuple[tuple[str, Decimal], ...] = ()
+    # Chaque compte de la cellule et sa ligne de relevé (09/11/2026), tableau Banques seulement
+    comptes: tuple[CompteCellule, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -248,6 +270,30 @@ def detail_comptes(comptes: Sequence[CompteColonne], jour: date) -> tuple[tuple[
         for compte in comptes
         if (connu := solde_connu(compte.soldes, jour))
     )
+
+
+def comptes_cellule(comptes: Sequence[CompteColonne], jour: date) -> tuple[CompteCellule, ...]:
+    """Chaque compte qui a un solde connu au `jour`, avec l'opération du relevé qui le donne : la
+    dernière opération datée du `jour` ou avant (un jour repris pointe sur la vraie date)."""
+    resultat = []
+    for compte in comptes:
+        connu = solde_connu(compte.soldes, jour)
+        if connu is None or compte.bank_account_id is None:
+            continue
+        operations = [op for op in compte.operations if PREMIERE_DATE_SOLDE <= op[0] <= jour]
+        operation = max(operations) if operations else None
+        resultat.append(
+            CompteCellule(
+                bank_account_id=compte.bank_account_id,
+                numero=compte.numero,
+                solde=connu[1],
+                date_solde=connu[0],
+                operation_id=operation[2] if operation else None,
+                date_operation=operation[0] if operation else None,
+                solde_operation=operation[1] if operation else None,
+            )
+        )
+    return tuple(resultat)
 
 
 def ligne_au(banque: "BanqueColonne", jour: date) -> Decimal | None:
@@ -336,6 +382,7 @@ def _ligne(
                 date_solde,
                 date_solde != jour,
                 detail_comptes(banque.comptes, jour),
+                comptes_cellule(banque.comptes, jour),
             )
         )
         total = solde if total is None else total + solde
