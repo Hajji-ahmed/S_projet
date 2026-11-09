@@ -60,6 +60,7 @@ import { exporterFrais, exporterJustificatif } from "@/services/frais";
 import {
   listAmbiguous,
   listAmbiguousEntries,
+  listPairesImpayes,
   listProposals,
   runReconciliation,
   runReconciliationElargie,
@@ -123,6 +124,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
   // Opérations en cours (« (*) », 20/10/2026) : jamais rapprochées, comptées à part
   const [enCours, setEnCours] = useState<number | null>(null);
   const [pending, setPending] = useState<Correspondances | null>(null);
+  // Impayés ↔ écritures d'origine à valider (09/11/2026) : la case de l'onglet Propositions
+  const [nbImpayes, setNbImpayes] = useState<number | null>(null);
   const [ambigues, setAmbigues] = useState<Ambigues | null>(null);
   // Écritures ambiguës (15/10/2026) : leur propre page, revenue à 1 quand le filtre change
   const [ecrituresAmbigues, setEcrituresAmbigues] = useState<EcrituresAmbigues | null>(null);
@@ -221,6 +224,14 @@ function Rapprochement({ companyId }: { companyId: number }) {
       },
       () => {
         if (!cancelled) setAmbigues(null);
+      },
+    );
+    listPairesImpayes(companyId, "Proposée", filter.bankAccountId).then(
+      (result) => {
+        if (!cancelled) setNbImpayes(result.paires.length);
+      },
+      () => {
+        if (!cancelled) setNbImpayes(null);
       },
     );
     listAmbiguousEntries(companyId, filtreType, pageEcrAmbigues).then(
@@ -563,16 +574,18 @@ function Rapprochement({ companyId }: { companyId: number }) {
             setStatut("");
             setOperation(selected);
           }}
-        />
-      )}
-
-      {periodeLue && !periodError && tab === "propositions" && (
-        <ImpayesOriginesCard
-          companyId={companyId}
-          bankAccountId={filter.bankAccountId}
-          canValidate={canValidate}
-          reloadKey={reloadKey}
-          onChanged={reload}
+          impayes={{
+            nb: nbImpayes,
+            carte: (
+              <ImpayesOriginesCard
+                companyId={companyId}
+                bankAccountId={filter.bankAccountId}
+                canValidate={canValidate}
+                reloadKey={reloadKey}
+                onChanged={reload}
+              />
+            ),
+          }}
         />
       )}
 

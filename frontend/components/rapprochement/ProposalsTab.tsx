@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCheck, ListChecks, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { AmbiguousCard } from "@/components/rapprochement/AmbiguousCard";
 import { EcritureAmbigueCard } from "@/components/rapprochement/EcritureAmbigueCard";
@@ -73,7 +73,13 @@ type ProposalsTabProps = {
   /** Filtre « Type d'opération » de l'opération bancaire (14/10/2026) ; "" = tous. */
   typeOperation?: string;
   onTypeOperation?: (value: string) => void;
+  /** Impayés ↔ écritures d'origine (09/11/2026) : nombre à valider (null : en cours) et la carte
+   * affichée quand on clique sur leur case. */
+  impayes?: { nb: number | null; carte: ReactNode };
 };
+
+// Filtre de la case « Impayés ↔ origine » : il n'affiche que la carte des paires (09/11/2026)
+const IMPAYES = "impayes";
 
 /** Filtres de l'onglet ; le seuil « forte » vient du serveur (80 depuis le 08/10/2026). */
 function filtres(seuil: string): { value: ProposalsFilter; label: string }[] {
@@ -164,9 +170,10 @@ export function ProposalsTab({
   onOpenOperation,
   typeOperation = "",
   onTypeOperation,
+  impayes,
 }: ProposalsTabProps) {
   const items = pending?.correspondances ?? null;
-  const [filtre, setFiltre] = useState<ProposalsFilter>("toutes");
+  const [filtre, setFiltre] = useState<ProposalsFilter | typeof IMPAYES>("toutes");
   // La sélection repart des fortes à chaque nouvelle liste (après une décision, un rechargement)
   const [selection, setSelection] = useState<{ source: Correspondance[] | null; ids: Set<number> }>(
     () => ({ source: items, ids: items ? defaultSelection(items) : new Set() }),
@@ -220,7 +227,7 @@ export function ProposalsTab({
     );
   }
 
-  const shown = filterProposals(items, filtre);
+  const shown = filtre === IMPAYES ? [] : filterProposals(items, filtre);
   // Seules les validables cochées partent à la validation (27/10/2026 : une proposition aux
   // montants différents se coche pour être rejetée)
   const valides = aValider(items, selected);
@@ -318,6 +325,15 @@ export function ProposalsTab({
                 onClick={() => setFiltre(value)}
               />
             ))}
+            {impayes && (
+              <StatButton
+                label="Impayés ↔ origine"
+                value={impayes.nb ?? undefined}
+                active={filtre === IMPAYES}
+                onClick={() => setFiltre(IMPAYES)}
+                description="Impayés Sage à rapprocher avec leur écriture d'origine"
+              />
+            )}
           </div>
           {onTypeOperation && (
             <div className="w-full max-w-[170px]">
@@ -348,7 +364,9 @@ export function ProposalsTab({
         )}
       </Card>
 
-      {nothing ? (
+      {filtre === IMPAYES ? (
+        impayes?.carte
+      ) : nothing ? (
         <Card>
           <EmptyState
             icon={ListChecks}
@@ -515,7 +533,8 @@ export function ProposalsTab({
       {canValidate &&
         items.length > 0 &&
         filtre !== "ambigues" &&
-        filtre !== "ecritures_ambigues" && (
+        filtre !== "ecritures_ambigues" &&
+        filtre !== IMPAYES && (
           <div className="sticky bottom-0 z-10 -mx-1 rounded-card border border-simtis-border bg-simtis-card p-4 shadow-simtis">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm">
