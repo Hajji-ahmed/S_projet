@@ -707,8 +707,9 @@ def _proposed_opening(
     """Solde d'ouverture, dans cet ordre (décision du 09/10/2026) :
 
     1. la banque : la ligne SOLDE INITIAL du fichier (verrouillé) ;
-    2. le solde de clôture du relevé précédent : la dernière opération importée avant la première
-       opération du fichier (verrouillé) ;
+    2. le solde de clôture du relevé précédent : la dernière opération importée jusqu'au jour de la
+       première opération nouvelle du fichier, ce jour compris (09/11/2026 ; « avant ce jour »
+       auparavant, qui oubliait les doublons d'un jour repris) (verrouillé) ;
     3. le tableau de position bancaire : le dernier solde du jour avant le fichier, sinon un calcul
        à rebours depuis un solde postérieur ; modifiable, c'est un premier import ;
     4. sinon, à saisir (premier import seulement).
@@ -739,6 +740,12 @@ def _proposed_opening(
                 f"{jour:%d/%m/%Y}) : une période manque peut-être."
             )
         return Ouverture(file_opening, source, avertissement, modifiable=False)
+    # Fichier sans soldes (09/11/2026) : ses lignes s'enregistrent après celles déjà importées du
+    # même jour, le calcul repart donc de la clôture de ce jour (doublons d'un jour repris compris)
+    if dates:
+        precedent = import_repository.last_operation_before(
+            db, account.id, min(dates), jour_inclus=True
+        )
     if precedent is not None:
         jour, solde = precedent
         return Ouverture(

@@ -2167,6 +2167,44 @@ def test_the_opening_comes_from_the_last_imported_operation(client, tresorerie, 
     assert body["lignes"][0]["solde_apercu"] == "5200.00"
 
 
+def test_a_file_that_adds_lines_to_an_imported_day_opens_on_that_day_closing(
+    client, tresorerie, account, db
+):
+    """Relevé BMCE du 09/11/2026 : le fichier reprend le 04/11 déjà importé (doublons) et y ajoute
+    des lignes. Elles s'enregistrent après celles du jour : le solde d'ouverture est donc la clôture
+    de ce jour en base, pas celle de la veille (sinon les doublons manquaient au solde)."""
+    first = [
+        ["Date", "Libellé", "Débit", "Crédit"],
+        ["01/09/2026", "VIR A", None, 1000],
+        ["01/09/2026", "CHQ B", 300, None],
+    ]
+    assert confirm(client, tresorerie, account.id, xlsx(("Relevé", first)), solde_ouverture="5000")
+    suite = [
+        ["Date", "Libellé", "Débit", "Crédit"],
+        ["01/09/2026", "VIR A", None, 1000],
+        ["01/09/2026", "CHQ B", 300, None],
+        ["01/09/2026", "FRAIS C", 20, None],
+        ["02/09/2026", "VIR D", None, 400],
+    ]
+    content = xlsx(("Relevé", suite))
+
+    body = analyse(client, tresorerie, account.id, content).json()
+
+    assert body["solde_ouverture_propose"] == "5700.00"
+    assert body["solde_ouverture_source"] == "Solde de clôture du relevé précédent, le 01/09/2026"
+    assert body["resume"]["solde_cloture"] == "6080.00"
+
+    response = confirm(client, tresorerie, account.id, content, solde_ouverture=None)
+
+    assert response.status_code == 201, response.text
+    assert [(tx.libelle, tx.solde) for tx in transactions(db, account)] == [
+        ("VIR A", Decimal("6000.00")),
+        ("CHQ B", Decimal("5700.00")),
+        ("FRAIS C", Decimal("5680.00")),
+        ("VIR D", Decimal("6080.00")),
+    ]
+
+
 # --- Période choisie à l'étape Validation (05/11/2026) --------------------------------------------
 
 LONG_EXPORT = [

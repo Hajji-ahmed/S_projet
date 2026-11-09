@@ -225,15 +225,18 @@ def first_balance_from(db: Session, account_id: int, day: date) -> tuple[date, D
 
 
 def last_operation_before(
-    db: Session, account_id: int, before: date
+    db: Session, account_id: int, before: date, *, jour_inclus: bool = False
 ) -> tuple[date, Decimal] | None:
     """(jour, solde) de la dernière opération importée avant `before` qui porte un solde, dans
-    l'ordre chronologique : le solde de clôture du relevé précédent."""
+    l'ordre chronologique : le solde de clôture du relevé précédent. `jour_inclus` (09/11/2026) :
+    les opérations du jour `before` comptent aussi."""
     row = db.execute(
         select(BankTransaction.date_operation, BankTransaction.solde)
         .where(
             BankTransaction.bank_account_id == account_id,
-            BankTransaction.date_operation < before,
+            BankTransaction.date_operation <= before
+            if jour_inclus
+            else BankTransaction.date_operation < before,
             BankTransaction.solde.is_not(None),
         )
         .order_by(*ORDRE_ANTECHRONOLOGIQUE)
