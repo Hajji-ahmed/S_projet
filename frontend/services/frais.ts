@@ -1,6 +1,7 @@
 import { apiDownload, apiFetch } from "@/lib/api";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
 import type {
+  AExporter,
   CompteFrais,
   FamilleFrais,
   ModificationFrais,
@@ -38,12 +39,21 @@ export function validerFrais(
   });
 }
 
-/** UN fichier CSV pour Sage (16/10/2026), toutes familles de frais ; les écritures exportées ne se
- * suppriment plus. */
-export function exporterFrais(companyId: number, filter: ReconciliationFilter, deja = false) {
-  return apiDownload(
-    `/frais/export${query(companyId, filter, deja ? { inclure_exportees: "true" } : {})}`,
-  );
+/** Ce qui reste à exporter vers Sage, par banque et par mois (09/11/2026). */
+export function listerAExporter(companyId: number) {
+  return apiFetch<AExporter[]>(`/frais/a-exporter?company_id=${companyId}`);
+}
+
+/** UN fichier CSV pour Sage par banque et par mois (09/11/2026), numéroté à partir de la première
+ * pièce saisie ; chaque écriture ne s'exporte qu'une fois et ne se supprime plus ensuite. */
+export function exporterFrais(companyId: number, bankId: number, mois: string, premiere: string) {
+  const params = new URLSearchParams({
+    company_id: String(companyId),
+    bank_id: String(bankId),
+    mois,
+    premiere_piece: premiere,
+  });
+  return apiDownload(`/frais/export?${params}`);
 }
 
 /** Supprime une écriture SIMTIS pas encore exportée ; ses opérations redeviennent à comptabiliser. */

@@ -56,7 +56,8 @@ import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { estPleinEcran, setPleinEcran, subscribe as subscribePleinEcran } from "@/lib/pleinEcran";
 import { saveFile } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
-import { exporterFrais, exporterJustificatif } from "@/services/frais";
+import { exporterJustificatif } from "@/services/frais";
+import { ExportSageModal } from "@/components/rapprochement/ExportSageModal";
 import {
   listAmbiguous,
   listAmbiguousEntries,
@@ -156,20 +157,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
     }
   }
 
-  async function exporterPourSage() {
-    setExporting(true);
-    try {
-      const blob = await exporterFrais(companyId, filter);
-      saveFile(blob, `ecritures-frais-${filter.from}-${filter.to}.csv`);
-      reload(
-        `${plural(totalAExporter, "écriture")} exportée${totalAExporter > 1 ? "s" : ""} pour Sage.`,
-      );
-    } catch (error) {
-      toast(error instanceof ApiError ? error.message : "L'export a échoué.", "error");
-    } finally {
-      setExporting(false);
-    }
-  }
+  // Export pour Sage par banque et par mois, N° de la première pièce saisi (09/11/2026)
+  const [exportSage, setExportSage] = useState(false);
   const [statut, setStatut] = useState("");
   const [tab, setTab] = useState<"rapprochement" | "propositions" | "historique">("rapprochement");
 
@@ -618,15 +607,21 @@ function Rapprochement({ companyId }: { companyId: number }) {
               </span>
             )}
             {canPrepare && (
-              <Button
-                icon={Download}
-                disabled={exporting || totalAExporter === 0}
-                onClick={exporterPourSage}
-              >
-                Exporter pour Sage ({totalAExporter})
+              <Button icon={Download} disabled={exporting} onClick={() => setExportSage(true)}>
+                Exporter pour Sage
               </Button>
             )}
           </div>
+          {exportSage && (
+            <ExportSageModal
+              companyId={companyId}
+              onClose={() => setExportSage(false)}
+              onExported={(message) => {
+                setExportSage(false);
+                reload(message);
+              }}
+            />
+          )}
           <FraisCard
             companyId={companyId}
             filter={filter}

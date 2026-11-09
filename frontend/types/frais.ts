@@ -149,5 +149,16 @@ export type CompteFrais = {
 
 export type ValidationTimbres = {
   nb_ecritures: number;
-  codes: string[];
+  /** Codes de rapprochement : le N° pièce n'est donné qu'à l'export (09/11/2026). */
+  codes: (string | null)[];
+};
+
+/** Écritures de frais pas encore exportées d'une banque et d'un mois (09/11/2026). */
+export type AExporter = {
+  bank_id: number;
+  bank_code: string;
+  bank_logo: string | null;
+  /** « 2026-10 » */
+  mois: string;
+  nb: number;
 };

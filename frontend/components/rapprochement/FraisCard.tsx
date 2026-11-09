@@ -922,7 +922,8 @@ function EcritureSage({
           <tr key={`${ligne.type ?? "ligne"}-${index}`}>
             <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">{formatDate(date)}</td>
             <td className="px-3 py-1.5 font-medium whitespace-nowrap tabular-nums">
-              {piece ?? "-"}
+              {/* N° donné à l'export vers Sage (09/11/2026) */}
+              {piece ?? "—"}
             </td>
             <td className="px-3 py-1.5 whitespace-nowrap">{journal ?? <ARenseigner />}</td>
             <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">

@@ -927,3 +927,46 @@ def test_migration_0046_stops_while_a_line_is_in_ecart(empty_database):
 
     with pytest.raises(Exception, match="au statut « Écart »"):
         command.upgrade(config, "0046")
+
+
+def test_migration_0048_empties_the_piece_of_simtis_entries_not_yet_exported(empty_database):
+    """Décision du 09/11/2026 : le N° pièce d'une écriture de frais SIMTIS est donné à l'export ;
+    celles pas encore exportées perdent le leur (gardé dans l'audit), les autres le gardent."""
+    config, engine = empty_database
+    command.upgrade(config, "0047")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'BP', 'BP');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+                INSERT INTO accounting_entries (id, company_id, bank_account_id, date_ecriture,
+                    libelle, debit, credit, montant, hash_ligne, origine, famille_frais,
+                    numero_piece, exportee_le) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '2026-10-02', 'COM', 0, 5, 5, 'e1', 'SIMTIS', 'commissions',
+                        'BP2610001', NULL),
+                    (2, 1, 1, '2026-10-01', 'COM', 0, 6, 6, 'e2', 'SIMTIS', 'commissions',
+                        'BP2610002', '2026-10-05 10:00+00'),
+                    (3, 1, 1, '2026-10-01', 'CHEQUE', 0, 7, 7, 'e3', 'Sage', NULL,
+                        'P-77', NULL);
+                """
+            )
+        )
+
+    command.upgrade(config, "0048")
+
+    with engine.connect() as connection:
+        pieces = dict(
+            connection.execute(text("SELECT id, numero_piece FROM accounting_entries")).all()
+        )
+        audits = connection.execute(
+            text(
+                "SELECT entite_id, ancienne_valeur ->> 'numero_piece' FROM audit_logs "
+                "WHERE action = 'piece_a_l_export'"
+            )
+        ).all()
+    assert pieces == {1: None, 2: "BP2610002", 3: "P-77"}
+    assert audits == [("1", "BP2610001")]

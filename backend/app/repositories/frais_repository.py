@@ -3,7 +3,7 @@ commissions (13/10/2026)."""
 
 from datetime import date
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models import (
@@ -234,20 +234,6 @@ def frais_libres_par_ids(
             .order_by(BankTransaction.date_operation, BankTransaction.id)
         )
     )
-
-
-def next_piece_number(db: Session, company_id: int, bank_id: int, annee: int, mois: int) -> int:
-    """Numéro suivant du compteur (société, banque, mois), atomique : deux comptabilisations
-    simultanées ne reçoivent jamais le même numéro (15/10/2026 ; par banque depuis le 16/10)."""
-    statement = text(
-        "INSERT INTO frais_piece_counters (company_id, bank_id, annee, mois, dernier) "
-        "VALUES (:societe, :banque, :annee, :mois, 1) "
-        "ON CONFLICT (company_id, bank_id, annee, mois) "
-        "DO UPDATE SET dernier = frais_piece_counters.dernier + 1 RETURNING dernier"
-    )
-    return db.execute(
-        statement, {"societe": company_id, "banque": bank_id, "annee": annee, "mois": mois}
-    ).scalar_one()
 
 
 # --- Propositions modifiées ou écartées (19/10/2026) ---------------------------------------------

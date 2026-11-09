@@ -14,6 +14,7 @@ from app.api.deps import client_ip, require_permission
 from app.core.db import get_db
 from app.core.permissions import PermissionCode
 from app.schemas.frais import (
+    AExporterOut,
     AutreFraisOut,
     CompteFraisOut,
     EcarterIn,
@@ -92,6 +93,16 @@ def justificatif(
     )
 
 
+@router.get("/a-exporter", response_model=list[AExporterOut])
+def a_exporter(
+    company_id: int,
+    db: Session = Depends(get_db),
+    _user: CurrentUser = Depends(can_view),
+) -> list[AExporterOut]:
+    """Écritures de frais pas encore exportées, par banque et par mois (09/11/2026)."""
+    return [AExporterOut.of(item) for item in frais_service.a_exporter(db, company_id)]
+
+
 @router.get(
     "/export",
     response_class=Response,
@@ -100,22 +111,23 @@ def justificatif(
 def exporter(
     request: Request,
     company_id: int,
-    bank_account_id: int | None = None,
-    date_from: DateFrom = None,
-    date_to: DateTo = None,
-    inclure_exportees: bool = False,
+    bank_id: int,
+    mois: Annotated[str, Query(pattern=r"^\d{4}-\d{2}$")],
+    premiere_piece: Annotated[str, Query(max_length=20)],
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_prepare),
 ) -> Response:
-    """UN fichier CSV pour Sage (16/10/2026), toutes familles de frais ; les écritures exportées
-    ne se suppriment plus dans SIMTIS."""
+    """UN fichier CSV pour Sage par banque et par mois (09/11/2026) : les écritures pas encore
+    exportées, numérotées à partir de `premiere_piece` (« BP2610001 ») ; chacune ne s'exporte
+    qu'une fois."""
+    annee, numero_mois = (int(part) for part in mois.split("-"))
     nom, content, _ = frais_service.exporter(
         db,
         company_id,
-        bank_account_id=bank_account_id,
-        date_from=date_from,
-        date_to=date_to,
-        inclure_exportees=inclure_exportees,
+        bank_id=bank_id,
+        annee=annee,
+        mois=numero_mois,
+        premiere=premiere_piece,
         acteur_id=user.id,
         ip=client_ip(request),
     )
@@ -197,7 +209,7 @@ def valider(
         },
     )
     return ValidationTimbresOut(
-        nb_ecritures=len(entries), codes=[entry.numero_piece for entry in entries]
+        nb_ecritures=len(entries), codes=frais_service.codes_rapprochement(db, entries)
     )
 
 
@@ -259,4 +271,6 @@ def comptabiliser_manuellement(
         acteur_id=user.id,
         ip=client_ip(request),
     )
-    return ValidationTimbresOut(nb_ecritures=1, codes=[entry.numero_piece])
+    return ValidationTimbresOut(
+        nb_ecritures=1, codes=frais_service.codes_rapprochement(db, [entry])
+    )

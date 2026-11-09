@@ -9,7 +9,7 @@ import pytest
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from app.models import AccountingEntry, AuditLog, BankTransaction, ReconciliationMatch
+from app.models import AccountingEntry, AuditLog, Bank, BankTransaction, ReconciliationMatch
 from app.services import frais_service
 from app.services.accounting_import_service import EntryLine, _mark_simtis_entries
 from app.services.errors import ConflictError
@@ -98,9 +98,15 @@ def valider(client, headers, db, *jours, famille="timbres"):
     return client.post("/api/frais/valider", json=body, headers=headers)
 
 
-def exporter(client, headers, db, famille="timbres", **params):
-    params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30", **params}
-    # Un seul export pour toutes les familles (13/10/2026) : `famille` est ignorée
+def exporter(client, headers, db, famille=None, *, banque="BP", mois="2026-04", premiere=None):
+    """Export pour Sage d'une banque et d'un mois (09/11/2026), numéroté à partir de `premiere`
+    (par défaut la pièce 001 du mois) ; `famille` est ignorée (un fichier toutes familles)."""
+    params = {
+        "company_id": str(company(db).id),
+        "bank_id": str(db.scalar(select(Bank.id).filter_by(code=banque))),
+        "mois": mois,
+        "premiere_piece": premiere or f"{banque}{mois[2:4]}{mois[5:7]}001",
+    }
     return client.get("/api/frais/export", params=params, headers=headers)
 
 
@@ -210,14 +216,13 @@ def test_validating_creates_the_entry_and_matches_it_at_once(client, comptable, 
 
     assert response.status_code == 200, response.text
     code = response.json()["codes"][0]
-    # N° pièce BANQUE AAMMNNN (16/10/2026) : premier frais BP du mois
-    assert code == f"BP{JOUR:%y%m}001"
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
+    # Pas de N° pièce avant l'export vers Sage (09/11/2026) : l'API rend le code du rapprochement
     assert (entry.journal, entry.compte, entry.libelle, entry.numero_piece) == (
         "5543",
         "55410003",
         "DT D'ENREGISTREMENT",
-        code,
+        None,
     )
     assert (entry.debit, entry.credit, entry.montant) == (
         Decimal("0.00"),
@@ -234,7 +239,8 @@ def test_validating_creates_the_entry_and_matches_it_at_once(client, comptable, 
     assert [
         (e["code"], e["numero_piece"], e["nb_operations"], e["exportee_le"])
         for e in body["ecritures"]
-    ] == [(match.code, code, 3, None)]
+    ] == [(match.code, None, 3, None)]
+    assert code == match.code
 
 
 def test_validation_is_all_or_nothing_and_recomputed_by_the_server(client, comptable, db):
@@ -277,11 +283,12 @@ def test_export_writes_a_csv_credit_line_and_marks_the_entry(client, comptable, 
     61671, sans ligne banque."""
     compte = bp(db, compte_timbre=None)
     timbres_du_jour(db, compte)
-    code = valider(client, comptable, db, (compte, JOUR)).json()["codes"][0]
+    valider(client, comptable, db, (compte, JOUR))
 
-    response = exporter(client, comptable, db)
+    response = exporter(client, comptable, db, premiere="BP2604045")
 
     assert response.status_code == 200, response.text
+    code = "BP2604045"  # N° donné par le comptable à l'export (09/11/2026)
     assert response.headers["content-type"].startswith("text/csv")
     assert ".csv" in response.headers["content-disposition"]
     rows = lignes_csv(response)
@@ -310,10 +317,11 @@ def test_export_writes_a_csv_credit_line_and_marks_the_entry(client, comptable, 
     ]
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     db.refresh(entry)
-    assert entry.exportee_le is not None
-    # Déjà exportée : plus rien de neuf, sauf à demander un nouvel export
-    assert exporter(client, comptable, db).status_code == 409
-    assert exporter(client, comptable, db, inclure_exportees="true").status_code == 200
+    assert (entry.numero_piece, entry.exportee_le is not None) == (code, True)
+    # Une écriture ne s'exporte qu'une fois (09/11/2026)
+    again = exporter(client, comptable, db)
+    assert again.status_code == 409
+    assert "Aucune écriture de frais BP à exporter en 04/2026" in again.json()["detail"]
 
 
 # --- Suppression et annulation ---------------------------------------------------------------------
@@ -371,7 +379,9 @@ def test_an_exported_entry_cannot_be_deleted_nor_cancelled(client, comptable, db
 def test_a_simtis_entry_coming_back_from_sage_is_a_duplicate(client, comptable, db):
     compte = bp(db)
     timbres_du_jour(db, compte)
-    code = valider(client, comptable, db, (compte, JOUR)).json()["codes"][0]
+    valider(client, comptable, db, (compte, JOUR))
+    assert exporter(client, comptable, db).status_code == 200
+    code = f"BP{JOUR:%y%m}001"
 
     def ligne(numero, libelle, montant="202.00", piece=None):
         return EntryLine(
@@ -496,9 +506,9 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     response = valider(client, comptable, db, (compte, JOUR), famille="commissions")
 
     assert response.status_code == 200, response.text
-    code = response.json()["codes"][0]
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS", libelle="COM"))
-    assert (entry.montant, entry.numero_piece) == (Decimal("66.00"), code)
+    assert (entry.montant, entry.numero_piece) == (Decimal("66.00"), None)
+    code = f"BP{JOUR:%y%m}001"
     assert statuses(db, *lignes) == ["Rapprochée"] * 6 + ["Non rapprochée"]
     assert "comptabilisation_commissions" in actions(db)
     # Les écritures de timbres ne listent pas la COM
@@ -669,7 +679,7 @@ def test_a_manual_entry_with_vat_is_matched_and_exported_on_two_lines(client, co
     response = manuelle(client, comptable, db, [rtgs], taux_tva="10")
 
     assert response.status_code == 200, response.text
-    code = response.json()["codes"][0]
+    code = f"BP{JOUR:%y%m}001"  # N° pièce donné à l'export
     entry = db.scalar(select(AccountingEntry).filter_by(famille_frais="manuelle"))
     assert (
         entry.libelle,
@@ -867,7 +877,7 @@ def test_a_manual_entry_takes_the_account_chosen_in_the_list(client, comptable, 
     )
 
     assert response.status_code == 200, response.text
-    code = response.json()["codes"][0]
+    code = f"BP{JOUR:%y%m}001"  # N° pièce donné à l'export
     ecrite = lire(client, comptable, db, None).json()["ecritures"][0]
     assert [(ligne["compte"], ligne["credit"]) for ligne in ecrite["lignes"]] == [
         ("63119400", "150.00"),
@@ -1125,7 +1135,8 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     }
     response = client.post("/api/frais/valider", json=body, headers=comptable)
     assert response.status_code == 200, response.text
-    code_com, code_frais = response.json()["codes"]
+    # Numérotés à l'export dans l'ordre de validation : COM puis FRAIS
+    code_com, code_frais = f"BP{JOUR:%y%m}001", f"BP{JOUR:%y%m}002"
     assert statuses(db, rtgs, recuperes, prelevement, remboursement) == [
         "Rapprochée",
         "Rapprochée",
@@ -1170,38 +1181,94 @@ def test_a_piece_number_is_bank_year_month_and_three_digits():
         numero_piece("BP", date(2026, 10, 3), 1000)
 
 
-def test_piece_numbers_follow_each_other_within_a_month_and_restart_the_next(client, comptable, db):
-    compte = bp(db)
-    autre_jour = JOUR + timedelta(days=1)
-    mois_suivant = date(JOUR.year, JOUR.month % 12 + 1, 1)
-    for jour in (JOUR, autre_jour, mois_suivant):
-        timbres_du_jour(db, compte, jour)
-
-    pieces = [
-        valider(client, comptable, db, (compte, jour)).json()["codes"][0]
-        for jour in (JOUR, autre_jour, mois_suivant)
-    ]
-
-    assert pieces == [
-        f"BP{JOUR:%y%m}001",
-        f"BP{JOUR:%y%m}002",
-        f"BP{mois_suivant:%y%m}001",
-    ]
-
-
-def test_each_bank_has_its_own_piece_counter(client, comptable, db):
+def test_pieces_are_given_at_export_from_the_first_one_typed(client, comptable, db):
+    """09/11/2026 : un fichier par banque et par mois, numéroté à partir du N° saisi, dans l'ordre
+    des dates ; les autres mois et les autres banques ne sont pas touchés."""
     compte = bp(db)
     awb = account(db, bank_code="AWB")
     awb.journal_sage = "5141"
     awb.compte_comptable = "55410001"
     db.flush()
-    timbres_du_jour(db, compte)
+    autre_jour = JOUR + timedelta(days=1)
+    mois_suivant = date(JOUR.year, JOUR.month % 12 + 1, 1)
+    for jour in (autre_jour, JOUR, mois_suivant):
+        timbres_du_jour(db, compte, jour)
+        assert valider(client, comptable, db, (compte, jour)).status_code == 200
     timbres_du_jour(db, awb)
+    valider(client, comptable, db, (awb, JOUR))
 
-    response = valider(client, comptable, db, (compte, JOUR), (awb, JOUR))
+    avant = a_exporter(client, comptable, db)
+    assert [(i["bank_code"], i["mois"], i["nb"]) for i in avant] == [
+        ("AWB", "2026-04", 1),
+        ("BP", "2026-04", 2),
+        ("BP", f"{mois_suivant:%Y-%m}", 1),
+    ]
+
+    response = exporter(client, comptable, db, premiere=" bp2604017 ")
 
     assert response.status_code == 200, response.text
-    assert sorted(response.json()["codes"]) == [f"AWB{JOUR:%y%m}001", f"BP{JOUR:%y%m}001"]
+    assert "BP-2026-04" in response.headers["content-disposition"]
+    assert [(r[0], r[1]) for r in lignes_csv(response)[1:]] == [
+        (f"{JOUR:%d/%m/%Y}", "BP2604017"),
+        (f"{autre_jour:%d/%m/%Y}", "BP2604018"),
+    ]
+    pieces = dict(
+        db.execute(
+            select(AccountingEntry.date_ecriture, AccountingEntry.numero_piece).filter_by(
+                origine="SIMTIS", bank_account_id=compte.id
+            )
+        ).all()
+    )
+    assert pieces == {JOUR: "BP2604017", autre_jour: "BP2604018", mois_suivant: None}
+    assert [(i["bank_code"], i["mois"]) for i in a_exporter(client, comptable, db)] == [
+        ("AWB", "2026-04"),
+        ("BP", f"{mois_suivant:%Y-%m}"),
+    ]
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_frais_sage"))
+    assert (audit.nouvelle_valeur["premiere_piece"], audit.nouvelle_valeur["derniere_piece"]) == (
+        "BP2604017",
+        "BP2604018",
+    )
+
+
+def a_exporter(client, headers, db):
+    response = client.get(
+        "/api/frais/a-exporter", params={"company_id": company(db).id}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.parametrize(
+    ("premiere", "message"),
+    [
+        ("AWB2604001", "BP2604 suivi de 3 chiffres"),
+        ("BP2605001", "BP2604 suivi de 3 chiffres"),
+        ("BP260401", "BP2604 suivi de 3 chiffres"),
+        ("BP2604000", "BP2604 suivi de 3 chiffres"),
+        ("BP2604999", "dépassent BP2604999"),
+    ],
+)
+def test_the_first_piece_must_match_the_bank_and_the_month(
+    client, comptable, db, premiere, message
+):
+    compte = bp(db)
+    for jour in (JOUR, JOUR + timedelta(days=1)):
+        timbres_du_jour(db, compte, jour)
+        valider(client, comptable, db, (compte, jour))
+
+    response = exporter(client, comptable, db, premiere=premiere)
+
+    assert response.status_code == 409
+    assert message in response.json()["detail"]
+    exportee = select(AccountingEntry.id).where(AccountingEntry.exportee_le.is_not(None))
+    assert db.scalar(exportee) is None
+
+
+def test_the_export_list_needs_a_login(client, direction, db):
+    params = {"company_id": company(db).id}
+    assert client.get("/api/frais/a-exporter", params=params).status_code == 401
+    assert a_exporter(client, direction, db) == []
 
 
 # --- Propositions modifiées ou écartées (19/10/2026) ----------------------------------------------
@@ -1234,7 +1301,6 @@ def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, c
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["codes"] == [f"BP{JOUR:%y%m}001"]
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     assert (entry.libelle, entry.date_ecriture, entry.montant) == (
         "DT AVRIL",
@@ -1379,7 +1445,7 @@ def test_fees_above_200_are_exported_for_the_bank(client, comptable, direction, 
         ("BP", "COMMISSION", "R1", 250, "À comptabiliser"),
         ("BP", "AGIOS BANCAIRES", None, 604.71, "Comptabilisé"),
     ]
-    assert rows[2][8].startswith("BP2604")
+    assert rows[2][8] is None  # pas encore exportée : pas de N° pièce (09/11/2026)
     assert rows[3][0] == "Total BP" and rows[3][6] == 854.71
     assert rows[4][0] == "Total général"
     assert grande.id and "export_frais_banque" in actions(db)

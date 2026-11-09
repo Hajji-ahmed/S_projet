@@ -861,7 +861,7 @@ def valider(
             detail={"explication": _explication(famille, jour)},
             acteur_id=acteur_id,
         )
-        entry.numero_piece = _nouvelle_piece(db, company_id, account, entry.date_ecriture)
+        # Pas de N° pièce : il est donné à l'export vers Sage (09/11/2026)
         for ordre, ligne in enumerate(lignes or [], start=1):
             db.add(
                 FraisLigne(
@@ -1058,12 +1058,24 @@ def numero_piece(banque: str, jour: date, numero: int) -> str:
     return f"{banque}{jour:%y%m}{numero:03d}"
 
 
-def _nouvelle_piece(db: Session, company_id: int, account: BankAccount, jour: date) -> str:
-    return numero_piece(
-        account.bank.code,
-        jour,
-        frais_repository.next_piece_number(db, company_id, account.bank_id, jour.year, jour.month),
-    )
+def premiere_piece(texte: str, banque: str, annee: int, mois: int, nb: int) -> int:
+    """Rang de la première pièce saisie par le comptable à l'export (09/11/2026) : « BP2610001 »
+    pour BP en octobre 2026 ; 409 si la banque, le mois ou les 3 chiffres ne vont pas, ou si les
+    `nb` écritures dépassent la pièce 999 du mois."""
+    numero = "".join((texte or "").split()).upper()
+    prefixe = f"{banque}{annee % 100:02d}{mois:02d}"
+    rang = numero[len(prefixe) :]
+    if not numero.startswith(prefixe) or not re.fullmatch(r"\d{3}", rang) or int(rang) == 0:
+        raise ConflictError(
+            f"Le N° de la première pièce s'écrit {prefixe} suivi de 3 chiffres (ex. {prefixe}001) "
+            f"pour {banque} en {mois:02d}/{annee}."
+        )
+    if int(rang) + nb - 1 > PIECE_MAX:
+        raise ConflictError(
+            f"{nb} écriture{'s' if nb > 1 else ''} à partir de {numero} dépassent {prefixe}"
+            f"{PIECE_MAX} : choisissez un N° plus petit."
+        )
+    return int(rang)
 
 
 def compte_charge(type_ligne: str | None, libelle_ecriture: str, banque: str) -> str | None:
@@ -1203,7 +1215,8 @@ def _equilibree(entry: AccountingEntry, lignes: list[LigneGL]) -> None:
     debit = sum((ligne.debit or ZERO for ligne in lignes), ZERO)
     if credit - debit != entry.montant:
         raise ConflictError(
-            f"Écriture {entry.numero_piece} : ses opérations ne font plus son montant. "
+            f"Écriture « {entry.libelle} » du {entry.date_ecriture:%d/%m/%Y} : ses opérations ne "
+            "font plus son montant. "
             "Rien n'a été exporté."
         )
 
@@ -1211,35 +1224,82 @@ def _equilibree(entry: AccountingEntry, lignes: list[LigneGL]) -> None:
 # --- Export pour Sage -----------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class AExporter:
+    """Écritures de frais pas encore exportées d'une banque et d'un mois (09/11/2026)."""
+
+    bank_id: int
+    bank_code: str
+    bank_logo: str | None
+    annee: int
+    mois: int
+    nb: int
+
+
+def a_exporter(db: Session, company_id: int) -> list[AExporter]:
+    """Ce qui reste à exporter vers Sage, par banque (ordre d'affichage) puis mois : un fichier
+    par banque et par mois."""
+    accounts = {a.id: a for a in _accounts(db, company_id, None)}
+    nombres: dict[tuple[int, int, int], int] = {}
+    for entry, _, _ in frais_repository.ecritures_simtis(
+        db, company_id, bank_account_id=None, date_from=None, date_to=None, non_exportees=True
+    ):
+        account = accounts.get(entry.bank_account_id)
+        if account is None:
+            continue
+        cle = (account.bank_id, entry.date_ecriture.year, entry.date_ecriture.month)
+        nombres[cle] = nombres.get(cle, 0) + 1
+    banques = {a.bank_id: a.bank for a in accounts.values()}
+    return [
+        AExporter(bank_id, banques[bank_id].code, banques[bank_id].logo, annee, mois, nb)
+        for (bank_id, annee, mois), nb in sorted(
+            nombres.items(),
+            key=lambda item: (banques[item[0][0]].ordre_affichage, item[0][1], item[0][2]),
+        )
+    ]
+
+
 def exporter(
     db: Session,
     company_id: int,
     *,
-    bank_account_id: int | None,
-    date_from: date | None,
-    date_to: date | None,
-    inclure_exportees: bool,
+    bank_id: int,
+    annee: int,
+    mois: int,
+    premiere: str,
     acteur_id: int,
     ip: str | None,
 ) -> tuple[str, bytes, int]:
-    """UN fichier CSV à intégrer dans Sage (16/10/2026, « import paramétrable »), toutes
-    familles, par date : par écriture, une ligne par type au débit de son compte et la contrepartie
-    au crédit du compte bancaire. Les écritures sont marquées exportées."""
+    """UN fichier CSV à intégrer dans Sage (16/10/2026, « import paramétrable ») pour UNE banque
+    et UN mois (09/11/2026) : les écritures pas encore exportées, par date ; par écriture, une
+    ligne par type au débit de son compte et la contrepartie au crédit du compte bancaire.
+
+    Le N° pièce est donné ici : `premiere` (« BP2610001 ») pour la première, puis +1 dans
+    l'ordre des dates. Chaque écriture ne s'exporte qu'une fois ; elle est marquée exportée."""
+    if not 1 <= mois <= 12:
+        raise ConflictError("Choisissez un mois de 1 à 12.")
     reconciliation_repository.lock_company(db, company_id)
-    accounts = {a.id: a for a in _accounts(db, company_id, bank_account_id)}
+    accounts = {a.id: a for a in _accounts(db, company_id, None) if a.bank_id == bank_id}
+    if not accounts:
+        raise NotFoundError("Banque introuvable pour cette société.")
+    banque = next(iter(accounts.values())).bank.code
+    debut = date(annee, mois, 1)
+    fin = (debut + timedelta(days=31)).replace(day=1) - timedelta(days=1)
     rows = [
         row
         for row in frais_repository.ecritures_simtis(
             db,
             company_id,
-            bank_account_id=bank_account_id,
-            date_from=date_from,
-            date_to=date_to,
-            non_exportees=not inclure_exportees,
+            bank_account_id=None,
+            date_from=debut,
+            date_to=fin,
+            non_exportees=True,
         )
+        if row[0].bank_account_id in accounts
     ]
     if not rows:
-        raise ConflictError("Aucune écriture de frais à exporter sur cette période.")
+        raise ConflictError(f"Aucune écriture de frais {banque} à exporter en {mois:02d}/{annee}.")
+    rang = premiere_piece(premiere, banque, annee, mois, len(rows))
     rows.sort(key=lambda row: (row[0].date_ecriture, row[0].id))
     operations = frais_repository.operations_of_entries(db, [entry.id for entry, _, _ in rows])
     saisies = frais_repository.lignes_saisies(db, [entry.id for entry, _, _ in rows])
@@ -1285,8 +1345,8 @@ def exporter(
     writer = csv.writer(buffer, delimiter=CSV_SEPARATEUR, lineterminator="\r\n")
     writer.writerow(EXPORT_HEADERS)
     maintenant = datetime.now(UTC)
-    for entry, code, _ in rows:
-        piece = entry.numero_piece or code
+    for index, (entry, _, _) in enumerate(rows):
+        piece = numero_piece(banque, debut, rang + index)
         for ligne in lignes[entry.id]:
             # Sage : un montant toujours positif et son sens ; Référence et les autres colonnes
             # facultatives restent vides (16/10/2026)
@@ -1298,22 +1358,47 @@ def exporter(
                  SENS_DEBIT if debit else SENS_CREDIT,
                  "", "", "", "", "", "", ""]
             )  # fmt: skip
-        avant = entry.exportee_le
-        if avant is None:
-            entry.exportee_le = maintenant
+        avant = {"numero_piece": entry.numero_piece, "exportee_le": entry.exportee_le}
+        entry.numero_piece = piece
+        entry.exportee_le = maintenant
         audit_service.log(
             db,
             user_id=acteur_id,
             action="export_ecriture_frais",
             entite=ENTITE,
             entite_id=entry.id,
-            avant={"exportee_le": avant},
-            apres={"exportee_le": entry.exportee_le, "reexport": avant is not None},
+            avant=avant,
+            apres={"numero_piece": piece, "exportee_le": maintenant},
             ip=ip,
         )
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="export_frais_sage",
+        entite="company",
+        entite_id=company_id,
+        apres={
+            "banque": banque,
+            "mois": f"{mois:02d}/{annee}",
+            "nb_ecritures": len(rows),
+            "premiere_piece": numero_piece(banque, debut, rang),
+            "derniere_piece": numero_piece(banque, debut, rang + len(rows) - 1),
+        },
+        ip=ip,
+    )
     _commit(db)
-    nom = f"ecritures-frais-{business_today():%Y%m%d}.csv"
+    nom = f"ecritures-frais-{banque}-{annee}-{mois:02d}.csv"
     return nom, buffer.getvalue().encode(CSV_ENCODAGE, errors="replace"), len(rows)
+
+
+def codes_rapprochement(db: Session, entries: list[AccountingEntry]) -> list[str | None]:
+    """Code « BANQUE-AA-NNNNNN » du rapprochement de chaque écriture validée : le N° pièce
+    n'existe qu'après l'export (09/11/2026)."""
+    codes = []
+    for entry in entries:
+        match = frais_repository.active_match_of_entry(db, entry.id)
+        codes.append(match.code if match else None)
+    return codes
 
 
 def montant_csv(montant: Decimal) -> str:
@@ -1595,7 +1680,7 @@ def comptabiliser_manuellement(
         },
         acteur_id=acteur_id,
     )
-    entry.numero_piece = _nouvelle_piece(db, company_id, account, entry.date_ecriture)
+    # Pas de N° pièce : il est donné à l'export vers Sage (09/11/2026)
     lignes = lignes_manuelle(None, montant, montant_tva, texte, account.bank.code)
     if compte is not None and compte != lignes[0].compte:
         # Compte choisi autre que celui du libellé : lignes enregistrées, la TVA reste la sienne

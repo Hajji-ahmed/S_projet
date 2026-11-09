@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models import BankTransaction
 from app.services.account_service import journal_des_frais
 from app.services.frais_service import (
+    AExporter,
     AutreFrais,
     Detail,
     EcritureSimtis,
@@ -333,7 +334,28 @@ class ValidationTimbresIn(BaseModel):
 
 class ValidationTimbresOut(BaseModel):
     nb_ecritures: int
-    codes: list[str]
+    # Codes de rapprochement « BANQUE-AA-NNNNNN » : le N° pièce est donné à l'export (09/11/2026)
+    codes: list[str | None]
+
+
+class AExporterOut(BaseModel):
+    """Écritures de frais pas encore exportées d'une banque et d'un mois (09/11/2026)."""
+
+    bank_id: int
+    bank_code: str
+    bank_logo: str | None
+    mois: str  # « 2026-10 »
+    nb: int
+
+    @classmethod
+    def of(cls, item: AExporter) -> "AExporterOut":
+        return cls(
+            bank_id=item.bank_id,
+            bank_code=item.bank_code,
+            bank_logo=item.bank_logo,
+            mois=f"{item.annee}-{item.mois:02d}",
+            nb=item.nb,
+        )
 
 
 class SuppressionIn(BaseModel):

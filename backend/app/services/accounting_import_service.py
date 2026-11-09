@@ -428,7 +428,11 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
             if same_piece or meme_libelle:
                 line.statut = "Doublon"
                 line.doublon_de = None
-                line.motifs = [f"Déjà comptabilisée par SIMTIS (pièce {entry.numero_piece})."]
+                # Pas encore exportée : pas de N° pièce (donné à l'export, 09/11/2026)
+                piece = (
+                    f"pièce {entry.numero_piece}" if entry.numero_piece else "pas encore exportée"
+                )
+                line.motifs = [f"Déjà comptabilisée par SIMTIS ({piece})."]
                 remaining.remove(entry)
                 break
 
