@@ -38,6 +38,21 @@ export type LigneComptable = {
   hash_ligne: string | null;
   /** Doublon interne au fichier : première ligne identique (la ligne peut être gardée). */
   doublon_de: number | null;
+  /** Copie d'une ligne de frais SIMTIS (même N° pièce, ligne identique) : décochée par défaut. */
+  piece_repetee?: boolean;
+};
+
+/** N° pièce d'un frais SIMTIS exporté présent plusieurs fois à l'identique (10/11/2026). */
+export type PieceRepetee = {
+  numero_piece: string;
+  bank_account_id: number;
+  bank_code: string | null;
+  date_ecriture: string;
+  montant: string;
+  /** Lignes identiques dans le fichier, la ligne gardée comprise. */
+  nb: number;
+  /** Numéros des lignes décochées par défaut. */
+  copies: number[];
 };
 
 export type TotalCompte = {
@@ -104,6 +119,8 @@ export type AnalyseComptable = {
   resume: ResumeComptable;
   /** Écritures Sage du même compte, journal et période absentes du fichier. */
   ecritures_absentes?: EcritureAbsente[];
+  /** Frais SIMTIS exportés présents plusieurs fois à l'identique : double import dans Sage. */
+  pieces_repetees?: PieceRepetee[];
 };
 
 export type ConfirmationComptable = {

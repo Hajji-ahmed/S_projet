@@ -17,6 +17,8 @@ type LigneCochable = {
   statut: string;
   doublon_de: number | null;
   en_cours?: boolean;
+  /** Copie d'un frais SIMTIS répétée dans le grand livre (10/11/2026). */
+  piece_repetee?: boolean;
 };
 
 /** Une ligne déjà importée (doublon sans ligne d'origine dans le fichier) ne se coche jamais. */
@@ -29,6 +31,8 @@ export function cochable(line: LigneCochable): boolean {
  * doublons internes au fichier. Une ligne en erreur cochée bloque la confirmation tant qu'elle
  * n'est pas corrigée (relevés) ou décochée. Sert aussi au bouton « Tout cocher ».
  * `sansEnCours` (07/11/2026) : les opérations en cours « (*) » du relevé restent décochées.
+ * Une copie d'un frais SIMTIS répétée dans le grand livre (`piece_repetee`, 10/11/2026) reste
+ * décochée : elle se coche à la main si ce sont vraiment deux frais.
  */
 export function defaultChecked(
   lines: readonly LigneCochable[],
@@ -36,8 +40,34 @@ export function defaultChecked(
 ): Set<number> {
   return new Set(
     lines
-      .filter((line) => cochable(line) && !(options.sansEnCours && line.en_cours))
+      .filter(
+        (line) => cochable(line) && !line.piece_repetee && !(options.sansEnCours && line.en_cours),
+      )
       .map((line) => line.numero),
+  );
+}
+
+/**
+ * Message d'attention quand des frais exportés par SIMTIS reviennent plusieurs fois à l'identique
+ * dans le grand livre (10/11/2026) : Sage ne détecte pas les doublons, le tableau des frais y a
+ * sans doute été importé deux fois. Null sans pièce répétée.
+ */
+export function messagePiecesRepetees(
+  pieces: readonly { numero_piece: string; bank_code: string | null; nb: number }[],
+): string | null {
+  if (pieces.length === 0) return null;
+  const liste = pieces
+    .map(
+      (piece) =>
+        `${piece.numero_piece}${piece.bank_code ? ` (${piece.bank_code})` : ""}, ${piece.nb} fois`,
+    )
+    .join(" ; ");
+  const un = pieces.length === 1;
+  return (
+    `Attention : ${pieces.length} N° pièce${un ? "" : "s"} de frais SIMTIS ${un ? "est répété" : "sont répétés"} ` +
+    `à l'identique dans ce grand livre (${liste}). Le tableau des frais a peut-être été importé ` +
+    "deux fois dans Sage : supprimez la copie dans Sage. Les copies sont décochées ; recochez-les " +
+    "seulement s'il s'agit vraiment de frais distincts."
   );
 }
 

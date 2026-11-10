@@ -59,6 +59,11 @@ class LigneComptableOut(BaseModel):
     bank_code: str | None
     hash_ligne: str | None
     doublon_de: int | None
+    piece_repetee: bool = Field(
+        False,
+        description="Copie d'une ligne de frais SIMTIS (même N° pièce, ligne identique) : décochée "
+        "par défaut",
+    )
 
 
 class TotalCompteOut(BaseModel):
@@ -117,6 +122,20 @@ class EcritureAbsenteOut(BaseModel):
     )
 
 
+class PieceRepeteeOut(BaseModel):
+    """N° pièce d'un frais SIMTIS exporté présent plusieurs fois à l'identique (10/11/2026)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    numero_piece: str
+    bank_account_id: int
+    bank_code: str | None
+    date_ecriture: date
+    montant: Decimal
+    nb: int = Field(description="Lignes identiques dans le fichier, la ligne gardée comprise")
+    copies: list[int] = Field(description="Numéros des lignes décochées par défaut")
+
+
 class AnalyseComptableOut(BaseModel):
     """Aperçu d'un export Sage : rien n'est encore enregistré."""
 
@@ -140,6 +159,11 @@ class AnalyseComptableOut(BaseModel):
     ecritures_absentes: list[EcritureAbsenteOut] = Field(
         default_factory=list,
         description="Écritures Sage du même compte, journal et période absentes du fichier",
+    )
+    pieces_repetees: list[PieceRepeteeOut] = Field(
+        default_factory=list,
+        description="Frais SIMTIS exportés présents plusieurs fois à l'identique (double import "
+        "dans Sage)",
     )
 
     @classmethod
@@ -167,6 +191,9 @@ class AnalyseComptableOut(BaseModel):
             resume=ResumeComptableOut.model_validate(analysis.resume),
             ecritures_absentes=[
                 EcritureAbsenteOut.model_validate(item) for item in analysis.ecritures_absentes
+            ],
+            pieces_repetees=[
+                PieceRepeteeOut.model_validate(item) for item in analysis.pieces_repetees
             ],
         )
 

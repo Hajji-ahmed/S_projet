@@ -149,6 +149,7 @@ def test_bank_lines_are_kept_and_attached_by_their_journal(client, comptable, db
         "bank_code": "AWB",
         "hash_ligne": None,
         "doublon_de": None,
+        "piece_repetee": False,
     }
     assert lines[1]["echeance"] == "2025-09-30"
     resume = body["resume"]

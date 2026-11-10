@@ -165,6 +165,24 @@ def simtis_entries_like(
     return [row for row in rows if (row.bank_account_id, row.date_ecriture) in keys]
 
 
+def pieces_simtis_exportees(db: Session, company_id: int, pieces: set[str]) -> set[str]:
+    """Parmi `pieces` (en majuscules), les N° pièce d'écritures SIMTIS déjà exportées vers Sage :
+    pour repérer un tableau des frais importé deux fois dans Sage (10/11/2026)."""
+    if not pieces:
+        return set()
+    numero = func.upper(AccountingEntry.numero_piece)
+    return set(
+        db.scalars(
+            select(numero).where(
+                AccountingEntry.company_id == company_id,
+                AccountingEntry.origine == "SIMTIS",
+                AccountingEntry.exportee_le.is_not(None),
+                numero.in_(pieces),
+            )
+        )
+    )
+
+
 def operations_of_entries(db: Session, entry_ids: list[int]) -> dict[int, list[BankTransaction]]:
     """Opérations rapprochées (correspondance active) de chaque écriture demandée."""
     if not entry_ids:

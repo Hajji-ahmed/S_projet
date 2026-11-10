@@ -2,11 +2,12 @@
 
 import csv
 import io
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
 
 from app.models import AccountingEntry, AuditLog, Bank, BankTransaction, ReconciliationMatch
@@ -407,6 +408,117 @@ def test_a_simtis_entry_coming_back_from_sage_is_a_duplicate(client, comptable, 
     par_piece = ligne(4, "FRAIS DIVERS", piece=code.lower())
     _mark_simtis_entries(db, company(db).id, [par_piece])
     assert par_piece.statut == "Doublon"
+
+
+# --- Frais importés deux fois dans Sage (10/11/2026) -----------------------------------------------
+
+GL_HEADER = ["Date", "Journal", "Compte", "N° pièce", "Libellé", "Débit", "Crédit"]
+
+
+def grand_livre(*rows) -> bytes:
+    workbook = Workbook()
+    workbook.active.append(GL_HEADER)
+    for row in rows:
+        workbook.active.append(row)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def analyse_gl(client, headers, db, content: bytes, path: str = "analyse", **form):
+    return client.post(
+        f"/api/accounting/import/{path}",
+        data={"company_id": str(company(db).id), **form},
+        files={"fichier": ("gl.xlsx", content, "application/octet-stream")},
+        headers=headers,
+    )
+
+
+def frais_exporte(client, comptable, db):
+    """Un jour de timbres comptabilisé par SIMTIS et exporté : pièce BP2604001, crédit 202,00."""
+    compte = bp(db)
+    timbres_du_jour(db, compte)
+    valider(client, comptable, db, (compte, JOUR))
+    assert exporter(client, comptable, db).status_code == 200
+    return compte
+
+
+def test_a_fee_imported_twice_in_sage_is_flagged_and_its_copy_unchecked(client, comptable, db):
+    frais_exporte(client, comptable, db)
+    ligne_frais = [JOUR, "5543", "55410003", "BP2604001", "DT D'ENREGISTREMENT", None, 202]
+    content = grand_livre(ligne_frais, ligne_frais, ligne_frais)
+
+    body = analyse_gl(client, comptable, db, content).json()
+
+    lignes = body["lignes"]
+    assert [line["statut"] for line in lignes] == ["Doublon", "Valide", "Valide"]
+    assert [line["piece_repetee"] for line in lignes] == [False, True, True]
+    assert "Déjà comptabilisée par SIMTIS (pièce BP2604001)" in lignes[0]["motifs"][0]
+    assert "BP2604001 répété à l'identique" in lignes[1]["motifs"][0]
+    assert body["pieces_repetees"] == [
+        {
+            "numero_piece": "BP2604001",
+            "bank_account_id": lignes[0]["bank_account_id"],
+            "bank_code": "BP",
+            "date_ecriture": JOUR.isoformat(),
+            "montant": lignes[0]["montant"],
+            "nb": 3,
+            "copies": [3, 4],
+        }
+    ]
+
+
+def test_a_rechecked_copy_is_imported(client, comptable, db):
+    frais_exporte(client, comptable, db)
+    ligne_frais = [JOUR, "5543", "55410003", "BP2604001", "DT D'ENREGISTREMENT", None, 202]
+    content = grand_livre(ligne_frais, ligne_frais)
+
+    body = analyse_gl(
+        client, comptable, db, content, path="confirm", lignes_choisies=json.dumps([3])
+    ).json()
+
+    assert body["nb_importees"] == 1
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        # Même N° pièce SIMTIS, montants différents : pas une copie
+        [
+            [JOUR, "5543", "55410003", "BP2604001", "DT D'ENREGISTREMENT", None, 202],
+            [JOUR, "5543", "55410003", "BP2604001", "DT D'ENREGISTREMENT", None, 15],
+        ],
+        # Même N° pièce SIMTIS, libellés différents
+        [
+            [JOUR, "5543", "55410003", "BP2604001", "DT D'ENREGISTREMENT", None, 202],
+            [JOUR, "5543", "55410003", "BP2604001", "COM VIR", None, 202],
+        ],
+        # Pièce Sage ordinaire répétée à l'identique : jamais signalée
+        [
+            [JOUR, "5543", "55410003", "P9", "AGIOS", None, 50],
+            [JOUR, "5543", "55410003", "P9", "AGIOS", None, 50],
+        ],
+    ],
+)
+def test_only_identical_copies_of_a_simtis_piece_are_flagged(client, comptable, db, rows):
+    frais_exporte(client, comptable, db)
+
+    body = analyse_gl(client, comptable, db, grand_livre(*rows)).json()
+
+    assert body["pieces_repetees"] == []
+    assert not any(line["piece_repetee"] for line in body["lignes"])
+
+
+def test_a_repeated_piece_of_a_fee_not_yet_exported_is_not_flagged(client, comptable, db):
+    """Sans export, le frais n'a pas de N° pièce : il ne peut pas être en double dans Sage."""
+    compte = bp(db)
+    timbres_du_jour(db, compte)
+    valider(client, comptable, db, (compte, JOUR))
+    ligne_frais = [JOUR, "5543", "55410003", "BP2604001", "DT D'ENREGISTREMENT", None, 202]
+
+    body = analyse_gl(client, comptable, db, grand_livre(ligne_frais, ligne_frais)).json()
+
+    assert body["pieces_repetees"] == []
 
 
 def test_validated_entries_are_listed_with_their_code(db, comptable, client):

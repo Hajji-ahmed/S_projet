@@ -7,6 +7,7 @@ import {
   totauxCoches,
   cellulesText,
   defaultChecked,
+  messagePiecesRepetees,
   pageOf,
   sageLinesFor,
   messageConfirmation,
@@ -58,6 +59,38 @@ describe("defaultChecked", () => {
       { numero: 6, statut: "Doublon", doublon_de: null },
     ];
     expect([...defaultChecked(lines)]).toEqual([3, 4, 5]);
+  });
+
+  it("laisse décochée la copie d'un frais SIMTIS répétée dans le grand livre", () => {
+    const lines = [
+      { numero: 3, statut: "Doublon", doublon_de: null },
+      { numero: 4, statut: "Valide", doublon_de: null, piece_repetee: true },
+      { numero: 5, statut: "Valide", doublon_de: null, piece_repetee: false },
+    ];
+    expect([...defaultChecked(lines)]).toEqual([5]);
+  });
+});
+
+describe("messagePiecesRepetees", () => {
+  it("n'affiche rien sans pièce répétée", () => {
+    expect(messagePiecesRepetees([])).toBeNull();
+  });
+
+  it("nomme chaque pièce, sa banque et le nombre de lignes", () => {
+    expect(messagePiecesRepetees([{ numero_piece: "BP2610001", bank_code: "BP", nb: 2 }])).toBe(
+      "Attention : 1 N° pièce de frais SIMTIS est répété à l'identique dans ce grand livre " +
+        "(BP2610001 (BP), 2 fois). Le tableau des frais a peut-être été importé deux fois dans " +
+        "Sage : supprimez la copie dans Sage. Les copies sont décochées ; recochez-les seulement " +
+        "s'il s'agit vraiment de frais distincts.",
+    );
+    expect(
+      messagePiecesRepetees([
+        { numero_piece: "BP2610001", bank_code: "BP", nb: 3 },
+        { numero_piece: "AWB2610004", bank_code: null, nb: 2 },
+      ]),
+    ).toContain(
+      "2 N° pièces de frais SIMTIS sont répétés à l'identique dans ce grand livre (BP2610001 (BP), 3 fois ; AWB2610004, 2 fois)",
+    );
   });
 });
 

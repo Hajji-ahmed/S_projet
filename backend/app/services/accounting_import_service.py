@@ -127,6 +127,8 @@ class EntryLine:
     hash_ligne: str | None = None
     # Doublon interne au fichier : numéro de la première ligne identique (gardable à la confirmation)
     doublon_de: int | None = None
+    # Copie d'une ligne de frais SIMTIS (même N° pièce, ligne identique) : décochée par défaut
+    piece_repetee: bool = False
 
 
 @dataclass
@@ -180,6 +182,20 @@ class EcritureAbsente:
 
 
 @dataclass
+class PieceRepetee:
+    """N° pièce d'un frais exporté par SIMTIS présent plusieurs fois à l'identique dans le grand
+    livre : le tableau des frais a sans doute été importé deux fois dans Sage (10/11/2026)."""
+
+    numero_piece: str
+    bank_account_id: int
+    bank_code: str | None
+    date_ecriture: date
+    montant: Decimal
+    nb: int  # lignes identiques dans le fichier, la ligne gardée comprise
+    copies: list[int]  # numéros des lignes décochées par défaut
+
+
+@dataclass
 class AccountingAnalysis:
     company: Company
     fichier_nom: str
@@ -197,6 +213,7 @@ class AccountingAnalysis:
     # Lignes non retenues (titres, autres journaux, contreparties) et leur raison : affichées seulement
     lignes_ignorees: list[IgnoredLine] = field(default_factory=list)
     ecritures_absentes: list[EcritureAbsente] = field(default_factory=list)
+    pieces_repetees: list[PieceRepetee] = field(default_factory=list)
 
 
 def _company(db: Session, company_id: int) -> Company:
@@ -437,6 +454,64 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
                 break
 
 
+def _mark_pieces_repetees(
+    db: Session, company_id: int, lines: list[EntryLine]
+) -> list[PieceRepetee]:
+    """Copies d'une ligne de frais exportée par SIMTIS (10/11/2026) : Sage ne voit pas les
+    doublons, un tableau des frais importé deux fois y donne deux lignes identiques (même compte,
+    date, montant, libellé et N° pièce). La ligne reconnue comme frais SIMTIS (ou déjà importée)
+    est gardée, sinon la première ; les autres restent valides mais sont décochées par défaut, avec
+    un motif. Une pièce Sage ordinaire (N° pièce qui n'est pas celui d'un frais SIMTIS exporté) et
+    des lignes qui diffèrent ne sont jamais signalées. Ne change pas `_mark_simtis_entries`."""
+    groups: dict[tuple, list[EntryLine]] = {}
+    for line in lines:
+        if (
+            line.statut == "Erreur"
+            or not line.numero_piece
+            or line.bank_account_id is None
+            or line.date_ecriture is None
+            or line.montant is None
+        ):
+            continue
+        key = (
+            line.bank_account_id,
+            line.numero_piece.strip().upper(),
+            line.date_ecriture,
+            line.montant,
+            " ".join((line.libelle or "").upper().split()),
+        )
+        groups.setdefault(key, []).append(line)
+    groups = {key: group for key, group in groups.items() if len(group) > 1}
+    simtis = frais_repository.pieces_simtis_exportees(db, company_id, {key[1] for key in groups})
+    repetees: list[PieceRepetee] = []
+    for key, group in groups.items():
+        if key[1] not in simtis:
+            continue
+        gardee = next((line for line in group if line.statut == "Doublon"), group[0])
+        copies = [line for line in group if line is not gardee and line.statut == "Valide"]
+        if not copies:
+            continue
+        for line in copies:
+            line.piece_repetee = True
+            line.motifs = [
+                *line.motifs,
+                f"N° pièce {line.numero_piece} répété à l'identique dans le grand livre : copie "
+                "probable d'un double import du tableau des frais dans Sage.",
+            ]
+        repetees.append(
+            PieceRepetee(
+                numero_piece=gardee.numero_piece or key[1],
+                bank_account_id=key[0],
+                bank_code=gardee.bank_code,
+                date_ecriture=key[2],
+                montant=key[3],
+                nb=len(group),
+                copies=[line.numero for line in copies],
+            )
+        )
+    return repetees
+
+
 def _summarise(lines: list[EntryLine], ignored: int) -> EntriesSummary:
     summary = EntriesSummary(nb_lignes=len(lines), nb_ignorees=ignored)
     valid = [line for line in lines if line.statut == "Valide"]
@@ -543,6 +618,7 @@ def analyse_entries(
         lines.append(_read_entry(numero, cells, mapping, account, today))
 
     _mark_duplicates(db, company.id, lines)
+    analysis.pieces_repetees = _mark_pieces_repetees(db, company.id, lines)
     analysis.lignes = lines
     analysis.resume = _summarise(lines, ignored)
     analysis.ecritures_absentes = _ecritures_absentes(db, company.id, lines)

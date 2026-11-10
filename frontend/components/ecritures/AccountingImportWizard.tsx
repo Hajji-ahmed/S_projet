@@ -24,6 +24,7 @@ import {
   blocageImport,
   cochable,
   defaultChecked,
+  messagePiecesRepetees,
   messageConfirmation,
   pageOf,
   sageLinesFor,
@@ -367,6 +368,7 @@ export function AccountingImportWizard({
       { key: "tiers", header: "Tiers", render: (line) => line.tiers ?? "-" },
     ];
     const absentes = current.ecritures_absentes ?? [];
+    const piecesRepetees = messagePiecesRepetees(current.pieces_repetees ?? []);
     const absentesColumns: Column<EcritureAbsente>[] = [
       {
         key: "choix",
@@ -513,6 +515,7 @@ export function AccountingImportWizard({
           {current.fichier_nom} · seules les lignes banque des journaux de banque sont retenues
           (journal Sage de vos comptes) ; les contreparties et les autres journaux sont ignorés.
         </p>
+        {piecesRepetees && <Alert tone="warning">{piecesRepetees}</Alert>}
         {absentes.length > 0 && (
           <Alert tone="warning">
             {absentes.length} écriture{absentes.length > 1 ? "s" : ""} Sage déjà dans SIMTIS{" "}
