@@ -842,6 +842,41 @@ def test_day_level_row_needs_at_least_one_amount(db, world):
     )
 
 
+# --- Formules des Prévisions (migration 0049) ------------------------------------------------------
+
+
+def test_previsions_formula_needs_its_amount(db, world):
+    save(db, prevision(world, formule="=50+50"))
+
+    assert_rejected(
+        db,
+        "ck_saisies_previsions_formule_avec_montant",
+        prevision(world, ligne=2, bank_id=None, montant=None, libelle="A", formule="=1"),
+    )
+
+
+@pytest.mark.parametrize("name", ["encaissement", "escompte", "douane"])
+def test_day_amounts_formula_needs_its_amount(db, world, name):
+    save(db, day_amounts(world, douane=Decimal("2"), formule_douane="=1+1"))
+
+    assert_rejected(
+        db,
+        "ck_saisies_previsions_jour_formules_avec_montants",
+        # Les deux autres montants sont renseignés : seule la règle de la formule est en cause
+        day_amounts(
+            world,
+            ligne=2,
+            **{
+                "encaissement": Decimal("1"),
+                "escompte": Decimal("1"),
+                "douane": Decimal("1"),
+                name: None,
+                f"formule_{name}": "=1",
+            },
+        ),
+    )
+
+
 # --- Origine d'une opération (migration 0006) ------------------------------------------------------
 
 

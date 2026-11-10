@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { estFormule, evaluerFormule } from "./formule";
+import { detailFormule, estFormule, evaluerFormule } from "./formule";
 
 describe("estFormule", () => {
   it("reconnaît un texte commençant par =", () => {
@@ -8,6 +8,14 @@ describe("estFormule", () => {
     expect(estFormule("  =1+2")).toBe(true);
     expect(estFormule("1+2")).toBe(false);
     expect(estFormule("1 200")).toBe(false);
+  });
+});
+
+describe("detailFormule", () => {
+  it("écrit le calcul lisiblement pour l'infobulle", () => {
+    expect(detailFormule("=1000+500+250")).toBe("1000 + 500 + 250");
+    expect(detailFormule(" = 1 200,50+350*2")).toBe("1 200,50 + 350 × 2");
+    expect(detailFormule("=(1000-200)/4")).toBe("(1000 - 200) ÷ 4");
   });
 });
 

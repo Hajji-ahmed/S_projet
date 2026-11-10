@@ -16,17 +16,24 @@ export type Devises = { company_id: number; jour: string; lignes: LigneDevises[]
 
 export type DevisesInput = { lignes: LigneDevises[] };
 
+/** Montant d'une banque dans une ligne Prévisions, avec la formule qui le donne (10/11/2026). */
+export type MontantBanquePrevision = MontantBanque & { formule: string | null };
+
 export type LignePrevisions = {
   /** Date de la ligne (décision du 30/10/2026). */
   jour: string;
   /** Rang de la ligne parmi celles de sa date, donné par le serveur. */
   ligne: number;
   libelle: string | null;
-  banques: MontantBanque[];
+  banques: MontantBanquePrevision[];
   /** Montants sans banque de la ligne (une valeur par ligne depuis le 03/10/2026). */
   encaissement: string | null;
   escompte: string | null;
   douane: string | null;
+  /** Formule tapée qui donne le montant (« =1000+500 »), gardée pour la revoir (10/11/2026). */
+  formule_encaissement: string | null;
+  formule_escompte: string | null;
+  formule_douane: string | null;
 };
 
 export type Previsions = { company_id: number; jour: string; lignes: LignePrevisions[] };

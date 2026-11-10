@@ -10,11 +10,14 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import SaisieDevise, SaisiePrevision, SaisiePrevisionJour, enums
+from app.models.saisies import FORMULE_MAX
 from app.services.saisie_service import DeviseCell, LignePrevision
 
 # Montant d'une cellule : positif ou négatif, 2 décimales au plus
 Montant = Annotated[Decimal, Field(max_digits=18, decimal_places=2)]
 LigneDevise = Literal["EUR", "USD", "Exp DH convertible"]
+# Formule d'une cellule Prévisions (« =1000+500 »), gardée avec son résultat (10/11/2026)
+Formule = Annotated[str, Field(max_length=FORMULE_MAX)]
 
 
 class MontantBanque(BaseModel):
@@ -105,6 +108,13 @@ class DevisesOut(BaseModel):
 # --- Prévisions ------------------------------------------------------------------------------------
 
 
+class MontantBanquePrevision(MontantBanque):
+    """Montant d'une banque dans une ligne Prévisions, avec la formule qui le donne s'il y en a une
+    (le serveur la recalcule : elle doit donner `montant`)."""
+
+    formule: Formule | None = None
+
+
 class LignePrevisionsIn(BaseModel):
     """Une ligne du tableau, avec sa date (décision du 30/10/2026). Son rang est donné par le serveur
     dans l'ordre d'envoi des lignes de la même date."""
@@ -113,11 +123,14 @@ class LignePrevisionsIn(BaseModel):
 
     jour: date
     libelle: str | None = Field(default=None, max_length=80)
-    banques: list[MontantBanque] = Field(default_factory=list, max_length=50)
+    banques: list[MontantBanquePrevision] = Field(default_factory=list, max_length=50)
     # Une valeur par ligne depuis le 03/10/2026 (avant : une pour toute la journée)
     encaissement: Montant | None = None
     escompte: Montant | None = None
     douane: Montant | None = None
+    formule_encaissement: Formule | None = None
+    formule_escompte: Formule | None = None
+    formule_douane: Formule | None = None
 
     @model_validator(mode="after")
     def _une_valeur_par_banque(self) -> "LignePrevisionsIn":
@@ -143,6 +156,12 @@ class PrevisionsIn(BaseModel):
                     "escompte": item.escompte,
                     "douane": item.douane,
                 },
+                formules={
+                    **{cell.bank_id: cell.formule for cell in item.banques},
+                    "encaissement": item.formule_encaissement,
+                    "escompte": item.formule_escompte,
+                    "douane": item.formule_douane,
+                },
             )
             for item in self.lignes
         ]
@@ -152,10 +171,13 @@ class LignePrevisionsOut(BaseModel):
     jour: date
     ligne: int
     libelle: str | None
-    banques: list[MontantBanque]
+    banques: list[MontantBanquePrevision]
     encaissement: Decimal | None
     escompte: Decimal | None
     douane: Decimal | None
+    formule_encaissement: str | None
+    formule_escompte: str | None
+    formule_douane: str | None
 
 
 class PrevisionsOut(BaseModel):
@@ -184,13 +206,18 @@ class PrevisionsOut(BaseModel):
                     ligne=key[1],
                     libelle=next((row.libelle for row in mine if row.bank_id is None), None),
                     banques=[
-                        MontantBanque(bank_id=row.bank_id, montant=row.montant)
+                        MontantBanquePrevision(
+                            bank_id=row.bank_id, montant=row.montant, formule=row.formule
+                        )
                         for row in mine
                         if row.bank_id is not None
                     ],
                     encaissement=day.encaissement if day else None,
                     escompte=day.escompte if day else None,
                     douane=day.douane if day else None,
+                    formule_encaissement=day.formule_encaissement if day else None,
+                    formule_escompte=day.formule_escompte if day else None,
+                    formule_douane=day.formule_douane if day else None,
                 )
             )
         return cls(company_id=company_id, jour=jour, lignes=lignes)

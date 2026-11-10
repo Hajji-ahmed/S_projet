@@ -1,9 +1,9 @@
-import { CircleAlert, RotateCcw, Save } from "lucide-react";
-import type { ReactNode } from "react";
+import { CircleAlert, RotateCcw, Save, Sigma } from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { estFormule, evaluerFormule } from "@/lib/formule";
+import { detailFormule, estFormule, evaluerFormule } from "@/lib/formule";
 
 /**
  * Style des tableaux du classeur (Banques, Devises, Prévisions), aligné sur `DataTable` : cadre
@@ -46,7 +46,24 @@ type GridCellProps = {
   maxLength?: number;
   /** « =1200+350 » est remplacé par son résultat sur Entrée ou en quittant la cellule (Prévisions). */
   formule?: boolean;
+  /**
+   * Formule gardée qui donne `value` (10/11/2026) : montrée en infobulle, remise dans le champ quand
+   * on y revient pour modifier ou retirer un nombre. `onFormuleChange` reçoit la nouvelle formule,
+   * ou « » quand la cellule redevient un simple montant.
+   */
+  formuleSaisie?: string;
+  onFormuleChange?: (formule: string) => void;
 };
+
+/** Repère d'une cellule calculée, à gauche du montant. */
+function RepereFormule() {
+  return (
+    <Sigma
+      className="pointer-events-none absolute top-1/2 left-1.5 h-3 w-3 -translate-y-1/2 text-simtis-secondary"
+      aria-hidden
+    />
+  );
+}
 
 /** Contenu d'une cellule : un champ sans bordure qui la remplit, ou le texte seul en lecture. */
 export function GridCell({
@@ -58,39 +75,73 @@ export function GridCell({
   align = "right",
   maxLength,
   formule = false,
+  formuleSaisie = "",
+  onFormuleChange,
 }: GridCellProps): ReactNode {
+  // Texte du champ pendant qu'on modifie une cellule à formule : la formule, pas son résultat
+  const [edition, setEdition] = useState<string | null>(null);
   const alignment = align === "right" ? "text-right tabular-nums" : "text-left";
+  const garde = formule && formuleSaisie !== "" && edition === null;
+  const titre = garde ? `Calcul : ${detailFormule(formuleSaisie)}` : undefined;
   if (readOnly) {
     return (
-      <span className={cn("block min-h-10 px-3 py-2.5 whitespace-nowrap", alignment)}>{value}</span>
+      <span
+        title={titre}
+        className={cn("relative block min-h-10 px-3 py-2.5 whitespace-nowrap", alignment)}
+      >
+        {garde && <RepereFormule />}
+        {value}
+      </span>
     );
   }
   // Une formule fausse reste telle quelle : « Enregistrer » la signale comme cellule à corriger
   function calculer() {
-    if (!formule || !estFormule(value)) return;
-    const resultat = evaluerFormule(value);
-    if (resultat !== null) onChange(resultat);
+    if (!formule) return;
+    const texte = edition ?? value;
+    setEdition(null);
+    if (!estFormule(texte)) {
+      if (edition !== null) onFormuleChange?.("");
+      return;
+    }
+    const resultat = evaluerFormule(texte);
+    if (resultat === null) {
+      onFormuleChange?.("");
+      return;
+    }
+    onChange(resultat);
+    onFormuleChange?.(texte.trim());
   }
   return (
-    <input
-      type="text"
-      inputMode={align === "right" ? "decimal" : undefined}
-      aria-label={label}
-      aria-invalid={invalid || undefined}
-      value={value}
-      maxLength={maxLength}
-      onChange={(event) => onChange(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") calculer();
-      }}
-      onBlur={calculer}
-      className={cn(
-        "block h-10 w-full min-w-0 bg-transparent px-3 outline-none",
-        "focus:bg-simtis-card focus:ring-2 focus:ring-simtis-primary focus:ring-inset",
-        invalid && "bg-simtis-danger-bg text-simtis-danger-fg ring-1 ring-simtis-danger ring-inset",
-        alignment,
-      )}
-    />
+    <div className="relative">
+      {garde && <RepereFormule />}
+      <input
+        type="text"
+        inputMode={align === "right" ? "decimal" : undefined}
+        aria-label={garde ? `${label}, ${titre}` : label}
+        aria-invalid={invalid || undefined}
+        title={titre}
+        value={edition ?? value}
+        maxLength={maxLength}
+        onFocus={() => {
+          if (formule && formuleSaisie) setEdition(formuleSaisie);
+        }}
+        onChange={(event) => {
+          if (formule) setEdition(event.target.value);
+          onChange(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") calculer();
+        }}
+        onBlur={calculer}
+        className={cn(
+          "block h-10 w-full min-w-0 bg-transparent px-3 outline-none",
+          "focus:bg-simtis-card focus:ring-2 focus:ring-simtis-primary focus:ring-inset",
+          invalid &&
+            "bg-simtis-danger-bg text-simtis-danger-fg ring-1 ring-simtis-danger ring-inset",
+          alignment,
+        )}
+      />
+    </div>
   );
 }
 

@@ -293,10 +293,13 @@ def test_previsions_round_trip_with_a_date_per_line(client, tresorerie, db):
         "jour": DAY.isoformat(),
         "ligne": 1,
         "libelle": "Client A",
-        "banques": [{"bank_id": cih, "montant": "1000.00"}],
+        "banques": [{"bank_id": cih, "montant": "1000.00", "formule": None}],
         "encaissement": "250000.00",
         "escompte": None,
         "douane": None,
+        "formule_encaissement": None,
+        "formule_escompte": None,
+        "formule_douane": None,
     }
     assert again["lignes"][1]["douane"] == "-12000.50"
     assert again["lignes"][2]["escompte"] == "5.00"
@@ -372,10 +375,13 @@ def test_deleted_line_is_removed_renumbered_and_audited(client, tresorerie, db):
             "jour": DAY.isoformat(),
             "ligne": 1,
             "libelle": "Client B",
-            "banques": [{"bank_id": cih, "montant": "1.00"}],
+            "banques": [{"bank_id": cih, "montant": "1.00", "formule": None}],
             "encaissement": None,
             "escompte": None,
             "douane": None,
+            "formule_encaissement": None,
+            "formule_escompte": None,
+            "formule_douane": None,
         }
     ]
     assert db.scalar(select(SaisiePrevisionJour)) is None  # trois cellules vides : ligne supprimée
@@ -396,6 +402,117 @@ def test_deleted_line_is_removed_renumbered_and_audited(client, tresorerie, db):
         "30/09/2026 · Ligne 2 · libellé": None,
         "30/09/2026 · Ligne 2 · CIH": None,
     }
+
+
+def test_formulas_are_kept_with_their_amount_and_audited(client, tresorerie, db):
+    """Décision du 10/11/2026 : la formule d'une cellule de montant est gardée pour la revoir."""
+    cih = bank_id(db, "CIH")
+    lignes = [
+        {
+            "jour": DAY.isoformat(),
+            "banques": [{"bank_id": cih, "montant": "1750", "formule": " =1000+500+250 "}],
+            "encaissement": "1900.50",
+            "formule_encaissement": "=1 200,50+350*2",
+            "douane": "10",
+        }
+    ]
+
+    put_previsions(client, db, tresorerie, lignes)
+    body = client.get(PREVISIONS, params=params(db), headers=tresorerie).json()
+
+    ligne = body["lignes"][0]
+    assert ligne["banques"] == [{"bank_id": cih, "montant": "1750.00", "formule": "=1000+500+250"}]
+    assert ligne["formule_encaissement"] == "=1 200,50+350*2"
+    assert ligne["formule_douane"] is None
+    assert audit(db, "saisie_previsions")[-1].nouvelle_valeur == {
+        "a_partir_du": DAY.isoformat(),
+        "30/09/2026 · Ligne 1 · CIH": {"montant": "1750.00", "formule": "=1000+500+250"},
+        "30/09/2026 · Ligne 1 · Encaissement": "1900.50",
+        "30/09/2026 · Ligne 1 · Encaissement (formule)": "=1 200,50+350*2",
+        "30/09/2026 · Ligne 1 · Douane": "10.00",
+    }
+
+
+def test_editing_a_formula_or_replacing_it_by_an_amount(client, tresorerie, db):
+    cih = bank_id(db, "CIH")
+    put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {
+                "jour": DAY.isoformat(),
+                "banques": [{"bank_id": cih, "montant": "1750", "formule": "=1000+500+250"}],
+                "escompte": "3",
+                "formule_escompte": "=1+2",
+            }
+        ],
+    )
+
+    # Un nombre retiré de la formule ; l'escompte redevient un simple montant
+    body = put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {
+                "jour": DAY.isoformat(),
+                "banques": [{"bank_id": cih, "montant": "1250", "formule": "=1000+250"}],
+                "escompte": "3",
+            }
+        ],
+    ).json()
+
+    ligne = body["lignes"][0]
+    assert ligne["banques"] == [{"bank_id": cih, "montant": "1250.00", "formule": "=1000+250"}]
+    assert ligne["formule_escompte"] is None
+    entry = audit(db, "saisie_previsions")[-1]
+    assert entry.ancienne_valeur == {
+        "a_partir_du": DAY.isoformat(),
+        "30/09/2026 · Ligne 1 · CIH": {"montant": "1750.00", "formule": "=1000+500+250"},
+        "30/09/2026 · Ligne 1 · Escompte (formule)": "=1+2",
+    }
+    assert entry.nouvelle_valeur == {
+        "a_partir_du": DAY.isoformat(),
+        "30/09/2026 · Ligne 1 · CIH": {"montant": "1250.00", "formule": "=1000+250"},
+        "30/09/2026 · Ligne 1 · Escompte (formule)": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "cellule",
+    [
+        {"encaissement": "100", "formule_encaissement": "=1+2"},  # ne donne pas le montant
+        {"encaissement": "100", "formule_encaissement": "=100+"},  # formule fausse
+        {"encaissement": "100", "formule_encaissement": "100"},  # pas une formule
+        {"douane": "1", "formule_escompte": "=1"},  # formule sans montant
+    ],
+)
+def test_formula_must_give_its_amount(client, tresorerie, db, cellule):
+    response = put_previsions(client, db, tresorerie, [{"jour": DAY.isoformat(), **cellule}])
+
+    assert response.status_code == 409
+    assert "Formule invalide" in response.json()["detail"]
+
+
+def test_bank_formula_error_names_the_bank(client, tresorerie, db):
+    cih = bank_id(db, "CIH")
+    response = put_previsions(
+        client,
+        db,
+        tresorerie,
+        [
+            {
+                "jour": DAY.isoformat(),
+                "banques": [{"bank_id": cih, "montant": "5", "formule": "=2+2"}],
+            }
+        ],
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Formule invalide ou différente du montant (30/09/2026, CIH) : =2+2"
+    )
 
 
 def test_same_previsions_again_writes_no_audit(client, tresorerie, db):
@@ -507,6 +624,7 @@ def test_future_previsions_can_be_entered(client, tresorerie, db):
         {"lignes": [{"jour": "2026-09-30", "douane": "1.234"}]},
         {"lignes": [], "encaissement": "1"},
         {"lignes": [], "inconnu": "x"},
+        {"lignes": [{"jour": "2026-09-30", "douane": "1", "formule_douane": "=" + "1" * 200}]},
     ],
 )
 def test_invalid_previsions_gives_422(client, tresorerie, db, body):

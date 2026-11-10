@@ -22,6 +22,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models import enums
 from app.models.base import Base, Montant, TimestampMixin, check_in
 
+# Longueur maximale d'une formule de cellule Prévisions (« =1 200,50+350*2 »)
+FORMULE_MAX = 200
+
 
 class SaisieDevise(TimestampMixin, Base):
     """Une cellule du tableau Devises : ligne EUR / USD / Exp DH convertible, colonne banque ou
@@ -80,6 +83,8 @@ class SaisiePrevision(TimestampMixin, Base):
             " OR (bank_id IS NOT NULL AND montant IS NOT NULL AND libelle IS NULL)",
             name="libelle_ou_montant",
         ),
+        # La formule (10/11/2026) est le détail d'un montant : jamais sans lui
+        CheckConstraint("formule IS NULL OR montant IS NOT NULL", name="formule_avec_montant"),
         Index(
             "uq_saisies_previsions_cellule_banque",
             "company_id",
@@ -106,6 +111,8 @@ class SaisiePrevision(TimestampMixin, Base):
     bank_id: Mapped[int | None] = mapped_column(ForeignKey("banks.id"), index=True)
     libelle: Mapped[str | None] = mapped_column(String(80))
     montant: Mapped[Montant | None]
+    # « =1000+500+250 » tapé par l'utilisateur, gardé pour le revoir et le corriger (10/11/2026)
+    formule: Mapped[str | None] = mapped_column(String(FORMULE_MAX))
     saisi_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
 
@@ -128,6 +135,12 @@ class SaisiePrevisionJour(TimestampMixin, Base):
             "encaissement IS NOT NULL OR escompte IS NOT NULL OR douane IS NOT NULL",
             name="un_montant_renseigne",
         ),
+        CheckConstraint(
+            "(formule_encaissement IS NULL OR encaissement IS NOT NULL)"
+            " AND (formule_escompte IS NULL OR escompte IS NOT NULL)"
+            " AND (formule_douane IS NULL OR douane IS NOT NULL)",
+            name="formules_avec_montants",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)
@@ -137,4 +150,7 @@ class SaisiePrevisionJour(TimestampMixin, Base):
     encaissement: Mapped[Montant | None]
     escompte: Mapped[Montant | None]
     douane: Mapped[Montant | None]
+    formule_encaissement: Mapped[str | None] = mapped_column(String(FORMULE_MAX))
+    formule_escompte: Mapped[str | None] = mapped_column(String(FORMULE_MAX))
+    formule_douane: Mapped[str | None] = mapped_column(String(FORMULE_MAX))
     saisi_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))

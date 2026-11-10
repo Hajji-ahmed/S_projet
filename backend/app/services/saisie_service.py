@@ -15,19 +15,24 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy.orm import Session
 
 from app.models import Bank, Company, SaisieDevise, SaisiePrevision, SaisiePrevisionJour
 from app.models.enums import LIGNES_PREVISIONS_PAR_DATE
 from app.repositories import account_repository, bank_repository, saisie_repository
-from app.services import audit_service
+from app.services import audit_service, formule_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.position_service import PREMIERE_DATE_SOLDE
 
 CENT = Decimal("0.01")
 JOUR_FIELDS = {"encaissement": "Encaissement", "escompte": "Escompte", "douane": "Douane"}
+# Colonnes de `saisies_previsions_jour` : les montants puis leurs formules (10/11/2026)
+JOUR_COLUMNS = {
+    **JOUR_FIELDS,
+    **{f"formule_{name}": f"{title} (formule)" for name, title in JOUR_FIELDS.items()},
+}
 
 # Cellule du tableau Devises : (ligne, colonne, banque). La banque n'existe que pour la colonne « Banque ».
 DeviseCell = tuple[str, str, int | None]
@@ -72,8 +77,10 @@ def _sync(
     label: Callable[[Any], str],
     avant: dict[str, Any],
     apres: dict[str, Any],
+    shown: Callable[[Any], Any] = lambda value: value,
 ) -> None:
-    """Aligne les cellules enregistrées sur la grille voulue : ajoute, corrige ou supprime."""
+    """Aligne les cellules enregistrées sur la grille voulue : ajoute, corrige ou supprime.
+    `shown` donne la valeur écrite dans l'audit."""
     keys = set(wanted) | {key for key in existing if editable(key)}
     for key in keys:
         row = existing.get(key)
@@ -81,8 +88,8 @@ def _sync(
         new = wanted.get(key)
         if old == new:
             continue
-        avant[label(key)] = old
-        apres[label(key)] = new
+        avant[label(key)] = shown(old)
+        apres[label(key)] = shown(new)
         if new is None:
             saisie_repository.delete(db, row)
         elif row is None:
@@ -177,6 +184,15 @@ class LignePrevision:
     libelle: str | None
     banques: Mapping[int, Decimal | None] = field(default_factory=dict)
     montants: Mapping[str, Decimal | None] = field(default_factory=dict)
+    # Formule tapée dans une cellule de montant (10/11/2026), par banque ou par nom de colonne
+    formules: Mapping[int | str, str | None] = field(default_factory=dict)
+
+
+class MontantFormule(NamedTuple):
+    """Montant d'une cellule Prévisions et la formule qui le donne, s'il y en a une."""
+
+    montant: Decimal
+    formule: str | None = None
 
 
 def list_previsions(
@@ -195,14 +211,32 @@ def _date(jour: date) -> str:
     return f"{jour.day:02d}/{jour.month:02d}/{jour.year:04d}"
 
 
+def _formule(formule: str | None, montant: Decimal | None, colonne: str, jour: date) -> str | None:
+    """La formule sans espaces autour, après avoir vérifié qu'elle donne `montant` (409 sinon)."""
+    texte = _text(formule)
+    if texte is None:
+        return None
+    if montant is None or formule_service.evaluer(texte) != montant:
+        raise ConflictError(
+            f"Formule invalide ou différente du montant ({_date(jour)}, {colonne}) : {texte}"
+        )
+    return texte
+
+
 def _numeroter(
-    lignes: list[LignePrevision], rangs_existants: Mapping[date, int]
-) -> tuple[dict[PrevisionCell, str | Decimal], dict[tuple[date, int], dict[str, Decimal | None]]]:
+    lignes: list[LignePrevision],
+    rangs_existants: Mapping[date, int],
+    codes: Mapping[int, str] | None = None,
+) -> tuple[
+    dict[PrevisionCell, str | MontantFormule],
+    dict[tuple[date, int], dict[str, Decimal | str | None]],
+]:
     """Cellules et montants sans banque voulus, par (date, rang). Une ligne entièrement vide est
     ignorée ; les autres sont numérotées dans l'ordre d'envoi, à partir de 1 pour chaque date, ou
-    après `rangs_existants` (lignes d'une date antérieure à la page, ajoutées le 09/11/2026)."""
-    cells: dict[PrevisionCell, str | Decimal] = {}
-    days: dict[tuple[date, int], dict[str, Decimal | None]] = {}
+    après `rangs_existants` (lignes d'une date antérieure à la page, ajoutées le 09/11/2026).
+    Chaque formule doit donner son montant (`codes` nomme les banques dans le message d'erreur)."""
+    cells: dict[PrevisionCell, str | MontantFormule] = {}
+    days: dict[tuple[date, int], dict[str, Decimal | str | None]] = {}
     rangs: dict[date, int] = dict(rangs_existants)
     for item in lignes:
         if item.jour < PREMIERE_DATE_SOLDE:
@@ -214,6 +248,20 @@ def _numeroter(
         montants = {name: _amount(item.montants.get(name)) for name in JOUR_FIELDS}
         if libelle is None and not banques and all(v is None for v in montants.values()):
             continue
+        formules = {
+            bank_id: _formule(
+                item.formules.get(bank_id),
+                montant,
+                (codes or {}).get(bank_id, f"banque {bank_id}"),
+                item.jour,
+            )
+            for bank_id, montant in banques.items()
+        }
+        colonnes: dict[str, Decimal | str | None] = dict(montants)
+        for name, title in JOUR_FIELDS.items():
+            colonnes[f"formule_{name}"] = _formule(
+                item.formules.get(name), montants[name], title, item.jour
+            )
         rang = rangs.get(item.jour, 0) + 1
         if rang > LIGNES_PREVISIONS_PAR_DATE:
             raise ConflictError(
@@ -223,10 +271,17 @@ def _numeroter(
         if libelle is not None:
             cells[(item.jour, rang, None)] = libelle
         for bank_id, montant in banques.items():
-            cells[(item.jour, rang, bank_id)] = montant
+            cells[(item.jour, rang, bank_id)] = MontantFormule(montant, formules[bank_id])
         if any(v is not None for v in montants.values()):
-            days[(item.jour, rang)] = montants
+            days[(item.jour, rang)] = colonnes
     return cells, days
+
+
+def _montant_audite(value: Any) -> Any:
+    """Dans l'audit, un montant sans formule reste un montant (comme avant le 10/11/2026)."""
+    if isinstance(value, MontantFormule):
+        return value.montant if value.formule is None else value._asdict()
+    return value
 
 
 def _ligne_label(jour: date, ligne: int, colonne: str) -> str:
@@ -250,32 +305,38 @@ def save_previsions(
     banks = _active_banks(db, {bank_id for item in lignes for bank_id in item.banques})
     passees = {item.jour for item in lignes if PREMIERE_DATE_SOLDE <= item.jour < depuis}
     wanted, wanted_days = _numeroter(
-        lignes, saisie_repository.dernier_rang_previsions(db, company.id, passees)
+        lignes,
+        saisie_repository.dernier_rang_previsions(db, company.id, passees),
+        {bank_id: bank.code for bank_id, bank in banks.items()},
     )
     existing = {
         (row.jour, row.ligne, row.bank_id): row
         for row in saisie_repository.list_previsions(db, company.id, depuis)
     }
 
-    def value_of(row: SaisiePrevision) -> str | Decimal | None:
-        return row.libelle if row.bank_id is None else row.montant
-
-    def set_value(row: SaisiePrevision, value: str | Decimal) -> None:
+    def value_of(row: SaisiePrevision) -> str | MontantFormule | None:
         if row.bank_id is None:
-            row.libelle = value
+            return row.libelle
+        return None if row.montant is None else MontantFormule(row.montant, row.formule)
+
+    def set_value(row: SaisiePrevision, value: str | MontantFormule) -> None:
+        if isinstance(value, MontantFormule):
+            row.montant, row.formule = value
         else:
-            row.montant = value
+            row.libelle = value
         row.saisi_par_id = acteur_id
 
-    def build(key: PrevisionCell, value: str | Decimal) -> SaisiePrevision:
+    def build(key: PrevisionCell, value: str | MontantFormule) -> SaisiePrevision:
         jour, ligne, bank_id = key
+        montant = value if isinstance(value, MontantFormule) else None
         return SaisiePrevision(
             company_id=company.id,
             jour=jour,
             ligne=ligne,
             bank_id=bank_id,
-            libelle=value if bank_id is None else None,
-            montant=value if bank_id is not None else None,
+            libelle=value if isinstance(value, str) else None,
+            montant=montant.montant if montant else None,
+            formule=montant.formule if montant else None,
             saisi_par_id=acteur_id,
         )
 
@@ -296,6 +357,7 @@ def save_previsions(
         label=label,
         avant=avant,
         apres=apres,
+        shown=_montant_audite,
     )
 
     # Encaissement, Escompte, Douane : un enregistrement par ligne, supprimé quand les trois sont vides
@@ -305,9 +367,9 @@ def save_previsions(
     }
     for key in sorted(set(days) | set(wanted_days)):
         day = days.get(key)
-        new_day = wanted_days.get(key, dict.fromkeys(JOUR_FIELDS))
+        new_day = wanted_days.get(key, dict.fromkeys(JOUR_COLUMNS))
         day_changed = False
-        for name, title in JOUR_FIELDS.items():
+        for name, title in JOUR_COLUMNS.items():
             old = None if day is None else getattr(day, name)
             if old != new_day[name]:
                 avant[_ligne_label(*key, title)] = old
@@ -315,7 +377,7 @@ def save_previsions(
                 day_changed = True
         if not day_changed:
             continue
-        if all(value is None for value in new_day.values()):
+        if all(new_day[name] is None for name in JOUR_FIELDS):
             saisie_repository.delete(db, day)
             continue
         if day is None:

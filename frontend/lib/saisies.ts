@@ -10,6 +10,7 @@ import type {
   DevisesInput,
   LigneDevise,
   MontantBanque,
+  MontantBanquePrevision,
   Previsions,
   PrevisionsInput,
 } from "@/types/saisie";
@@ -36,6 +37,14 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; invalid: string[] 
 /** Clé d'une cellule : « EUR|3 » (ligne, banque), « EUR|total », « 5|libelle », « 5|encaissement ». */
 export function cellKey(row: string | number, column: string | number): string {
   return `${row}|${column}`;
+}
+
+/**
+ * Clé de la formule d'une cellule de montant des Prévisions (10/11/2026) : « 5|3|= » pour la
+ * cellule « 5|3 ». La cellule garde le résultat, la formule est à côté.
+ */
+export function formuleKey(key: string): string {
+  return `${key}|=`;
 }
 
 /** Deux brouillons identiques, en ignorant les espaces autour et les cellules vides. */
@@ -143,6 +152,10 @@ export function supprimerLigne(draft: Draft, id: number): Draft {
   return Object.fromEntries(Object.entries(draft).filter(([key]) => !key.startsWith(`${id}|`)));
 }
 
+function putFormule(draft: Draft, key: string, formule: string | null) {
+  if (formule) draft[formuleKey(key)] = formule;
+}
+
 export function previsionsToDraft(previsions: Previsions): Draft {
   const draft: Draft = {};
   previsions.lignes.forEach((line, index) => {
@@ -150,9 +163,30 @@ export function previsionsToDraft(previsions: Previsions): Draft {
     draft[cellKey(id, "jour")] = line.jour;
     if (line.libelle !== null) draft[cellKey(id, "libelle")] = line.libelle;
     putBanks(draft, id, line.banques);
-    for (const { key } of COLONNES_JOUR) putAmount(draft, cellKey(id, key), line[key]);
+    for (const cell of line.banques) putFormule(draft, cellKey(id, cell.bank_id), cell.formule);
+    for (const { key } of COLONNES_JOUR) {
+      putAmount(draft, cellKey(id, key), line[key]);
+      putFormule(draft, cellKey(id, key), line[`formule_${key}`]);
+    }
   });
   return draft;
+}
+
+/** La formule d'une cellule, envoyée seulement avec un montant valide (le serveur la recalcule). */
+function formuleOf(draft: Draft, key: string, montant: string | null): string | null {
+  return montant === null ? null : (draft[formuleKey(key)] ?? "").trim() || null;
+}
+
+function banksPrevision(
+  draft: Draft,
+  id: number,
+  bankIds: number[],
+  invalid: string[],
+): MontantBanquePrevision[] {
+  return banksOf(draft, id, bankIds, invalid).map((cell) => ({
+    ...cell,
+    formule: formuleOf(draft, cellKey(id, cell.bank_id), cell.montant),
+  }));
 }
 
 /** Toutes les lignes affichées, dans l'ordre : une ligne absente est supprimée par le serveur. */
@@ -162,13 +196,19 @@ export function draftToPrevisionsInput(draft: Draft, bankIds: number[]): Parsed<
     const key = cellKey(id, "libelle");
     const libelle = (draft[key] ?? "").trim();
     if (libelle.length > LIBELLE_MAX) invalid.push(key);
+    const encaissement = amountOf(draft, cellKey(id, "encaissement"), invalid);
+    const escompte = amountOf(draft, cellKey(id, "escompte"), invalid);
+    const douane = amountOf(draft, cellKey(id, "douane"), invalid);
     return {
       jour,
       libelle: libelle || null,
-      banques: banksOf(draft, id, bankIds, invalid),
-      encaissement: amountOf(draft, cellKey(id, "encaissement"), invalid),
-      escompte: amountOf(draft, cellKey(id, "escompte"), invalid),
-      douane: amountOf(draft, cellKey(id, "douane"), invalid),
+      banques: banksPrevision(draft, id, bankIds, invalid),
+      encaissement,
+      escompte,
+      douane,
+      formule_encaissement: formuleOf(draft, cellKey(id, "encaissement"), encaissement),
+      formule_escompte: formuleOf(draft, cellKey(id, "escompte"), escompte),
+      formule_douane: formuleOf(draft, cellKey(id, "douane"), douane),
     };
   });
   return invalid.length ? { ok: false, invalid } : { ok: true, value: { lignes } };

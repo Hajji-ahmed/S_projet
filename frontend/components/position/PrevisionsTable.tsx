@@ -30,6 +30,7 @@ import {
   ajouterLigne,
   cellKey,
   draftToPrevisionsInput,
+  formuleKey,
   groupesParDate,
   lignesPrevisions,
   previsionsToDraft,
@@ -63,7 +64,8 @@ type PrevisionsTableProps = {
  * ajoute une ligne (à une nouvelle date ou sous une date existante) ou la supprime, puis enregistre.
  * Une ligne datée avant le jour choisi s'ajoute à sa date (décision du 09/11/2026) et n'est plus
  * visible après l'enregistrement : un message dit quelle date choisir pour la revoir.
- * Rien n'y est calculé.
+ * Rien n'y est calculé, sauf une formule tapée dans une cellule de montant (« =1000+500 ») : son
+ * résultat est le montant, la formule est gardée pour la revoir et la corriger (10/11/2026).
  */
 export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsTableProps) {
   const { toast } = useToast();
@@ -124,6 +126,8 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
         align={text ? "left" : "right"}
         maxLength={text ? LIBELLE_MAX : undefined}
         formule={!text}
+        formuleSaisie={text ? undefined : (grid.draft[formuleKey(key)] ?? "")}
+        onFormuleChange={text ? undefined : (value) => grid.setCell(formuleKey(key), value)}
       />
     );
   }

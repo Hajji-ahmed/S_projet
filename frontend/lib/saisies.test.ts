@@ -8,6 +8,7 @@ import {
   devisesToDraft,
   draftToDevisesInput,
   draftToPrevisionsInput,
+  formuleKey,
   groupesParDate,
   lignesPrevisions,
   previsionsToDraft,
@@ -81,7 +82,16 @@ describe("devisesToDraft / draftToDevisesInput", () => {
   });
 });
 
-const vide = { libelle: null, banques: [], encaissement: null, escompte: null, douane: null };
+const vide = {
+  libelle: null,
+  banques: [],
+  encaissement: null,
+  escompte: null,
+  douane: null,
+  formule_encaissement: null,
+  formule_escompte: null,
+  formule_douane: null,
+};
 
 // Une date par ligne (décision du 30/10/2026), triées par date puis par rang
 const previsions: Previsions = {
@@ -93,7 +103,7 @@ const previsions: Previsions = {
       jour: "2026-09-30",
       ligne: 1,
       libelle: "Client A",
-      banques: [{ bank_id: BP, montant: "1000.00" }],
+      banques: [{ bank_id: BP, montant: "1000.00", formule: null }],
       encaissement: "250000.00",
     },
     { ...vide, jour: "2026-09-30", ligne: 2, douane: "-50.00" },
@@ -128,7 +138,7 @@ describe("previsionsToDraft / draftToPrevisionsInput", () => {
             ...vide,
             jour: "2026-09-30",
             libelle: "Client A",
-            banques: [{ bank_id: BP, montant: "1000" }],
+            banques: [{ bank_id: BP, montant: "1000", formule: null }],
             encaissement: "250000",
           },
           { ...vide, jour: "2026-09-30", douane: "-50" },
@@ -145,6 +155,76 @@ describe("previsionsToDraft / draftToPrevisionsInput", () => {
     );
 
     expect(parsed).toEqual({ ok: false, invalid: ["4|libelle", "4|douane"] });
+  });
+});
+
+describe("formules gardées des Prévisions (10/11/2026)", () => {
+  const avecFormules: Previsions = {
+    company_id: 1,
+    jour: "2026-09-30",
+    lignes: [
+      {
+        ...vide,
+        jour: "2026-09-30",
+        ligne: 1,
+        banques: [{ bank_id: BP, montant: "1750.00", formule: "=1000+500+250" }],
+        escompte: "3.00",
+        formule_escompte: "=1+2",
+      },
+    ],
+  };
+
+  it("met la formule de chaque cellule à côté de son résultat", () => {
+    expect(previsionsToDraft(avecFormules)).toEqual({
+      "1|jour": "2026-09-30",
+      "1|3": "1 750",
+      "1|3|=": "=1000+500+250",
+      "1|escompte": "3",
+      "1|escompte|=": "=1+2",
+    });
+    expect(formuleKey(cellKey(1, BP))).toBe("1|3|=");
+  });
+
+  it("renvoie chaque formule avec son montant", () => {
+    const parsed = draftToPrevisionsInput(previsionsToDraft(avecFormules), [AWB, BP]);
+
+    expect(parsed).toEqual({
+      ok: true,
+      value: {
+        lignes: [
+          {
+            ...vide,
+            jour: "2026-09-30",
+            banques: [{ bank_id: BP, montant: "1750", formule: "=1000+500+250" }],
+            escompte: "3",
+            formule_escompte: "=1+2",
+          },
+        ],
+      },
+    });
+  });
+
+  it("n'envoie pas la formule d'une cellule vidée, ni une formule vide", () => {
+    const draft = {
+      ...previsionsToDraft(avecFormules),
+      "1|3": "",
+      [formuleKey(cellKey(1, "escompte"))]: "",
+    };
+
+    const parsed = draftToPrevisionsInput(draft, [AWB, BP]);
+
+    expect(parsed).toEqual({
+      ok: true,
+      value: { lignes: [{ ...vide, jour: "2026-09-30", escompte: "3" }] },
+    });
+  });
+
+  it("une formule modifiée rend le tableau modifié, supprimer la ligne retire ses formules", () => {
+    const saved = previsionsToDraft(avecFormules);
+
+    expect(sameDraft(saved, { ...saved, "1|3|=": "=1000+750" })).toBe(false);
+    expect(supprimerLigne(saved, 1)).toEqual({});
+    expect(lignesPrevisions(saved)).toEqual([{ id: 1, jour: "2026-09-30" }]);
   });
 });
 

@@ -2,7 +2,8 @@ import { amountForInput } from "@/lib/accounts";
 
 /**
  * Formules des cellules de montant (tableau Prévisions, 30/10/2026) : « =1 200,50+350*2 » devient
- * « 1 900,50 » quand on appuie sur Entrée ou quitte la cellule. Seul le résultat est gardé.
+ * « 1 900,50 » quand on appuie sur Entrée ou quitte la cellule. Depuis le 10/11/2026, la formule
+ * est gardée à côté du résultat pour la revoir et la corriger (le serveur la recalcule).
  * Opérations + − * / et parenthèses, calcul exact (fractions en BigInt, jamais de float), résultat
  * arrondi au centime, 0,005 vers le haut. Le texte est lu par un petit analyseur : rien n'est exécuté.
  */
@@ -18,6 +19,19 @@ const CENT = BigInt(100);
 /** Le texte commence par « = » : c'est une formule. */
 export function estFormule(texte: string): boolean {
   return texte.trim().startsWith("=");
+}
+
+/** « =1000+500*2 » → « 1000 + 500 × 2 », pour l'infobulle. */
+export function detailFormule(formule: string): string {
+  return formule
+    .trim()
+    .replace(/^=\s*/, "")
+    .replace(/\s*([+*/()×÷−-])\s*/g, (_, op: string) =>
+      op === "(" || op === ")" ? op : ` ${op === "*" ? "×" : op === "/" ? "÷" : op} `,
+    )
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .trim();
 }
 
 /** « =1200+350,50 » → « 1 550,50 » ; formule fausse ou division par zéro → null. */
