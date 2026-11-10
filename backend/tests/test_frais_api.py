@@ -256,7 +256,9 @@ def test_validation_is_all_or_nothing_and_recomputed_by_the_server(client, compt
 
 def test_validation_needs_the_bank_account_settings(client, comptable, db):
     compte = bp(db)
-    compte.journal_frais = None  # deux journaux Sage : lequel ?
+    # Deux journaux Sage, aucun en « 55 » (10/11/2026) : lequel ?
+    compte.journal_frais = None
+    compte.journal_sage = "5243,5143"
     db.flush()
     timbres_du_jour(db, compte)
 
@@ -1633,3 +1635,20 @@ def test_awb_fees_with_vat_inside_are_split_and_its_escompte_stays_by_hand(clien
     ]
     assert par_famille["timbres"]["total"] == "28.00"
     assert [a["id"] for a in tableau["autres_frais"]] == [agios.id]
+
+
+def test_the_fees_journal_is_the_account_journal_starting_with_55(client, comptable, db):
+    """10/11/2026 : « 1456,5541 » → les écritures de frais passent dans le journal 5541."""
+    compte = account(db, bank_code="BMCE")
+    compte.journal_sage = "1456,5541"
+    compte.compte_comptable = "55410002"
+    db.flush()
+    timbres_du_jour(db, compte)
+
+    (proposition,) = lire(client, comptable, db).json()["propositions"]
+    response = valider(client, comptable, db, (compte, JOUR))
+
+    assert proposition["journal"] == "5541"
+    assert response.status_code == 200, response.text
+    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
+    assert entry.journal == "5541"

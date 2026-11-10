@@ -144,11 +144,20 @@ def _check_journal_frais(journal_frais: str | None, journal_sage: str | None) ->
 
 
 def journal_des_frais(account: BankAccount) -> str | None:
-    """Journal où passent les frais du compte : le journal des frais, sinon le seul journal Sage."""
+    """Journal où passent les frais du compte : le journal des frais saisi, sinon le premier
+    journal Sage qui commence par « 55 » (10/11/2026 : « 5243,5543 » → 5543), sinon le seul
+    journal Sage du compte."""
     if account.journal_frais:
         return account.journal_frais
     journaux = journaux_sage(account.journal_sage)
+    en_55 = [journal for journal in journaux if journal.startswith(PREFIXE_JOURNAL_FRAIS)]
+    if en_55:
+        return en_55[0]
     return journaux[0] if len(journaux) == 1 else None
+
+
+# Journal Sage des frais bancaires (10/11/2026) : celui des journaux du compte en « 55 »
+PREFIXE_JOURNAL_FRAIS = "55"
 
 
 def journaux_sage(valeur: str | None) -> list[str]:

@@ -287,7 +287,7 @@ export function AccountFormModal({
           label="Journal des frais"
           htmlFor="account-journal-frais"
           error={errors.journal_frais}
-          hint="Journal Sage où passent les frais bancaires (ex. 5543). Vide = le seul journal du compte."
+          hint="Journal Sage où passent les frais bancaires (ex. 5543). Vide = le journal Sage du compte qui commence par 55 (sinon son seul journal)."
         >
           <TextInput
             id="account-journal-frais"

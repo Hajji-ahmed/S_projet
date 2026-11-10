@@ -660,3 +660,27 @@ def test_commission_accounts_are_saved(client, tresorerie, db):
         "34552000",
     )
     assert invalid.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("journal_sage", "journal_frais", "attendu"),
+    [
+        ("5243,5543", None, "5543"),
+        ("5548", None, "5548"),
+        ("5541,5542", None, "5541"),
+        ("123", None, "123"),
+        ("123,456", None, None),
+        (None, None, None),
+        ("5243,5543", "5243", "5243"),
+    ],
+)
+def test_the_fees_journal_is_the_sage_journal_starting_with_55(
+    journal_sage, journal_frais, attendu
+):
+    """10/11/2026 : le journal saisi, sinon le premier journal Sage en « 55 », sinon le seul."""
+    from app.models import BankAccount
+    from app.services.account_service import journal_des_frais
+
+    compte = BankAccount(journal_sage=journal_sage, journal_frais=journal_frais)
+
+    assert journal_des_frais(compte) == attendu
