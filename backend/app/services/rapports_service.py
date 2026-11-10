@@ -316,12 +316,25 @@ EN_TETE_ECRAN = Font(bold=True, color="004F54")
 TRAIT = Border(bottom=Side(style="thin", color="D9E3E8"))
 COLONNES_RELEVE = (("Date", 10), ("Libellé", 52), ("Réf.", 14), ("Débit", 15), ("Crédit", 15),
                    ("St.", 18))  # fmt: skip
-# Échéance après Crédit (07/11/2026), côté Sage seulement
-COLONNES_SAGE = (("Date", 10), ("Libellé", 52), ("Pce", 18), ("Débit", 15), ("Crédit", 15),
+# Échéance après Crédit (07/11/2026), N° pièce juste avant elle (10/11/2026), côté Sage seulement
+COLONNES_SAGE = (("Date", 10), ("Libellé", 52), ("Débit", 15), ("Crédit", 15), ("Pce", 18),
                  ("Échéance", 11), ("St.", 18))  # fmt: skip
 # Comptabilité à gauche, relevé à droite (07/11/2026), une colonne vide entre les deux
 DEBUT_SAGE = 1
 DEBUT_RELEVE = len(COLONNES_SAGE) + 2
+
+
+def _rangs_montants(colonnes: tuple[tuple[str, int], ...]) -> tuple[int, int]:
+    """Rangs (depuis 0) des colonnes Débit et Crédit d'un côté, lus sur leurs titres."""
+    titres = [titre for titre, _ in colonnes]
+    return titres.index("Débit"), titres.index("Crédit")
+
+
+# Débit / Crédit de chaque côté, par colonne de départ du côté
+MONTANTS = {
+    DEBUT_SAGE: _rangs_montants(COLONNES_SAGE),
+    DEBUT_RELEVE: _rangs_montants(COLONNES_RELEVE),
+}
 
 
 def statut_affiche(statut: str, frais: bool = False, rapprochee_le: date | None = None) -> str:
@@ -378,7 +391,7 @@ def _feuille_compte(
             cellule.border = TRAIT
             if index == 0 or isinstance(valeur, date):
                 cellule.number_format = "DD/MM/YY"
-            elif index in (3, 4):
+            elif index in MONTANTS[debut]:
                 cellule.number_format = FORMAT_MONTANT
             if proposition:
                 cellule.fill = PROPOSITION
@@ -397,7 +410,10 @@ def _feuille_compte(
             sheet.cell(row=4, column=debut + nb - 1, value="non renseigné")
         elif solde != 0:
             au_debit = (solde < 0) == debit_si_negatif
-            cellule = sheet.cell(row=4, column=debut + (3 if au_debit else 4), value=abs(solde))
+            rang_debit, rang_credit = MONTANTS[debut]
+            cellule = sheet.cell(
+                row=4, column=debut + (rang_debit if au_debit else rang_credit), value=abs(solde)
+            )
             cellule.number_format = FORMAT_MONTANT
         for index in range(nb):
             cellule = sheet.cell(row=4, column=debut + index)
@@ -426,9 +442,9 @@ def _feuille_compte(
             [
                 ec.date_ecriture,
                 ec.libelle,
-                ec.numero_piece,
                 ec.debit or None,
                 ec.credit or None,
+                ec.numero_piece,
                 ec.echeance,
                 statut_affiche(ec.statut, rapprochee_le=apres[1].get(ec.id)),
             ],
@@ -437,7 +453,7 @@ def _feuille_compte(
     fin = 5 + max(len(operations), len(ecritures)) + 1
     for debut, lignes in ((DEBUT_SAGE, ecritures), (DEBUT_RELEVE, operations)):
         sheet.cell(row=fin, column=debut, value="Total").font = GRAS
-        for decalage, champ in ((3, "debit"), (4, "credit")):
+        for decalage, champ in zip(MONTANTS[debut], ("debit", "credit"), strict=True):
             total = sum((getattr(x, champ) for x in lignes), Decimal("0"))
             cellule = sheet.cell(row=fin, column=debut + decalage, value=total)
             cellule.font = GRAS
@@ -459,8 +475,11 @@ def _feuille_compte(
     for libelle, valeur in sorted(controle, key=lambda ligne: ordre[ligne[0]]):
         rang += 1
         sheet.cell(row=rang, column=2, value=libelle).font = GRAS
+        # Sous le Débit de la comptabilité
         cellule = sheet.cell(
-            row=rang, column=4, value="non calculable" if valeur is None else valeur
+            row=rang,
+            column=DEBUT_SAGE + MONTANTS[DEBUT_SAGE][0],
+            value="non calculable" if valeur is None else valeur,
         )
         cellule.font = GRAS
         cellule.number_format = FORMAT_MONTANT

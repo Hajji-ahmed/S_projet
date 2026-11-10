@@ -283,6 +283,12 @@ def test_unreconciled_lines_side_by_side_for_one_bank_and_period(client, respons
     feuille = workbook[workbook.sheetnames[0]]
     # Comptabilité à gauche (A–G, échéance en F), relevé à droite (I–N) (07/11/2026)
     assert feuille.cell(row=2, column=1).value == "Écritures comptables (1)"
+    # Côté Sage, N° pièce juste avant l'échéance (10/11/2026) ; côté relevé inchangé
+    titres = [c.value for c in feuille[3]]
+    assert titres[:7] == [
+        "Date", "Libellé", "Débit (DH)", "Crédit (DH)", "Pce", "Échéance", "St.",
+    ]  # fmt: skip
+    assert titres[8:] == ["Date", "Libellé", "Réf.", "Débit (DH)", "Crédit (DH)", "St."]
     assert feuille.cell(row=2, column=9).value == "Transactions bancaires (3)"
     # Du plus ancien au plus récent (02/11/2026), rapprochées, en cours et hors période exclues
     assert lignes(feuille, 10) == ["VIR KARIM", "COMMISSION", "VERSEMENT DEPLACE PAR X"]
@@ -332,20 +338,23 @@ def test_unreconciled_lines_start_with_both_balances_and_end_at_zero(client, res
     lettree.statut = "Rapprochée"
     esp = ecriture(db, bp, montant="-200", jour=date(2026, 9, 29), libelle="ESP Y")
     esp.echeance = date(2026, 10, 15)
+    esp.numero_piece = "BP2609001"
     db.flush()
 
     feuille = classeur(non_rapproches(client, responsable, db, bp)).active
 
     # Solde du relevé créditeur (Crédit), solde comptable débiteur dans Sage (Débit)
     assert feuille.cell(row=4, column=2).value == "Solde comptable au 30/09/2026"
-    assert feuille.cell(row=4, column=4).value == 1700
+    assert feuille.cell(row=4, column=3).value == 1700
     assert feuille.cell(row=4, column=10).value == "Solde du relevé au 30/09/2026"
     assert feuille.cell(row=4, column=13).value == 10500
     assert lignes(feuille, 2) == ["ESP Y"]
     assert feuille.cell(row=5, column=6).value.date() == date(2026, 10, 15)  # échéance
+    assert feuille.cell(row=5, column=5).value == "BP2609001"  # N° pièce juste avant
+    assert feuille.cell(row=5, column=3).value == 200  # Débit
     assert lignes(feuille, 10) == ["VERSEMENT X"]
     # Solde compta avant Solde banque à l'affichage (07/11/2026), même calcul
-    controle = [(r[1], r[3]) for r in feuille.iter_rows(min_row=10, max_row=12, values_only=True)]
+    controle = [(r[1], r[2]) for r in feuille.iter_rows(min_row=10, max_row=12, values_only=True)]
     assert controle == [
         ("Solde compta", 10700),
         ("Solde banque", 10700),
@@ -361,8 +370,8 @@ def test_without_accounting_opening_the_balance_is_not_invented(client, responsa
     feuille = classeur(non_rapproches(client, responsable, db, bp)).active
 
     assert feuille.cell(row=4, column=7).value == "non renseigné"
-    assert feuille.cell(row=4, column=4).value is None
-    valeurs = {r[1]: r[3] for r in feuille.iter_rows(min_row=9, values_only=True) if r[1]}
+    assert feuille.cell(row=4, column=3).value is None
+    valeurs = {r[1]: r[2] for r in feuille.iter_rows(min_row=9, values_only=True) if r[1]}
     assert valeurs["Écart"] == "non calculable"
     assert valeurs["Solde banque"] == 9000
 
@@ -390,7 +399,7 @@ def comptable(client, reference):
 
 
 def controle(feuille) -> dict:
-    return {r[1]: r[3] for r in feuille.iter_rows(min_row=5, values_only=True) if r[1]}
+    return {r[1]: r[2] for r in feuille.iter_rows(min_row=5, values_only=True) if r[1]}
 
 
 def test_a_match_closed_after_the_end_date_is_still_pending_at_that_date(
