@@ -52,12 +52,17 @@ function EcritureCell({ ecriture }: { ecriture: Ecriture }) {
 export function ImpayesOriginesCard({
   companyId,
   bankAccountId,
+  from,
+  to,
   canValidate,
   reloadKey,
   onChanged,
 }: {
   companyId: number;
   bankAccountId?: number;
+  /** Période de la date de l'impayé (10/11/2026). */
+  from?: string;
+  to?: string;
   canValidate: boolean;
   reloadKey: number;
   onChanged: (message: string) => void;
@@ -74,7 +79,7 @@ export function ImpayesOriginesCard({
 
   useEffect(() => {
     let cancelled = false;
-    listPairesImpayes(companyId, vue, bankAccountId).then(
+    listPairesImpayes(companyId, vue, { bankAccountId, from, to }).then(
       (result) => {
         if (cancelled) return;
         setPaires(result.paires);
@@ -88,7 +93,7 @@ export function ImpayesOriginesCard({
     return () => {
       cancelled = true;
     };
-  }, [companyId, vue, bankAccountId, reloadKey, retryKey]);
+  }, [companyId, vue, bankAccountId, from, to, reloadKey, retryKey]);
 
   function changerVue(value: Vue) {
     if (value === vue) return;

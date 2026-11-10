@@ -251,3 +251,21 @@ def test_pairs_are_read_per_company(client, comptable, db):
     autre = client.get(URL, params={"company_id": str(company(db, "SOCX").id)}, headers=comptable)
 
     assert autre.json()["paires"] == []
+
+
+def test_pairs_follow_the_period_of_their_unpaid_entry(client, comptable, db):
+    """10/11/2026 : le compteur « Impayés ↔ origine » suit la période (date de l'impayé)."""
+    _paire(db)  # origine le 03/09, impayé le 05/09
+    run(client, comptable, db)
+
+    avant = paires(client, comptable, db, **{"from": "2026-01-01", "to": "2026-08-31"})
+    septembre = paires(client, comptable, db, **{"from": "2026-09-05", "to": "2026-09-30"})
+    impaye_seul = paires(client, comptable, db, **{"from": "2026-09-04", "to": "2026-09-30"})
+    inversee = paires(client, comptable, db, **{"from": "2026-09-30", "to": "2026-09-01"})
+
+    assert avant.json()["paires"] == []
+    assert len(septembre.json()["paires"]) == 1
+    # L'origine (03/09) peut être avant la période
+    assert len(impaye_seul.json()["paires"]) == 1
+    assert len(paires(client, comptable, db).json()["paires"]) == 1
+    assert inversee.status_code == 409

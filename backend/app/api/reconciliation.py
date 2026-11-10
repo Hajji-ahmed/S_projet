@@ -499,10 +499,18 @@ def list_paires(
     _user: CurrentUser = Depends(can_view),
     statut: StatutCorrespondance = "Proposée",
     bank_account_id: int | None = None,
+    date_from: Annotated[date | None, Query(alias="from")] = None,
+    date_to: Annotated[date | None, Query(alias="to")] = None,
 ) -> PairesOut:
-    """Impayés proposés (ou rapprochés) avec l'écriture d'origine qu'ils annulent."""
+    """Impayés proposés (ou rapprochés) avec l'écriture d'origine qu'ils annulent ; la période
+    porte sur la date de l'impayé (10/11/2026)."""
     views = reconciliation_service.list_paires(
-        db, company_id, statut=statut, bank_account_id=bank_account_id
+        db,
+        company_id,
+        statut=statut,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
     )
     return PairesOut(paires=[PaireOut.from_view(view) for view in views])
 

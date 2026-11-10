@@ -125,10 +125,14 @@ export function rejectMatch(id: number, commentaire?: string) {
 export function listPairesImpayes(
   companyId: number,
   statut: "Proposée" | "Validée",
-  bankAccountId?: number,
+  filtre: { bankAccountId?: number; from?: string; to?: string } = {},
 ) {
   const params = new URLSearchParams({ company_id: String(companyId), statut });
-  if (bankAccountId !== undefined) params.set("bank_account_id", String(bankAccountId));
+  if (filtre.bankAccountId !== undefined)
+    params.set("bank_account_id", String(filtre.bankAccountId));
+  // Période de la date de l'impayé (10/11/2026), comme les autres propositions
+  if (filtre.from) params.set("from", filtre.from);
+  if (filtre.to) params.set("to", filtre.to);
   return apiFetch<{ paires: PaireImpaye[] }>(`/reconciliation/impayes-origines?${params}`);
 }
 

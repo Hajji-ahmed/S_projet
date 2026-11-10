@@ -215,7 +215,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
         if (!cancelled) setAmbigues(null);
       },
     );
-    listPairesImpayes(companyId, "Proposée", filter.bankAccountId).then(
+    listPairesImpayes(companyId, "Proposée", filter).then(
       (result) => {
         if (!cancelled) setNbImpayes(result.paires.length);
       },
@@ -569,6 +569,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
               <ImpayesOriginesCard
                 companyId={companyId}
                 bankAccountId={filter.bankAccountId}
+                from={filter.from}
+                to={filter.to}
                 canValidate={canValidate}
                 reloadKey={reloadKey}
                 onChanged={reload}

@@ -2440,12 +2440,22 @@ def list_paires(
     *,
     statut: str = "Proposée",
     bank_account_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> list[PaireView]:
-    """Impayés rapprochés (ou proposés) avec leur écriture d'origine, les plus récents d'abord."""
+    """Impayés rapprochés (ou proposés) avec leur écriture d'origine, les plus récents d'abord.
+    Période (10/11/2026) : celle de la date de l'impayé, l'origine peut être plus ancienne."""
     company = _company(db, company_id)
-    return _paire_views(
+    _check_period(date_from, date_to)
+    views = _paire_views(
         db, repo.entry_pairs(db, company.id, statut=statut, bank_account_id=bank_account_id)
     )
+    return [
+        view
+        for view in views
+        if (date_from is None or view.impaye.date_ecriture >= date_from)
+        and (date_to is None or view.impaye.date_ecriture <= date_to)
+    ]
 
 
 def get_paire_view(db: Session, match_id: int) -> PaireView:
