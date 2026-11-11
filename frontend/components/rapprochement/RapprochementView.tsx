@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Calculator,
   Download,
   FileSpreadsheet,
   GitCompareArrows,
@@ -163,7 +164,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
   // Export pour Sage par banque et par mois, N° de la première pièce saisi (09/11/2026)
   const [exportSage, setExportSage] = useState(false);
   const [statut, setStatut] = useState("");
-  const [tab, setTab] = useState<"rapprochement" | "propositions" | "historique">("rapprochement");
+  const [tab, setTab] = useState<"rapprochement" | "propositions" | "comptabiliser" | "historique">(
+    "rapprochement",
+  );
 
   const periodError =
     filter.from && filter.to && filter.from > filter.to
@@ -483,10 +486,10 @@ function Rapprochement({ companyId }: { companyId: number }) {
       </Card>
 
       {/* Compteurs en tuiles sous les filtres (11/11/2026), visibles aussi en plein écran ;
-          « Propositions en attente » retirée : l'onglet porte déjà le nombre */}
+          « Propositions en attente » et « À comptabiliser » retirées : leurs onglets portent le nombre */}
       {periodeLue && !periodError && (
         <div
-          className="grid grid-cols-2 gap-4 md:grid-cols-4"
+          className="grid grid-cols-2 gap-4 md:grid-cols-3"
           role="group"
           aria-label="Résumé du rapprochement : un clic filtre les transactions"
         >
@@ -508,17 +511,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
               />
             );
           })}
-          <StatButton
-            variant="tuile"
-            label={A_COMPTABILISER}
-            value={aComptabiliser ?? undefined}
-            active={tab === "rapprochement" && statut === A_COMPTABILISER}
-            description="Afficher les frais bancaires à passer dans Sage"
-            onClick={() => {
-              setTab("rapprochement");
-              setStatut((current) => toggleStatut(current, A_COMPTABILISER));
-            }}
-          />
           {!!enCours && (
             <div
               className="rounded-card border border-simtis-border bg-simtis-card px-5 py-4 shadow-simtis"
@@ -535,14 +527,20 @@ function Rapprochement({ companyId }: { companyId: number }) {
 
       {periodeLue && !periodError && (
         <div className="flex flex-wrap items-end justify-between gap-2 border-b border-simtis-border">
-          <div className="flex gap-2" role="tablist" aria-label="Vue du rapprochement">
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vue du rapprochement">
             {(
               [
                 ["rapprochement", "Rapprochement", GitCompareArrows],
                 [
                   "propositions",
-                  `Propositions${aVerifier !== null ? ` (${aVerifier})` : ""}`,
+                  `Propositions${aVerifier !== null ? ` (${formatAmount(aVerifier)})` : ""}`,
                   ListChecks,
+                ],
+                // Frais bancaires à passer dans Sage : un onglet à part (11/11/2026)
+                [
+                  "comptabiliser",
+                  `${A_COMPTABILISER}${aComptabiliser !== null ? ` (${formatAmount(aComptabiliser)})` : ""}`,
+                  Calculator,
                 ],
                 ["historique", "Historique", History],
               ] as const
@@ -621,7 +619,8 @@ function Rapprochement({ companyId }: { companyId: number }) {
         />
       )}
 
-      {periodeLue && !periodError && tab === "rapprochement" && statut === A_COMPTABILISER && (
+      {/* Onglet « À comptabiliser » (11/11/2026) : exports, carte des frais et opérations de frais */}
+      {periodeLue && !periodError && tab === "comptabiliser" && (
         <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-end gap-3">
             <Button
@@ -662,6 +661,25 @@ function Rapprochement({ companyId }: { companyId: number }) {
             onChanged={reload}
             onAExporter={setTotalAExporter}
             onLancer={canValidate ? run : undefined}
+          />
+          {/* Pas de panier dans cet onglet : un clic sur une ligne ouvre son détail ; un autre
+              statut choisi dans le filtre ramène à l'onglet Rapprochement */}
+          <TransactionsPane
+            key={`frais-${filterKey}`}
+            pleinEcran={pleinEcran}
+            companyId={companyId}
+            filter={filter}
+            reloadKey={reloadKey}
+            selectedId={operation?.id ?? null}
+            coches={{ ids: [], onToggle: setOperation }}
+            onSelect={setOperation}
+            onLoaded={handleOperations}
+            statut={A_COMPTABILISER}
+            onStatutChange={(valeur) => {
+              if (valeur === A_COMPTABILISER) return;
+              setStatut(valeur);
+              setTab("rapprochement");
+            }}
           />
         </div>
       )}
