@@ -40,6 +40,7 @@ import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
+import { formatAmount } from "@/lib/format";
 import {
   basculerLigne,
   CLE_PERIODE,
@@ -48,6 +49,8 @@ import {
   periodeAStocker,
   periodeMemorisee,
   periodeRapprochement,
+  raccourcisPeriode,
+  tauxRapprochement,
   toggleStatut,
   A_COMPTABILISER,
   type ReconciliationFilter,
@@ -444,64 +447,91 @@ function Rapprochement({ companyId }: { companyId: number }) {
                 />
               </Field>
             </div>
+            {/* Raccourcis de période (11/11/2026) : remplissent Du et Au */}
+            <div
+              className="flex flex-wrap gap-1 pb-1"
+              role="group"
+              aria-label="Raccourcis de période"
+            >
+              {raccourcisPeriode(businessToday()).map((raccourci) => {
+                const actif = filter.from === raccourci.from && filter.to === raccourci.to;
+                return (
+                  <button
+                    key={raccourci.label}
+                    type="button"
+                    aria-pressed={actif}
+                    onClick={() => changeFilter({ from: raccourci.from, to: raccourci.to })}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors duration-200",
+                      actif
+                        ? "border-simtis-primary bg-simtis-light text-simtis-primary-dark"
+                        : "border-simtis-border bg-simtis-card text-simtis-muted hover:border-simtis-primary hover:text-simtis-primary",
+                    )}
+                  >
+                    {raccourci.label}
+                  </button>
+                );
+              })}
+            </div>
             {periodError && (
               <p role="alert" className="pb-2 text-sm text-simtis-danger-fg">
                 {periodError}
               </p>
             )}
-            {/* Compteurs sur la ligne des dates (29/10/2026), visibles aussi en plein écran */}
-            {periodeLue && !periodError && (
-              <div
-                className="ml-auto flex flex-wrap items-end gap-1 text-sm"
-                role="group"
-                aria-label="Résumé du rapprochement : un clic filtre les transactions"
-              >
-                {COMPTEURS.map(({ statut: value, label }) => (
-                  <StatButton
-                    key={value}
-                    label={label}
-                    value={compteurStatut(parStatut, value)}
-                    active={tab === "rapprochement" && statut === value}
-                    description={`Afficher les transactions « ${value} »`}
-                    onClick={() => {
-                      setTab("rapprochement");
-                      setStatut((current) => toggleStatut(current, value));
-                    }}
-                  />
-                ))}
-                <StatButton
-                  label={A_COMPTABILISER}
-                  value={aComptabiliser ?? undefined}
-                  active={tab === "rapprochement" && statut === A_COMPTABILISER}
-                  description="Afficher les frais bancaires à passer dans Sage"
-                  onClick={() => {
-                    setTab("rapprochement");
-                    setStatut((current) => toggleStatut(current, A_COMPTABILISER));
-                  }}
-                />
-                <StatButton
-                  label="Propositions en attente"
-                  value={aVerifier ?? undefined}
-                  active={tab === "propositions"}
-                  description="Voir les propositions en attente"
-                  onClick={() => setTab("propositions")}
-                />
-                {!!enCours && (
-                  <div
-                    className="rounded-[10px] px-3 py-2"
-                    title="Opérations « (*) » en attente de leur définitive : jamais rapprochées"
-                  >
-                    <span className="block text-simtis-muted">En cours</span>
-                    <span className="block text-[17px] font-semibold text-simtis-warning-fg tabular-nums">
-                      {enCours}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </Card>
+
+      {/* Compteurs en tuiles sous les filtres (11/11/2026), visibles aussi en plein écran ;
+          « Propositions en attente » retirée : l'onglet porte déjà le nombre */}
+      {periodeLue && !periodError && (
+        <div
+          className="grid grid-cols-2 gap-4 md:grid-cols-4"
+          role="group"
+          aria-label="Résumé du rapprochement : un clic filtre les transactions"
+        >
+          {COMPTEURS.map(({ statut: value, label }) => {
+            const taux = value === "Rapprochée" ? tauxRapprochement(parStatut) : null;
+            return (
+              <StatButton
+                key={value}
+                variant="tuile"
+                label={label}
+                value={compteurStatut(parStatut, value)}
+                detail={taux !== null ? `${taux} %` : undefined}
+                active={tab === "rapprochement" && statut === value}
+                description={`Afficher les transactions « ${value} »`}
+                onClick={() => {
+                  setTab("rapprochement");
+                  setStatut((current) => toggleStatut(current, value));
+                }}
+              />
+            );
+          })}
+          <StatButton
+            variant="tuile"
+            label={A_COMPTABILISER}
+            value={aComptabiliser ?? undefined}
+            active={tab === "rapprochement" && statut === A_COMPTABILISER}
+            description="Afficher les frais bancaires à passer dans Sage"
+            onClick={() => {
+              setTab("rapprochement");
+              setStatut((current) => toggleStatut(current, A_COMPTABILISER));
+            }}
+          />
+          {!!enCours && (
+            <div
+              className="rounded-card border border-simtis-border bg-simtis-card px-5 py-4 shadow-simtis"
+              title="Opérations « (*) » en attente de leur définitive : jamais rapprochées"
+            >
+              <span className="block text-sm text-simtis-muted">En cours</span>
+              <span className="block text-[24px] leading-tight font-semibold text-simtis-warning-fg tabular-nums">
+                {formatAmount(enCours)}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {periodeLue && !periodError && (
         <div className="flex flex-wrap items-end justify-between gap-2 border-b border-simtis-border">

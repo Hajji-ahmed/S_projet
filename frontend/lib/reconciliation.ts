@@ -1,5 +1,6 @@
 /** Rapprochement 1→1 (P11) : règles pures de l'écran. Montants en texte exact, jamais en float. */
 import { formatDate } from "@/lib/balances";
+import { pourcentage } from "@/lib/dashboard";
 import { formatAmount } from "@/lib/format";
 import { fromCents, toCents } from "@/lib/statementLines";
 import type { Ecriture } from "@/types/accounting";
@@ -192,6 +193,39 @@ export function compteurStatut(
   if (!parStatut) return undefined;
   const valeur = parStatut[statut] ?? 0;
   return statut === "Non rapprochée" ? valeur + (parStatut["À vérifier"] ?? 0) : valeur;
+}
+
+/**
+ * Taux de rapprochement de la tuile « Rapprochées » (11/11/2026), en % arrondi : Rapprochées ÷
+ * (Rapprochées + Non rapprochées, « À vérifier » compris). null tant que les compteurs ne sont pas
+ * chargés. Les opérations « En cours (*) » ne comptent pas.
+ */
+export function tauxRapprochement(
+  parStatut: Partial<Record<string, number>> | null | undefined,
+): number | null {
+  if (!parStatut) return null;
+  const rapprochees = compteurStatut(parStatut, "Rapprochée") ?? 0;
+  const non = compteurStatut(parStatut, "Non rapprochée") ?? 0;
+  return pourcentage(rapprochees, rapprochees + non);
+}
+
+const deux = (n: number) => String(n).padStart(2, "0");
+
+/** Raccourcis de période à côté des dates (11/11/2026). `today` au format « AAAA-MM-JJ ». */
+export function raccourcisPeriode(today: string): { label: string; from: string; to: string }[] {
+  const [year, month] = today.split("-").map(Number);
+  const precedent = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
+  // Dernier jour du mois précédent : le jour 0 du mois en cours (calcul en UTC, sans fuseau)
+  const dernierJour = new Date(Date.UTC(year, month - 1, 0)).getUTCDate();
+  return [
+    { label: "Ce mois", from: `${year}-${deux(month)}-01`, to: today },
+    {
+      label: "Mois dernier",
+      from: `${precedent.y}-${deux(precedent.m)}-01`,
+      to: `${precedent.y}-${deux(precedent.m)}-${deux(dernierJour)}`,
+    },
+    { label: "Année en cours", from: `${year}-01-01`, to: today },
+  ];
 }
 
 /** Une proposition validable : en attente et équilibrée (même montant, sens opposé). */

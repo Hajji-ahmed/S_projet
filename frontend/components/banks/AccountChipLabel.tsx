@@ -25,9 +25,8 @@ export function AccountChipLabel({ account }: { account: Account }) {
         {account.devise}
       </span>
       {/* Plusieurs comptes de la même banque et devise possibles (23/10/2026) */}
-      <span className="text-[11px] text-simtis-muted tabular-nums">
-        {finNumero(account.numero)}
-      </span>
+      {/* Couleur du bouton, atténuée : lisible aussi sur le bouton actif teal (11/11/2026) */}
+      <span className="text-[11px] tabular-nums opacity-70">{finNumero(account.numero)}</span>
     </span>
   );
 }

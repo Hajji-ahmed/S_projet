@@ -416,8 +416,9 @@ export function AccountButton({
       className={cn(
         "shrink-0 rounded-[10px] border px-3 py-2 text-sm font-medium transition-colors duration-200",
         active
-          ? "border-simtis-primary bg-simtis-light text-simtis-primary-dark"
-          : "border-simtis-border bg-simtis-card text-simtis-text hover:bg-simtis-light/50",
+          ? // Teal plein, comme l'élément actif du menu (11/11/2026)
+            "border-simtis-primary bg-simtis-primary text-white shadow-simtis"
+          : "border-simtis-border bg-simtis-card text-simtis-text hover:border-simtis-primary hover:bg-simtis-light/50",
       )}
     >
       {children}

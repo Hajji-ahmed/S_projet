@@ -39,6 +39,8 @@ import {
   sensSage,
   toggleStatut,
   compteurStatut,
+  raccourcisPeriode,
+  tauxRapprochement,
   validable,
 } from "./reconciliation";
 import type { Candidat, Correspondance } from "@/types/reconciliation";
@@ -162,6 +164,34 @@ describe("compteurStatut", () => {
     expect(compteurStatut(parStatut, "Rapprochée")).toBe(7);
     expect(compteurStatut({ Rapprochée: 2 }, "Non rapprochée")).toBe(0);
     expect(compteurStatut(null, "Non rapprochée")).toBeUndefined();
+  });
+});
+
+describe("tauxRapprochement", () => {
+  it("rapprochées sur rapprochées + non rapprochées, À vérifier compris (11/11/2026)", () => {
+    expect(tauxRapprochement({ Rapprochée: 6, "Non rapprochée": 3, "À vérifier": 1 })).toBe(60);
+    expect(tauxRapprochement({ Rapprochée: 20594, "Non rapprochée": 2346 })).toBe(90);
+    expect(tauxRapprochement({})).toBe(0);
+    expect(tauxRapprochement(null)).toBeNull();
+  });
+});
+
+describe("raccourcisPeriode", () => {
+  it("ce mois, le mois dernier entier et l'année en cours", () => {
+    expect(raccourcisPeriode("2026-11-11")).toEqual([
+      { label: "Ce mois", from: "2026-11-01", to: "2026-11-11" },
+      { label: "Mois dernier", from: "2026-10-01", to: "2026-10-31" },
+      { label: "Année en cours", from: "2026-01-01", to: "2026-11-11" },
+    ]);
+  });
+
+  it("passe à l'année précédente en janvier et connaît février", () => {
+    expect(raccourcisPeriode("2026-01-05")[1]).toEqual({
+      label: "Mois dernier",
+      from: "2025-12-01",
+      to: "2025-12-31",
+    });
+    expect(raccourcisPeriode("2028-03-02")[1].to).toBe("2028-02-29");
   });
 });
 
