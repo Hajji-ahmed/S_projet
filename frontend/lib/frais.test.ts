@@ -12,6 +12,7 @@ import {
   selectionTimbres,
   sommeMontants,
   suggestionsLibelles,
+  totalGrandLivre,
   ventilerTva,
 } from "@/lib/frais";
 import type { CompteFrais, PropositionTimbres } from "@/types/frais";
@@ -124,6 +125,39 @@ describe("propositions modifiées (19/10/2026)", () => {
     ]);
     expect(libelleModifie(tva, "COM", "COM RTGS")).toBe("TVA COM RTGS");
     expect(libelleModifie({ ...tva, libelle: "COM" }, "COM", "COM RTGS")).toBe("COM RTGS");
+  });
+});
+
+describe("total du tableau « À valider » (11/11/2026)", () => {
+  const gl = (debit: string | null, credit: string | null) => ({
+    type: debit ? "commission" : null,
+    type_libelle: "",
+    libelle: "COM",
+    compte: "61473000",
+    debit,
+    credit,
+  });
+
+  it("additionne Débit et Crédit de toutes les écritures et compte les pièces", () => {
+    const total = totalGrandLivre([
+      [gl("150.00", null), gl("15.00", null), gl(null, "165.00")],
+      [gl("39.60", null), gl(null, "39.60")],
+    ]);
+    expect(total).toEqual({ debit: "204.60", credit: "204.60", ecart: "0.00", pieces: 2 });
+  });
+
+  it("donne l'écart débit − crédit quand ce n'est pas équilibré", () => {
+    expect(totalGrandLivre([[gl("100.10", null), gl(null, "87.60")]]).ecart).toBe("12.50");
+    expect(totalGrandLivre([[gl("1.00", null), gl(null, "3.00")]]).ecart).toBe("-2.00");
+  });
+
+  it("zéro sans écriture", () => {
+    expect(totalGrandLivre([])).toEqual({
+      debit: "0.00",
+      credit: "0.00",
+      ecart: "0.00",
+      pieces: 0,
+    });
   });
 });
 

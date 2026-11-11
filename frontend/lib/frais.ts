@@ -120,6 +120,28 @@ export function sommeMontants(montants: string[]): string {
 }
 
 /**
+ * Ligne « Total » du tableau « À valider » (11/11/2026) : somme des colonnes Débit et Crédit de
+ * toutes les écritures affichées, leur écart (débit − crédit, « 0.00 » si équilibré) et le nombre
+ * de pièces (une écriture = une pièce). Centimes exacts, jamais de float.
+ */
+export function totalGrandLivre(ecritures: LigneGL[][]): {
+  debit: string;
+  credit: string;
+  ecart: string;
+  pieces: number;
+} {
+  const lignes = ecritures.flat();
+  const debit = sommeMontants(lignes.map((ligne) => ligne.debit ?? "0"));
+  const credit = sommeMontants(lignes.map((ligne) => ligne.credit ?? "0"));
+  return {
+    debit,
+    credit,
+    ecart: fromCents(toCents(debit) - toCents(credit)),
+    pieces: ecritures.length,
+  };
+}
+
+/**
  * (Frais HT, TVA) d'un total TTC positif, comme le serveur : HT = total ÷ (1 + taux), arrondi au
  * centime le plus proche (0,5 vers le haut) ; TVA = total − HT. Taux en %, « 10 » ou « 7,5 ».
  * Null si le taux n'est pas un nombre positif de 2 décimales au plus.

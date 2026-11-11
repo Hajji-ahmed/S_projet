@@ -27,7 +27,13 @@ import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
-import { cleJour, libelleModifie, selectionTimbres, sommeMontants } from "@/lib/frais";
+import {
+  cleJour,
+  libelleModifie,
+  selectionTimbres,
+  sommeMontants,
+  totalGrandLivre,
+} from "@/lib/frais";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
 import { formatDateTime } from "@/lib/statements";
 import {
@@ -272,6 +278,9 @@ export function FraisCard({
               <GrandLivre
                 avecCase={canPrepare}
                 fin={canPrepare ? ["Opérations", "Actions"] : ["Opérations"]}
+                total={totalGrandLivre(
+                  propositions.map((item) => lignesAffichees(item, modifs.get(cleJour(item)))),
+                )}
               >
                 {propositions.map((item) => {
                   const cle = cleJour(item);
@@ -770,12 +779,16 @@ const TH = "px-3 py-2 font-semibold whitespace-nowrap";
 function GrandLivre({
   avecCase,
   fin,
+  total,
   children,
 }: {
   avecCase: boolean;
   fin: string[];
+  /** Ligne « Total » en bas (11/11/2026) : Débit, Crédit et équilibre avant l'export. */
+  total?: ReturnType<typeof totalGrandLivre>;
   children: ReactNode;
 }) {
+  const equilibre = total?.ecart === "0.00";
   return (
     <div className="overflow-x-auto rounded-[12px] border border-simtis-border">
       <table className="w-full text-sm">
@@ -801,6 +814,44 @@ function GrandLivre({
           </tr>
         </thead>
         {children}
+        {total && (
+          <tfoot className="border-t-2 border-simtis-primary/30 bg-simtis-light font-semibold text-simtis-primary-dark">
+            <tr>
+              <td colSpan={(avecCase ? 1 : 0) + 5} className="px-3 py-2">
+                Total · {plural(total.pieces, "pièce")}
+              </td>
+              <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+                {formatAmount(total.debit, "DH")}
+              </td>
+              <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+                {formatAmount(total.credit, "DH")}
+              </td>
+              {fin.length > 0 && (
+                <td colSpan={fin.length} className="px-3 py-2 whitespace-nowrap">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                      equilibre
+                        ? "bg-simtis-success-bg text-simtis-success-fg"
+                        : "bg-simtis-danger-bg text-simtis-danger-fg",
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        equilibre ? "bg-simtis-success" : "bg-simtis-danger",
+                      )}
+                    />
+                    {equilibre
+                      ? "Équilibré"
+                      : `Écart ${formatAmount(total.ecart.replace(/^-/, ""), "DH")}`}
+                  </span>
+                </td>
+              )}
+            </tr>
+          </tfoot>
+        )}
       </table>
     </div>
   );
