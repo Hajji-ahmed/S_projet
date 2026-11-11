@@ -128,6 +128,9 @@ _FRAIS_RECUPERES = (
     # Autres banques (09/11/2026) : AWB, CIH
     ("frais_swift", re.compile(r"^FRAIS SWIFT CREDOC IMPORT\b")),
     ("frais_cheques", re.compile(r"^FRAIS ENCAISSEMENT DE CHEQUES\b")),
+    # CIH (11/11/2026), TVA comprise, sans le seuil de 200 DH (`TYPES_FRAIS_SANS_SEUIL`)
+    ("frais_caution", re.compile(r"^FRAIS CAUTION NUMERO\b")),
+    ("frais_pdl_credoc", re.compile(r"^FRAIS PDL CREDOC IMPORT EN FAVEUR\b")),
 )
 _FRAIS_TVA = _COMMISSIONS_TVA + _FRAIS_RECUPERES
 TAUX_TVA_FRAIS = Decimal("10")
@@ -139,6 +142,8 @@ SEUIL_MANUEL = Decimal("200")
 # même au-dessus de `SEUIL_MANUEL`, et sort du fichier des frais à justifier ; les commissions à TVA
 # comprise et les autres frais suivent toujours le seuil
 TYPES_SANS_SEUIL = frozenset({"commission", "tva", "commission_effet", "tva_commission_effet"})
+# Frais CIH à TVA comprise toujours automatiques, quel que soit le montant (11/11/2026)
+TYPES_FRAIS_SANS_SEUIL = frozenset({"frais_caution", "frais_pdl_credoc"})
 # FRAIS RECUPERES PAR LA BANQUE de 77,50 : droit de timbre 50 + commission 25 + TVA 2,50
 FRAIS_RECUPERES_AVEC_TIMBRE = Decimal("77.50")
 TIMBRE_FRAIS_RECUPERES = Decimal("50.00")
@@ -203,6 +208,8 @@ COMPTE_PAR_TYPE = {
     "commission_domiciliation": COMPTE_FRAIS_BANCAIRES,
     "frais_swift": COMPTE_FRAIS_BANCAIRES,
     "frais_cheques": COMPTE_FRAIS_BANCAIRES,
+    "frais_caution": COMPTE_FRAIS_BANCAIRES,
+    "frais_pdl_credoc": COMPTE_FRAIS_BANCAIRES,
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
@@ -244,6 +251,11 @@ TYPES = {
     "frais_swift_tva": ("TVA frais SWIFT credoc", "compte_tva", "compte de TVA"),
     "frais_cheques": ("Frais encaissement chèques", "compte_commission", "compte de charge"),
     "frais_cheques_tva": ("TVA frais encaissement chèques", "compte_tva", "compte de TVA"),
+    # CIH (11/11/2026)
+    "frais_caution": ("Frais caution", "compte_commission", "compte de charge"),
+    "frais_caution_tva": ("TVA frais caution", "compte_tva", "compte de TVA"),
+    "frais_pdl_credoc": ("Frais PDL credoc import", "compte_commission", "compte de charge"),
+    "frais_pdl_credoc_tva": ("TVA frais PDL credoc import", "compte_tva", "compte de TVA"),
 }
 
 
@@ -600,8 +612,12 @@ def _ecartes(
 
 
 def sans_seuil(libelle: str | None) -> bool:
-    """Commission ou TVA sur deux lignes (11/11/2026) : le seuil de 200 DH ne s'applique pas."""
-    return type_commission(libelle) in TYPES_SANS_SEUIL
+    """Commission ou TVA sur deux lignes, frais CIH de caution ou de PDL credoc (11/11/2026) : le
+    seuil de 200 DH ne s'applique pas."""
+    return (
+        type_commission(libelle) in TYPES_SANS_SEUIL
+        or type_frais_tva(libelle) in TYPES_FRAIS_SANS_SEUIL
+    )
 
 
 def au_dessus_du_seuil(famille: "Famille", montant: Decimal, libelle: str | None) -> bool:
@@ -610,7 +626,7 @@ def au_dessus_du_seuil(famille: "Famille", montant: Decimal, libelle: str | None
     return (
         famille.code != "timbres"
         and -montant > SEUIL_MANUEL
-        and not (famille is COMMISSIONS and sans_seuil(libelle))
+        and not (famille in (COMMISSIONS, FRAIS_TVA) and sans_seuil(libelle))
     )
 
 

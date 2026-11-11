@@ -1738,7 +1738,12 @@ def test_a_day_with_a_sage_com_entry_keeps_its_vat_out_of_the_manual_list(client
         ("COMMISSION DE TENUE DE COMPTE", False, "commission_tenue", None),
         ("FRAIS SWIFT CREDOC IMPORT EN FAVEUR DE X", False, None, "frais_swift"),
         ("FRAIS ENCAISSEMENT DE CHEQUES", False, None, "frais_cheques"),
+        # CIH (11/11/2026), TVA comprise, sans seuil
+        ("FRAIS CAUTION NUMERO 2600457", False, None, "frais_caution"),
+        ("FRAIS CAUTION NUMÉRO : 26/00457", False, None, "frais_caution"),
+        ("FRAIS PDL CREDOC IMPORT EN FAVEUR DE SOCIETE X", False, None, "frais_pdl_credoc"),
         # Restent à la main
+        ("FRAIS RELEVE CAUTION", False, None, None),
         ("AGIOS ESCOMPTE LCN N 2600114", False, None, None),
         ("TVA 10% SUR COMMISSION REF ILC26A0001", False, None, None),
         ("PRELEVEMENT DE LA TVA SUR L'ENSEMBLE DES FRAIS & COMMISSIONS", False, None, None),
@@ -1815,6 +1820,46 @@ def test_awb_fees_with_vat_inside_are_split_and_its_escompte_stays_by_hand(clien
     ]
     assert par_famille["timbres"]["total"] == "28.00"
     assert [a["id"] for a in tableau["autres_frais"]] == [agios.id]
+
+
+def test_cih_caution_and_pdl_credoc_fees_are_automatic_whatever_the_amount(
+    client, comptable, direction, db
+):
+    """11/11/2026 : FRAIS CAUTION NUMERO et FRAIS PDL CREDOC IMPORT EN FAVEUR passent dans
+    l'écriture « FRAIS », TVA de 10 % comprise, même au-dessus de 200 DH, et ne vont pas dans le
+    fichier des frais à justifier."""
+    compte = account(db, bank_code="CIH")
+    operation(db, compte, "-110", JOUR, "FRAIS CAUTION NUMERO 2600457")
+    operation(db, compte, "-660", JOUR, "FRAIS PDL CREDOC IMPORT EN FAVEUR DE SOCIETE X")
+    releve = operation(db, compte, "-22", JOUR, "FRAIS RELEVE CAUTION")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    (proposition,) = tableau["propositions"]
+    assert (proposition["famille"], proposition["libelle"], proposition["total"]) == (
+        "frais",
+        "FRAIS",
+        "770.00",
+    )
+    assert details(proposition) == [
+        ("frais_caution", 1, "100.00"),
+        ("frais_caution_tva", 1, "10.00"),
+        ("frais_pdl_credoc", 1, "600.00"),
+        ("frais_pdl_credoc_tva", 1, "60.00"),
+    ]
+    assert [(g["compte"], g["debit"], g["credit"]) for g in proposition["lignes"]] == [
+        ("61473000", "100.00", None),
+        ("34552142", "10.00", None),
+        ("61473000", "600.00", None),
+        ("34552142", "60.00", None),
+        (compte.compte_comptable, None, "770.00"),
+    ]
+    assert [a["id"] for a in tableau["autres_frais"]] == [releve.id]
+
+    params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30"}
+    response = client.get("/api/frais/justificatif", params=params, headers=direction)
+    assert response.status_code == 409
+    assert "Aucun frais de plus de 200 DH" in response.json()["detail"]
 
 
 def test_the_fees_journal_is_the_account_journal_starting_with_55(client, comptable, db):
