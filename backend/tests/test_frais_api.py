@@ -1314,14 +1314,15 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
         (code_frais, "61473000", "FRAIS", "25,00", "D"),
         (code_frais, "34552142", "TVA FRAIS", "2,50", "D"),
         (code_frais, "61671000", "FRAIS", "50,00", "D"),
-        (code_frais, "55410003", "FRAIS", "77,50", "C"),
+        # Ligne banque d'une écriture FRAIS libellée « COM » (11/11/2026), le détail reste FRAIS
+        (code_frais, "55410003", "COM", "77,50", "C"),
     ]
     # Même libellé à l'écran (14/10/2026)
     assert [ligne["libelle"] for ligne in ecriture_frais["lignes"]] == [
         "FRAIS",
         "TVA FRAIS",
         "FRAIS",
-        "FRAIS",
+        "COM",
     ]
 
 

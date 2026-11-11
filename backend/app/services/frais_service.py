@@ -1138,8 +1138,13 @@ def est_ligne_tva(type_ligne: str | None) -> bool:
 
 
 def texte_ligne(libelle_ecriture: str, ligne: "LigneGL") -> str:
-    """Libellé d'une ligne dans Sage : le libellé saisi, sinon celui de l'écriture."""
-    return ligne.libelle or libelle_ligne(libelle_ecriture, ligne.type)
+    """Libellé d'une ligne dans Sage : le libellé saisi, sinon celui de l'écriture. La ligne banque
+    d'une écriture « FRAIS » s'appelle « COM » (11/11/2026), ses lignes de détail restent FRAIS."""
+    if ligne.libelle:
+        return ligne.libelle
+    if ligne.banque and libelle_ecriture == LIBELLE_FRAIS:
+        return LIBELLE_COMMISSION
+    return libelle_ligne(libelle_ecriture, ligne.type)
 
 
 def libelle_ligne(libelle_ecriture: str, type_ligne: str | None) -> str:
