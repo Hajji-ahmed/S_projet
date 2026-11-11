@@ -526,42 +526,54 @@ function Rapprochement({ companyId }: { companyId: number }) {
       )}
 
       {periodeLue && !periodError && (
-        <div className="flex flex-wrap items-end justify-between gap-2 border-b border-simtis-border">
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vue du rapprochement">
+        // Barre segmentée (11/11/2026) : l'onglet actif est une pastille blanche, nombres en badges
+        <div className="max-w-full overflow-x-auto">
+          <div
+            className="inline-flex gap-1 rounded-[12px] bg-simtis-neutral-bg p-1"
+            role="tablist"
+            aria-label="Vue du rapprochement"
+          >
             {(
               [
-                ["rapprochement", "Rapprochement", GitCompareArrows],
-                [
-                  "propositions",
-                  `Propositions${aVerifier !== null ? ` (${formatAmount(aVerifier)})` : ""}`,
-                  ListChecks,
-                ],
+                ["rapprochement", "Rapprochement", GitCompareArrows, null],
+                ["propositions", "Propositions", ListChecks, aVerifier],
                 // Frais bancaires à passer dans Sage : un onglet à part (11/11/2026)
-                [
-                  "comptabiliser",
-                  `${A_COMPTABILISER}${aComptabiliser !== null ? ` (${formatAmount(aComptabiliser)})` : ""}`,
-                  Calculator,
-                ],
-                ["historique", "Historique", History],
+                ["comptabiliser", A_COMPTABILISER, Calculator, aComptabiliser],
+                ["historique", "Historique", History, null],
               ] as const
-            ).map(([value, label, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={tab === value}
-                onClick={() => setTab(value)}
-                className={cn(
-                  "-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors duration-200",
-                  tab === value
-                    ? "border-simtis-primary text-simtis-primary-dark"
-                    : "border-transparent text-simtis-muted hover:text-simtis-primary",
-                )}
-              >
-                <Icon className="h-4 w-4" aria-hidden />
-                {label}
-              </button>
-            ))}
+            ).map(([value, label, Icon, nombre]) => {
+              const actif = tab === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={actif}
+                  onClick={() => setTab(value)}
+                  className={cn(
+                    "flex shrink-0 items-center gap-2 rounded-[10px] px-4 py-2 text-sm font-medium whitespace-nowrap transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary",
+                    actif
+                      ? "bg-simtis-card text-simtis-primary-dark shadow-simtis"
+                      : "text-simtis-muted hover:text-simtis-primary",
+                  )}
+                >
+                  <Icon className={cn("h-4 w-4", actif && "text-simtis-primary")} aria-hidden />
+                  {label}
+                  {nombre !== null && (
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums",
+                        actif
+                          ? "bg-simtis-light text-simtis-primary-dark"
+                          : "bg-simtis-card text-simtis-muted",
+                      )}
+                    >
+                      {formatAmount(nombre)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
