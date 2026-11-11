@@ -94,7 +94,7 @@ function Rapport({
   children?: ReactNode;
 }) {
   return (
-    <section className="flex flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6">
+    <section className="flex h-full flex-col rounded-card border border-simtis-border bg-simtis-card p-5 shadow-simtis lg:p-6">
       <header className="flex items-start gap-3">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px] bg-simtis-light text-simtis-primary">
           <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden />
@@ -132,6 +132,48 @@ function SansDroit() {
   return <p className="text-sm text-simtis-muted">Vous n&apos;avez pas la permission requise.</p>;
 }
 
+/**
+ * Bouton « Télécharger » d'un rapport (11/11/2026) : quand il est désactivé faute de choix, `aide`
+ * dit ce qu'il manque, sur une ligne sous les champs, reliée au bouton pour les lecteurs d'écran.
+ * À placer dans la rangée `flex flex-wrap` des champs.
+ */
+function Telecharger({
+  id,
+  icon = Download,
+  envoi,
+  aide,
+  onClick,
+}: {
+  id: string;
+  icon?: LucideIcon;
+  envoi: boolean;
+  /** null : tout est choisi, le bouton est actif (sauf pendant l'envoi). */
+  aide: string | null;
+  onClick: () => void;
+}) {
+  const aideId = `${id}-aide`;
+  return (
+    <>
+      <Button
+        icon={icon}
+        disabled={envoi || aide !== null}
+        aria-describedby={aide !== null ? aideId : undefined}
+        onClick={onClick}
+      >
+        {envoi ? "Préparation..." : "Télécharger"}
+      </Button>
+      {/* Ligne entière sous les champs : le bouton reste aligné sur eux */}
+      {aide !== null && (
+        <p id={aideId} className="-mt-1 basis-full text-xs text-simtis-muted">
+          {aide}
+        </p>
+      )}
+    </>
+  );
+}
+
+const AIDE_PERIODE = "Choisissez une période dont le début précède la fin.";
+
 function PositionRapport({ companyId, actif }: { companyId: number; actif: boolean }) {
   const [jour, setJour] = useState(businessToday);
   const { envoi, telecharger } = useTelechargement();
@@ -153,18 +195,17 @@ function PositionRapport({ companyId, actif }: { companyId: number; actif: boole
               />
             </Field>
           </div>
-          <Button
-            icon={Download}
-            disabled={envoi || !jour}
+          <Telecharger
+            id="rapport-position"
+            envoi={envoi}
+            aide={jour ? null : "Choisissez une date."}
             onClick={() =>
               telecharger(
                 () => exportPosition(companyId, jour),
                 `position-${jour.replaceAll("-", "")}.xlsx`,
               )
             }
-          >
-            {envoi ? "Préparation..." : "Télécharger"}
-          </Button>
+          />
         </div>
       ) : (
         <SansDroit />
@@ -254,18 +295,17 @@ function EtatRapport({ companyId, actif }: { companyId: number; actif: boolean }
               onChange={setBanque}
             />
           </div>
-          <Button
-            icon={Download}
-            disabled={envoi || !periodeValide(periode)}
+          <Telecharger
+            id="rapport-etat"
+            envoi={envoi}
+            aide={periodeValide(periode) ? null : AIDE_PERIODE}
             onClick={() =>
               telecharger(
                 () => exportEtatRapprochement(companyId, periode.from, periode.to, banque),
                 `etat-rapprochement-${code}-${periode.from}-${periode.to}.xlsx`,
               )
             }
-          >
-            {envoi ? "Préparation..." : "Télécharger"}
-          </Button>
+          />
         </div>
       ) : (
         <SansDroit />
@@ -323,9 +363,10 @@ function ReleveRapport({ companyId, actif }: { companyId: number; actif: boolean
             </Field>
           </div>
           <Periode id="rapport-releve" periode={periode} onChange={setPeriode} />
-          <Button
-            icon={Download}
-            disabled={envoi || !compte || !periodeValide(periode)}
+          <Telecharger
+            id="rapport-releve"
+            envoi={envoi}
+            aide={!compte ? "Choisissez un compte." : periodeValide(periode) ? null : AIDE_PERIODE}
             onClick={() =>
               compte &&
               telecharger(
@@ -338,9 +379,7 @@ function ReleveRapport({ companyId, actif }: { companyId: number; actif: boolean
                 }),
               )
             }
-          >
-            {envoi ? "Préparation..." : "Télécharger"}
-          </Button>
+          />
         </div>
       ) : (
         <SansDroit />
@@ -372,18 +411,18 @@ function LettrageRapport({ companyId, actif }: { companyId: number; actif: boole
               onChange={setBanque}
             />
           </div>
-          <Button
+          <Telecharger
+            id="rapport-lettrage"
             icon={FileSpreadsheet}
-            disabled={envoi || !periodeValide(periode)}
+            envoi={envoi}
+            aide={periodeValide(periode) ? null : AIDE_PERIODE}
             onClick={() =>
               telecharger(
                 () => exportLettrageBanque(companyId, periode.from, periode.to, banque),
                 `lettrage-${code}-${periode.from}-${periode.to}.xlsx`,
               )
             }
-          >
-            {envoi ? "Préparation..." : "Télécharger"}
-          </Button>
+          />
         </div>
       ) : (
         <SansDroit />
