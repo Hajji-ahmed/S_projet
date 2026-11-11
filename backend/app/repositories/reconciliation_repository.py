@@ -830,7 +830,10 @@ LIBELLE_FRAIS = (
 )
 # Jamais un frais, quel que soit le pointage choisi (13/10/2026) : ces opérations repassent dans
 # « Non rapprochée ». Le libellé l'emporte sur le pointage (« INTERET », « FRAIS »…).
-LIBELLE_PAS_FRAIS = r"^\s*(VIREMENT\s+COMMERCIAL|REMISE\s+DOCUMENTAIRE)"
+# Chèque remis (11/11/2026) : jamais un frais, même pointé COM (« …EN FAVEUR DE STE.BIS.COM »)
+LIBELLE_PAS_FRAIS = (
+    r"^\s*(VIREMENT\s+COMMERCIAL|REMISE\s+DOCUMENTAIRE|CHEQUE\s+N\W*\d+.*\mREMIS\s+PAR\M)"
+)
 
 
 def frais_bancaire():

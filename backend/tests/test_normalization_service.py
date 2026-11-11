@@ -148,6 +148,10 @@ CATEGORIES = (
         ("REMBOURSEMENT PRET 12", "REMBOURSEMENT PRÊT"),
         ("VIREMENT SIMTIS TEFIL", "SIMTIS-TEFIL"),
         ("COMPTE COURANT", None),  # « COM » en mot entier seulement
+        # Une fin d'adresse web ne compte pas (11/11/2026) : « STE.BIS.COM » n'est pas une COM
+        ("CHEQUE N 5100983 REMIS PAR CAM EN FAVEUR DE STE.BIS.COM", None),
+        ("PAIEMENT SITE.MA", None),
+        ("COM.ADOBE", "COM"),
         ("FRAISIER SA", None),
         ("A VOIR AVEC LA BANQUE", None),  # « A voir » n'est jamais automatique
         ("VIR CLIENT ATLAS", None),

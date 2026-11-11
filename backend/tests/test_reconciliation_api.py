@@ -1034,6 +1034,15 @@ def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, 
     remboursement = operation(
         db, compte, montant="151110.79", libelle="AGIOS BANCAIRES", pointage_type_id=agios.id
     )
+    # 11/11/2026 : un chèque remis n'est jamais un frais, même pointé COM
+    com = db.scalar(select(PointageType).filter_by(code="COM"))
+    cheque = operation(
+        db,
+        compte,
+        montant="-1800",
+        libelle="CHEQUE N 5100983 REMIS PAR CAM EN FAVEUR DE STE.BIS.COM",
+        pointage_type_id=com.id,
+    )
     url = "/api/reconciliation/transactions"
     params = {"company_id": company(db).id}
 
@@ -1042,9 +1051,9 @@ def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, 
 
     assert (tous["a_comptabiliser"], tous["total_a_comptabiliser"]) == (1, "151110.79")
     assert {op["id"] for op in frais["operations"]} == {remboursement.id}
-    # Depuis le 30/10/2026, les trois restent dans « Non rapprochée »
-    assert tous["par_statut"]["Non rapprochée"] == 3
-    assert {virement.id, remise.id} <= {op["id"] for op in tous["operations"]}
+    # Depuis le 30/10/2026, ils restent dans « Non rapprochée »
+    assert tous["par_statut"]["Non rapprochée"] == 4
+    assert {virement.id, remise.id, cheque.id} <= {op["id"] for op in tous["operations"]}
 
 
 def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):

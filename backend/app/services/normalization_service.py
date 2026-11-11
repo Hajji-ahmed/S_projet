@@ -215,6 +215,10 @@ def pointage_code(libelle: str) -> str:
     return label_key(libelle).replace(" ", "_")
 
 
+# « .COM », « .NET »… collé à un mot (11/11/2026) : une adresse web dans le nom d'un bénéficiaire
+_FIN_ADRESSE_WEB = re.compile(r"(?<=[A-Z0-9])\.(COM|NET|ORG|MA|FR)\b")
+
+
 def _contains_words(text: str, words: str) -> bool:
     return bool(words) and f" {words} " in f" {text} "
 
@@ -222,8 +226,9 @@ def _contains_words(text: str, words: str) -> bool:
 def guess_pointage(libelle: str | None, categories: Iterable[str]) -> str | None:
     """Catégorie (libellé tel qu'en base) dont le nom, ou un synonyme, apparaît en mots entiers
     dans le libellé bancaire ; la plus longue gagne (« AGIOS D'ECHELLE » avant « AGIOS »).
-    None si rien ne correspond. « A voir » n'est jamais choisi automatiquement."""
-    text = label_key(libelle)
+    None si rien ne correspond. « A voir » n'est jamais choisi automatiquement. Une fin d'adresse
+    web collée à un mot ne compte pas (11/11/2026) : « STE.BIS.COM » ne donne pas COM."""
+    text = label_key(_FIN_ADRESSE_WEB.sub("", _plain(libelle or "")))
     if not text:
         return None
     by_key = {label_key(category): category for category in categories}
