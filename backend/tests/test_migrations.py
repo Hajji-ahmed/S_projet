@@ -1018,6 +1018,54 @@ def test_migration_0050_moves_the_stamp_lines_not_yet_exported_to_61671000(empty
     assert comptes == {1: "61671", 2: "61473000", 3: "61671"}
 
 
+def test_migration_0052_moves_the_commission_lines_not_yet_exported_to_61473000(empty_database):
+    """Décision du 11/11/2026 : les commissions vont au compte 61473000 (61714000 avant). Les
+    lignes saisies d'une écriture pas encore exportée changent (audit), celles d'une écriture
+    exportée non."""
+    config, engine = empty_database
+    command.upgrade(config, "0051")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'BP', 'BP');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+                INSERT INTO accounting_entries (id, company_id, bank_account_id, date_ecriture,
+                    libelle, debit, credit, montant, hash_ligne, origine, famille_frais,
+                    numero_piece, exportee_le) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '2026-10-02', 'COM', 0, 11, 11, 'e1', 'SIMTIS', 'commissions',
+                        NULL, NULL),
+                    (2, 1, 1, '2026-10-01', 'COM', 0, 6, 6, 'e2', 'SIMTIS', 'commissions',
+                        'BP2610001', '2026-10-05 10:00+00');
+                INSERT INTO frais_lignes (id, accounting_entry_id, ordre, compte, libelle,
+                    montant, sens) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '61714000', 'COM', 10, 'Débit'),
+                    (2, 1, 2, '34552142', 'TVA COM', 1, 'Débit'),
+                    (3, 2, 1, '61714000', 'COM', 6, 'Débit');
+                """
+            )
+        )
+
+    command.upgrade(config, "0052")
+
+    with engine.connect() as connection:
+        comptes = dict(connection.execute(text("SELECT id, compte FROM frais_lignes")).all())
+        audits = connection.execute(
+            text("SELECT entite_id FROM audit_logs WHERE action = 'compte_commission'")
+        ).all()
+    assert comptes == {1: "61473000", 2: "34552142", 3: "61714000"}
+    assert audits == [("1",)]
+
+    command.downgrade(config, "0051")
+
+    with engine.connect() as connection:
+        comptes = dict(connection.execute(text("SELECT id, compte FROM frais_lignes")).all())
+    assert comptes == {1: "61714000", 2: "34552142", 3: "61714000"}
+
+
 def test_migration_0051_puts_the_saved_lines_not_yet_exported_on_the_debit(empty_database):
     """Décision du 11/11/2026 : les lignes de charge et de TVA vont au débit. Les lignes saisies
     d'une écriture pas encore exportée changent de sens (audit), celles d'une écriture exportée

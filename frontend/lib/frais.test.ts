@@ -161,10 +161,10 @@ describe("comptes de charge des frais (05/11/2026)", () => {
       ...comptes,
       { numero: "63116300", intitule: "AGIOS CIH", banque: "CIH" },
       { numero: "63110001", intitule: "INTERET CREDOC", banque: null },
-      { numero: "61714000", intitule: "COMMISSIONS", banque: null },
     ];
-    expect(compteParDefaut("COM RTGS", "BP", avecCom)).toBe("61714000");
-    expect(compteParDefaut("Commission tenue", "BP", avecCom)).toBe("61714000");
+    // Commissions au 61473000 depuis le 11/11/2026 (61714000 avant)
+    expect(compteParDefaut("COM RTGS", "BP", avecCom)).toBe("61473000");
+    expect(compteParDefaut("Commission tenue", "BP", avecCom)).toBe("61473000");
     expect(compteParDefaut("AGIOS", "CIH", avecCom)).toBe("63116300");
     expect(compteParDefaut("AGIOS", "BMCI", avecCom)).toBe("");
     expect(compteParDefaut("INTERET CREDOC", "BP", avecCom)).toBe("63110001");

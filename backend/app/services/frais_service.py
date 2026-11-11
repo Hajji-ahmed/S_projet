@@ -145,8 +145,10 @@ TIMBRE_FRAIS_RECUPERES = Decimal("50.00")
 # de frais va au débit de son compte, le total au crédit du compte bancaire
 # 61671000 depuis le 11/11/2026 (61671 avant ; migration 0050 pour les lignes non exportées)
 COMPTE_TIMBRE = "61671000"
-COMPTE_COMMISSION = "61714000"
 COMPTE_FRAIS_BANCAIRES = "61473000"  # FRAIS COMMISSIONS BANCAIRE
+# Commissions (COM) : 61473000 depuis le 11/11/2026 (61714000 avant ; migration 0052 pour les
+# lignes saisies non exportées)
+COMPTE_COMMISSION = COMPTE_FRAIS_BANCAIRES
 COMPTE_TVA = "34552142"  # TVA BANQUE 10 %
 COMPTES_AGIOS = {
     "BMCE": "63111000",
@@ -160,9 +162,8 @@ COMPTES_AGIOS = {
 # le métier) : (numéro, intitulé, banque réservée). Une écriture manuelle dont le libellé commence
 # par l'intitulé va sur ce compte ; on peut aussi le choisir dans la saisie.
 COMPTES_FRAIS: tuple[tuple[str, str, str | None], ...] = (
+    # Aussi le compte des commissions (COM) depuis le 11/11/2026 : « 61714000 COMMISSIONS » retiré
     ("61473000", "FRAIS COMMISSIONS BANCAIRE", None),
-    # Compte des commissions (COM), aussi choisissable dans la liste depuis le 07/11/2026
-    (COMPTE_COMMISSION, "COMMISSIONS", None),
     ("63110001", "INTERET CREDOC", None),
     ("63110002", "INTERET RELANCE", None),
     ("63110004", "INTERET CMT / OXYGENE", None),

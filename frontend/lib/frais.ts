@@ -62,7 +62,7 @@ function cleIntitule(texte: string): string {
 /**
  * Compte de frais que le serveur donne à ce libellé (`frais_service.compte_charge`, 05/11/2026) :
  * AGIOS → celui de la banque, sinon l'intitulé le plus long qui commence le libellé ; null sinon
- * (le serveur garde alors COM 61714000 ou les frais bancaires 61473000).
+ * (le serveur garde alors les frais bancaires 61473000, aussi pour COM depuis le 11/11/2026).
  */
 export function compteDuLibelle(
   libelle: string,
@@ -89,15 +89,16 @@ export function compteDuLibelle(
   return trouve?.numero ?? null;
 }
 
-/** Compte des commissions (COM) et des autres frais bancaires (16/10/2026). */
-export const COMPTE_COMMISSION = "61714000";
+/** Compte des autres frais bancaires (16/10/2026), aussi celui des commissions (COM) depuis le
+ * 11/11/2026 (61714000 avant). */
 export const COMPTE_FRAIS_BANCAIRES = "61473000";
+export const COMPTE_COMMISSION = COMPTE_FRAIS_BANCAIRES;
 /** Valeur du choix « Autre… » de la liste des comptes de charge (07/11/2026). */
 export const AUTRE_COMPTE = "autre";
 
 /** Compte de charge que SIMTIS prend sans choix (07/11/2026), comme le serveur
  * (`frais_service.compte_charge`) : AGIOS selon la banque, puis l'intitulé d'un compte de la liste,
- * puis COM / COMMISSION → 61714000, sinon 61473000. "" : AGIOS d'une banque sans compte d'agios. */
+ * sinon 61473000 (COM / COMMISSION compris depuis le 11/11/2026). "" : AGIOS d'une banque sans compte d'agios. */
 export function compteParDefaut(libelle: string, banque: string, comptes: CompteFrais[]): string {
   const premier = cleIntitule(libelle).split(" ")[0];
   const duLibelle = compteDuLibelle(libelle, banque, comptes);

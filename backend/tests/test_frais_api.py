@@ -640,11 +640,11 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     rows = lignes_csv(export)
     # Chaque commission puis sa TVA au débit, la banque au crédit (11/11/2026)
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows[1:]] == [
-        ("61714000", code, "COM", "D", "20,00"),
+        ("61473000", code, "COM", "D", "20,00"),
         ("34552142", code, "TVA COM", "D", "2,00"),
-        ("61714000", code, "COM", "D", "30,00"),
+        ("61473000", code, "COM", "D", "30,00"),
         ("34552142", code, "TVA COM", "D", "3,00"),
-        ("61714000", code, "COM", "D", "10,00"),
+        ("61473000", code, "COM", "D", "10,00"),
         ("34552142", code, "TVA COM", "D", "1,00"),
         ("55410003", code, "COM", "C", "66,00"),
     ]
@@ -690,11 +690,11 @@ def test_lines_follow_the_general_ledger_with_one_pair_per_commission(client, co
         (ligne["type"], ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in com["lignes"]
     ] == [
         # Une paire commission + TVA par commission (11/11/2026), puis la banque
-        ("commission", "61714000", "20.00", None),
+        ("commission", "61473000", "20.00", None),
         ("tva", "34552142", "2.00", None),
-        ("commission", "61714000", "30.00", None),
+        ("commission", "61473000", "30.00", None),
         ("tva", "34552142", "3.00", None),
-        ("commission_effet", "61714000", "10.00", None),
+        ("commission_effet", "61473000", "10.00", None),
         ("tva_commission_effet", "34552142", "1.00", None),
         (None, "55410003", None, "66.00"),
     ]
@@ -854,7 +854,7 @@ def test_a_manual_entry_with_vat_is_matched_and_exported_on_two_lines(client, co
 
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[1], r[3], r[5], r[7], r[6]) for r in rows[1:]] == [
-        (code, "61714000", "COM RTGS", "D", "150,00"),
+        (code, "61473000", "COM RTGS", "D", "150,00"),
         (code, "34552142", "TVA COM RTGS", "D", "15,00"),
         (code, "55410003", "COM RTGS", "C", "165,00"),
     ]
@@ -987,7 +987,7 @@ def test_manual_booking_needs_the_permission(client, direction, db):
         ("FRAIS DE REFINANCEMENT", "BP", "63119500"),
         # Inchangés : AGIOS selon la banque, COM, sinon les frais bancaires
         ("AGIOS BP", "BMCE", "63111000"),
-        ("COM RTGS", "BP", "61714000"),
+        ("COM RTGS", "BP", "61473000"),
         ("INTERETS DEBITEURS", "BP", "61473000"),
         ("INTERET CREDOCX", "BP", "61473000"),
     ],
@@ -1003,9 +1003,9 @@ def test_the_fee_accounts_are_listed_with_their_reserved_bank(client, direction)
 
     assert response.status_code == 200
     comptes = {c["numero"]: c for c in response.json()}
-    assert len(comptes) == 22
-    # Le compte des commissions est dans la liste (07/11/2026)
-    assert comptes["61714000"] == {"numero": "61714000", "intitule": "COMMISSIONS", "banque": None}
+    assert len(comptes) == 21
+    # Les commissions vont au 61473000 depuis le 11/11/2026 : 61714000 n'est plus dans la liste
+    assert "61714000" not in comptes
     assert comptes["63119400"] == {
         "numero": "63119400",
         "intitule": "INTERET CRED SPOT",
@@ -1692,9 +1692,9 @@ def test_a_commission_above_200_goes_automatically_with_its_vat(client, comptabl
     assert (com["libelle"], com["total"], com["nb_operations"]) == ("COM", "704.00", 4)
     # Chaque commission suivie de sa TVA, dans l'ordre du relevé, puis la banque (11/11/2026)
     assert [(ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in com["lignes"]] == [
-        ("61714000", "40.00", None),
+        ("61473000", "40.00", None),
         ("34552142", "4.00", None),
-        ("61714000", "600.00", None),
+        ("61473000", "600.00", None),
         ("34552142", "60.00", None),
         ("55410003", None, "704.00"),
     ]
