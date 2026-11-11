@@ -34,6 +34,7 @@ from app.services.reconciliation_scoring import (
     est_especes,
     grille_de_la_paire,
     numeros,
+    numeros_communs,
     points_date,
     points_montant,
     ratio_libelle,
@@ -105,9 +106,10 @@ def score_groupe(ops: Sequence[Operation], ecriture: Ecriture, grille: Grille) -
     """Montant exact (toujours, sinon pas de groupe) + n° commun + date (écart le plus grand) +
     libellé de l'opération principale (la plus grosse), plafonné à 100."""
     principale = max(ops, key=lambda op: abs(op.montant))
-    commun = any(numeros(op.libelle, op.reference) for op in ops) and bool(
-        set().union(*(numeros(op.libelle, op.reference) for op in ops))
-        & numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece)
+    # N° partiels acceptés (11/11/2026, `numeros_communs`)
+    commun = numeros_communs(
+        set().union(*(numeros(op.libelle, op.reference) for op in ops)),
+        numeros(ecriture.libelle, ecriture.reference, ecriture.numero_piece),
     )
     ecart = max(ecart_jours(op, ecriture) for op in ops)
     # Espèces, virement, autre : sans référence, +10 par critère (28/10/2026)
@@ -497,7 +499,7 @@ def score_ensemble(
     total_ops = sum((op.montant for op in ops), ZERO)
     grille = grille_de_la_paire(grille, principale, plus_grosse)
     detail = {
-        "reference": grille.reference if cote_banque & cote_sage else ZERO,
+        "reference": grille.reference if numeros_communs(cote_banque, cote_sage) else ZERO,
         "montant": points_montant(total_ops, -total_ops, grille),
         "date": points_date(ecart, est_especes(principale, plus_grosse), grille),
         "libelle": _points(grille.libelle, ratio_libelle(principale, plus_grosse)),

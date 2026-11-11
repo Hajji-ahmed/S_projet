@@ -150,6 +150,15 @@ def _detail_json(resultat: Score, second: Decimal | None = None) -> dict[str, st
     return detail
 
 
+def _types_json(tx: BankTransaction, entry: AccountingEntry) -> dict[str, str]:
+    """« Autre » face à un type connu (11/11/2026) : `type_different` = « Autre / Chèque » (banque /
+    Sage), affiché en badge ; rien quand les deux lignes ont le même type."""
+    type_banque, type_sage = type_operation(tx.libelle), type_ecriture(entry.libelle)
+    if type_banque == type_sage:
+        return {}
+    return {"type_different": f"{type_banque or 'Autre'} / {type_sage or 'Autre'}"}
+
+
 def score_second(match: ReconciliationMatch) -> Decimal | None:
     """Score de la 2e meilleure écriture (ou opération) au moment de la proposition."""
     value = (match.detail_score or {}).get("second")
@@ -348,6 +357,7 @@ def run_elargi(
                 origine="Automatique",
                 detail_score={
                     **_detail_json(proposition.score),
+                    **_types_json(tx, entry),
                     "elargie": True,
                     "ecart_jours": proposition.ecart_jours,
                 },
@@ -652,7 +662,10 @@ def _enregistrer_proposition(
             score=proposition.score.total,
             statut="Proposée",
             origine="Automatique",
-            detail_score=_detail_json(proposition.score, proposition.second),
+            detail_score={
+                **_detail_json(proposition.score, proposition.second),
+                **_types_json(tx, entry),
+            },
             items=[
                 ReconciliationMatchItem(
                     bank_transaction_id=tx.id, montant_affecte=abs(tx.montant), actif=True
@@ -1396,6 +1409,8 @@ class MatchView:
     # Recherche élargie (20/10/2026) : écart en jours ; jamais cochée d'office
     elargie: bool = False
     ecart_jours: int | None = None
+    # « Autre » face à un type connu (11/11/2026) : « Autre / Chèque » ; jamais cochée d'office
+    type_different: str | None = None
     # Toutes les opérations (une seule en 1 → 1, plusieurs pour un groupe N → 1), avec leur banque
     transactions: list[tuple[BankTransaction, str]] = field(default_factory=list)
     # Toutes les écritures (plusieurs en 1 → N et N → N, P13), la plus grosse en tête
@@ -1546,6 +1561,7 @@ def _views(db: Session, matches: list[ReconciliationMatch], regles: Grille) -> l
                 and match.score - second < regles.ecart_ambiguite,
                 elargie=bool((match.detail_score or {}).get("elargie")),
                 ecart_jours=(match.detail_score or {}).get("ecart_jours"),
+                type_different=(match.detail_score or {}).get("type_different"),
             )
         )
     return views

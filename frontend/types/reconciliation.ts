@@ -71,6 +71,8 @@ export type Correspondance = {
   /** Recherche élargie (20/10/2026) : écart entre les dates ; jamais cochée d'office. */
   elargie?: boolean;
   ecart_jours?: number | null;
+  /** « Autre » face à un type connu (11/11/2026) : « Autre / Chèque » ; jamais cochée d'office. */
+  type_different?: string | null;
   criteres: Critere[];
   commentaire: string | null;
   valide_par: string | null;

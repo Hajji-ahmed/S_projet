@@ -1946,3 +1946,30 @@ def test_an_entry_after_the_end_date_is_never_proposed(client, comptable, db):
 
     assert run(client, comptable, db, au="2026-10-01").status_code == 200
     assert statuses(db, cheque, entree, virement, vir_sage) == ["À vérifier"] * 4
+
+
+def test_an_other_line_facing_a_virement_is_proposed_with_a_type_different_flag(
+    client, comptable, db
+):
+    """11/11/2026 : « VIR. RTGS RECU… » (virement) ↔ « VIREMENTS DE FONDS » devient un virement ;
+    une ligne « Autre » face à un chèque au même n° est proposée avec « Type différent »."""
+    compte = account(db)
+    rtgs = operation(
+        db, compte, montant="500000", libelle="VIR. RTGS RECU DE CLIENT H EMIS PAR CIH"
+    )
+    fonds = ecriture(db, compte, montant="-500000", libelle="VIREMENTS DE FONDS", numero_piece="P1")
+    autre = operation(db, compte, montant="53100", libelle="OPERATION BANCAIRE 1234567")
+    cheque = ecriture(
+        db, compte, montant="-53100", libelle="CHQ 1234567 FOURNISSEUR A", numero_piece="P2"
+    )
+
+    assert run(client, comptable, db).status_code == 200
+    proposees = {
+        p["operation"]["id"]: p for p in proposals(client, comptable, db).json()["correspondances"]
+    }
+
+    assert proposees[rtgs.id]["ecriture"]["id"] == fonds.id
+    assert proposees[rtgs.id]["type_different"] is None
+    assert proposees[autre.id]["ecriture"]["id"] == cheque.id
+    assert proposees[autre.id]["type_different"] == "Autre / Chèque"
+    assert statuses(db, autre, cheque) == ["À vérifier", "À vérifier"]

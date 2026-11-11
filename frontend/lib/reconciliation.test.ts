@@ -369,6 +369,13 @@ describe("propositions éloignées (20/10/2026)", () => {
     expect(filterProposals([eloignee, normale], "eloignees").map((item) => item.id)).toEqual([1]);
   });
 
+  it("ne coche jamais d'office une proposition de type différent (11/11/2026)", () => {
+    const differente = { ...proposal(1, "95.00", true), type_different: "Autre / Chèque" };
+    const normale = proposal(2, "95.00", true);
+
+    expect([...defaultSelection([differente, normale])]).toEqual([2]);
+  });
+
   it("compte sur chaque filtre exactement ce que le filtre liste", () => {
     const normale = proposal(2, "95.00", true);
     const faible = proposal(3, "60.00", false);

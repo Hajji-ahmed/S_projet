@@ -74,10 +74,10 @@ def test_cheque_plus_commission_plus_tva_is_one_entry():
 
     assert groupe.operation_ids == (1, 2, 3)
     assert groupe.principale_id == 1
-    # « CHEQUE N … » et « CHQ° » ne sont pas des types reconnus (autre) : sans référence, +10
-    # (28/10/2026) ; somme ronde 40 + 10
-    assert groupe.score.detail["montant"] == Decimal("50.00")
-    assert groupe.score.detail["reference"] == Decimal("0.00")
+    # « CHEQUE N … » et « CHQ° » sont des chèques depuis le 11/11/2026 : la grille avec référence
+    # (somme ronde 40, n° commun)
+    assert groupe.score.detail["montant"] == Decimal("40.00")
+    assert groupe.score.detail["reference"] > 0
     assert "= 10 055,00" in groupe.explication
     assert "n° 2100843 commun" in groupe.explication
 
@@ -146,7 +146,7 @@ def test_a_wrong_sum_gives_no_group():
 
 def test_two_different_groups_make_the_entry_ambiguous():
     banque = [
-        op(1, "-1000", "CHEQUE N 1111111"),
+        op(1, "-1000", "PAIEMENT CLIENT 1111111"),
         op(2, "-1000", "PAIEMENT FOURNISSEUR"),
         op(3, "-50", "COMMISSION"),
         op(4, "-5", "TAXE SUR VALEUR AJOUTEE"),

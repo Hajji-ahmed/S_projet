@@ -262,10 +262,15 @@ TYPES_SAGE: tuple[tuple[str, str], ...] = (
     ("IMPAYE", "Impayé"),
     ("IMP", "Impayé"),
     ("EAR1", "Chèque"),  # « EAR1° … »
+    # 11/11/2026 : « CHQ 1234567 … », « CHQ° 7654321 … », « EAP1° CHQ 2223334 … » (chèque émis)
+    ("CHQ", "Chèque"),
+    ("EAP1", "Chèque"),
     ("EAR", "Effet"),  # « EAR° … »
     ("LCN", "Effet"),  # « LCN … » (28/10/2026)
     ("ESP", "Espèces"),
-    # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
+    # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre ; « VIREMENTS DE
+    # FONDS » (11/11/2026)
+    ("VIREMENTS", "Virement"),
     ("VIREMENT", "Virement"),
     ("VIRT", "Virement"),
     ("VIR", "Virement"),
@@ -275,9 +280,13 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
     ("IMPAYE", "Impayé"),
     ("IMP", "Impayé"),
     ("ENCAISSEMENT CHEQUE", "Chèque"),
+    # Chèque payé (11/11/2026) : « CHEQUE N 2223334 REMIS PAR … »
+    ("CHEQUE N", "Chèque"),
     ("ENCAISSEMENT EFFET", "Effet"),
     ("REMISE D EFFETS", "Effet"),
     ("VERSEMENT DEPLACE", "Espèces"),
+    # Versement déplacé chez AWB (11/11/2026) : « VERSEMENT ESPECE DEPLACE CLIENT »
+    ("VERSEMENT ESPECE DEPLACE", "Espèces"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
     ("VIREMENT", "Virement"),
     ("VIRT", "Virement"),
@@ -358,6 +367,24 @@ def types_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
     return type_operation(operation.libelle) == type_ecriture(ecriture.libelle)
 
 
+def type_different(operation: Operation, ecriture: Ecriture) -> bool:
+    """Les deux lignes n'ont pas le même type (« Autre » face à un type connu, 11/11/2026)."""
+    return type_operation(operation.libelle) != type_ecriture(ecriture.libelle)
+
+
+def types_proposables(operation: Operation, ecriture: Ecriture) -> bool:
+    """Le moteur 1 → 1 peut proposer la paire (11/11/2026) : même type, ou « Autre » (type non
+    reconnu) face à un type connu, jamais face à des espèces (une écriture ESP ne va qu'avec un
+    VERSEMENT DEPLACE). Deux types connus différents ne se comparent jamais ; les groupes gardent
+    `types_compatibles`."""
+    type_op, type_ec = type_operation(operation.libelle), type_ecriture(ecriture.libelle)
+    if type_op == type_ec:
+        return True
+    if ESPECES in (type_op, type_ec):
+        return False
+    return type_op is None or type_ec is None
+
+
 def numeros(*textes: str | None) -> set[str]:
     """Numéros de 5 chiffres ou plus des textes, sans les zéros en tête (« 0173813 » → « 173813 »)."""
     return set().union(*(_numeros_du_texte(texte) for texte in textes if texte))
@@ -368,6 +395,34 @@ def numeros(*textes: str | None) -> set[str]:
 @lru_cache(maxsize=_CACHE)
 def _numeros_du_texte(texte: str) -> frozenset[str]:
     return frozenset(numero.lstrip("0") or "0" for numero in _NUMERO.findall(texte))
+
+
+# N° partiels (11/11/2026) : à partir de 7 chiffres, un n° écrit en entier d'un côté et tronqué au
+# début de l'autre (« 4567891 » dans « 2534567891 »), ou avec un « 0 » de trop (« 70000036 » pour
+# « 7000036 »), compte comme le même n°
+NUMERO_PARTIEL_MIN = 7
+
+
+@lru_cache(maxsize=_CACHE)
+def variantes_numero(numero: str) -> frozenset[str]:
+    """Formes plus courtes d'un n° qui le désignent encore : ses fins de 7 chiffres ou plus, et le
+    n° sans un de ses « 0 » (7 chiffres ou plus). Le n° lui-même n'en fait pas partie."""
+    if len(numero) <= NUMERO_PARTIEL_MIN:
+        return frozenset()
+    fins = {numero[i:] for i in range(1, len(numero) - NUMERO_PARTIEL_MIN + 1)}
+    sans_zero = {numero[:i] + numero[i + 1 :] for i, c in enumerate(numero) if c == "0" and i}
+    return frozenset(
+        v for v in fins | sans_zero if len(v) >= NUMERO_PARTIEL_MIN and not v.startswith("0")
+    )
+
+
+def numeros_communs(a: Iterable[str], b: Iterable[str]) -> bool:
+    """Un n° des deux côtés : le même, ou l'un est une variante de l'autre (`variantes_numero`).
+    Deux n° qui ne partagent que leur fin ne concordent pas (2534567891 / 9994567891)."""
+    a, b = set(a), set(b)
+    if a & b:
+        return True
+    return any(x in variantes_numero(y) or y in variantes_numero(x) for x in a for y in b)
 
 
 # --- Critères --------------------------------------------------------------------------------------
@@ -430,7 +485,7 @@ def _cote_ecriture(ecriture: Ecriture) -> _Cote:
 def _reference_preparee(operation: _Cote, ecriture: _Cote) -> bool:
     """`critere_reference` sur des lignes préparées : mêmes règles."""
     # 1) un numéro de 5 chiffres ou plus commun aux deux côtés
-    if operation.numeros & ecriture.numeros:
+    if numeros_communs(operation.numeros, ecriture.numeros):
         return True
     # 2) une même clé (référence / pièce) des deux côtés
     if ecriture.cles & operation.cles:
@@ -580,8 +635,9 @@ def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grill
     # Même signe des deux côtés : un crédit banque doit faire face à un débit Sage, et inversement
     if (operation.montant > 0) == (ecriture.montant > 0):
         return None
-    # Types différents (chèque ↔ effet, espèces ↔ autre…) : jamais comparés (28/10/2026)
-    if not types_compatibles(operation, ecriture):
+    # Types connus différents (chèque ↔ effet…) ou espèces ↔ autre : jamais comparés (28/10/2026) ;
+    # « Autre » face à un type connu l'est depuis le 11/11/2026 (`types_proposables`)
+    if not types_proposables(operation, ecriture):
         return None
     ecart = ecart_jours(operation, ecriture)
     if ecart <= grille.fenetre_jours:
@@ -602,14 +658,18 @@ def _numeros_ecriture(ecriture: Ecriture) -> set[str]:
 
 
 def meme_numero_et_montant(operation: Operation, ecriture: Ecriture) -> bool:
-    """Chèque, effet ou impayé des deux côtés, même montant (sens opposé) et un n° commun."""
-    if type_operation(operation.libelle) not in TYPES_PAR_NUMERO:
+    """Chèque, effet ou impayé des deux côtés (ou d'un côté face à « Autre », 11/11/2026), même
+    montant (sens opposé) et un n° commun (`numeros_communs`)."""
+    if not types_proposables(operation, ecriture):
         return False
-    if type_ecriture(ecriture.libelle) != type_operation(operation.libelle):
+    connu = type_operation(operation.libelle) or type_ecriture(ecriture.libelle)
+    if connu not in TYPES_PAR_NUMERO:
         return False
     if operation.montant != -ecriture.montant:
         return False
-    return bool(numeros(operation.libelle, operation.reference) & _numeros_ecriture(ecriture))
+    return numeros_communs(
+        numeros(operation.libelle, operation.reference), _numeros_ecriture(ecriture)
+    )
 
 
 def score(operation: Operation, ecriture: Ecriture, grille: Grille = GRILLE_PAR_DEFAUT) -> Score:
@@ -684,6 +744,7 @@ def proposer(
         )
         if resultat is not None:
             candidats[(operation.id, ecriture.id)] = resultat
+    retirees = _types_differents_uniques(candidats, operations, ecritures, cotes_op, cotes_ec)
 
     # Attribution du meilleur score au plus bas (16/10/2026) : une ligne déjà prise passe sa
     # place à la suivante ; seule une ÉGALITÉ au meilleur score d'une ligne la rend ambiguë (ses
@@ -758,9 +819,41 @@ def proposer(
         pris_op.add(operation_id)
         pris_ec.add(ecriture_id)
 
+    # Une ligne dont une paire « Type différent » a été retirée, restée sans proposition : ambiguë
+    resultat.operations_ambigues |= {op for op, _ in retirees if op not in pris_op}
+    resultat.ecritures_ambigues |= {ec for _, ec in retirees if ec not in pris_ec}
     # Ordre stable du résultat (mêmes données → même liste)
     resultat.propositions.sort(key=lambda item: (item.operation_id, item.ecriture_id))
     return resultat
+
+
+def _types_differents_uniques(
+    candidats: dict[tuple[int, int], Score],
+    operations: list[Operation],
+    ecritures: list[Ecriture],
+    cotes_op: dict[int, "_Cote"],
+    cotes_ec: dict[int, "_Cote"],
+) -> set[tuple[int, int]]:
+    """« Autre » face à un type connu (11/11/2026) : la paire reste candidate avec un n° commun, ou
+    si elle est le seul candidat de son opération ET de son écriture ; sinon elle est retirée et
+    renvoyée (ses lignes sans proposition deviennent ambiguës)."""
+    par_id_op = {operation.id: operation for operation in operations}
+    par_id_ec = {ecriture.id: ecriture for ecriture in ecritures}
+    nb_op: dict[int, int] = {}
+    nb_ec: dict[int, int] = {}
+    retirees: set[tuple[int, int]] = set()
+    for operation_id, ecriture_id in candidats:
+        nb_op[operation_id] = nb_op.get(operation_id, 0) + 1
+        nb_ec[ecriture_id] = nb_ec.get(ecriture_id, 0) + 1
+    for operation_id, ecriture_id in list(candidats):
+        if not type_different(par_id_op[operation_id], par_id_ec[ecriture_id]):
+            continue
+        if _reference_preparee(cotes_op[operation_id], cotes_ec[ecriture_id]):
+            continue
+        if nb_op[operation_id] > 1 or nb_ec[ecriture_id] > 1:
+            del candidats[(operation_id, ecriture_id)]
+            retirees.add((operation_id, ecriture_id))
+    return retirees
 
 
 def _peut_atteindre(operation: Operation, ecriture: Ecriture, grille: Grille) -> bool:
@@ -842,6 +935,11 @@ def _candidat(
     return resultat if resultat.total >= grille.seuil_proposition else None
 
 
+# Rangés par n° pour la recherche jusqu'à `fenetre_numero_jours` : chèques, effets, impayés et,
+# depuis le 11/11/2026, « Autre » (None)
+_TYPES_INDEXES = TYPES_PAR_NUMERO | {None}
+
+
 def _paires_comparables(
     operations: Iterable[Operation], ecritures: Iterable[Ecriture], grille: Grille
 ) -> Iterable[tuple[Operation, Ecriture, int]]:
@@ -852,15 +950,23 @@ def _paires_comparables(
     par_numero: dict[str, list[Ecriture]] = {}
     for ecriture in ecritures:
         par_jour.setdefault(date_comparee(ecriture), []).append(ecriture)
-        if type_ecriture(ecriture.libelle) in TYPES_PAR_NUMERO:
+        # « Autre » aussi : il peut faire face à un chèque au même n° (11/11/2026) ; chaque n° est
+        # aussi rangé sous ses variantes (n° partiels)
+        if type_ecriture(ecriture.libelle) in _TYPES_INDEXES:
             for numero in _numeros_ecriture(ecriture):
-                par_numero.setdefault(numero, []).append(ecriture)
+                for cle in (numero, *variantes_numero(numero)):
+                    par_numero.setdefault(cle, []).append(ecriture)
     for operation in operations:
         # Écritures déjà proposées pour cette opération (évite de sortir deux fois la même paire)
         vues: set[int] = set()
         # 1) Chèque / effet / impayé : d'abord les écritures au même n°, même loin en date
-        if type_operation(operation.libelle) in TYPES_PAR_NUMERO:
-            for numero in numeros(operation.libelle, operation.reference):
+        if type_operation(operation.libelle) in _TYPES_INDEXES:
+            cles = {
+                cle
+                for numero in numeros(operation.libelle, operation.reference)
+                for cle in (numero, *variantes_numero(numero))
+            }
+            for numero in sorted(cles):
                 for ecriture in par_numero.get(numero, ()):
                     if ecriture.id not in vues:
                         vues.add(ecriture.id)
@@ -954,12 +1060,13 @@ def proposer_elargi(
         for ecriture in par_montant.get((operation.bank_account_id, -operation.montant), ()):
             if (operation.id, ecriture.id) in paires_rejetees:
                 continue
-            if not types_compatibles(operation, ecriture):
+            if not types_proposables(operation, ecriture):
                 continue
-            if par_libelle:
+            # « Autre » face à un type connu (11/11/2026) : seulement avec un n° commun
+            if par_libelle and not type_different(operation, ecriture):
                 if ratio_libelle(operation, ecriture) < SEUIL_LIBELLE_ELARGIE:
                     continue
-            elif not numeros_op & _numeros_ecriture(ecriture):
+            elif not numeros_communs(numeros_op, _numeros_ecriture(ecriture)):
                 continue
             ecart = ecart_jours(operation, ecriture)
             # Dans la fenêtre normale, c'est le moteur habituel qui compare

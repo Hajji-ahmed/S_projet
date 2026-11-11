@@ -189,6 +189,8 @@ class CorrespondanceOut(BaseModel):
     # Recherche élargie (20/10/2026) : écart entre les dates ; jamais cochée d'office
     elargie: bool = False
     ecart_jours: int | None = None
+    # « Autre » face à un type connu (11/11/2026) : « Autre / Chèque » ; jamais cochée d'office
+    type_different: str | None = None
     criteres: list[CritereOut]
     commentaire: str | None
     valide_par: str | None
@@ -244,6 +246,7 @@ class CorrespondanceOut(BaseModel):
             concurrente_proche=view.concurrente_proche,
             elargie=view.elargie,
             ecart_jours=view.ecart_jours,
+            type_different=view.type_different,
             criteres=criteres(match.detail_score, view.actifs),
             commentaire=match.commentaire,
             valide_par=view.valide_par,

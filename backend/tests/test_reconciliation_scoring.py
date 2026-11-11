@@ -3,6 +3,8 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
+
 from app.services.reconciliation_scoring import (
     GRILLE_PAR_DEFAUT,
     Ecriture,
@@ -13,6 +15,7 @@ from app.services.reconciliation_scoring import (
     ecart_jours,
     jusqu_au,
     numeros,
+    numeros_communs,
     proposer,
     proposer_elargi,
     ratio_date,
@@ -425,14 +428,21 @@ def test_different_types_are_never_compared():
 
     ecriture_autre = ec(libelle="REGLEMENT FOURNISSEUR ATLAS")
 
+    ecriture_especes = ec(libelle="ESP N 1234")
+
     assert comparable(cheque, ecriture_cheque, GRILLE_PAR_DEFAUT)
+    # Deux types connus différents : jamais
     assert not comparable(especes, ecriture_cheque, GRILLE_PAR_DEFAUT)
-    # 28/10/2026 : un type inconnu (autre) ne se compare qu'à un autre type inconnu
-    assert not comparable(autre, ecriture_cheque, GRILLE_PAR_DEFAUT)
-    assert not comparable(cheque, ecriture_autre, GRILLE_PAR_DEFAUT)
-    assert comparable(autre, ecriture_autre, GRILLE_PAR_DEFAUT)
     assert proposer([especes], [ecriture_cheque]).propositions == []
-    assert proposer([autre], [ecriture_cheque]).propositions == []
+    # 11/11/2026 : « Autre » face à un type connu se compare (il était refusé le 28/10/2026)…
+    assert comparable(autre, ecriture_cheque, GRILLE_PAR_DEFAUT)
+    assert comparable(cheque, ecriture_autre, GRILLE_PAR_DEFAUT)
+    assert comparable(autre, ecriture_autre, GRILLE_PAR_DEFAUT)
+    # … sauf face à des espèces : une écriture ESP ne va qu'avec un VERSEMENT DEPLACE
+    assert not comparable(autre, ecriture_especes, GRILLE_PAR_DEFAUT)
+    assert not comparable(
+        op(libelle="VERSEMENT PAR VOUS-MEME"), ecriture_especes, GRILLE_PAR_DEFAUT
+    )
 
 
 def test_especes_are_compared_at_their_due_date():
@@ -674,3 +684,100 @@ def test_an_entry_after_the_end_of_the_period_is_never_compared():
     )
     # Chèque comparé par sa date : une échéance après « Au » ne compte pas
     assert jusqu_au(ec(jour=date(2026, 9, 29), echeance=date(2026, 10, 5)), au)
+
+
+# --- Libellés et n° du 11/11/2026 (opérations BP oubliées par le moteur) -------------------------
+
+
+def test_new_labels_get_their_type():
+    assert type_ecriture("CHQ 1234567 FOURNISSEUR A") == "Chèque"
+    assert type_ecriture("CHQ° 7654321 CLIENT B") == "Chèque"
+    assert type_ecriture("EAP1° CHQ 2223334 FOURNISSEUR C") == "Chèque"
+    assert type_ecriture("VIREMENTS DE FONDS") == "Virement"
+    assert type_operation("CHEQUE N 2223334 REMIS PAR CAM EN FAVEUR DE FOURNISSEUR C") == "Chèque"
+    # Le versement déplacé d'AWB est des espèces : il ne fait jamais face à un chèque
+    assert type_operation("VERSEMENT ESPECE DEPLACE CLIENT F") == "Espèces"
+    assert not comparable(
+        op(libelle="VERSEMENT ESPECE DEPLACE CLIENT F"),
+        ec(libelle="EAR1° ABB 3332221 CLIENT D"),
+        GRILLE_PAR_DEFAUT,
+    )
+    # Un autre versement que « VERSEMENT (ESPECE) DEPLACE » reste « Autre » (choix du métier)
+    assert type_operation("VERSEMENT PAR VOUS-MEME") is None
+    assert type_operation("VERSEMENT EFFECTUE PAR CLIENT E") is None
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "attendu"),
+    [
+        ("4567891", "2534567891", True),  # n° tronqué au début
+        ("7000036", "70000036", True),  # un 0 de trop
+        ("1234567", "1234567", True),
+        ("2534567891", "9994567891", False),  # seulement la même fin
+        ("123456", "1234567", False),  # moins de 7 chiffres
+        ("4567891", "4567892", False),
+        ("7000036", "700000036", False),  # deux 0 de trop
+    ],
+)
+def test_partial_numbers_match(a, b, attendu):
+    assert numeros_communs({a}, {b}) is attendu
+    assert numeros_communs({b}, {a}) is attendu
+
+
+def test_a_truncated_cheque_number_is_proposed():
+    """ENCAISSEMENT CHEQUE N 4567891 ↔ EAR1° 2534567891 CLIENT G (4 jours)."""
+    cheque = op(montant="12900", libelle="ENCAISSEMENT CHEQUE N 4567891 TIRE SUR CM")
+    ecriture = ec(
+        montant="-12900",
+        jour=JOUR - timedelta(days=4),
+        libelle="EAR1° 2534567891 CLIENT G",
+        piece=None,
+    )
+
+    assert len(proposer([cheque], [ecriture]).propositions) == 1
+    [proposition] = proposer([cheque], [ecriture], AVEC_REFERENCE).propositions
+    assert proposition.score.detail["reference"] == Decimal("40.00")
+
+
+def test_a_cheque_far_away_is_found_by_its_number_on_both_new_labels():
+    """CHEQUE N 7654321 REMIS PAR… ↔ CHQ° 7654321 à 85 jours : même n°, jusqu'à 180 jours."""
+    cheque = op(montant="-4084", libelle="CHEQUE N 7654321 REMIS PAR ABB EN FAVEUR DE CLIENT B")
+    ecriture = ec(
+        montant="4084",
+        jour=JOUR - timedelta(days=85),
+        libelle="CHQ° 7654321 CLIENT B",
+        piece=None,
+    )
+
+    assert [p.ecriture_id for p in proposer([cheque], [ecriture]).propositions] == [ecriture.id]
+
+
+def test_an_other_line_facing_a_known_type_is_proposed_only_when_alone():
+    """« Autre » face à un type connu (11/11/2026) : proposé s'il est le seul candidat des deux
+    côtés ; avec deux candidats, l'opération est ambiguë."""
+    autre = op(montant="2000000", libelle="RECU DE CLIENT H")
+    virement = ec(montant="-2000000", libelle="VIREMENT RECU CIH", piece=None)
+    second = ec(
+        id=2,
+        montant="-2000000",
+        jour=JOUR + timedelta(days=1),
+        libelle="VIREMENT CIH 2",
+        piece=None,
+    )
+
+    seul = proposer([autre], [virement])
+    deux = proposer([autre], [virement, second])
+
+    assert [p.ecriture_id for p in seul.propositions] == [virement.id]
+    assert deux.propositions == []
+    assert deux.operations_ambigues == {autre.id}
+
+
+def test_an_other_line_with_a_common_number_is_proposed_among_several():
+    autre = op(montant="10000", libelle="OPERATION 1234567")
+    cheque = ec(montant="-10000", libelle="EAR1° 1234567 CLIENT", piece=None)
+    autre_cheque = ec(id=2, montant="-10000", libelle="EAR1° 7777777 AUTRE", piece=None)
+
+    [proposition] = proposer([autre], [cheque, autre_cheque]).propositions
+
+    assert proposition.ecriture_id == cheque.id

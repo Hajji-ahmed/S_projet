@@ -147,6 +147,15 @@ export function ProposalCard({
               Concurrente proche · 2e à {formatScore(item.score_second ?? null)}
             </span>
           )}
+          {item.type_different && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-simtis-warning-bg px-2 py-0.5 text-[11px] font-medium text-simtis-warning-fg"
+              title="Une ligne au type non reconnu (« Autre ») face à une ligne d'un autre type (banque / Sage) : vérifiez qu'il s'agit bien de la même opération. Jamais cochée d'office."
+            >
+              <TriangleAlert className="h-3 w-3" aria-hidden />
+              Type différent · {item.type_different}
+            </span>
+          )}
           {item.elargie && (
             <span
               className="inline-flex items-center gap-1 rounded-full bg-simtis-info-bg px-2 py-0.5 text-[11px] font-medium text-simtis-info-fg"

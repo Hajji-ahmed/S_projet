@@ -224,11 +224,19 @@ export function aRejeter(
 }
 
 /** Sélection proposée à l'ouverture : seules les fortes validables sans concurrente proche sont
- *  cochées d'office (08/10/2026) ; les autres se cochent après contrôle. */
+ *  cochées d'office (08/10/2026), jamais une recherche élargie ni un type différent (11/11/2026) ;
+ *  les autres se cochent après contrôle. */
 export function defaultSelection(items: readonly Correspondance[]): Set<number> {
   return new Set(
     items
-      .filter((item) => item.forte && !item.concurrente_proche && !item.elargie && validable(item))
+      .filter(
+        (item) =>
+          item.forte &&
+          !item.concurrente_proche &&
+          !item.elargie &&
+          !item.type_different &&
+          validable(item),
+      )
       .map((item) => item.id),
   );
 }
