@@ -84,3 +84,32 @@ export function bornesAxe(valeurs: (number | null)[]): [number, number] | null {
   const marge = (maxi - mini) * 0.1 || Math.abs(maxi) * 0.05 || 1;
   return [Math.floor(mini - marge), Math.ceil(maxi + marge)];
 }
+
+/** Une ligne d'« Activité récente » : une action, répétée `nombre` fois d'affilée (11/11/2026). */
+export type GroupeActivite<T> = { ligne: T; nombre: number; premiere: string };
+
+/**
+ * Regroupe les actions consécutives de même code et même utilisateur (« ×5 »), du plus récent au
+ * plus ancien : `ligne` est la plus récente, `premiere` l'heure de la plus ancienne du groupe.
+ * Garde au plus `max` groupes. Affichage seulement : le journal n'est pas modifié.
+ */
+export function regrouperActivite<
+  T extends { action: string; user_id: number | null; created_at: string },
+>(lignes: T[], max: number = 5): GroupeActivite<T>[] {
+  const groupes: GroupeActivite<T>[] = [];
+  for (const ligne of lignes) {
+    const dernier = groupes.at(-1);
+    if (
+      dernier &&
+      dernier.ligne.action === ligne.action &&
+      dernier.ligne.user_id === ligne.user_id
+    ) {
+      dernier.nombre += 1;
+      dernier.premiere = ligne.created_at;
+    } else {
+      if (groupes.length === max) break;
+      groupes.push({ ligne, nombre: 1, premiere: ligne.created_at });
+    }
+  }
+  return groupes;
+}

@@ -9,6 +9,7 @@ import {
   moisEnCours,
   partFrais,
   pourcentage,
+  regrouperActivite,
   tendance,
 } from "@/lib/dashboard";
 
@@ -60,5 +61,42 @@ describe("bornesAxe", () => {
   it("garde une marge pour une série plate et rien pour une série vide", () => {
     expect(bornesAxe([1000, 1000])).toEqual([950, 1050]);
     expect(bornesAxe([null])).toBeNull();
+  });
+});
+
+describe("regrouperActivite", () => {
+  const l = (id: number, action: string, user_id: number | null, minute: number) => ({
+    id,
+    action,
+    user_id,
+    created_at: `2026-11-11T10:${String(minute).padStart(2, "0")}:00Z`,
+  });
+
+  it("regroupe les actions consécutives de même code et même utilisateur", () => {
+    const groupes = regrouperActivite([
+      l(1, "import", 1, 50),
+      l(2, "import", 1, 40),
+      l(3, "import", 1, 30),
+    ]);
+    expect(groupes).toHaveLength(1);
+    expect(groupes[0].nombre).toBe(3);
+    expect(groupes[0].ligne.id).toBe(1);
+    expect(groupes[0].premiere).toBe("2026-11-11T10:30:00Z");
+  });
+
+  it("sépare deux utilisateurs et deux actions non consécutives", () => {
+    const groupes = regrouperActivite([
+      l(1, "import", 1, 50),
+      l(2, "import", 2, 40),
+      l(3, "export", 2, 30),
+      l(4, "import", 2, 20),
+    ]);
+    expect(groupes.map((g) => g.nombre)).toEqual([1, 1, 1, 1]);
+  });
+
+  it("garde au plus 5 groupes, et rien pour une liste vide", () => {
+    const lignes = Array.from({ length: 8 }, (_, i) => l(i, `action-${i}`, 1, 59 - i));
+    expect(regrouperActivite(lignes)).toHaveLength(5);
+    expect(regrouperActivite([])).toEqual([]);
   });
 });

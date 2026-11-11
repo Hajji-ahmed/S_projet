@@ -18,22 +18,49 @@ import { useEffect, useState } from "react";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { Petite } from "@/components/dashboard/SyntheseCards";
 import { cn } from "@/lib/cn";
-import { heureRelative, pourcentage } from "@/lib/dashboard";
+import {
+  type GroupeActivite,
+  heureRelative,
+  pourcentage,
+  regrouperActivite,
+} from "@/lib/dashboard";
 import { formatDateTime } from "@/lib/statements";
 import { getHistorique } from "@/services/historique";
 import type { Dashboard } from "@/types/dashboard";
 import type { LigneHistorique } from "@/types/historique";
 
+// Urgence d'une tâche selon son type (11/11/2026) : les ambiguës bloquent le rapprochement,
+// les propositions attendent une validation, les frais sont à faire sans urgence.
+type Urgence = "urgent" | "a_traiter" | "a_faire";
+
+const STYLE_URGENCE: Record<Urgence, { tuile: string; nombre: string; libelle: string }> = {
+  urgent: {
+    tuile: "border-transparent bg-simtis-danger-bg",
+    nombre: "text-simtis-danger-fg",
+    libelle: "urgent",
+  },
+  a_traiter: {
+    tuile: "border-transparent bg-simtis-warning-bg",
+    nombre: "text-simtis-warning-fg",
+    libelle: "à traiter",
+  },
+  a_faire: {
+    tuile: "border-transparent bg-simtis-info-bg",
+    nombre: "text-simtis-info-fg",
+    libelle: "à faire",
+  },
+};
+
 /** Travail en attente, chaque compteur menant à l'écran où il se traite (19/10/2026). */
 export function TachesCard({ data }: { data: Dashboard }) {
   const t = data.taches;
-  const lignes: [string, number][] = [
-    ["Propositions fortes à valider", t.propositions_fortes],
-    ["Propositions à vérifier", t.propositions_a_verifier],
-    ["Opérations ambiguës", t.operations_ambigues],
-    ["Écritures ambiguës", t.ecritures_ambigues],
-    ["Frais bancaires à comptabiliser", t.a_comptabiliser],
-    ["Écritures de frais à exporter pour Sage", t.a_exporter],
+  const lignes: [string, number, Urgence][] = [
+    ["Propositions fortes à valider", t.propositions_fortes, "a_traiter"],
+    ["Propositions à vérifier", t.propositions_a_verifier, "a_traiter"],
+    ["Opérations ambiguës", t.operations_ambigues, "urgent"],
+    ["Écritures ambiguës", t.ecritures_ambigues, "urgent"],
+    ["Frais bancaires à comptabiliser", t.a_comptabiliser, "a_faire"],
+    ["Écritures de frais à exporter pour Sage", t.a_exporter, "a_faire"],
   ];
   return (
     <Petite
@@ -41,38 +68,40 @@ export function TachesCard({ data }: { data: Dashboard }) {
       icon={ListChecks}
       pastille="bg-simtis-light text-simtis-primary"
     >
-      {/* Une tuile par tâche (27/10/2026) : orange s'il reste du travail, grisée à 0 */}
+      {/* Une tuile par tâche, colorée selon l'urgence de son type (11/11/2026), grisée à 0 */}
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {lignes.map(([libelle, nombre]) => (
-          <li key={libelle}>
-            <Link
-              href="/rapprochement"
-              className={cn(
-                "flex h-full flex-col justify-between gap-2 rounded-[12px] border p-3 transition-shadow duration-150 hover:shadow-simtis",
-                nombre > 0
-                  ? "border-transparent bg-simtis-warning-bg"
-                  : "border-simtis-border bg-simtis-surface",
-              )}
-            >
-              <span
+        {lignes.map(([libelle, nombre, urgence]) => {
+          const style = nombre > 0 ? STYLE_URGENCE[urgence] : null;
+          return (
+            <li key={libelle}>
+              <Link
+                href="/rapprochement"
+                aria-label={`${libelle} : ${nombre}${style ? `, ${style.libelle}` : ""}`}
                 className={cn(
-                  "text-2xl leading-none font-bold tracking-tight tabular-nums",
-                  nombre > 0 ? "text-simtis-warning-fg" : "text-simtis-muted",
+                  "flex h-full flex-col justify-between gap-2 rounded-[12px] border p-3 transition-shadow duration-150 hover:shadow-simtis",
+                  style ? style.tuile : "border-simtis-border bg-simtis-surface",
                 )}
               >
-                {nombre}
-              </span>
-              <span
-                className={cn(
-                  "text-xs leading-snug",
-                  nombre > 0 ? "text-simtis-text" : "text-simtis-muted",
-                )}
-              >
-                {libelle}
-              </span>
-            </Link>
-          </li>
-        ))}
+                <span
+                  className={cn(
+                    "text-2xl leading-none font-bold tracking-tight tabular-nums",
+                    style ? style.nombre : "text-simtis-muted",
+                  )}
+                >
+                  {nombre}
+                </span>
+                <span
+                  className={cn(
+                    "text-xs leading-snug",
+                    style ? "text-simtis-text" : "text-simtis-muted",
+                  )}
+                >
+                  {libelle}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </Petite>
   );
@@ -138,16 +167,19 @@ function iconeAction(action: string): LucideIcon {
   return ICONES_ACTION.find(([motif]) => motif.test(action))?.[1] ?? Activity;
 }
 
-/** Les 5 dernières actions du journal d'audit (permission « audit.view »). */
+/**
+ * Les 5 dernières actions du journal d'audit (permission « audit.view ») ; les actions identiques
+ * qui se suivent sont regroupées en une ligne « ×N » (11/11/2026).
+ */
 export function ActiviteCard() {
-  const [lignes, setLignes] = useState<LigneHistorique[] | null>(null);
+  const [lignes, setLignes] = useState<GroupeActivite<LigneHistorique>[] | null>(null);
   const [erreur, setErreur] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     getHistorique({ page: 1, user_id: "", action: "", entite: "", from: "", to: "" }).then(
       (page) => {
-        if (!cancelled) setLignes(page.items.slice(0, 5));
+        if (!cancelled) setLignes(regrouperActivite(page.items));
       },
       () => {
         if (!cancelled) setErreur(true);
@@ -174,7 +206,7 @@ export function ActiviteCard() {
         <ol className="relative space-y-3 text-[13px]">
           {/* Frise : un trait vertical relie les actions */}
           <span className="absolute top-2 bottom-2 left-[13px] w-px bg-simtis-border" aria-hidden />
-          {lignes.map((ligne) => {
+          {lignes.map(({ ligne, nombre, premiere }) => {
             const Icone = iconeAction(ligne.action);
             return (
               <li key={ligne.id} className="relative flex items-start gap-3">
@@ -182,8 +214,18 @@ export function ActiviteCard() {
                   <Icone className="h-3.5 w-3.5" aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1 pt-1">
-                  <span className="block truncate font-medium text-simtis-text">
-                    {ligne.action_libelle}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate font-medium text-simtis-text">
+                      {ligne.action_libelle}
+                    </span>
+                    {nombre > 1 && (
+                      <span
+                        className="shrink-0 rounded-full bg-simtis-light px-1.5 py-px text-[11px] font-semibold text-simtis-primary-dark tabular-nums"
+                        aria-label={`${nombre} fois d'affilée`}
+                      >
+                        ×{nombre}
+                      </span>
+                    )}
                   </span>
                   <span className="block truncate text-xs text-simtis-muted">
                     {ligne.utilisateur ?? "Système"}
@@ -191,7 +233,11 @@ export function ActiviteCard() {
                 </span>
                 <time
                   dateTime={ligne.created_at}
-                  title={formatDateTime(ligne.created_at)}
+                  title={
+                    nombre > 1
+                      ? `Du ${formatDateTime(premiere)} au ${formatDateTime(ligne.created_at)}`
+                      : formatDateTime(ligne.created_at)
+                  }
                   className="shrink-0 pt-1 text-xs whitespace-nowrap text-simtis-muted"
                 >
                   {heureRelative(ligne.created_at)}
