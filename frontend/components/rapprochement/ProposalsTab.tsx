@@ -1,12 +1,11 @@
 "use client";
 
 import { CheckCheck, ListChecks, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { AmbiguousCard } from "@/components/rapprochement/AmbiguousCard";
 import { EcritureAmbigueCard } from "@/components/rapprochement/EcritureAmbigueCard";
 import { ProposalCard } from "@/components/rapprochement/ProposalCard";
-import { StatButton } from "@/components/rapprochement/StatButton";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -15,6 +14,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
   aRejeter,
@@ -81,16 +81,102 @@ type ProposalsTabProps = {
 // Filtre de la case « Impayés ↔ origine » : il n'affiche que la carte des paires (09/11/2026)
 const IMPAYES = "impayes";
 
+type FiltrePastille = {
+  value: ProposalsFilter;
+  label: string;
+  /** Famille de pastilles, séparées par un trait (11/11/2026). */
+  groupe: "toutes" | "propositions" | "ambigues";
+  /** Point de couleur selon le risque (classe de token), absent pour « Toutes ». */
+  point?: string;
+};
+
 /** Filtres de l'onglet ; le seuil « forte » vient du serveur (80 depuis le 08/10/2026). */
-function filtres(seuil: string): { value: ProposalsFilter; label: string }[] {
+function filtres(seuil: string): FiltrePastille[] {
   return [
-    { value: "toutes", label: "Toutes" },
-    { value: "fortes", label: `Fortes (≥ ${seuil})` },
-    { value: "a_verifier", label: `À vérifier (< ${seuil})` },
-    { value: "ambigues", label: "Opérations ambiguës" },
-    { value: "ecritures_ambigues", label: "Écritures ambiguës" },
-    { value: "eloignees", label: "Éloignées" },
+    { value: "toutes", label: "Toutes", groupe: "toutes" },
+    {
+      value: "fortes",
+      label: `Fortes ≥ ${seuil}`,
+      groupe: "propositions",
+      point: "bg-simtis-success",
+    },
+    {
+      value: "a_verifier",
+      label: `À vérifier < ${seuil}`,
+      groupe: "propositions",
+      point: "bg-simtis-warning",
+    },
+    {
+      value: "eloignees",
+      label: "Éloignées",
+      groupe: "propositions",
+      point: "bg-simtis-neutral-fg",
+    },
+    {
+      value: "ambigues",
+      label: "Opérations ambiguës",
+      groupe: "ambigues",
+      point: "bg-simtis-warning",
+    },
+    {
+      value: "ecritures_ambigues",
+      label: "Écritures ambiguës",
+      groupe: "ambigues",
+      point: "bg-simtis-warning",
+    },
   ];
+}
+
+/** Pastille de filtre de la carte « Propositions en attente » (11/11/2026). */
+function PastilleFiltre({
+  label,
+  value,
+  point,
+  active,
+  onClick,
+  description,
+}: {
+  label: string;
+  value: number | undefined;
+  point?: string;
+  active: boolean;
+  onClick: () => void;
+  description?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={description}
+      onClick={onClick}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-2 rounded-full border py-1.5 pr-1.5 pl-3 text-sm font-medium whitespace-nowrap transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary",
+        active
+          ? "border-simtis-primary bg-simtis-primary text-white shadow-simtis"
+          : "border-simtis-border bg-simtis-card text-simtis-text hover:border-simtis-primary hover:bg-simtis-light/50",
+      )}
+    >
+      {point && (
+        <span
+          aria-hidden
+          className={cn("h-2 w-2 rounded-full", point, active && "ring-2 ring-white/70")}
+        />
+      )}
+      {label}
+      <span
+        className={cn(
+          "min-w-7 rounded-full px-2 py-0.5 text-center text-xs font-semibold tabular-nums",
+          active ? "bg-white/20 text-white" : "bg-simtis-light text-simtis-primary-dark",
+        )}
+      >
+        {value === undefined ? "-" : formatAmount(value)}
+      </span>
+    </button>
+  );
+}
+
+function Separateur() {
+  return <span aria-hidden className="mx-1 hidden h-6 w-px bg-simtis-border sm:block" />;
 }
 
 function bascule(ids: ReadonlySet<number>, id: number): Set<number> {
@@ -310,34 +396,45 @@ export function ProposalsTab({
   return (
     <div className="space-y-4">
       <Card title="Propositions en attente" icon={ListChecks}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Pastilles groupées par famille (11/11/2026), le filtre Type à droite */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-3">
           <div
-            className="grid grid-cols-2 gap-2 text-sm sm:max-w-3xl sm:grid-cols-5"
+            className="flex flex-wrap items-center gap-2"
             role="group"
             aria-label="Filtrer les propositions"
           >
-            {filtres(seuil).map(({ value, label }) => (
-              <StatButton
-                key={value}
-                label={label}
-                value={compteFiltre(items, value, ambigues.total, ecrituresAmbigues.total)}
-                active={filtre === value}
-                onClick={() => setFiltre(value)}
-              />
+            {filtres(seuil).map(({ value, label, groupe, point }, index, liste) => (
+              <Fragment key={value}>
+                {index > 0 && liste[index - 1].groupe !== groupe && <Separateur />}
+                <PastilleFiltre
+                  label={label}
+                  point={point}
+                  value={compteFiltre(items, value, ambigues.total, ecrituresAmbigues.total)}
+                  active={filtre === value}
+                  onClick={() => setFiltre(value)}
+                />
+              </Fragment>
             ))}
             {impayes && (
-              <StatButton
-                label="Impayés ↔ origine"
-                value={impayes.nb ?? undefined}
-                active={filtre === IMPAYES}
-                onClick={() => setFiltre(IMPAYES)}
-                description="Impayés Sage à rapprocher avec leur écriture d'origine"
-              />
+              <>
+                <Separateur />
+                <PastilleFiltre
+                  label="Impayés ↔ origine"
+                  point="bg-simtis-danger"
+                  value={impayes.nb ?? undefined}
+                  active={filtre === IMPAYES}
+                  onClick={() => setFiltre(IMPAYES)}
+                  description="Impayés Sage à rapprocher avec leur écriture d'origine"
+                />
+              </>
             )}
           </div>
           {onTypeOperation && (
-            <div className="w-full max-w-[170px]">
-              <Field label="Type d'opération" htmlFor="propositions-type">
+            <div className="ml-auto flex items-center gap-2">
+              <label htmlFor="propositions-type" className="text-sm font-medium text-simtis-muted">
+                Type
+              </label>
+              <div className="w-[170px]">
                 <Select
                   id="propositions-type"
                   value={typeOperation}
@@ -345,14 +442,9 @@ export function ProposalsTab({
                   options={TYPES_OPERATION.map((item) => ({ value: item, label: item }))}
                   onChange={(event) => onTypeOperation(event.target.value)}
                 />
-              </Field>
+              </div>
             </div>
           )}
-          <p className="max-w-md text-sm text-simtis-muted">
-            Les fortes correspondances sont cochées d&apos;office. Cochez une proposition à vérifier
-            seulement après l&apos;avoir contrôlée. Une opération ambiguë se rapproche en
-            choisissant son écriture.
-          </p>
         </div>
         {error && (
           <p
