@@ -157,11 +157,19 @@ export function SoldeComptableCard({
       key: "ecart",
       header: "Écart",
       align: "right",
+      // Badge rouge si l'écart n'est pas nul, vert à 0, texte simple sans écart (11/11/2026)
       render: (l) => (
         <span
           className={cn(
-            l.ecart !== null && Number(l.ecart) !== 0 && "font-semibold text-simtis-danger-fg",
-            l.ecart !== null && Number(l.ecart) === 0 && "text-simtis-success-fg",
+            "whitespace-nowrap tabular-nums",
+            l.ecart !== null &&
+              "inline-flex rounded-full px-2.5 py-0.5 text-xs leading-5 font-semibold",
+            l.ecart !== null &&
+              Number(l.ecart) !== 0 &&
+              "bg-simtis-danger-bg text-simtis-danger-fg",
+            l.ecart !== null &&
+              Number(l.ecart) === 0 &&
+              "bg-simtis-success-bg text-simtis-success-fg",
           )}
         >
           {formatAmount(l.ecart, unite(l))}
