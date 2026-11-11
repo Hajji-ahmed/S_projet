@@ -970,3 +970,49 @@ def test_migration_0048_empties_the_piece_of_simtis_entries_not_yet_exported(emp
         ).all()
     assert pieces == {1: None, 2: "BP2610002", 3: "P-77"}
     assert audits == [("1", "BP2610001")]
+
+
+def test_migration_0050_moves_the_stamp_lines_not_yet_exported_to_61671000(empty_database):
+    """Décision du 11/11/2026 : le DT D'ENREGISTREMENT va au compte 61671000. Les lignes saisies
+    d'une écriture pas encore exportée changent (audit), celles d'une écriture exportée non."""
+    config, engine = empty_database
+    command.upgrade(config, "0049")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'BP', 'BP');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'Compte', 'N1', 'MAD');
+                INSERT INTO accounting_entries (id, company_id, bank_account_id, date_ecriture,
+                    libelle, debit, credit, montant, hash_ligne, origine, famille_frais,
+                    numero_piece, exportee_le) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '2026-10-02', 'DT', 0, 5, 5, 'e1', 'SIMTIS', 'timbres', NULL, NULL),
+                    (2, 1, 1, '2026-10-01', 'DT', 0, 6, 6, 'e2', 'SIMTIS', 'timbres',
+                        'BP2610001', '2026-10-05 10:00+00');
+                INSERT INTO frais_lignes (id, accounting_entry_id, ordre, compte, libelle,
+                    montant, sens) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '61671', 'DT', 4, 'Crédit'),
+                    (2, 1, 2, '61473000', 'FRAIS', 1, 'Crédit'),
+                    (3, 2, 1, '61671', 'DT', 6, 'Crédit');
+                """
+            )
+        )
+
+    command.upgrade(config, "0050")
+
+    with engine.connect() as connection:
+        comptes = dict(connection.execute(text("SELECT id, compte FROM frais_lignes")).all())
+        audits = connection.execute(
+            text("SELECT entite_id FROM audit_logs WHERE action = 'compte_timbre'")
+        ).all()
+    assert comptes == {1: "61671000", 2: "61473000", 3: "61671"}
+    assert audits == [("1",)]
+
+    command.downgrade(config, "0049")
+
+    with engine.connect() as connection:
+        comptes = dict(connection.execute(text("SELECT id, compte FROM frais_lignes")).all())
+    assert comptes == {1: "61671", 2: "61473000", 3: "61671"}

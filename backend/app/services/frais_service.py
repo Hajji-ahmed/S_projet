@@ -131,12 +131,18 @@ TAUX_TVA_FRAIS = Decimal("10")
 # Décision du 19/10/2026 : une opération de frais de plus de 200 DH (hors droits de timbre) n'est
 # jamais comptabilisée en automatique ; elle se passe à la main et se justifie auprès de la banque
 SEUIL_MANUEL = Decimal("200")
+# Décision du 11/11/2026 : une commission dont la TVA est sur une ligne à part (« COMMISSION » +
+# « TAXE SUR VALEUR AJOUTEE » de BP, et les mêmes paires des autres banques) passe en automatique
+# même au-dessus de `SEUIL_MANUEL`, et sort du fichier des frais à justifier ; les commissions à TVA
+# comprise et les autres frais suivent toujours le seuil
+TYPES_SANS_SEUIL = frozenset({"commission", "tva", "commission_effet", "tva_commission_effet"})
 # FRAIS RECUPERES PAR LA BANQUE de 77,50 : droit de timbre 50 + commission 25 + TVA 2,50
 FRAIS_RECUPERES_AVEC_TIMBRE = Decimal("77.50")
 TIMBRE_FRAIS_RECUPERES = Decimal("50.00")
 # Comptes généraux Sage des lignes de frais (16/10/2026, donnés par le métier) : chaque ligne
 # de frais va au débit de son compte, le total au crédit du compte bancaire
-COMPTE_TIMBRE = "61671"
+# 61671000 depuis le 11/11/2026 (61671 avant ; migration 0050 pour les lignes non exportées)
+COMPTE_TIMBRE = "61671000"
 COMPTE_COMMISSION = "61714000"
 COMPTE_FRAIS_BANCAIRES = "61473000"  # FRAIS COMMISSIONS BANCAIRE
 COMPTE_TVA = "34552142"  # TVA BANQUE 10 %
@@ -399,8 +405,8 @@ def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
 
     Par compte et par jour, chaque TVA (dans l'ordre du relevé) prend une « COMMISSION » encore
     libre dont la TVA de 10 % vaut exactement son montant ; une commission ne prend qu'une TVA.
-    Restent à la main : une TVA sans commission (celle d'un INTERET REMISE LCN A L'ESCOMPTE…) et
-    celle d'une commission de plus de `SEUIL_MANUEL`, qui suit sa commission."""
+    Reste à la main : une TVA sans commission (celle d'un INTERET REMISE LCN A L'ESCOMPTE…). Une
+    commission de plus de `SEUIL_MANUEL` passe avec sa TVA depuis le 11/11/2026."""
     par_jour: dict[tuple[int, date], list[BankTransaction]] = {}
     for tx in operations:
         if tx.montant < 0 and type_commission(tx.libelle) in ("commission", "tva"):
@@ -419,9 +425,7 @@ def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
             if not candidates:
                 a_la_main.add(tx.id)
                 continue
-            commission = candidates.pop(0)
-            if -commission.montant > SEUIL_MANUEL:
-                a_la_main.add(tx.id)
+            candidates.pop(0)
     return a_la_main
 
 
@@ -442,7 +446,7 @@ def regrouper(
         if (
             tx.montant >= 0
             or code is None
-            or au_dessus_du_seuil(famille, tx.montant)
+            or au_dessus_du_seuil(famille, tx.montant, tx.libelle)
             or tx.id in hors_famille
         ):
             continue
@@ -544,10 +548,19 @@ def _ecartes(
     }
 
 
-def au_dessus_du_seuil(famille: "Famille", montant: Decimal) -> bool:
+def sans_seuil(libelle: str | None) -> bool:
+    """Commission ou TVA sur deux lignes (11/11/2026) : le seuil de 200 DH ne s'applique pas."""
+    return type_commission(libelle) in TYPES_SANS_SEUIL
+
+
+def au_dessus_du_seuil(famille: "Famille", montant: Decimal, libelle: str | None) -> bool:
     """Frais débité de plus de `SEUIL_MANUEL` (19/10/2026) : jamais en automatique, sauf un droit
-    de timbre."""
-    return famille.code != "timbres" and -montant > SEUIL_MANUEL
+    de timbre et, depuis le 11/11/2026, une commission ou sa TVA sur deux lignes."""
+    return (
+        famille.code != "timbres"
+        and -montant > SEUIL_MANUEL
+        and not (famille is COMMISSIONS and sans_seuil(libelle))
+    )
 
 
 def famille_automatique(libelle: str | None, montant: Decimal | None) -> str | None:
@@ -559,7 +572,7 @@ def famille_automatique(libelle: str | None, montant: Decimal | None) -> str | N
         (
             code
             for code, regle in FAMILLES.items()
-            if regle.type_de(libelle) and not au_dessus_du_seuil(regle, montant)
+            if regle.type_de(libelle) and not au_dessus_du_seuil(regle, montant, libelle)
         ),
         None,
     )
@@ -1882,13 +1895,18 @@ def justificatif(
     acteur_id: int,
     ip: str | None,
 ) -> tuple[str, bytes, int]:
-    """Fichier Excel des frais de plus de 200 DH (hors droits de timbre) de la période, quel que
-    soit leur statut, à envoyer à la banque pour justification ; un total par banque et un total
-    général. Rien n'est marqué : le fichier se retélécharge."""
+    """Fichier Excel des frais de plus de 200 DH (hors droits de timbre et, depuis le 11/11/2026,
+    commissions et TVA sur deux lignes) de la période, quel que soit leur statut, à envoyer à la
+    banque pour justification ; un total par banque et un total général. Rien n'est marqué : le
+    fichier se retélécharge."""
     date_from, date_to = _periode(date_from, date_to)
     accounts = {a.id: a for a in _accounts(db, company_id, bank_account_id)}
     rows = frais_repository.frais_au_dessus(db, list(accounts), date_from, date_to, SEUIL_MANUEL)
-    rows = [(tx, piece, origine) for tx, piece, origine in rows if not est_timbre(tx.libelle)]
+    rows = [
+        (tx, piece, origine)
+        for tx, piece, origine in rows
+        if not est_timbre(tx.libelle) and not sans_seuil(tx.libelle)
+    ]
     if not rows:
         raise ConflictError(f"Aucun frais de plus de {SEUIL_MANUEL:.0f} DH sur cette période.")
     rows.sort(

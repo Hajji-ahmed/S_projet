@@ -283,7 +283,7 @@ def test_preparing_needs_the_permission(client, direction, db):
 
 def test_export_writes_a_csv_credit_line_and_marks_the_entry(client, comptable, db):
     """16/10/2026 : un CSV au point-virgule, Référence vide ; 17/10/2026 : le timbre au crédit de
-    61671, sans ligne banque."""
+    61671000 (61671 avant le 11/11/2026), sans ligne banque."""
     compte = bp(db, compte_timbre=None)
     timbres_du_jour(db, compte)
     valider(client, comptable, db, (compte, JOUR))
@@ -315,7 +315,7 @@ def test_export_writes_a_csv_credit_line_and_marks_the_entry(client, comptable, 
     )
     vides = ("",) * 7
     assert rows[1:] == [
-        ("23/04/2026", code, "5543", "61671", "", "DT D'ENREGISTREMENT", "202,00", "Crédit")
+        ("23/04/2026", code, "5543", "61671000", "", "DT D'ENREGISTREMENT", "202,00", "Crédit")
         + vides,
     ]
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
@@ -1236,7 +1236,7 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     ] == [
         ("Frais récupérés", "61473000", "25.00"),
         ("TVA frais récupérés", "34552142", "2.50"),
-        ("Timbre frais récupérés", "61671", "50.00"),
+        ("Timbre frais récupérés", "61671000", "50.00"),
     ]
     assert [a["id"] for a in tous["autres_frais"]] == [remboursement.id]
 
@@ -1267,7 +1267,7 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
         (code_com, "34552142", "TVA COM", "1,00", "Crédit"),
         (code_frais, "61473000", "FRAIS", "25,00", "Crédit"),
         (code_frais, "34552142", "TVA FRAIS", "2,50", "Crédit"),
-        (code_frais, "61671", "FRAIS", "50,00", "Crédit"),
+        (code_frais, "61671000", "FRAIS", "50,00", "Crédit"),
     ]
     # Même libellé à l'écran (14/10/2026)
     assert [ligne["libelle"] for ligne in ecriture_frais["lignes"]] == [
@@ -1514,7 +1514,8 @@ def test_a_dismissed_day_comes_back_when_proposed_again(client, comptable, db):
 def test_a_fee_above_200_leaves_the_automatic_proposal_but_a_stamp_does_not(client, comptable, db):
     compte = bp(db)
     petite = operation(db, compte, "-150", JOUR, "COMMISSION")
-    grande = operation(db, compte, "-250", JOUR, "COMMISSION")
+    # À TVA comprise : toujours au seuil de 200 DH (11/11/2026)
+    grande = operation(db, compte, "-250", JOUR, "COMMISSION BANCAIRE")
     timbre = operation(db, compte, "-300", JOUR, REMISE)
 
     tableau = lire(client, comptable, db, None).json()
@@ -1535,8 +1536,12 @@ def test_a_fee_above_200_leaves_the_automatic_proposal_but_a_stamp_does_not(clie
 def test_fees_above_200_are_exported_for_the_bank(client, comptable, direction, db):
     compte = bp(db)
     operation(db, compte, "-150", JOUR, "COMMISSION")
-    grande = operation(db, compte, "-250", JOUR, "COMMISSION", reference="R1")
+    grande = operation(db, compte, "-250", JOUR, "COMMISSION BANCAIRE", reference="R1")
     operation(db, compte, "-300", JOUR, REMISE)
+    # Commission et TVA sur deux lignes : automatiques, pas à justifier (11/11/2026)
+    operation(db, compte, "-300", JOUR, "COMMISSION")
+    operation(db, compte, "-30", JOUR, TVA)
+    operation(db, compte, "-400", JOUR, "COMMISSION EFFET N 12 REMIS PAR X")
     agios = operation(db, compte, "-604.71", date(2026, 4, 24), "AGIOS BANCAIRES")
     manuelle(client, comptable, db, [agios], libelle="AGIOS")
     params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30"}
@@ -1556,7 +1561,7 @@ def test_fees_above_200_are_exported_for_the_bank(client, comptable, direction, 
         "Statut",
     )
     assert [(r[0], r[4], r[5], r[6], r[7]) for r in rows[1:3]] == [
-        ("BP", "COMMISSION", "R1", 250, "À comptabiliser"),
+        ("BP", "COMMISSION BANCAIRE", "R1", 250, "À comptabiliser"),
         ("BP", "AGIOS BANCAIRES", None, 604.71, "Comptabilisé"),
     ]
     assert rows[2][8] is None  # pas encore exportée : pas de N° pièce (09/11/2026)
@@ -1573,7 +1578,7 @@ INTERET_ESCOMPTE = "INTERET REMISE LCN A L'ESCOMPTE"
 
 def test_a_vat_goes_with_a_commission_of_ten_times_its_amount():
     """Relevé BP du 22/04/2026 : la TVA d'un intérêt d'escompte n'a pas de commission, celle d'une
-    commission de plus de 200 DH suit sa commission ; une commission ne prend qu'une TVA."""
+    commission de plus de 200 DH entre avec elle (11/11/2026) ; une commission ne prend qu'une TVA."""
     autre_jour = date(2026, 4, 24)
     operations = [
         _tx(1, 1, JOUR, "-45", "COMMISSION"),
@@ -1590,7 +1595,7 @@ def test_a_vat_goes_with_a_commission_of_ten_times_its_amount():
         _tx(12, 1, autre_jour, "-4.51", TVA),  # au centime près
     ]
 
-    assert frais_service.tva_a_la_main(operations) == {5, 6, 7, 8, 9, 12}
+    assert frais_service.tva_a_la_main(operations) == {5, 7, 8, 9, 12}
 
 
 def test_a_vat_without_its_commission_is_booked_by_hand(client, comptable, db):
@@ -1618,7 +1623,9 @@ def test_a_vat_without_its_commission_is_booked_by_hand(client, comptable, db):
     assert manuelle(client, comptable, db, [tva_interet], libelle="TVA").status_code == 200
 
 
-def test_the_vat_of_a_commission_above_200_goes_by_hand_with_it(client, comptable, db):
+def test_a_commission_above_200_goes_automatically_with_its_vat(client, comptable, db):
+    """Décision du 11/11/2026 : commission et TVA sur deux lignes passent dans la COM même
+    au-dessus de 200 DH (à la main avant)."""
     compte = bp(db)
     petite = operation(db, compte, "-40", JOUR, "COMMISSION")
     grande = operation(db, compte, "-600", JOUR, "COMMISSION")
@@ -1628,11 +1635,28 @@ def test_the_vat_of_a_commission_above_200_goes_by_hand_with_it(client, comptabl
     tableau = lire(client, comptable, db, None).json()
 
     (com,) = tableau["propositions"]
-    assert com["total"] == "44.00"
-    assert {a["id"] for a in tableau["autres_frais"]} == {grande.id, tva_grande.id}
-    assert petite.id and tva_petite.id
-    reponse = manuelle(client, comptable, db, [grande, tva_grande], libelle="COM")
-    assert reponse.status_code == 200, reponse.text
+    assert (com["libelle"], com["total"], com["nb_operations"]) == ("COM", "704.00", 4)
+    assert {(ligne["compte"], ligne["credit"]) for ligne in com["lignes"]} == {
+        ("61714000", "640.00"),
+        ("34552142", "64.00"),
+    }
+    assert tableau["autres_frais"] == []
+    assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
+    assert statuses(db, petite, grande, tva_petite, tva_grande) == ["Rapprochée"] * 4
+
+
+def test_other_banks_commission_pairs_above_200_are_automatic_too(client, comptable, db):
+    compte = bp(db)
+    transfert = operation(db, compte, "-500", JOUR, "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF 1")
+    tva = operation(db, compte, "-50", JOUR, "TVA 10% SUR COMMISSION TRF 1")
+    effet = operation(db, compte, "-250", JOUR, "COMMISSION EFFET N 12 REMIS PAR X")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    (com,) = tableau["propositions"]
+    assert (com["total"], com["nb_operations"]) == ("800.00", 3)
+    assert tableau["autres_frais"] == []
+    assert transfert.id and tva.id and effet.id
 
 
 def test_a_day_with_a_sage_com_entry_keeps_its_vat_out_of_the_manual_list(client, comptable, db):
@@ -1694,7 +1718,7 @@ def details(proposition):
 
 def test_a_bmce_day_is_booked_like_bp(client, comptable, db):
     """Commission et TVA sur deux lignes, associées par les 10 % ; timbre de domiciliation ; une
-    commission de plus de 200 DH passe à la main avec sa TVA."""
+    commission de plus de 200 DH entre dans la COM avec sa TVA (11/11/2026, à la main avant)."""
     compte = account(db, bank_code="BMCE")
     operation(db, compte, "-50", JOUR, "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J148345")
     operation(db, compte, "-5", JOUR, "TVA 10% SUR COMMISSION TRF26J148345")
@@ -1714,13 +1738,14 @@ def test_a_bmce_day_is_booked_like_bp(client, comptable, db):
     )
     assert (par_famille["commissions"]["libelle"], par_famille["commissions"]["total"]) == (
         "COM",
-        "220.00",
+        "685.52",
     )
     assert details(par_famille["commissions"]) == [
-        ("commission", 2, "200.00"),
-        ("tva", 2, "20.00"),
+        ("commission", 3, "623.20"),
+        ("tva", 3, "62.32"),
     ]
-    assert {a["id"] for a in tableau["autres_frais"]} == {grande.id, tva_grande.id}
+    assert tableau["autres_frais"] == []
+    assert grande.id and tva_grande.id
 
 
 def test_awb_fees_with_vat_inside_are_split_and_its_escompte_stays_by_hand(client, comptable, db):

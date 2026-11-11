@@ -599,7 +599,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
               icon={FileSpreadsheet}
               disabled={exporting}
               onClick={exporterPourBanque}
-              title="Frais de plus de 200 DH (hors droits de timbre) à justifier"
+              title="Frais de plus de 200 DH (hors droits de timbre et commissions avec TVA séparée) à justifier"
             >
               Exporter pour la banque
             </Button>
