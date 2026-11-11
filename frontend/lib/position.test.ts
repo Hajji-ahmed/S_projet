@@ -22,7 +22,7 @@ describe("currencyCell", () => {
   it("signale un solde repris d'un jour précédent", () => {
     expect(
       currencyCell({ bank_id: 1, valeur: "75.00", date_solde: "2026-10-01", reprise: true }, "USD"),
-    ).toEqual({ text: "75 USD", note: "dernier solde connu : 01/10/2026" });
+    ).toEqual({ text: "75,00 USD", note: "dernier solde connu : 01/10/2026" });
   });
 
   it("« - » sans compte ni solde, jamais 0", () => {
@@ -140,7 +140,7 @@ describe("noteCellule (plusieurs comptes, 23/10/2026)", () => {
     );
 
     expect(note?.replace(/\s/g, " ")).toBe(
-      "Somme de 2 comptes (soldes …4521 : 30 000 USD ; …8830 : 18 299,91 USD)",
+      "Somme de 2 comptes (soldes …4521 : 30 000,00 USD ; …8830 : 18 299,91 USD)",
     );
   });
 

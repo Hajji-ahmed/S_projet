@@ -456,7 +456,7 @@ describe("volets compacts (28/10/2026)", () => {
 
   it("retire « DH » des montants MAD et garde l'unité d'une devise", () => {
     expect(montantVolet("65638.18", "MAD")).toBe("65 638,18");
-    expect(montantVolet("1000000.00")).toBe("1 000 000");
+    expect(montantVolet("1000000.00")).toBe("1 000 000,00");
     expect(montantVolet("2891.83", "USD")).toBe("2 891,83 USD");
     expect(montantVolet("0.00", "MAD")).toBe("-");
   });

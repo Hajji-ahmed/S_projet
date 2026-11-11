@@ -1,21 +1,24 @@
 const EMPTY_VALUE = "-";
 
 type FormatAmountOptions = {
-  /** Affiche « - » pour un montant égal à zéro (colonnes Débit / Crédit). Sinon « 0 ». */
+  /** Affiche « - » pour un montant égal à zéro (colonnes Débit / Crédit). Sinon « 0,00 ». */
   dashForZero?: boolean;
+  /** Décimales seulement s'il y a des centimes (« 500 000 ») : champs de saisie (11/11/2026). */
+  centimesSiBesoin?: boolean;
 };
 
 /**
- * Formate un montant pour l'affichage : « 2 450 000 DH ».
- * Séparateur de milliers = espace, décimales seulement s'il y a des centimes.
- * Valeur absente (null, undefined, vide, non numérique) = « - ».
+ * Formate un montant pour l'affichage : « 2 450 000,00 DH ».
+ * Séparateur de milliers = espace, toujours 2 décimales (11/11/2026 ; avant, seulement s'il y avait
+ * des centimes). Valeur absente (null, undefined, vide, non numérique) = « - ». Pour un compteur
+ * (nombre de lignes, de propositions), utiliser `formatNombre`.
  *
  * Affichage uniquement : les montants restent calculés côté API (Decimal).
  */
 export function formatAmount(
   value: number | string | null | undefined,
   currency?: string,
-  { dashForZero = false }: FormatAmountOptions = {},
+  { dashForZero = false, centimesSiBesoin = false }: FormatAmountOptions = {},
 ) {
   if (value === null || value === undefined || value === "") return EMPTY_VALUE;
 
@@ -25,7 +28,7 @@ export function formatAmount(
 
   const hasCents = Math.round(n * 100) % 100 !== 0;
   const formatted = new Intl.NumberFormat("fr-FR", {
-    minimumFractionDigits: hasCents ? 2 : 0,
+    minimumFractionDigits: hasCents || !centimesSiBesoin ? 2 : 0,
     maximumFractionDigits: 2,
   })
     .format(n)
@@ -35,6 +38,14 @@ export function formatAmount(
 }
 
 const INSECABLE = " ";
+
+/** Compteur (lignes, propositions, frais) : « 6 469 », sans décimales (11/11/2026). */
+export function formatNombre(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return EMPTY_VALUE;
+  return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 })
+    .format(value)
+    .replace(/[  ]/g, " ");
+}
 
 /**
  * Montant court pour les axes et le centre des graphiques (21/10/2026) : « 18 M », « 1,5 M »,

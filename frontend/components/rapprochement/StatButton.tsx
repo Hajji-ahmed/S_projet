@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/format";
+import { formatNombre } from "@/lib/format";
 
 type StatButtonProps = {
   label: string;
@@ -50,7 +50,7 @@ export function StatButton({
             tuile ? "text-[24px] leading-tight" : "text-[17px]",
           )}
         >
-          {value === undefined ? "-" : formatAmount(value)}
+          {value === undefined ? "-" : formatNombre(value)}
         </span>
         {detail && (
           <span className="text-sm font-medium text-simtis-muted tabular-nums">{detail}</span>

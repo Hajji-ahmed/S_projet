@@ -64,7 +64,7 @@ export function normalizeNumero(text: string): string {
 
 /** Valeur de l'API (« 500000.00 ») vers le champ de saisie (« 500 000 »). */
 export function amountForInput(value: string): string {
-  return formatAmount(value);
+  return formatAmount(value, undefined, { centimesSiBesoin: true });
 }
 
 /** « 4.5 » → « 4,5 % » ; aucun taux → « - ». */

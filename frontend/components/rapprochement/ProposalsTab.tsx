@@ -15,7 +15,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatNombre } from "@/lib/format";
 import {
   aRejeter,
   aValider,
@@ -169,7 +169,7 @@ function PastilleFiltre({
           active ? "bg-white/20 text-white" : "bg-simtis-light text-simtis-primary-dark",
         )}
       >
-        {value === undefined ? "-" : formatAmount(value)}
+        {value === undefined ? "-" : formatNombre(value)}
       </span>
     </button>
   );

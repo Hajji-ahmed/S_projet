@@ -41,7 +41,7 @@ import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/format";
+import { formatNombre } from "@/lib/format";
 import {
   basculerLigne,
   CLE_PERIODE,
@@ -518,7 +518,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
             >
               <span className="block text-sm text-simtis-muted">En cours</span>
               <span className="block text-[24px] leading-tight font-semibold text-simtis-warning-fg tabular-nums">
-                {formatAmount(enCours)}
+                {formatNombre(enCours)}
               </span>
             </div>
           )}
@@ -568,7 +568,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
                           : "bg-simtis-card text-simtis-muted",
                       )}
                     >
-                      {formatAmount(nombre)}
+                      {formatNombre(nombre)}
                     </span>
                   )}
                 </button>
