@@ -61,8 +61,9 @@ ENTITE = "accounting_entry"
 # Garde-fou contre une année mal saisie, comme le moteur de rapprochement
 PERIODE_MAX_JOURS = 1827
 # Format d'import paramétrable de Sage (15/10/2026), dans l'ordre de l'écran Sage ; les colonnes
-# marquées d'une étoile sont obligatoires pour Sage
-EXPORT_HEADERS = (
+# marquées d'une étoile sont obligatoires pour Sage. Le fichier n'a PAS de ligne d'en-tête
+# (11/11/2026, Sage l'importe ainsi) : cette liste ne sert que de référence pour l'ordre des colonnes
+COLONNES_SAGE = (
     "* Date de pièce",
     "N° pièce",
     "* Code journal",
@@ -1483,7 +1484,6 @@ def exporter(
 
     buffer = StringIO()
     writer = csv.writer(buffer, delimiter=CSV_SEPARATEUR, lineterminator="\r\n")
-    writer.writerow(EXPORT_HEADERS)
     maintenant = datetime.now(UTC)
     for index, (entry, _, _) in enumerate(rows):
         piece = numero_piece(banque, debut, rang + index)

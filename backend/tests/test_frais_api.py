@@ -302,26 +302,11 @@ def test_export_writes_a_balanced_csv_entry_and_marks_the_entry(client, comptabl
     assert response.headers["content-type"].startswith("text/csv")
     assert ".csv" in response.headers["content-disposition"]
     rows = lignes_csv(response)
-    # Format d'import paramétrable de Sage (15/10/2026)
-    assert rows[0] == (
-        "* Date de pièce",
-        "N° pièce",
-        "* Code journal",
-        "* N° compte général",
-        "N° compte tiers",
-        "Libellé écriture",
-        "Montant",
-        "Sens",
-        "Mode de règlement",
-        "Date d'échéance",
-        "Référence",
-        "Numéro facture",
-        "Montant devise",
-        "Cours de la devise",
-        "Code ISO devise",
-    )
+    # Format d'import paramétrable de Sage (15/10/2026), sans ligne d'en-tête (11/11/2026) : la
+    # première ligne est déjà une écriture, dans l'ordre des colonnes de Sage
+    assert all(len(row) == len(frais_service.COLONNES_SAGE) for row in rows)
     vides = ("",) * 7
-    assert rows[1:] == [
+    assert rows == [
         ("23/04/2026", code, "5543", "61671000", "", "DT D'ENREGISTREMENT", "202,00", "D") + vides,
         ("23/04/2026", code, "5543", "55410003", "", "DT D'ENREGISTREMENT", "202,00", "C") + vides,
     ]
@@ -639,7 +624,7 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     assert export.status_code == 200, export.text
     rows = lignes_csv(export)
     # Chaque commission puis sa TVA au débit, la banque au crédit (11/11/2026)
-    assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows[1:]] == [
+    assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows] == [
         ("61473000", code, "COM", "D", "20,00"),
         ("34552142", code, "TVA COM", "D", "2,00"),
         ("61473000", code, "COM", "D", "30,00"),
@@ -743,13 +728,13 @@ def test_one_export_file_holds_stamps_and_commissions(client, comptable, db):
 
     assert response.status_code == 200, response.text
     rows = lignes_csv(response)
-    assert [(r[5], r[7]) for r in rows[1:]] == [
+    assert [(r[5], r[7]) for r in rows] == [
         ("DT D'ENREGISTREMENT", "D"),
         ("DT D'ENREGISTREMENT", "C"),
         *[("COM", "D"), ("TVA COM", "D")] * 3,
         ("COM", "C"),
     ]
-    montants = [(Decimal(r[6].replace(",", ".")), r[7]) for r in rows[1:]]
+    montants = [(Decimal(r[6].replace(",", ".")), r[7]) for r in rows]
     assert sum(m for m, sens in montants if sens == "D") == 268
     assert sum(m for m, sens in montants if sens == "C") == 268
     assert exporter(client, comptable, db).status_code == 409
@@ -853,7 +838,7 @@ def test_a_manual_entry_with_vat_is_matched_and_exported_on_two_lines(client, co
     ]
 
     rows = lignes_csv(exporter(client, comptable, db))
-    assert [(r[1], r[3], r[5], r[7], r[6]) for r in rows[1:]] == [
+    assert [(r[1], r[3], r[5], r[7], r[6]) for r in rows] == [
         (code, "61473000", "COM RTGS", "D", "150,00"),
         (code, "34552142", "TVA COM RTGS", "D", "15,00"),
         (code, "55410003", "COM RTGS", "C", "165,00"),
@@ -884,7 +869,7 @@ def test_a_manual_entry_without_vat_has_one_line_and_a_refund_goes_to_the_debit(
     # Sage : montant positif ; un remboursement d'agios BP au crédit de 63112000, la banque au
     # débit (11/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
-    assert [(r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+    assert [(r[3], r[5], r[6], r[7]) for r in rows] == [
         ("63112000", "AGIOS REMBOURSES", "151110,79", "C"),
         ("55410003", "AGIOS REMBOURSES", "151110,79", "D"),
     ]
@@ -1033,7 +1018,7 @@ def test_a_manual_entry_takes_the_account_chosen_in_the_list(client, comptable, 
         ("55410003", None),
     ]
     rows = lignes_csv(exporter(client, comptable, db))
-    assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+    assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows] == [
         (code, "63119400", "INTERETS", "150,00", "D"),
         (code, "34552142", "TVA INTERETS", "15,00", "D"),
         (code, "55410003", "INTERETS", "165,00", "C"),
@@ -1305,7 +1290,7 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     assert "comptabilisation_frais" in actions(db)
 
     rows = lignes_csv(exporter(client, comptable, db))
-    assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+    assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows] == [
         (code_com, "61473000", "COM", "150,00", "D"),
         (code_com, "34552142", "TVA COM", "15,00", "D"),
         (code_com, "61473000", "COM", "10,00", "D"),
@@ -1371,7 +1356,7 @@ def test_pieces_are_given_at_export_from_the_first_one_typed(client, comptable, 
 
     assert response.status_code == 200, response.text
     assert "BP-2026-04" in response.headers["content-disposition"]
-    assert [(r[0], r[1]) for r in lignes_csv(response)[1:]] == [
+    assert [(r[0], r[1]) for r in lignes_csv(response)] == [
         (f"{JOUR:%d/%m/%Y}", "BP2604017"),
         (f"{JOUR:%d/%m/%Y}", "BP2604017"),
         (f"{autre_jour:%d/%m/%Y}", "BP2604018"),
@@ -1481,7 +1466,7 @@ def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, c
     ]
     # La ligne banque est ajoutée aux lignes saisies (11/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
-    assert [(r[0], r[3], r[5], r[6], r[7]) for r in rows[1:]] == [
+    assert [(r[0], r[3], r[5], r[6], r[7]) for r in rows] == [
         ("25/04/2026", "61671", "DT VERSEMENTS", "2,00", "D"),
         ("25/04/2026", "61473000", "DT REMISE LCN", "200,00", "D"),
         ("25/04/2026", "55410003", "DT AVRIL", "202,00", "C"),
