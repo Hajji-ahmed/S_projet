@@ -7,6 +7,7 @@ import { Fragment, useState, type ReactNode } from "react";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { FilterTile } from "@/components/releves/FilterTile";
 import { IgnoredLinesTable } from "@/components/releves/IgnoredLinesTable";
+import { PointageBadge, pointageSelectClasses } from "@/components/releves/PointageBadge";
 import { DateInput, NumberInput, Select, TextInput } from "@/components/ui/Field";
 import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -192,8 +193,15 @@ export function EditablePreview({
         </div>
         <div>
           <dt className="text-simtis-muted">Total débit / crédit</dt>
-          <dd className="font-medium tabular-nums">
-            {formatAmount(summary.totalDebit, suffix)} / {formatAmount(summary.totalCredit, suffix)}
+          <dd className="font-medium whitespace-nowrap tabular-nums">
+            <span className="block">
+              <span className="font-normal text-simtis-muted">Débit </span>
+              {formatAmount(summary.totalDebit, suffix)}
+            </span>
+            <span className="block">
+              <span className="font-normal text-simtis-muted">Crédit </span>
+              {formatAmount(summary.totalCredit, suffix)}
+            </span>
           </dd>
         </div>
         <div>
@@ -329,7 +337,7 @@ export function EditablePreview({
                       {!locked ? (
                         <Select
                           aria-label={`Pointage de la ligne ${draft.numero}`}
-                          className="h-9 min-w-[150px]"
+                          className={pointageSelectClasses(draft.pointage_type_id === null)}
                           value={
                             draft.pointage_type_id === null ? "" : String(draft.pointage_type_id)
                           }
@@ -348,11 +356,13 @@ export function EditablePreview({
                           }
                         />
                       ) : (
-                        <span className="whitespace-nowrap">
-                          {draft.pointage_type_id === null
-                            ? "À choisir"
-                            : (pointageLabel.get(draft.pointage_type_id) ?? "-")}
-                        </span>
+                        <PointageBadge
+                          libelle={
+                            draft.pointage_type_id === null
+                              ? null
+                              : (pointageLabel.get(draft.pointage_type_id) ?? "-")
+                          }
+                        />
                       )}
                     </td>
                     <td className={CELL}>

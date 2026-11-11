@@ -8,6 +8,7 @@ import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
 import { ManualOperationModal } from "@/components/releves/ManualOperationModal";
+import { PointageBadge, pointageSelectClasses } from "@/components/releves/PointageBadge";
 import { TransactionEditModal } from "@/components/releves/TransactionEditModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -263,7 +264,7 @@ export function AccountStatementCard({
         canEdit ? (
           <Select
             aria-label={`Pointage de l'opération du ${formatDate(row.date_operation)} ${row.libelle}`}
-            className="h-9 min-w-[150px]"
+            className={pointageSelectClasses(row.pointage_type_id === null)}
             value={row.pointage_type_id === null ? "" : String(row.pointage_type_id)}
             placeholder="À choisir"
             options={pointages.map((item) => ({ value: String(item.id), label: item.libelle }))}
@@ -276,7 +277,7 @@ export function AccountStatementCard({
             }
           />
         ) : (
-          (row.pointage ?? "À choisir")
+          <PointageBadge libelle={row.pointage} />
         ),
     },
     {
@@ -529,8 +530,15 @@ export function AccountStatementCard({
             </div>
             <div>
               <dt className="text-simtis-muted">Total débit / crédit</dt>
-              <dd className="font-medium tabular-nums">
-                {formatAmount(data.total_debit, suffix)} / {formatAmount(data.total_credit, suffix)}
+              <dd className="font-medium whitespace-nowrap tabular-nums">
+                <span className="block">
+                  <span className="font-normal text-simtis-muted">Débit </span>
+                  {formatAmount(data.total_debit, suffix)}
+                </span>
+                <span className="block">
+                  <span className="font-normal text-simtis-muted">Crédit </span>
+                  {formatAmount(data.total_credit, suffix)}
+                </span>
               </dd>
             </div>
             <div>
