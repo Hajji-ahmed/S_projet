@@ -15,7 +15,9 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
+import { couleurAvatar, initiales } from "@/lib/admin";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/statements";
 import { listRoles, listUsers, resetPassword, setUserStatus } from "@/services/admin";
 import type { AdminRole, AdminUser, PasswordResult } from "@/types/admin";
@@ -89,8 +91,14 @@ export function UsersTab() {
       header: "Utilisateur",
       render: (u) => (
         <span className="flex items-center gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-simtis-light text-sm font-semibold text-simtis-primary">
-            {u.nom.charAt(0).toUpperCase()}
+          <span
+            className={cn(
+              "grid h-9 w-9 shrink-0 place-items-center rounded-full text-[13px] font-semibold",
+              couleurAvatar(u.id),
+            )}
+            aria-hidden
+          >
+            {initiales(u.nom)}
           </span>
           <span className="min-w-0">
             <span className="block font-medium text-simtis-text">
@@ -306,8 +314,9 @@ function IconAction({
       aria-label={label}
       className={
         "rounded-[10px] p-2 transition-colors duration-150 disabled:pointer-events-none disabled:opacity-40 " +
+        // Action dangereuse grise au repos, rouge au survol et au focus (11/11/2026)
         (danger
-          ? "text-simtis-danger-fg hover:bg-simtis-danger-bg"
+          ? "text-simtis-muted hover:bg-simtis-danger-bg hover:text-simtis-danger-fg focus-visible:bg-simtis-danger-bg focus-visible:text-simtis-danger-fg"
           : "text-simtis-muted hover:bg-simtis-light hover:text-simtis-primary")
       }
     >

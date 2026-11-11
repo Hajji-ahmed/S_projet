@@ -4,6 +4,8 @@ import {
   basculer,
   caseVerrouillee,
   changementsPersonne,
+  couleurAvatar,
+  initiales,
   matriceDe,
   parModule,
   rolesModifies,
@@ -82,5 +84,18 @@ describe("changementsPersonne (23/10/2026)", () => {
     expect(
       changementsPersonne(permissions, new Set(["dashboard.view", "accounting.import"])),
     ).toEqual({ ajouts: [], retraits: [] });
+  });
+});
+
+describe("avatars", () => {
+  it("prend les initiales du premier et du dernier mot", () => {
+    expect(initiales("Mustapha El Alaoui")).toBe("MA");
+    expect(initiales("  salma  ")).toBe("SA");
+    expect(initiales("")).toBe("?");
+  });
+
+  it("donne toujours la même couleur au même utilisateur", () => {
+    expect(couleurAvatar(7)).toBe(couleurAvatar(7));
+    expect(couleurAvatar(1)).not.toBe(couleurAvatar(2));
   });
 });

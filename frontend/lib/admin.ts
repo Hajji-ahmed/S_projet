@@ -66,3 +66,28 @@ export function changementsPersonne(
   }
   return { ajouts: ajouts.sort(), retraits: retraits.sort() };
 }
+
+/**
+ * Initiales d'un avatar (11/11/2026) : première lettre du premier et du dernier mot
+ * (« Mustapha El Alaoui » → « MA »), deux premières lettres d'un seul mot, « ? » sans nom.
+ */
+export function initiales(nom: string): string {
+  const mots = nom.trim().split(/\s+/).filter(Boolean);
+  if (mots.length === 0) return "?";
+  if (mots.length === 1) return mots[0].slice(0, 2).toUpperCase();
+  return (mots[0].charAt(0) + mots[mots.length - 1].charAt(0)).toUpperCase();
+}
+
+// Couleurs d'avatar, toutes tirées des tokens (fond clair, texte foncé)
+const COULEURS_AVATAR = [
+  "bg-simtis-light text-simtis-primary",
+  "bg-simtis-info-bg text-simtis-info-fg",
+  "bg-simtis-violet-bg text-simtis-violet-fg",
+  "bg-simtis-success-bg text-simtis-success-fg",
+  "bg-simtis-warning-bg text-simtis-warning-fg",
+] as const;
+
+/** Couleur stable d'un utilisateur, d'après son id : la même à chaque affichage. */
+export function couleurAvatar(id: number): string {
+  return COULEURS_AVATAR[Math.abs(id) % COULEURS_AVATAR.length];
+}
