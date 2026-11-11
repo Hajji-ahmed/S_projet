@@ -135,19 +135,25 @@ export function ventilerTva(total: string, taux: string): { ht: string; tva: str
   return { ht: fromCents(ht), tva: fromCents(ttc - ht) };
 }
 
-/** Lignes d'une proposition, modifiables (19/10/2026) : montant positif et son sens. */
+/**
+ * Lignes d'une proposition, modifiables (19/10/2026) : montant positif et son sens. La ligne banque
+ * (type null) n'en fait pas partie : le serveur la recalcule toujours (11/11/2026).
+ */
 export function lignesSaisies(lignes: LigneGL[]): LigneSaisie[] {
-  return lignes.map((ligne) => ({
-    compte: ligne.compte ?? "",
-    libelle: ligne.libelle,
-    montant: ligne.credit ?? ligne.debit ?? "0.00",
-    sens: ligne.credit ? "Crédit" : "Débit",
-  }));
+  return lignes
+    .filter((ligne) => ligne.type !== null)
+    .map((ligne) => ({
+      compte: ligne.compte ?? "",
+      libelle: ligne.libelle,
+      montant: ligne.debit ?? ligne.credit ?? "0.00",
+      sens: ligne.debit ? "Débit" : "Crédit",
+    }));
 }
 
 /**
  * Contrôle des lignes saisies, comme le serveur : chacune a un compte, un libellé et un montant
- * positif, et crédits − débits = total des opérations. `ecart` = total − lignes, en texte exact.
+ * positif, et débits − crédits = total des opérations (charges et TVA au débit, 11/11/2026 ; la
+ * ligne banque n'est pas saisie). `ecart` = total − lignes, en texte exact.
  */
 export function etatLignes(
   lignes: LigneSaisie[],
@@ -167,7 +173,7 @@ export function etatLignes(
       erreur ??= "Chaque montant est positif, au centime près.";
       continue;
     }
-    somme += ligne.sens === "Crédit" ? montant : -montant;
+    somme += ligne.sens === "Débit" ? montant : -montant;
   }
   const ecart = toCents(total) - somme;
   if (!erreur && ecart !== BigInt(0))

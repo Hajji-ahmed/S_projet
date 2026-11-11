@@ -87,6 +87,8 @@ SENS_CREDIT = "Crédit"
 # Fichier pour Sage (16/10/2026) : CSV au point-virgule, en Windows-1252 (accents de « Débit »)
 CSV_SEPARATEUR = ";"
 CSV_ENCODAGE = "cp1252"
+# Colonne Sens du fichier (11/11/2026) : « D » / « C », comme le modèle de Mustapha
+SENS_CSV = {SENS_DEBIT: "D", SENS_CREDIT: "C"}
 ZERO = Decimal("0.00")
 
 # Libellés reconnus, sur le libellé en majuscules aux espaces réduits
@@ -393,6 +395,53 @@ def details_par_type(lignes: list[tuple[BankTransaction, str]]) -> list[Detail]:
             detail.nb += 1
             detail.total += montant
     return [par_type[code] for code in TYPES if code in par_type]
+
+
+# TVA sur une ligne à part et la commission qu'elle suit
+_TVA_DE = {"tva": "commission", "tva_commission_effet": "commission_effet"}
+
+
+def details_commissions(lignes: list[tuple[BankTransaction, str]]) -> list[Detail]:
+    """Lignes d'une écriture « COM » (11/11/2026) : dans l'ordre du relevé, chaque commission puis
+    sa TVA de 10 % (la première encore libre de ce montant), un frais à TVA comprise en hors taxe
+    puis TVA ; une TVA sans commission vient à la fin. Le total vaut celui des opérations."""
+    ordonnees = sorted(
+        lignes, key=lambda item: (item[0].date_operation, item[0].ordre or 0, item[0].id)
+    )
+    libres: dict[tuple[str, Decimal], list[BankTransaction]] = {}
+    for tx, code in ordonnees:
+        if code in _TVA_DE:
+            libres.setdefault((_TVA_DE[code], -tx.montant), []).append(tx)
+    prises: set[int] = set()
+    details: list[Detail] = []
+    for tx, code in ordonnees:
+        if code in _TVA_DE:
+            continue
+        details.extend(
+            Detail(part, 1, montant + ZERO) for part, montant in ventilation(code, -tx.montant)
+        )
+        candidates = libres.get((code, tva_attendue(-tx.montant)))
+        if candidates:
+            tva = candidates.pop(0)
+            prises.add(tva.id)
+            details.append(Detail(TVA_DE_COMMISSION[code], 1, -tva.montant + ZERO))
+    details.extend(
+        Detail(code, 1, -tx.montant + ZERO)
+        for tx, code in ordonnees
+        if code in _TVA_DE and tx.id not in prises
+    )
+    return details
+
+
+TVA_DE_COMMISSION = {commission: tva for tva, commission in _TVA_DE.items()}
+
+
+def details_ecriture(famille: "Famille", lignes: list[tuple[BankTransaction, str]]) -> list[Detail]:
+    """Lignes de charge d'une écriture automatique : une paire commission + TVA par commission pour
+    « COM » (11/11/2026), un total par type sinon."""
+    if famille.code == "commissions":
+        return details_commissions(lignes)
+    return details_par_type(lignes)
 
 
 def tva_attendue(commission: Decimal) -> Decimal:
@@ -812,8 +861,9 @@ def _lignes_valides(lignes: tuple[LigneSaisie, ...], total: Decimal, cle: str) -
         if ligne.sens not in (SENS_CREDIT, SENS_DEBIT):
             raise ConflictError(f"{cle} : le sens d'une ligne est « Crédit » ou « Débit ».")
         propres.append(LigneSaisie(compte, libelle, ligne.montant, ligne.sens))
+    # Lignes de charge et de TVA, sans la banque : débits − crédits = total (11/11/2026)
     solde = sum(
-        (ligne.montant if ligne.sens == SENS_CREDIT else -ligne.montant for ligne in propres),
+        (ligne.montant if ligne.sens == SENS_DEBIT else -ligne.montant for ligne in propres),
         ZERO,
     )
     if solde != total:
@@ -1178,18 +1228,34 @@ def compte_du_libelle(libelle: str, banque: str) -> str | None:
     return max(trouves)[1] if trouves else None
 
 
+def ligne_banque(compte: str | None, montant: Decimal) -> LigneGL:
+    """Contrepartie de l'écriture sur le compte comptable du compte bancaire (11/11/2026) : au
+    crédit pour un frais (montant positif), au débit pour un remboursement."""
+    return LigneGL(
+        None,
+        "Banque",
+        compte,
+        -montant if montant < 0 else None,
+        montant if montant > 0 else None,
+        nom_compte="compte comptable",
+    )
+
+
 def lignes_gl(account: BankAccount, details: list[Detail], total: Decimal) -> list[LigneGL]:
-    """Une ligne par type AU CRÉDIT de son compte de charge ou de TVA (17/10/2026 : sans ligne
-    banque ; les deux TVA restent deux lignes). Le total des lignes vaut `total`."""
+    """Une ligne par détail AU DÉBIT de son compte de charge ou de TVA, puis le total au crédit du
+    compte bancaire (11/11/2026, remplace les lignes au crédit sans ligne banque du 17/10/2026)."""
     return [
-        LigneGL(
-            detail.type,
-            TYPES[detail.type][0],
-            compte_charge(detail.type, "", account.bank.code),
-            None,
-            detail.total,
-        )
-        for detail in details
+        *(
+            LigneGL(
+                detail.type,
+                TYPES[detail.type][0],
+                compte_charge(detail.type, "", account.bank.code),
+                detail.total,
+                None,
+            )
+            for detail in details
+        ),
+        ligne_banque(account.compte_comptable, total),
     ]
 
 
@@ -1199,8 +1265,8 @@ def _lignes_de(
     entry: AccountingEntry,
     operations: list[BankTransaction],
 ) -> list[LigneGL]:
-    details = details_par_type(
-        [(tx, code) for tx in operations if (code := famille.type_de(tx.libelle))]
+    details = details_ecriture(
+        famille, [(tx, code) for tx in operations if (code := famille.type_de(tx.libelle))]
     )
     return lignes_gl(account, details, entry.montant)
 
@@ -1213,8 +1279,9 @@ def lignes_manuelle(
     banque: str = "",
 ) -> list[LigneGL]:
     """Écriture manuelle : le frais (hors taxe si la TVA est séparée) puis sa TVA, sur leurs
-    comptes (16/10/2026), sans ligne banque (17/10/2026). Un frais (montant positif côté Sage) va
-    au crédit, un remboursement au débit. `compte` (celui de la banque) n'est plus utilisé."""
+    comptes (16/10/2026), puis la contrepartie sur `compte`, le compte comptable du compte bancaire
+    (11/11/2026). Un frais (montant positif côté Sage) met ses lignes au débit et la banque au
+    crédit, un remboursement l'inverse."""
     total = abs(montant)
     parts = (
         [("frais", "Frais", total - montant_tva), ("tva", "TVA", montant_tva)]
@@ -1222,14 +1289,17 @@ def lignes_manuelle(
         else [("frais", "", total)]
     )
     return [
-        LigneGL(
-            code,
-            nom,
-            compte_charge(code, libelle, banque),
-            None if montant > 0 else part,
-            part if montant > 0 else None,
-        )
-        for code, nom, part in parts
+        *(
+            LigneGL(
+                code,
+                nom,
+                compte_charge(code, libelle, banque),
+                part if montant > 0 else None,
+                None if montant > 0 else part,
+            )
+            for code, nom, part in parts
+        ),
+        ligne_banque(compte, montant),
     ]
 
 
@@ -1241,30 +1311,41 @@ def lignes_ecriture(
     saisies: list[FraisLigne] | None = None,
 ) -> list[LigneGL]:
     if saisies:
-        # Lignes saisies avant la validation (19/10/2026) : telles quelles
+        # Lignes saisies avant la validation (19/10/2026) : telles quelles, puis la banque
         return [
-            LigneGL(
-                "saisie",
-                "",
-                ligne.compte,
-                ligne.montant if ligne.sens == SENS_DEBIT else None,
-                ligne.montant if ligne.sens == SENS_CREDIT else None,
-                libelle=ligne.libelle,
-            )
-            for ligne in saisies
+            *(
+                LigneGL(
+                    "saisie",
+                    "",
+                    ligne.compte,
+                    ligne.montant if ligne.sens == SENS_DEBIT else None,
+                    ligne.montant if ligne.sens == SENS_CREDIT else None,
+                    libelle=ligne.libelle,
+                )
+                for ligne in saisies
+            ),
+            ligne_banque(account.compte_comptable, entry.montant),
         ]
     if famille is MANUELLE:
         return lignes_manuelle(
-            entry.compte, entry.montant, entry.montant_tva, entry.libelle, account.bank.code
+            account.compte_comptable,
+            entry.montant,
+            entry.montant_tva,
+            entry.libelle,
+            account.bank.code,
         )
     return _lignes_de(famille, account, entry, operations)
 
 
 def _equilibree(entry: AccountingEntry, lignes: list[LigneGL]) -> None:
-    """Crédits − débits des lignes = montant de l'écriture (17/10/2026, sans ligne banque)."""
+    """Écriture équilibrée (11/11/2026) : débits = crédits, et la ligne banque (crédit − débit)
+    vaut le montant de l'écriture."""
     credit = sum((ligne.credit or ZERO for ligne in lignes), ZERO)
     debit = sum((ligne.debit or ZERO for ligne in lignes), ZERO)
-    if credit - debit != entry.montant:
+    banque = sum(
+        ((ligne.credit or ZERO) - (ligne.debit or ZERO) for ligne in lignes if ligne.banque), ZERO
+    )
+    if credit != debit or banque != entry.montant:
         raise ConflictError(
             f"Écriture « {entry.libelle} » du {entry.date_ecriture:%d/%m/%Y} : ses opérations ne "
             "font plus son montant. "
@@ -1323,7 +1404,9 @@ def exporter(
 ) -> tuple[str, bytes, int]:
     """UN fichier CSV à intégrer dans Sage (16/10/2026, « import paramétrable ») pour UNE banque
     et UN mois (09/11/2026) : les écritures pas encore exportées, par date ; par écriture, une
-    ligne par type au débit de son compte et la contrepartie au crédit du compte bancaire.
+    ligne par type (une paire commission + TVA par commission pour « COM ») au débit de son compte
+    et la contrepartie au crédit du compte comptable du compte bancaire (11/11/2026), Sens « D » /
+    « C ».
 
     Le N° pièce est donné ici : `premiere` (« BP2610001 ») pour la première, puis +1 dans
     l'ordre des dates. Chaque écriture ne s'exporte qu'une fois ; elle est marquée exportée."""
@@ -1406,7 +1489,7 @@ def exporter(
                 [f"{entry.date_ecriture:%d/%m/%Y}", piece, entry.journal, ligne.compte, "",
                  texte_ligne(entry.libelle, ligne),
                  montant_csv(ligne.debit if debit else ligne.credit),
-                 SENS_DEBIT if debit else SENS_CREDIT,
+                 SENS_CSV[SENS_DEBIT if debit else SENS_CREDIT],
                  "", "", "", "", "", "", ""]
             )  # fmt: skip
         avant = {"numero_piece": entry.numero_piece, "exportee_le": entry.exportee_le}
@@ -1735,15 +1818,16 @@ def comptabiliser_manuellement(
     lignes = lignes_manuelle(None, montant, montant_tva, texte, account.bank.code)
     if compte is not None and compte != lignes[0].compte:
         # Compte choisi autre que celui du libellé : lignes enregistrées, la TVA reste la sienne
-        for ordre, ligne in enumerate(lignes, start=1):
+        # Sans la ligne banque, recalculée à la lecture (11/11/2026)
+        for ordre, ligne in enumerate((ligne for ligne in lignes if not ligne.banque), start=1):
             db.add(
                 FraisLigne(
                     accounting_entry_id=entry.id,
                     ordre=ordre,
                     compte=ligne.compte if est_ligne_tva(ligne.type) else compte,
                     libelle=texte_ligne(texte, ligne)[:LIBELLE_MAX],
-                    montant=ligne.credit or ligne.debit,
-                    sens=SENS_CREDIT if ligne.credit else SENS_DEBIT,
+                    montant=ligne.debit or ligne.credit,
+                    sens=SENS_DEBIT if ligne.debit else SENS_CREDIT,
                 )
             )
     audit_service.log(

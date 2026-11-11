@@ -65,6 +65,7 @@ function plural(n: number, word: string): string {
 /** Libellé d'une ligne : « DT D'ENREGISTREMENT · 9 timbres », « COM · Commission effet ». */
 function libelleLigne(famille: EcritureFrais["famille"], ligne: LigneGL, nb: number) {
   // Le libellé de la ligne, comme dans le fichier Sage (« TVA COM » pour une TVA, 14/10/2026)
+  if (ligne.type === null) return `${ligne.libelle} · Banque`;
   if (famille === "timbres") return `${ligne.libelle} · ${plural(nb, "timbre")}`;
   // Écriture manuelle sans TVA : une seule ligne, sans type
   return ligne.type_libelle ? `${ligne.libelle} · ${ligne.type_libelle}` : ligne.libelle;
@@ -73,8 +74,8 @@ function libelleLigne(famille: EcritureFrais["famille"], ligne: LigneGL, nb: num
 /**
  * Frais comptabilisés par SIMTIS (13/10/2026), en UN tableau : droits de timbre (une ligne par
  * jour, « DT D'ENREGISTREMENT ») et commissions (« COM », une ligne par type), au format du grand
- * livre Sage : chaque type au crédit de son compte (17/10/2026, sans ligne banque). La
- * validation enregistre l'écriture
+ * livre Sage : chaque ligne de charge et de TVA au débit de son compte, la banque au crédit de
+ * son compte comptable (11/11/2026). La validation enregistre l'écriture
  * et la rapproche d'emblée de ses opérations ; l'export pour Sage est commun.
  */
 export function FraisCard({
@@ -732,14 +733,20 @@ function lignesAffichees(
   modif: ModificationFrais | undefined,
 ): LigneGL[] {
   if (modif?.lignes) {
-    return modif.lignes.map((ligne) => ({
-      type: "saisie",
-      type_libelle: "",
-      libelle: ligne.libelle,
-      compte: ligne.compte,
-      debit: ligne.sens === "Débit" ? ligne.montant : null,
-      credit: ligne.sens === "Crédit" ? ligne.montant : null,
-    }));
+    // Les lignes saisies, puis la ligne banque calculée par le serveur (11/11/2026)
+    return [
+      ...modif.lignes.map((ligne) => ({
+        type: "saisie",
+        type_libelle: "",
+        libelle: ligne.libelle,
+        compte: ligne.compte,
+        debit: ligne.sens === "Débit" ? ligne.montant : null,
+        credit: ligne.sens === "Crédit" ? ligne.montant : null,
+      })),
+      ...item.lignes
+        .filter((ligne) => ligne.type === null)
+        .map((ligne) => ({ ...ligne, libelle: modif.libelle ?? ligne.libelle })),
+    ];
   }
   const libelle = modif?.libelle;
   if (!libelle) return item.lignes;
@@ -871,7 +878,7 @@ function Ecriture({
 
 /**
  * Écritures comptabilisées au format du fichier exporté pour Sage (17/10/2026) : mêmes colonnes,
- * même ordre, même libellé, Montant toujours positif et son Sens ; les 7 colonnes facultatives,
+ * même ordre, même libellé, Montant toujours positif et son Sens « D » / « C » (11/11/2026) ; les 7 colonnes facultatives,
  * toujours vides, ne sont pas affichées.
  */
 function TableauSage({ fin, children }: { fin: string[]; children: ReactNode }) {
@@ -932,7 +939,9 @@ function EcritureSage({
             <td className="px-3 py-1.5" />
             <td className="px-3 py-1.5">{ligne.libelle}</td>
             <Montant value={debit ? ligne.debit : ligne.credit} />
-            <td className="px-3 py-1.5 whitespace-nowrap">{debit ? "Débit" : "Crédit"}</td>
+            <td className="px-3 py-1.5 whitespace-nowrap" title={debit ? "Débit" : "Crédit"}>
+              {debit ? "D" : "C"}
+            </td>
             {index === 0 &&
               fin.map((cellule, position) => (
                 <td

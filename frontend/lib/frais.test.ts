@@ -65,7 +65,7 @@ describe("comptabilisation manuelle", () => {
 });
 
 describe("propositions modifiées (19/10/2026)", () => {
-  const ligne = (compte: string, montant: string, sens: "Crédit" | "Débit" = "Crédit") => ({
+  const ligne = (compte: string, montant: string, sens: "Crédit" | "Débit" = "Débit") => ({
     compte,
     libelle: "COM",
     montant,
@@ -92,27 +92,35 @@ describe("propositions modifiées (19/10/2026)", () => {
     expect(etatLignes([], "55.00").erreur).toBe("L'écriture doit garder au moins une ligne.");
   });
 
-  it("déduit un débit d'un crédit", () => {
+  it("déduit un crédit d'un débit (charges au débit, 11/11/2026)", () => {
     const etat = etatLignes(
-      [ligne("61714000", "60.00"), ligne("61473000", "5.00", "Débit")],
+      [ligne("61714000", "60.00"), ligne("61473000", "5.00", "Crédit")],
       "55.00",
     );
 
     expect(etat.erreur).toBeNull();
   });
 
-  it("reprend les lignes calculées et renomme la TVA avec l'écriture", () => {
+  it("reprend les lignes calculées sans la banque et renomme la TVA avec l'écriture", () => {
     const tva = {
       type: "tva",
       type_libelle: "",
       libelle: "TVA COM",
       compte: "34552142",
+      debit: "5.00",
+      credit: null,
+    };
+    const banque = {
+      ...tva,
+      type: null,
+      libelle: "COM",
+      compte: "55410003",
       debit: null,
       credit: "5.00",
     };
 
-    expect(lignesSaisies([tva])).toEqual([
-      { compte: "34552142", libelle: "TVA COM", montant: "5.00", sens: "Crédit" },
+    expect(lignesSaisies([tva, banque])).toEqual([
+      { compte: "34552142", libelle: "TVA COM", montant: "5.00", sens: "Débit" },
     ]);
     expect(libelleModifie(tva, "COM", "COM RTGS")).toBe("TVA COM RTGS");
     expect(libelleModifie({ ...tva, libelle: "COM" }, "COM", "COM RTGS")).toBe("COM RTGS");

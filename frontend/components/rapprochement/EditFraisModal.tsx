@@ -28,14 +28,15 @@ function exact(saisie: string): string {
 }
 
 const SENS = [
-  { value: "Crédit", label: "Crédit" },
   { value: "Débit", label: "Débit" },
+  { value: "Crédit", label: "Crédit" },
 ];
 
 /**
  * Modifier une proposition de frais avant sa validation (19/10/2026) : libellé, date et, au
- * besoin, ses lignes (compte, libellé, montant, sens ; une ligne s'ajoute ou se retire). Le total
- * des lignes reste la somme des opérations. Rien n'est enregistré ici : la modification part avec
+ * besoin, ses lignes de charge et de TVA (compte, libellé, montant, sens ; une ligne s'ajoute ou
+ * se retire), au débit depuis le 11/11/2026 ; le total des lignes reste la somme des opérations.
+ * La ligne banque, au crédit, est toujours recalculée par le serveur. Rien n'est enregistré ici : la modification part avec
  * « Valider la sélection », et le serveur la contrôle de nouveau.
  */
 export function EditFraisModal({
@@ -176,7 +177,7 @@ export function EditFraisModal({
               setLignesModifiees(true);
               setLignes((liste) => [
                 ...liste,
-                { compte: "", libelle: "", montant: "", sens: "Crédit" },
+                { compte: "", libelle: "", montant: "", sens: "Débit" },
               ]);
             }}
           >
@@ -186,6 +187,7 @@ export function EditFraisModal({
         {!lignesModifiees && (
           <p className="text-xs text-simtis-muted">
             Lignes calculées par SIMTIS. Modifiez-en une, ou ajoutez-en, pour les saisir vous-même.
+            La ligne banque, au crédit du compte bancaire, est ajoutée automatiquement.
           </p>
         )}
         <div className="overflow-x-auto rounded-[12px] border border-simtis-border">

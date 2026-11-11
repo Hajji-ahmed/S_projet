@@ -17,6 +17,7 @@ from app.services.frais_service import (
     JourEcarte,
     LigneGL,
     Proposition,
+    details_ecriture,
     lignes_gl,
     texte_ligne,
 )
@@ -116,7 +117,11 @@ class PropositionTimbresOut(BaseModel):
             journal=journal_des_frais(item.account),
             lignes=[
                 LigneGLOut.of(ligne, item.famille.libelle)
-                for ligne in lignes_gl(item.account, item.jour.details, item.jour.total)
+                for ligne in lignes_gl(
+                    item.account,
+                    details_ecriture(item.famille, item.jour.lignes),
+                    item.jour.total,
+                )
             ],
             operations=[TimbreOut.of(tx) for tx in item.jour.operations],
         )
