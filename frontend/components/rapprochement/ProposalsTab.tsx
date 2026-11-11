@@ -150,7 +150,7 @@ function PastilleFiltre({
       title={description}
       onClick={onClick}
       className={cn(
-        "inline-flex shrink-0 items-center gap-2 rounded-full border py-1.5 pr-1.5 pl-3 text-sm font-medium whitespace-nowrap transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary",
+        "inline-flex shrink-0 items-center gap-2.5 rounded-full border py-2 pr-2 pl-4 text-sm font-medium whitespace-nowrap transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary",
         active
           ? "border-simtis-primary bg-simtis-primary text-white shadow-simtis"
           : "border-simtis-border bg-simtis-card text-simtis-text hover:border-simtis-primary hover:bg-simtis-light/50",
@@ -165,7 +165,7 @@ function PastilleFiltre({
       {label}
       <span
         className={cn(
-          "min-w-7 rounded-full px-2 py-0.5 text-center text-xs font-semibold tabular-nums",
+          "min-w-7 rounded-full px-2.5 py-1 text-center text-xs font-semibold tabular-nums",
           active ? "bg-white/20 text-white" : "bg-simtis-light text-simtis-primary-dark",
         )}
       >
@@ -399,7 +399,7 @@ export function ProposalsTab({
         {/* Pastilles groupées par famille (11/11/2026), le filtre Type à droite */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-3">
           <div
-            className="flex flex-wrap items-center gap-2"
+            className="flex flex-wrap items-center gap-2.5"
             role="group"
             aria-label="Filtrer les propositions"
           >
