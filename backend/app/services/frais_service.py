@@ -148,7 +148,17 @@ _FRAIS_RECUPERES = (
     ("frais_operation", re.compile(r"^FRAIS OPERATION N \d+$")),
     ("frais_releve_caution", re.compile(r"^FRAIS RELEVE CAUTION\b")),
 )
-_FRAIS_TVA = (*_COMMISSIONS_TVA, ("commission_carte", _COMMISSION_CARTE), *_FRAIS_RECUPERES)
+# Agios d'escompte LCN de CIH (12/11/2026), TVA de 10 % comprise, sans seuil, dans « FRAIS » :
+# « AGIOS ESCOMPTE LCN N … ». Seule règle qui lit la banque : chez AWB, le même libellé reste à la
+# main (choix du métier du 09/11/2026)
+_AGIOS_ESCOMPTE = re.compile(r"^AGIOS ESCOMPTE LCN\b")
+BANQUES_AGIOS_ESCOMPTE = frozenset({"CIH"})
+_FRAIS_TVA = (
+    *_COMMISSIONS_TVA,
+    ("commission_carte", _COMMISSION_CARTE),
+    *_FRAIS_RECUPERES,
+    ("agios_escompte", _AGIOS_ESCOMPTE),
+)
 TAUX_TVA_FRAIS = Decimal("10")
 # Décision du 19/10/2026 : une opération de frais de plus de 200 DH (hors droits de timbre) n'est
 # jamais comptabilisée en automatique ; elle se passe à la main et se justifie auprès de la banque
@@ -169,6 +179,8 @@ TYPES_FRAIS_SANS_SEUIL = frozenset(
         "frais_certification",
         "frais_operation",
         "frais_releve_caution",
+        # CIH (12/11/2026)
+        "agios_escompte",
     }
 )
 # Commissions AWB à TVA comprise toujours automatiques, quel que soit le montant (12/11/2026)
@@ -250,6 +262,8 @@ COMPTE_PAR_TYPE = {
     "frais_certification": COMPTE_FRAIS_BANCAIRES,
     "frais_operation": COMPTE_FRAIS_BANCAIRES,
     "frais_releve_caution": COMPTE_FRAIS_BANCAIRES,
+    # CIH (12/11/2026) : AGIOS CIH
+    "agios_escompte": COMPTES_AGIOS["CIH"],
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
@@ -313,6 +327,9 @@ TYPES = {
     "frais_operation_tva": ("TVA frais opération", "compte_tva", "compte de TVA"),
     "frais_releve_caution": ("Frais relevé caution", "compte_commission", "compte de charge"),
     "frais_releve_caution_tva": ("TVA frais relevé caution", "compte_tva", "compte de TVA"),
+    # CIH (12/11/2026)
+    "agios_escompte": ("Agios escompte LCN", "compte_commission", "compte de charge"),
+    "agios_escompte_tva": ("TVA agios escompte LCN", "compte_tva", "compte de TVA"),
 }
 
 
@@ -323,8 +340,16 @@ def _plain(libelle: str | None) -> str:
     return " ".join((libelle or "").upper().split())
 
 
-def type_timbre(libelle: str | None) -> str | None:
-    """« DROIT DE TIMBRE SUR VERSEMENT », « DROITS DE TIMBRE SUR REMISE LCN N 2600114 »…"""
+def banque_de(tx: BankTransaction) -> str | None:
+    """Code de la banque du compte de l'opération (« CIH »), None pour une opération sans compte
+    chargé (règles pures)."""
+    account = tx.bank_account
+    return account.bank.code if account is not None else None
+
+
+def type_timbre(libelle: str | None, banque: str | None = None) -> str | None:
+    """« DROIT DE TIMBRE SUR VERSEMENT », « DROITS DE TIMBRE SUR REMISE LCN N 2600114 »…
+    La banque ne compte pas."""
     return "timbre" if _TIMBRE.match(_plain(libelle)) else None
 
 
@@ -332,8 +357,9 @@ def est_timbre(libelle: str | None) -> bool:
     return type_timbre(libelle) is not None
 
 
-def type_commission(libelle: str | None) -> str | None:
-    """Type d'une commission reprise par SIMTIS, ou None (à passer à la main)."""
+def type_commission(libelle: str | None, banque: str | None = None) -> str | None:
+    """Type d'une commission reprise par SIMTIS, ou None (à passer à la main). La banque ne
+    compte pas."""
     texte = _plain(libelle)
     exacte = next((code for code, regle in _COMMISSIONS if regle.match(texte)), None)
     if exacte:
@@ -346,10 +372,13 @@ def type_commission(libelle: str | None) -> str | None:
     return code
 
 
-def type_frais_tva(libelle: str | None) -> str | None:
+def type_frais_tva(libelle: str | None, banque: str | None = None) -> str | None:
     """Frais à TVA comprise comptabilisés en automatique dans l'écriture « FRAIS » (14/10/2026),
-    ou None. La ponctuation et les accents ne comptent pas (« COMMISSION VIR. RTGS »)."""
+    ou None. La ponctuation et les accents ne comptent pas (« COMMISSION VIR. RTGS »).
+    « AGIOS ESCOMPTE LCN » seulement pour un compte CIH (12/11/2026) : sans banque, None."""
     texte = _sans_ponctuation(libelle)
+    if banque in BANQUES_AGIOS_ESCOMPTE and _AGIOS_ESCOMPTE.match(texte):
+        return "agios_escompte"
     # Seulement FRAIS RECUPERES PAR LA BANQUE : les commissions à TVA comprise vont dans « COM »
     return next((code for code, regle in _FRAIS_RECUPERES if regle.match(texte)), None)
 
@@ -379,7 +408,8 @@ class Famille:
     code: str  # « timbres », « commissions »
     nom: str  # pour les messages : « droits de timbre », « commissions »
     libelle: str  # libellé de l'écriture, comme dans Sage
-    type_de: Callable[[str | None], str | None]
+    # (libellé, code de la banque) → type ; la banque ne compte que pour les agios CIH (12/11/2026)
+    type_de: Callable[[str | None, str | None], str | None]
     libelle_sql: str
     ecriture_sql: str
 
@@ -410,7 +440,7 @@ FRAIS_TVA = Famille(
 )
 FAMILLES = {famille.code: famille for famille in (TIMBRES, COMMISSIONS, FRAIS_TVA)}
 # Écriture saisie à la main (13/10/2026) : libellé libre, pas de règle de libellé ni de type
-MANUELLE = Famille("manuelle", "frais", "", lambda _libelle: None, "", "")
+MANUELLE = Famille("manuelle", "frais", "", lambda _libelle, _banque=None: None, "", "")
 PAR_LIBELLE = {famille.libelle: famille for famille in FAMILLES.values()}
 
 
@@ -565,11 +595,12 @@ def regrouper(
     hors_famille = hors_famille or set()
     groupes: dict[tuple[int, date], JourFrais] = {}
     for tx in operations:
-        code = famille.type_de(tx.libelle)
+        banque = banque_de(tx)
+        code = famille.type_de(tx.libelle, banque)
         if (
             tx.montant >= 0
             or code is None
-            or au_dessus_du_seuil(famille, tx.montant, tx.libelle)
+            or au_dessus_du_seuil(famille, tx.montant, tx.libelle, banque)
             or tx.id in hors_famille
         ):
             continue
@@ -671,26 +702,30 @@ def _ecartes(
     }
 
 
-def sans_seuil(libelle: str | None) -> bool:
-    """Commission ou TVA sur deux lignes, frais CIH de caution ou de PDL credoc (11/11/2026) : le
-    seuil de 200 DH ne s'applique pas."""
+def sans_seuil(libelle: str | None, banque: str | None = None) -> bool:
+    """Commission ou TVA sur deux lignes, frais CIH de caution ou de PDL credoc (11/11/2026),
+    agios d'escompte LCN de CIH (12/11/2026) : le seuil de 200 DH ne s'applique pas."""
     return (
         type_commission(libelle) in TYPES_SANS_SEUIL | TYPES_COMMISSIONS_SANS_SEUIL
-        or type_frais_tva(libelle) in TYPES_FRAIS_SANS_SEUIL
+        or type_frais_tva(libelle, banque) in TYPES_FRAIS_SANS_SEUIL
     )
 
 
-def au_dessus_du_seuil(famille: "Famille", montant: Decimal, libelle: str | None) -> bool:
+def au_dessus_du_seuil(
+    famille: "Famille", montant: Decimal, libelle: str | None, banque: str | None = None
+) -> bool:
     """Frais débité de plus de `SEUIL_MANUEL` (19/10/2026) : jamais en automatique, sauf un droit
     de timbre et, depuis le 11/11/2026, une commission ou sa TVA sur deux lignes."""
     return (
         famille.code != "timbres"
         and -montant > SEUIL_MANUEL
-        and not (famille in (COMMISSIONS, FRAIS_TVA) and sans_seuil(libelle))
+        and not (famille in (COMMISSIONS, FRAIS_TVA) and sans_seuil(libelle, banque))
     )
 
 
-def famille_automatique(libelle: str | None, montant: Decimal | None) -> str | None:
+def famille_automatique(
+    libelle: str | None, montant: Decimal | None, banque: str | None = None
+) -> str | None:
     """Code de la famille automatique d'un frais débité, ou None (frais à passer à la main, dont
     un frais de plus de 200 DH hors droits de timbre)."""
     if montant is None or montant >= 0:
@@ -699,7 +734,8 @@ def famille_automatique(libelle: str | None, montant: Decimal | None) -> str | N
         (
             code
             for code, regle in FAMILLES.items()
-            if regle.type_de(libelle) and not au_dessus_du_seuil(regle, montant, libelle)
+            if regle.type_de(libelle, banque)
+            and not au_dessus_du_seuil(regle, montant, libelle, banque)
         ),
         None,
     )
@@ -712,7 +748,7 @@ def a_la_main(
     TVA sans sa commission (`tva_main`, 09/11/2026)."""
     if tva_main and tx.id in tva_main:
         return True
-    code = famille_automatique(tx.libelle, tx.montant)
+    code = famille_automatique(tx.libelle, tx.montant, banque_de(tx))
     return code is None or (tx.bank_account_id, tx.date_operation, code) in ecartes
 
 
@@ -1369,7 +1405,9 @@ def _lignes_de(
     entry: AccountingEntry,
     operations: list[BankTransaction],
 ) -> list[LigneGL]:
-    lignes = [(tx, code) for tx in operations if (code := famille.type_de(tx.libelle))]
+    lignes = [
+        (tx, code) for tx in operations if (code := famille.type_de(tx.libelle, banque_de(tx)))
+    ]
     details = details_ecriture(famille, lignes)
     return lignes_gl(account, details, entry.montant, [tx for tx, _ in lignes])
 
@@ -1774,14 +1812,16 @@ def _message_inclus(tx: BankTransaction, entry: AccountingEntry) -> str:
     )
 
 
-def est_automatique(libelle: str | None, montant: Decimal | None = None) -> bool:
+def est_automatique(
+    libelle: str | None, montant: Decimal | None = None, banque: str | None = None
+) -> bool:
     """Libellé d'une famille comptabilisée en automatique (droits de timbre, commissions, frais à
     TVA comprise). Un remboursement (montant positif) ne l'est jamais : il se passe à la main."""
     if montant is not None and montant >= 0:
         return False
     if montant is not None:
-        return famille_automatique(libelle, montant) is not None
-    return any(famille.type_de(libelle) for famille in FAMILLES.values())
+        return famille_automatique(libelle, montant, banque) is not None
+    return any(famille.type_de(libelle, banque) for famille in FAMILLES.values())
 
 
 def _libelle_manuel(libelle: str) -> str:
@@ -2092,7 +2132,7 @@ def justificatif(
     rows = [
         (tx, piece, origine)
         for tx, piece, origine in rows
-        if not est_timbre(tx.libelle) and not sans_seuil(tx.libelle)
+        if not est_timbre(tx.libelle) and not sans_seuil(tx.libelle, banque_de(tx))
     ]
     if not rows:
         raise ConflictError(f"Aucun frais de plus de {SEUIL_MANUEL:.0f} DH sur cette période.")

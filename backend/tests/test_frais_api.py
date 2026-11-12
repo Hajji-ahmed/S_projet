@@ -1898,6 +1898,85 @@ def test_cih_caution_and_pdl_credoc_fees_are_automatic_whatever_the_amount(
     assert "Aucun frais de plus de 200 DH" in response.json()["detail"]
 
 
+@pytest.mark.parametrize(
+    ("banque", "attendu"),
+    [("CIH", "agios_escompte"), ("AWB", None), ("BP", None), (None, None)],
+)
+def test_escompte_agios_are_a_cih_fee_with_vat_only(banque, attendu):
+    """12/11/2026 : seule règle qui lit la banque ; sans seuil chez CIH seulement."""
+    assert type_frais_tva("AGIOS ESCOMPTE LCN N° 2600114", banque) == attendu
+    assert frais_service.sans_seuil("AGIOS ESCOMPTE LCN N 2600114", banque) is (attendu is not None)
+
+
+def cih(db):
+    compte = account(db, bank_code="CIH")
+    compte.compte_comptable, compte.journal_sage = "55410005", "5545"
+    db.flush()
+    return compte
+
+
+def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
+    client, comptable, direction, db
+):
+    """12/11/2026 : chez CIH, « AGIOS ESCOMPTE LCN N … » entre dans l'écriture « FRAIS », hors taxe
+    sur 63116300 (AGIOS CIH) et TVA de 10 % comprise sur 34552142, quel que soit le montant ; un
+    remboursement reste à la main ; chez AWB, le même libellé reste à la main."""
+    compte = cih(db)
+    petit = operation(db, compte, "-4.18", JOUR, "AGIOS ESCOMPTE LCN N 2600114")
+    grand = operation(db, compte, "-21945", JOUR, "AGIOS ESCOMPTE LCN N° 2600115")
+    remboursement = operation(db, compte, "50", JOUR, "AGIOS ESCOMPTE LCN N 2600116")
+    chez_awb = operation(db, account(db, bank_code="AWB"), "-73.15", JOUR, petit.libelle)
+
+    tableau = lire(client, comptable, db, None).json()
+
+    (proposition,) = tableau["propositions"]
+    assert (proposition["famille"], proposition["libelle"], proposition["total"]) == (
+        "frais",
+        "FRAIS",
+        "21949.18",
+    )
+    assert details(proposition) == [
+        ("agios_escompte", 2, "19953.80"),
+        ("agios_escompte_tva", 2, "1995.38"),
+    ]
+    assert [(g["compte"], g["debit"], g["credit"]) for g in proposition["lignes"]] == [
+        ("63116300", "19953.80", None),
+        ("34552142", "1995.38", None),
+        ("55410005", None, "4.18"),
+        ("55410005", None, "21945.00"),
+    ]
+    assert {a["id"] for a in tableau["autres_frais"]} == {remboursement.id, chez_awb.id}
+
+    # Sans seuil : pas dans le fichier des frais à justifier auprès de la banque
+    params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30"}
+    justificatif = client.get("/api/frais/justificatif", params=params, headers=direction)
+    assert justificatif.status_code == 409
+    assert "Aucun frais de plus de 200 DH" in justificatif.json()["detail"]
+
+    assert valider(client, comptable, db, (compte, JOUR), famille="frais").status_code == 200
+    response = exporter(client, comptable, db, banque="CIH")
+    assert response.status_code == 200, response.text
+    vides = ("",) * 7
+    assert lignes_csv(response) == [
+        ("23/04/2026", "CIH2604001", "5545", "63116300", "", "FRAIS", "19953,80", "D") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "34552142", "", "TVA FRAIS", "1995,38", "D") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit.libelle, "4,18", "C") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "55410005", "", grand.libelle, "21945,00", "C")
+        + vides,
+    ]
+
+
+def test_cih_escompte_agios_are_not_proposed_on_a_day_already_in_sage(client, comptable, db):
+    compte = cih(db)
+    agios = operation(db, compte, "-4.18", JOUR, "AGIOS ESCOMPTE LCN N 2600114")
+    ecriture(db, compte, "1000", JOUR, "FRAIS")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    assert tableau["propositions"] == []
+    assert agios.id not in {a["id"] for a in tableau["autres_frais"]}
+
+
 def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commission(
     client, comptable, db
 ):

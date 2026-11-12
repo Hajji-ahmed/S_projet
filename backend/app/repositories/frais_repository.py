@@ -34,12 +34,14 @@ ECRITURE_COMMISSION_SQL = r"^\s*COM\s*$"
 # Frais bancaires à TVA comprise (14/10/2026) : écriture Sage « FRAIS » du jour
 # Les commissions à TVA comprise sont lues avec les autres commissions (écriture « COM »)
 LIBELLE_FRAIS_SQL = (
-    r"^\s*FRAIS\W+(R.CUP.R.S\W+PAR\W+LA\W+BANQUE|SWIFT\W+CREDOC|ENCAISSEMENT\W+DE\W+CH"
+    r"^\s*(FRAIS\W+(R.CUP.R.S\W+PAR\W+LA\W+BANQUE|SWIFT\W+CREDOC|ENCAISSEMENT\W+DE\W+CH"
     # CIH (11/11/2026)
     r"|CAUTION\W+NUM.RO|PDL\W+CREDOC"
     # AWB (12/11/2026)
     r"|ATTIJARI\W+NET\W+ENTREPRISE|MODULE\W+DOCNET|POUR\W+CERTIFICATION\W+CH|OPERATION\W+N\W"
     r"|RELEVE\W+CAUTION)"
+    # CIH (12/11/2026) : la banque est vérifiée par `frais_service.type_frais_tva`
+    r"|AGIOS\W+ESCOMPTE\W+LCN)"
 )
 ECRITURE_FRAIS_SQL = r"^\s*FRAIS\s*$"
 STATUTS_LIBRES = ("Non rapprochée", "À vérifier")
