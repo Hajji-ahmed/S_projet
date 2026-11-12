@@ -1072,6 +1072,81 @@ def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):
     assert body["par_statut"]["Rapprochée"] == 1
 
 
+NOUVEAUX_FRAIS = (
+    "COMM. PAIEMENT CREDOC IMPORT EN FAV.",
+    "COMM.OUVERTURE CREDOC IMPORT EN FAV.",
+    "COMMISS ENCAISSEMENT RDOC EN FAVEUR",
+    "COMM VIR SRBM: AWBDVS2600114",
+    "TIMBRE/REM LCN REF 2600114",
+    "DROITS DE GARDE DES TITRES",
+    "ABONNEMENT BP E-CORPORATE",
+    "PACKAGE FEVRIER 2026",
+)
+
+
+def test_commissions_stamps_custody_subscription_and_package_are_fees(client, comptable, db):
+    """12/11/2026 : commissions CIH sur crédit documentaire, commissions et timbres AWB, droits de
+    garde et abonnement BP, package BMCE, sans pointage ; « COMM1 » au milieu d'un libellé n'est pas
+    une commission."""
+    compte = account(db)
+    frais = [operation(db, compte, montant="-220", libelle=libelle) for libelle in NOUVEAUX_FRAIS]
+    recu = operation(
+        db, compte, montant="329226.35", libelle="CREDIT DE VOTRE COMPTE RPT26K1/ROC/URI/COMM1/NOOR"
+    )
+    url = "/api/reconciliation/transactions"
+    params = {"company_id": company(db).id}
+
+    tous = client.get(url, params=params, headers=comptable).json()
+    a_comptabiliser = client.get(
+        url, params={**params, "a_comptabiliser": "true"}, headers=comptable
+    ).json()
+
+    assert {op["id"] for op in a_comptabiliser["operations"]} == {tx.id for tx in frais}
+    assert tous["a_comptabiliser"] == len(NOUVEAUX_FRAIS)
+    assert recu.id in {op["id"] for op in tous["operations"]}
+
+
+def test_an_issued_transfer_ending_in_com_is_never_a_fee(client, comptable, db):
+    """12/11/2026 : BMCE « DEBIT CTRV MNT TRF EMIS … 1/COM » est un virement fournisseur, même
+    pointé COM."""
+    from app.models import PointageType
+
+    com = db.scalar(select(PointageType).filter_by(code="COM"))
+    compte = account(db)
+    virement = operation(
+        db,
+        compte,
+        montant="-114180.79",
+        libelle="DEBIT CTRV MNT TRF EMIS TRF26J026263/INV/SA02026021101 1/AASTAR GARMENT 1/COM",
+        pointage_type_id=com.id,
+    )
+    url = "/api/reconciliation/transactions"
+    params = {"company_id": company(db).id}
+
+    tous = client.get(url, params=params, headers=comptable).json()
+
+    assert tous["a_comptabiliser"] == 0
+    assert tous["par_statut"]["Non rapprochée"] == 1
+    assert virement.id in {op["id"] for op in tous["operations"]}
+
+
+def test_a_reconciled_credoc_commission_is_not_to_be_booked(client, comptable, db):
+    """12/11/2026 : devenue un frais, une commission déjà rapprochée reste hors « À comptabiliser »."""
+    compte = account(db)
+    frais = operation(db, compte, montant="-220", libelle="COMM. PAIEMENT CREDOC IMPORT EN FAV.")
+    entry = ecriture(db, compte, montant="220", libelle="COM CREDOC")
+
+    manual(client, comptable, frais, entry)
+    body = client.get(
+        "/api/reconciliation/transactions",
+        params={"company_id": company(db).id, "a_comptabiliser": "true"},
+        headers=comptable,
+    ).json()
+
+    assert body["a_comptabiliser"] == 0
+    assert body["operations"] == []
+
+
 # --- Groupes N -> 1 (12/10/2026) ----------------------------------------------------------------
 
 
