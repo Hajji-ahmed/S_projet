@@ -9,6 +9,7 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.models import AuditLog
+from app.services import rapports_service
 from tests.helpers import bearer, login, make_auth_user
 from tests.test_reconciliation_api import account, company, ecriture, operation
 
@@ -53,6 +54,29 @@ def test_the_daily_position_keeps_the_banks_table_structure(client, responsable,
     assert "attachment" in response.headers["content-disposition"]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_rapport"))
     assert audit.nouvelle_valeur["rapport"] == "position_du_jour"
+
+
+def test_the_ligne_row_of_the_excel_position_is_teal_with_a_line_under_it(client, responsable, db):
+    awb = account(db)
+    awb.credit_autorise = Decimal("500000.00")
+    db.flush()
+    operation(db, awb, montant="-200000", jour=date(2026, 9, 1), solde=Decimal("-200000"))
+
+    response = client.get(
+        "/api/rapports/position",
+        params={"company_id": str(company(db).id), "date": "2026-09-02"},
+        headers=responsable,
+    )
+
+    sheet = classeur(response)["Banques"]
+    # Rangée 4 = LIGNE (12/11/2026) : toute la largeur, TOTAL et DEPASSEMENT compris
+    for colonne in range(1, sheet.max_column + 1):
+        cellule = sheet.cell(row=4, column=colonne)
+        assert cellule.fill.fgColor.rgb.endswith("E7F6F4")
+        assert cellule.border.bottom.style == "medium"
+        assert cellule.border.bottom.color.rgb.endswith("004F54")
+    # Les jours restent sans fond
+    assert sheet.cell(row=6, column=2).fill.fill_type is None
 
 
 def rapprocher(client, headers, operations, ecritures, id_seulement=False):
@@ -209,6 +233,41 @@ def test_the_daily_position_is_also_given_as_a_pdf(client, responsable, db):
     assert 'filename="position-simtis-20260902.pdf"' in response.headers["content-disposition"]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_rapport"))
     assert audit.nouvelle_valeur["rapport"] == "position_du_jour_pdf"
+
+
+def test_the_pdf_rate_and_ligne_rows_are_teal_with_a_line_under_ligne(
+    client, responsable, db, monkeypatch
+):
+    awb = account(db)
+    awb.credit_autorise = Decimal("500000.00")
+    db.flush()
+    operation(db, awb, montant="-200000", jour=date(2026, 9, 1), solde=Decimal("-200000"))
+    commandes: list[tuple] = []
+    original = rapports_service.TableStyle
+
+    def espion(cmds, *args, **kwargs):
+        commandes.extend(cmds)
+        return original(cmds, *args, **kwargs)
+
+    monkeypatch.setattr(rapports_service, "TableStyle", espion)
+
+    response = client.get(
+        "/api/rapports/position/pdf",
+        params={"company_id": str(company(db).id), "date": "2026-09-02"},
+        headers=responsable,
+    )
+
+    assert response.status_code == 200, response.text
+    # Rangées 1 (Taux) et 2 (LIGNE), 12/11/2026 : fond teal clair, trait teal sous LIGNE
+    assert ("BACKGROUND", (0, 1), (-1, 2), rapports_service.PDF_EN_TETE) in commandes
+    trait = ("LINEBELOW", (0, 2), (-1, 2), 1, rapports_service.PDF_PRIMAIRE)
+    assert trait in commandes
+    # Le trait est dessiné après la grille, donc par-dessus
+    grille = next(i for i, c in enumerate(commandes) if c[0] == "GRID")
+    assert commandes.index(trait) > grille
+    # Les jours (rangées 3 et 4) restent sans fond
+    fonds = [c for c in commandes if c[0] == "BACKGROUND"]
+    assert all(not ({3, 4} & set(range(c[1][1], c[2][1] + 1))) for c in fonds)
 
 
 def test_the_pdf_position_needs_the_position_permission(client, reference, db):

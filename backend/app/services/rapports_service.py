@@ -45,6 +45,8 @@ FORMAT_DATE = "DD/MM/YYYY"
 GRAS = Font(bold=True)
 REPRISE = Font(italic=True, color="71839B")
 EN_TETE = PatternFill("solid", fgColor="E7F6F4")
+# Ligne LIGNE de la position (12/11/2026) : fond teal clair et trait teal dessous, comme à l'écran
+TRAIT_PARAMETRES = Border(bottom=Side(style="medium", color="004F54"))
 
 
 def _company(db: Session, company_id: int):
@@ -105,6 +107,9 @@ def position_du_jour(
 
     sheet.append(["LIGNE", *(banque.ligne for banque in banques), tableau.ligne_total, None])
     sheet[sheet.max_row][0].font = GRAS
+    for cell in sheet[sheet.max_row]:
+        cell.fill = EN_TETE
+        cell.border = TRAIT_PARAMETRES
 
     def ligne(libelle, valeur_date, contenu: LigneTableau) -> None:
         sheet.append(
@@ -157,6 +162,15 @@ PDF_GRILLE = colors.HexColor("#D5E3E6")
 PDF_REPRISE = colors.HexColor("#71839B")
 PDF_POSITIF = colors.HexColor("#15803D")
 PDF_NEGATIF = colors.HexColor("#B91C1C")
+
+
+def _styles_parametres_pdf() -> list[tuple]:
+    """Lignes Taux (rang 1) et LIGNE (rang 2) du PDF (12/11/2026) : fond teal clair et trait teal
+    sous LIGNE, comme à l'écran ; leurs libellés sont déjà en gras."""
+    return [
+        ("BACKGROUND", (0, 1), (-1, 2), PDF_EN_TETE),
+        ("LINEBELOW", (0, 2), (-1, 2), 1, PDF_PRIMAIRE),
+    ]
 
 
 def montant_pdf(valeur: Decimal | None) -> str:
@@ -244,6 +258,8 @@ def position_pdf(
                 ("BACKGROUND", (0, rang_disponible), (-1, rang_disponible), PDF_EN_TETE),
                 ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
                 ("GRID", (0, 0), (-1, -1), 0.4, PDF_GRILLE),
+                # Après la grille : le trait sous LIGNE se dessine par-dessus
+                *_styles_parametres_pdf(),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("TOPPADDING", (0, 0), (-1, -1), 2),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 2),

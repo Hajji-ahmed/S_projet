@@ -47,6 +47,12 @@ const GRID = cn(GRID_TABLE, "table-fixed");
 // Lignes fixées pendant le défilement vertical : fond opaque, au-dessus des jours qui défilent
 const STICKY_HAUT = "sticky top-0 z-10 bg-simtis-card";
 const STICKY_BAS = "sticky bottom-0 z-10 bg-simtis-card";
+// Taux et LIGNE (12/11/2026) : bloc « paramètres » sur fond teal clair, libellés semi-gras, trait
+// teal sous LIGNE. Le trait est une ombre intérieure des cellules : une bordure de tableau fusionnée
+// ne suit pas toujours l'en-tête fixé pendant le défilement.
+const PARAMETRES = "bg-simtis-light";
+const PARAMETRE_HEAD = cn(ROW_HEAD, "font-semibold");
+const TRAIT_SOUS_LIGNE = "*:shadow-[inset_0_-2px_0_var(--simtis-primary)]";
 // Disponible Fc reel : vert > 0, rouge < 0 (tokens de statut, pas le vert du classeur)
 const TONES: Record<Tone, string> = {
   positive: "text-simtis-success",
@@ -184,7 +190,8 @@ function Grid({ table }: { table: Table }) {
             <col className="w-[150px]" />
             <col className="w-[150px]" />
           </colgroup>
-          {/* En-tête, Taux et LIGNE restent en haut pendant le défilement */}
+          {/* En-tête, Taux et LIGNE restent en haut pendant le défilement ; Taux et LIGNE en teal
+              clair, séparés des jours par un trait */}
           <thead className={STICKY_HAUT}>
             <tr>
               <th scope="col" className={cn(GRID_HEAD, "text-left")}>
@@ -202,8 +209,8 @@ function Grid({ table }: { table: Table }) {
                 DEPASSEMENT
               </th>
             </tr>
-            <tr>
-              <th scope="row" className={ROW_HEAD}>
+            <tr className={PARAMETRES}>
+              <th scope="row" className={PARAMETRE_HEAD}>
                 Taux
               </th>
               {table.banques.map((banque) => (
@@ -214,10 +221,10 @@ function Grid({ table }: { table: Table }) {
               <td />
               <td />
             </tr>
-            <tr>
+            <tr className={cn(PARAMETRES, TRAIT_SOUS_LIGNE)}>
               <th
                 scope="row"
-                className={ROW_HEAD}
+                className={PARAMETRE_HEAD}
                 title="LIGNE actuelle du compte, appliquée à tous les jours"
               >
                 LIGNE
