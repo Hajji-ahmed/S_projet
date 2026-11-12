@@ -1,3 +1,5 @@
+import { normalizeAmountInput } from "@/lib/accounts";
+import { formatAmount } from "@/lib/format";
 import { fromCents, toCents } from "@/lib/statementLines";
 import type { CompteFrais, LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
 
@@ -156,6 +158,41 @@ export function ventilerTva(total: string, taux: string): { ht: string; tva: str
   const denominateur = base + centiemes;
   const ht = (BigInt(2) * ttc * base + denominateur) / (BigInt(2) * denominateur);
   return { ht: fromCents(ht), tva: fromCents(ttc - ht) };
+}
+
+/**
+ * TVA sur une partie seulement d'un frais (12/11/2026) : TVA = partie avec TVA × taux, arrondie au
+ * centime le plus proche (0,5 vers le haut) ; le reste est sans TVA ; Frais HT = total − TVA
+ * (partie avec TVA + partie sans TVA, sur le même compte). `total` positif, `base` et `taux` saisis.
+ */
+export function tvaSurPartie(
+  total: string,
+  base: string,
+  taux: string,
+): { ht: string; tva: string; sansTva: string; erreur: string | null } {
+  const vide = { ht: "0.00", tva: "0.00", sansTva: "0.00" };
+  const tauxTexte = taux.trim().replace(",", ".");
+  const centiemes = /^\d{1,3}(\.\d{1,2})?$/.test(tauxTexte) ? toCents(tauxTexte) : null;
+  if (centiemes === null || centiemes <= BigInt(0) || centiemes > BigInt(10000))
+    return { ...vide, erreur: "Un taux entre 0 et 100." };
+  const baseTexte = normalizeAmountInput(base);
+  if (baseTexte === null)
+    return { ...vide, erreur: "Saisissez la partie avec TVA (2 décimales au plus)." };
+  const partie = toCents(baseTexte);
+  if (partie <= BigInt(0)) return { ...vide, erreur: "La partie avec TVA doit être positive." };
+  const tva = (BigInt(2) * partie * centiemes + BigInt(10000)) / BigInt(20000);
+  const sansTva = toCents(total) - partie - tva;
+  if (sansTva < BigInt(0))
+    return {
+      ...vide,
+      erreur: `Partie avec TVA + TVA dépasse le montant du frais (${formatAmount(total, "DH")}).`,
+    };
+  return {
+    ht: fromCents(toCents(total) - tva),
+    tva: fromCents(tva),
+    sansTva: fromCents(sansTva),
+    erreur: null,
+  };
 }
 
 /**

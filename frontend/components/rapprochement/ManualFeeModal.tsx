@@ -16,6 +16,7 @@ import {
   compteValide,
   sommeMontants,
   suggestionsLibelles,
+  tvaSurPartie,
   ventilerTva,
 } from "@/lib/frais";
 import { fromCents, toCents } from "@/lib/statementLines";
@@ -66,6 +67,8 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
   const [taux, setTaux] = useState(TAUX_PAR_DEFAUT);
   const [ht, setHt] = useState("");
   const [tva, setTva] = useState("");
+  // Partie avec TVA (12/11/2026) : vide, la TVA porte sur tout le montant
+  const [partie, setPartie] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,17 +118,21 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
     if (exact !== null) setHt(fromCents(toCents(total) - toCents(exact)).replace(".", ","));
   }
 
-  const htExact = montant(ht);
-  const tvaExacte = montant(tva);
+  // TVA sur une partie seulement : calculée, Frais HT et TVA ne se saisissent plus
+  const partiel = avecTva && partie.trim() !== "" ? tvaSurPartie(total, partie, taux) : null;
+  const htExact = partiel ? partiel.ht : montant(ht);
+  const tvaExacte = partiel ? partiel.tva : montant(tva);
   const erreurTva = !avecTva
     ? null
-    : htExact === null || tvaExacte === null
-      ? "Saisissez le frais hors taxe et la TVA (2 décimales au plus)."
-      : toCents(htExact) <= BigInt(0) || toCents(tvaExacte) <= BigInt(0)
-        ? "Le frais hors taxe et la TVA doivent être positifs."
-        : toCents(htExact) + toCents(tvaExacte) !== toCents(total)
-          ? `Frais HT + TVA doit faire exactement ${formatAmount(total, "DH")}.`
-          : null;
+    : partiel
+      ? partiel.erreur
+      : htExact === null || tvaExacte === null
+        ? "Saisissez le frais hors taxe et la TVA (2 décimales au plus)."
+        : toCents(htExact) <= BigInt(0) || toCents(tvaExacte) <= BigInt(0)
+          ? "Le frais hors taxe et la TVA doivent être positifs."
+          : toCents(htExact) + toCents(tvaExacte) !== toCents(total)
+            ? `Frais HT + TVA doit faire exactement ${formatAmount(total, "DH")}.`
+            : null;
   const tauxValide = ventilerTva(total, taux) !== null;
   const pret =
     libelle.trim() !== "" &&
@@ -271,7 +278,7 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
         </label>
 
         {avecTva && (
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field
               label="Taux de TVA (%)"
               htmlFor="frais-manuel-taux"
@@ -285,11 +292,26 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
                 onChange={(event) => appliquerTaux(event.target.value)}
               />
             </Field>
+            <Field
+              label="Partie avec TVA (HT)"
+              htmlFor="frais-manuel-partie"
+              hint="Si la TVA ne porte que sur une partie ; vide : sur tout le montant."
+            >
+              <NumberInput
+                id="frais-manuel-partie"
+                value={partie}
+                inputMode="decimal"
+                placeholder="Tout le montant"
+                invalid={!!partiel?.erreur}
+                onChange={(event) => setPartie(event.target.value)}
+              />
+            </Field>
             <Field label="Frais HT" htmlFor="frais-manuel-ht">
               <NumberInput
                 id="frais-manuel-ht"
-                value={ht}
+                value={partiel ? partiel.ht.replace(".", ",") : ht}
                 inputMode="decimal"
+                disabled={!!partiel}
                 invalid={!!erreurTva}
                 onChange={(event) => saisirHt(event.target.value)}
               />
@@ -297,13 +319,20 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
             <Field label="TVA" htmlFor="frais-manuel-tva">
               <NumberInput
                 id="frais-manuel-tva"
-                value={tva}
+                value={partiel ? partiel.tva.replace(".", ",") : tva}
                 inputMode="decimal"
+                disabled={!!partiel}
                 invalid={!!erreurTva}
                 onChange={(event) => saisirTva(event.target.value)}
               />
             </Field>
           </div>
+        )}
+        {partiel && !partiel.erreur && (
+          <p className="text-sm text-simtis-muted tabular-nums">
+            Partie avec TVA {formatAmount(normalizeAmountInput(partie) ?? "0", "DH")} · TVA{" "}
+            {formatAmount(partiel.tva, "DH")} · Sans TVA {formatAmount(partiel.sansTva, "DH")}
+          </p>
         )}
         {erreurTva && <p className="text-sm text-simtis-danger-fg">{erreurTva}</p>}
 

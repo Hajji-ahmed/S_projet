@@ -14,6 +14,7 @@ import {
   sommeMontants,
   suggestionsLibelles,
   totalGrandLivre,
+  tvaSurPartie,
   ventilerTva,
 } from "@/lib/frais";
 import type { CompteFrais, LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
@@ -59,6 +60,31 @@ describe("comptabilisation manuelle", () => {
     expect(ventilerTva("165.00", "0")).toBeNull();
     expect(ventilerTva("165.00", "abc")).toBeNull();
     expect(ventilerTva("165.00", "120")).toBeNull();
+  });
+
+  it("calcule la TVA sur une partie seulement, le reste sans TVA (12/11/2026)", () => {
+    // 77,50 = commission 25 + TVA 2,50 + timbre 50 sans TVA
+    expect(tvaSurPartie("77.50", "25", "10")).toEqual({
+      ht: "75.00",
+      tva: "2.50",
+      sansTva: "50.00",
+      erreur: null,
+    });
+    // TVA arrondie au centime le plus proche, 0,5 vers le haut
+    expect(tvaSurPartie("100.00", "12,35", "10")).toMatchObject({ tva: "1.24", sansTva: "86.41" });
+    // Toute la base soumise : rien sans TVA
+    expect(tvaSurPartie("165.00", "150", "10")).toMatchObject({ tva: "15.00", sansTva: "0.00" });
+  });
+
+  it("refuse une partie avec TVA invalide ou trop grande", () => {
+    expect(tvaSurPartie("77.50", "", "10").erreur).toBe(
+      "Saisissez la partie avec TVA (2 décimales au plus).",
+    );
+    expect(tvaSurPartie("77.50", "0", "10").erreur).toBe("La partie avec TVA doit être positive.");
+    expect(tvaSurPartie("77.50", "75", "10").erreur).toBe(
+      "Partie avec TVA + TVA dépasse le montant du frais (77,50 DH).",
+    );
+    expect(tvaSurPartie("77.50", "25", "abc").erreur).toBe("Un taux entre 0 et 100.");
   });
 
   it("additionne exactement des montants signés", () => {
