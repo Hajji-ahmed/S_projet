@@ -50,6 +50,8 @@ from app.services.reconciliation_scoring import (
     comparable,
     jusqu_au,
     meme_montant,
+    numeros,
+    numeros_communs,
     proposer,
     proposer_elargi,
     score,
@@ -410,6 +412,24 @@ class _Moteur:
     nb_annulations: int = 0
 
 
+def _ecritures_d_une_paire(
+    entries: list[AccountingEntry], date_from: date, date_to: date
+) -> set[int]:
+    """Écritures libres (hors SIMTIS) qui forment une paire impayé ↔ origine (12/11/2026)."""
+    paires = paires_annulation(
+        [_ecriture(e) for e in entries if e.origine != "SIMTIS"], du=date_from, au=date_to
+    )
+    return {i for p in paires for i in (p.impaye_id, p.origine_id)}
+
+
+def _numero_commun(tx: BankTransaction, entry: AccountingEntry) -> bool:
+    """L'opération et l'écriture portent un même n° de chèque, d'effet ou de pièce."""
+    return numeros_communs(
+        numeros(tx.libelle, tx.reference),
+        numeros(entry.libelle, entry.reference, entry.numero_piece),
+    )
+
+
 def _engine(
     db: Session,
     company: Company,
@@ -474,6 +494,18 @@ def _engine(
         repo.rejected_pairs(db, company.id),
     )
 
+    # 2 bis. Impayé ↔ origine avant une proposition sans n° commun (12/11/2026) : une écriture qui
+    # forme une paire avec son impayé (même n°, montant opposé) ne va pas à une opération de banque
+    # qui ne porte pas ce n° ; elle est réservée à l'étape 5 (ni groupe, ni frais)
+    reservees = _ecritures_d_une_paire(entries, date_from, date_to)
+    resultat.propositions = [
+        p
+        for p in resultat.propositions
+        if p.ecriture_id not in reservees
+        or _numero_commun(by_tx[p.operation_id], by_entry[p.ecriture_id])
+    ]
+    reservees -= {p.ecriture_id for p in resultat.propositions}
+
     # 3. Groupes N → 1 (12/10/2026) sur ce que le 1 → 1 laisse libre : un groupe équilibré passe
     # avant une paire 1 → 1 aux montants différents (qui ne pourrait jamais être validée)
     equilibrees = [
@@ -482,7 +514,7 @@ def _engine(
         if by_tx[p.operation_id].montant == -montant_rapprochement(by_entry[p.ecriture_id])
     ]
     bloque_tx = {p.operation_id for p in equilibrees} | resultat.operations_ambigues
-    bloque_ec = {p.ecriture_id for p in equilibrees} | resultat.ecritures_ambigues
+    bloque_ec = {p.ecriture_id for p in equilibrees} | resultat.ecritures_ambigues | reservees
     groupes = grouper(
         [_operation(tx) for tx in transactions if tx.id not in bloque_tx],
         [_ecriture(entry) for entry in entries if entry.id not in bloque_ec],
@@ -501,7 +533,10 @@ def _engine(
     # 3 bis. Frais seuls face à une écriture Sage de frais (05/11/2026) : « FRAIS RECUPERES PAR LA
     # BANQUE » ↔ « INTERET CREDOC », sur ce que le 1 → 1 et les groupes laissent libre
     pris_ec = (
-        {p.ecriture_id for p in resultat.propositions} | groupe_ec | resultat.ecritures_ambigues
+        {p.ecriture_id for p in resultat.propositions}
+        | groupe_ec
+        | resultat.ecritures_ambigues
+        | reservees
     )
     frais_seuls = _frais_seuls(
         [by_tx[i] for i in sorted(frais_ids - groupe_tx)],

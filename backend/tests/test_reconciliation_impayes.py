@@ -16,6 +16,7 @@ from tests.test_reconciliation_api import (
     company,
     ecriture,
     operation,
+    proposals,
     run,
     statuses,
 )
@@ -176,6 +177,39 @@ def test_only_entries_left_free_by_the_bank_are_paired(client, comptable, db):
 
     assert result["nb_annulations"] == 0
     assert paires(client, comptable, db).json()["paires"] == []
+    assert statuses(db, impaye) == ["Non rapprochée"]
+
+
+def test_a_bank_proposal_without_a_common_number_gives_way_to_the_unpaid_pair(
+    client, comptable, db
+):
+    """12/11/2026 : l'encaissement du chèque 8000215 ne prend plus l'écriture du chèque 0001006,
+    qui a son impayé au même numéro ; la paire impayé ↔ origine est proposée."""
+    compte, origine, impaye = _paire(db)
+    tx = operation(
+        db, compte, "10000", date(2026, 9, 3), "ENCAISSEMENT CHEQUE N 8000215 TIRE SUR C M"
+    )
+
+    result = run(client, comptable, db).json()
+    [paire] = paires(client, comptable, db).json()["paires"]
+
+    assert result["nb_annulations"] == 1
+    assert (paire["impaye"]["id"], paire["origine"]["id"]) == (impaye.id, origine.id)
+    assert proposals(client, comptable, db).json()["correspondances"] == []
+    assert statuses(db, tx) == ["Non rapprochée"]
+
+
+def test_a_bank_proposal_with_the_same_number_keeps_the_entry(client, comptable, db):
+    """La règle « seulement les restes » reste vraie quand la banque porte le même numéro."""
+    compte, origine, impaye = _paire(db)
+    tx = operation(db, compte, "10000", date(2026, 9, 3), "REMISE CHEQUE N 0001006 HAJAR ISMAILI")
+
+    result = run(client, comptable, db).json()
+    [proposition] = proposals(client, comptable, db).json()["correspondances"]
+
+    assert result["nb_annulations"] == 0
+    assert proposition["operations"][0]["id"] == tx.id
+    assert proposition["ecritures"][0]["id"] == origine.id
     assert statuses(db, impaye) == ["Non rapprochée"]
 
 
