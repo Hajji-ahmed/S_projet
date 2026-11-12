@@ -30,6 +30,7 @@ import { formatAmount } from "@/lib/format";
 import {
   cleJour,
   libelleModifie,
+  ligneBanqueTotale,
   selectionTimbres,
   sommeMontants,
   totalGrandLivre,
@@ -742,7 +743,7 @@ function lignesAffichees(
   modif: ModificationFrais | undefined,
 ): LigneGL[] {
   if (modif?.lignes) {
-    // Les lignes saisies, puis la ligne banque calculée par le serveur (11/11/2026)
+    // Les lignes saisies, puis une seule ligne banque avec le total, comme le serveur (12/11/2026)
     return [
       ...modif.lignes.map((ligne) => ({
         type: "saisie",
@@ -752,9 +753,7 @@ function lignesAffichees(
         debit: ligne.sens === "Débit" ? ligne.montant : null,
         credit: ligne.sens === "Crédit" ? ligne.montant : null,
       })),
-      ...item.lignes
-        .filter((ligne) => ligne.type === null)
-        .map((ligne) => ({ ...ligne, libelle: modif.libelle ?? ligne.libelle })),
+      ligneBanqueTotale(item.lignes, item.total, modif.libelle ?? item.libelle),
     ];
   }
   const libelle = modif?.libelle;

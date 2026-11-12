@@ -121,6 +121,7 @@ class PropositionTimbresOut(BaseModel):
                     item.account,
                     details_ecriture(item.famille, item.jour.lignes),
                     item.jour.total,
+                    [tx for tx, _ in item.jour.lignes],
                 )
             ],
             operations=[TimbreOut.of(tx) for tx in item.jour.operations],
@@ -381,7 +382,7 @@ class ManuelleIn(BaseModel):
 
     company_id: int
     transaction_ids: Annotated[list[int], Field(min_length=1, max_length=500)]
-    libelle: Annotated[str, Field(min_length=1, max_length=60)]
+    libelle: Annotated[str, Field(min_length=1, max_length=50)]
     # « date » dans le JSON ; le nom du champ ne doit pas masquer le type `date`
     date_ecriture: date | None = Field(default=None, alias="date")
     # TVA séparée : son montant, sinon calculée au taux donné

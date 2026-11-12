@@ -199,7 +199,7 @@ export function ManualFeeModal({ companyId, operations, onClose, onDone }: Manua
           <TextInput
             id="frais-manuel-libelle"
             value={libelle}
-            maxLength={60}
+            maxLength={50}
             list="frais-manuel-suggestions"
             autoComplete="off"
             onChange={(event) => setLibelle(event.target.value)}

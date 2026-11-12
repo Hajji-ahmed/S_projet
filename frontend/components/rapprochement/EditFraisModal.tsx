@@ -87,8 +87,8 @@ export function EditFraisModal({
   const erreurLibelle =
     libelle.trim() === ""
       ? "Indiquez le libellé de l'écriture."
-      : libelle.trim().length > 60
-        ? "60 caractères au plus."
+      : libelle.trim().length > 50
+        ? "50 caractères au plus."
         : null;
   const erreur = erreurLibelle ?? erreurDate ?? (lignesModifiees ? etat.erreur : null);
 
@@ -153,7 +153,7 @@ export function EditFraisModal({
             <TextInput
               id="frais-edit-libelle"
               value={libelle}
-              maxLength={60}
+              maxLength={50}
               invalid={!!erreurLibelle}
               onChange={(event) => setLibelle(event.target.value)}
             />
@@ -221,7 +221,7 @@ export function EditFraisModal({
                     <TextInput
                       aria-label={`Libellé de la ligne ${index + 1}`}
                       value={ligne.libelle}
-                      maxLength={60}
+                      maxLength={50}
                       className="min-w-[160px]"
                       onChange={(event) => changerLigne(index, "libelle", event.target.value)}
                     />

@@ -27,7 +27,7 @@ comptabilisation) ; un export Sage qui ramène une écriture SIMTIS la reconnaî
 import csv
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from io import BytesIO, StringIO
@@ -84,6 +84,8 @@ SENS_DEBIT = "Débit"
 # N° pièce d'une écriture de frais (16/10/2026) : BANQUE AA MM NNN (« BP2610123 »), un compteur
 # par société, banque et mois
 PIECE_MAX = 999
+# Longueur du libellé d'écriture dans Sage 100 (12/11/2026)
+LIBELLE_SAGE = 50
 SENS_CREDIT = "Crédit"
 # Fichier pour Sage (16/10/2026) : CSV au point-virgule, en Windows-1252 (accents de « Débit »)
 CSV_SEPARATEUR = ";"
@@ -1322,9 +1324,30 @@ def ligne_banque(compte: str | None, montant: Decimal) -> LigneGL:
     )
 
 
-def lignes_gl(account: BankAccount, details: list[Detail], total: Decimal) -> list[LigneGL]:
-    """Une ligne par détail AU DÉBIT de son compte de charge ou de TVA, puis le total au crédit du
-    compte bancaire (11/11/2026, remplace les lignes au crédit sans ligne banque du 17/10/2026)."""
+def lignes_banque(
+    compte: str | None, operations: list[BankTransaction], total: Decimal
+) -> list[LigneGL]:
+    """Partie banque d'une écriture automatique (12/11/2026) : une ligne par opération du relevé,
+    dans l'ordre du relevé, avec son libellé (`LIBELLE_SAGE` caractères au plus) et son montant ;
+    le total en une ligne si les opérations ne le font pas (aucune donnée)."""
+    if not operations or sum(-tx.montant for tx in operations) != total:
+        return [ligne_banque(compte, total)]
+    ordonnees = sorted(operations, key=lambda tx: (tx.date_operation, tx.ordre or 0, tx.id))
+    return [
+        replace(ligne_banque(compte, -tx.montant + ZERO), libelle=_plain(tx.libelle)[:LIBELLE_SAGE])
+        for tx in ordonnees
+    ]
+
+
+def lignes_gl(
+    account: BankAccount,
+    details: list[Detail],
+    total: Decimal,
+    operations: list[BankTransaction] | None = None,
+) -> list[LigneGL]:
+    """Une ligne par détail AU DÉBIT de son compte de charge ou de TVA, puis la banque au crédit du
+    compte bancaire (11/11/2026, remplace les lignes au crédit sans ligne banque du 17/10/2026) :
+    une ligne par opération depuis le 12/11/2026 (`lignes_banque`), le total sans opérations."""
     return [
         *(
             LigneGL(
@@ -1336,7 +1359,7 @@ def lignes_gl(account: BankAccount, details: list[Detail], total: Decimal) -> li
             )
             for detail in details
         ),
-        ligne_banque(account.compte_comptable, total),
+        *lignes_banque(account.compte_comptable, operations or [], total),
     ]
 
 
@@ -1346,10 +1369,9 @@ def _lignes_de(
     entry: AccountingEntry,
     operations: list[BankTransaction],
 ) -> list[LigneGL]:
-    details = details_ecriture(
-        famille, [(tx, code) for tx in operations if (code := famille.type_de(tx.libelle))]
-    )
-    return lignes_gl(account, details, entry.montant)
+    lignes = [(tx, code) for tx in operations if (code := famille.type_de(tx.libelle))]
+    details = details_ecriture(famille, lignes)
+    return lignes_gl(account, details, entry.montant, [tx for tx, _ in lignes])
 
 
 def lignes_manuelle(
@@ -1622,7 +1644,8 @@ def montant_csv(montant: Decimal) -> str:
 
 # --- Comptabilisation manuelle (13/10/2026) -------------------------------------------------------
 
-LIBELLE_MAX = 60
+# Sage 100 accepte 50 caractères dans le libellé d'écriture (12/11/2026, 60 avant)
+LIBELLE_MAX = LIBELLE_SAGE
 OPERATIONS_MAX = 500
 CENT = Decimal("0.01")
 CENT_POUR_CENT = Decimal("100")

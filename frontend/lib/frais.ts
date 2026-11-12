@@ -191,7 +191,7 @@ export function etatLignes(
     else if (ligne.compte.replace(/\s/g, "").length > 20)
       erreur ??= "Un N° compte général a 20 caractères au plus.";
     if (!ligne.libelle.trim()) erreur ??= "Chaque ligne a un libellé.";
-    else if (ligne.libelle.trim().length > 60) erreur ??= "Un libellé a 60 caractères au plus.";
+    else if (ligne.libelle.trim().length > 50) erreur ??= "Un libellé a 50 caractères au plus.";
     if (montant === null || montant <= BigInt(0)) {
       erreur ??= "Chaque montant est positif, au centime près.";
       continue;
@@ -204,7 +204,24 @@ export function etatLignes(
   return { somme: fromCents(somme), ecart: fromCents(ecart), erreur };
 }
 
-/** Libellé d'une ligne quand seul le libellé de l'écriture change : « TVA … » pour la TVA. */
+/** Libellé d'une ligne quand seul le libellé de l'écriture change : « TVA … » pour la TVA ; une
+ * ligne banque garde le libellé du relevé (12/11/2026). */
 export function libelleModifie(ligne: LigneGL, libelleOrigine: string, libelle: string): string {
+  if (ligne.type === null) return ligne.libelle;
   return ligne.libelle === `TVA ${libelleOrigine}` ? `TVA ${libelle}` : libelle;
+}
+
+/**
+ * Ligne banque d'une écriture dont les lignes ont été saisies (« Modifier ») : une seule ligne
+ * avec le total, comme le serveur la calcule (12/11/2026) ; « COM » pour une écriture « FRAIS ».
+ */
+export function ligneBanqueTotale(lignes: LigneGL[], total: string, libelle: string): LigneGL {
+  return {
+    type: null,
+    type_libelle: "Banque",
+    libelle: libelle === "FRAIS" ? "COM" : libelle,
+    compte: lignes.find((ligne) => ligne.type === null)?.compte ?? null,
+    debit: null,
+    credit: total,
+  };
 }

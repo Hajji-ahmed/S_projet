@@ -8,6 +8,7 @@ import {
   comptesDeLaBanque,
   etatLignes,
   libelleModifie,
+  ligneBanqueTotale,
   lignesSaisies,
   selectionTimbres,
   sommeMontants,
@@ -15,7 +16,7 @@ import {
   totalGrandLivre,
   ventilerTva,
 } from "@/lib/frais";
-import type { CompteFrais, PropositionTimbres } from "@/types/frais";
+import type { CompteFrais, LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
 
 const jour = (bank_account_id: number, date: string, total: string, famille = "timbres") =>
   ({ famille, bank_account_id, date, total }) as PropositionTimbres;
@@ -125,6 +126,39 @@ describe("propositions modifiées (19/10/2026)", () => {
     ]);
     expect(libelleModifie(tva, "COM", "COM RTGS")).toBe("TVA COM RTGS");
     expect(libelleModifie({ ...tva, libelle: "COM" }, "COM", "COM RTGS")).toBe("COM RTGS");
+    // Une ligne banque garde le libellé du relevé (12/11/2026)
+    const releve = { ...banque, libelle: "COMM VIR SRBM: AWBVCA0510261805" };
+    expect(libelleModifie(releve, "COM", "COM RTGS")).toBe("COMM VIR SRBM: AWBVCA0510261805");
+  });
+
+  it("gives a modified entry one bank line with the total", () => {
+    const banque: LigneGL = {
+      type: null,
+      type_libelle: "Banque",
+      libelle: "COM ABONNEMENT EBICS",
+      compte: "55410002",
+      debit: null,
+      credit: "660.00",
+    };
+
+    expect(ligneBanqueTotale([banque, { ...banque, credit: "11.00" }], "671.00", "COM")).toEqual({
+      ...banque,
+      libelle: "COM",
+      credit: "671.00",
+    });
+    expect(ligneBanqueTotale([banque], "77.50", "FRAIS").libelle).toBe("COM");
+  });
+
+  it("limits a line label to 50 characters, the length Sage 100 accepts", () => {
+    const ligne: LigneSaisie = {
+      compte: "61473000",
+      libelle: "X".repeat(51),
+      montant: "5.00",
+      sens: "Débit",
+    };
+
+    expect(etatLignes([ligne], "5.00").erreur).toBe("Un libellé a 50 caractères au plus.");
+    expect(etatLignes([{ ...ligne, libelle: "X".repeat(50) }], "5.00").erreur).toBeNull();
   });
 });
 
