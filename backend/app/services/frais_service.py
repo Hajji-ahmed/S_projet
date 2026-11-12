@@ -97,7 +97,9 @@ ZERO = Decimal("0.00")
 # IMPORTATION » (BMCE, BMCI), « FRAIS DE TIMBRE DOMICILIATION TITRES… », « FRAIS TIMBRE DU MOIS »
 # (AWB)
 _TIMBRE = re.compile(
-    r"^(DROITS? DE TIMBRE\b|FRAIS DE TIMBRE ?/? ?DOMICILIATION\b|FRAIS TIMBRE DU MOIS\b)"
+    r"^(DROITS? DE TIMBRE\b|FRAIS DE TIMBRE ?/? ?DOMICILIATION\b|FRAIS TIMBRE DU MOIS\b"
+    # AWB (12/11/2026) : « TIMBRE/REM LCN REF 1897734 »
+    r"|TIMBRE ?/ ?REM LCN\b)"
 )
 _COMMISSIONS = (
     ("commission", re.compile(r"^COMMISSION$")),
@@ -122,7 +124,13 @@ _COMMISSIONS_TVA = (
     ("commission_lcn", re.compile(r"^COMMISSION REJET PAIEMENT LCN\b")),
     ("commission_lcn", re.compile(r"^COM FRAIS (REGLEMENT \d+ LCN|\d+ LCN (PAYEES|IMPAYEES))\b")),
     ("commission_domiciliation", re.compile(r"^COMMISSION DOMICILIATION TITRES?\b")),
+    # AWB (12/11/2026), sans le seuil de 200 DH (`TYPES_COMMISSIONS_SANS_SEUIL`)
+    ("commission_virement", re.compile(r"^COMM VIR (EMIS|SRBM)\b")),
+    ("commission_ebics", re.compile(r"^COM ABONNEMENT EBICS\b")),
 )
+# Commission d'un paiement par carte (AWB, 12/11/2026) : « COM.ADOBE », « COM.WWW.FASHN.AI »,
+# « COM.ANTHROPIC* CLAUDE TEAM », lue sur le libellé avec sa ponctuation
+_COMMISSION_CARTE = re.compile(r"^COM\.\S")
 _FRAIS_RECUPERES = (
     ("frais_recuperes", re.compile(r"^FRAIS RECUPERES PAR LA BANQUE\b")),
     # Autres banques (09/11/2026) : AWB, CIH
@@ -131,8 +139,14 @@ _FRAIS_RECUPERES = (
     # CIH (11/11/2026), TVA comprise, sans le seuil de 200 DH (`TYPES_FRAIS_SANS_SEUIL`)
     ("frais_caution", re.compile(r"^FRAIS CAUTION NUMERO\b")),
     ("frais_pdl_credoc", re.compile(r"^FRAIS PDL CREDOC IMPORT EN FAVEUR\b")),
+    # AWB (12/11/2026), TVA comprise, sans le seuil de 200 DH
+    ("frais_attijari_net", re.compile(r"^FRAIS ATTIJARI NET ENTREPRISE\b")),
+    ("frais_docnet", re.compile(r"^FRAIS MODULE DOCNET\b")),
+    ("frais_certification", re.compile(r"^FRAIS POUR CERTIFICATION CHEQUES?\b")),
+    ("frais_operation", re.compile(r"^FRAIS OPERATION N \d+$")),
+    ("frais_releve_caution", re.compile(r"^FRAIS RELEVE CAUTION\b")),
 )
-_FRAIS_TVA = _COMMISSIONS_TVA + _FRAIS_RECUPERES
+_FRAIS_TVA = (*_COMMISSIONS_TVA, ("commission_carte", _COMMISSION_CARTE), *_FRAIS_RECUPERES)
 TAUX_TVA_FRAIS = Decimal("10")
 # Décision du 19/10/2026 : une opération de frais de plus de 200 DH (hors droits de timbre) n'est
 # jamais comptabilisée en automatique ; elle se passe à la main et se justifie auprès de la banque
@@ -143,7 +157,22 @@ SEUIL_MANUEL = Decimal("200")
 # comprise et les autres frais suivent toujours le seuil
 TYPES_SANS_SEUIL = frozenset({"commission", "tva", "commission_effet", "tva_commission_effet"})
 # Frais CIH à TVA comprise toujours automatiques, quel que soit le montant (11/11/2026)
-TYPES_FRAIS_SANS_SEUIL = frozenset({"frais_caution", "frais_pdl_credoc"})
+TYPES_FRAIS_SANS_SEUIL = frozenset(
+    {
+        "frais_caution",
+        "frais_pdl_credoc",
+        # AWB (12/11/2026)
+        "frais_attijari_net",
+        "frais_docnet",
+        "frais_certification",
+        "frais_operation",
+        "frais_releve_caution",
+    }
+)
+# Commissions AWB à TVA comprise toujours automatiques, quel que soit le montant (12/11/2026)
+TYPES_COMMISSIONS_SANS_SEUIL = frozenset(
+    {"commission_virement", "commission_ebics", "commission_carte"}
+)
 # FRAIS RECUPERES PAR LA BANQUE de 77,50 : droit de timbre 50 + commission 25 + TVA 2,50
 FRAIS_RECUPERES_AVEC_TIMBRE = Decimal("77.50")
 TIMBRE_FRAIS_RECUPERES = Decimal("50.00")
@@ -210,6 +239,15 @@ COMPTE_PAR_TYPE = {
     "frais_cheques": COMPTE_FRAIS_BANCAIRES,
     "frais_caution": COMPTE_FRAIS_BANCAIRES,
     "frais_pdl_credoc": COMPTE_FRAIS_BANCAIRES,
+    # AWB (12/11/2026)
+    "commission_virement": COMPTE_FRAIS_BANCAIRES,
+    "commission_ebics": COMPTE_FRAIS_BANCAIRES,
+    "commission_carte": COMPTE_FRAIS_BANCAIRES,
+    "frais_attijari_net": COMPTE_FRAIS_BANCAIRES,
+    "frais_docnet": COMPTE_FRAIS_BANCAIRES,
+    "frais_certification": COMPTE_FRAIS_BANCAIRES,
+    "frais_operation": COMPTE_FRAIS_BANCAIRES,
+    "frais_releve_caution": COMPTE_FRAIS_BANCAIRES,
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
@@ -256,6 +294,23 @@ TYPES = {
     "frais_caution_tva": ("TVA frais caution", "compte_tva", "compte de TVA"),
     "frais_pdl_credoc": ("Frais PDL credoc import", "compte_commission", "compte de charge"),
     "frais_pdl_credoc_tva": ("TVA frais PDL credoc import", "compte_tva", "compte de TVA"),
+    # AWB (12/11/2026)
+    "commission_virement": ("Commission virement", "compte_commission", "compte de charge"),
+    "commission_virement_tva": ("TVA commission virement", "compte_tva", "compte de TVA"),
+    "commission_ebics": ("Commission abonnement EBICS", "compte_commission", "compte de charge"),
+    "commission_ebics_tva": ("TVA commission EBICS", "compte_tva", "compte de TVA"),
+    "commission_carte": ("Commission paiement carte", "compte_commission", "compte de charge"),
+    "commission_carte_tva": ("TVA commission carte", "compte_tva", "compte de TVA"),
+    "frais_attijari_net": ("Frais Attijari Net", "compte_commission", "compte de charge"),
+    "frais_attijari_net_tva": ("TVA frais Attijari Net", "compte_tva", "compte de TVA"),
+    "frais_docnet": ("Frais module DocNet", "compte_commission", "compte de charge"),
+    "frais_docnet_tva": ("TVA frais DocNet", "compte_tva", "compte de TVA"),
+    "frais_certification": ("Frais certification chèques", "compte_commission", "compte de charge"),
+    "frais_certification_tva": ("TVA frais certification", "compte_tva", "compte de TVA"),
+    "frais_operation": ("Frais opération", "compte_commission", "compte de charge"),
+    "frais_operation_tva": ("TVA frais opération", "compte_tva", "compte de TVA"),
+    "frais_releve_caution": ("Frais relevé caution", "compte_commission", "compte de charge"),
+    "frais_releve_caution_tva": ("TVA frais relevé caution", "compte_tva", "compte de TVA"),
 }
 
 
@@ -283,7 +338,10 @@ def type_commission(libelle: str | None) -> str | None:
         return exacte
     # Commissions à TVA comprise (RTGS, prélèvement, bancaire, tenue de compte, 14/10/2026)
     sans = _sans_ponctuation(libelle)
-    return next((code for code, regle in _COMMISSIONS_TVA if regle.match(sans)), None)
+    code = next((code for code, regle in _COMMISSIONS_TVA if regle.match(sans)), None)
+    if code is None and _COMMISSION_CARTE.match(texte):
+        return "commission_carte"
+    return code
 
 
 def type_frais_tva(libelle: str | None) -> str | None:
@@ -615,7 +673,7 @@ def sans_seuil(libelle: str | None) -> bool:
     """Commission ou TVA sur deux lignes, frais CIH de caution ou de PDL credoc (11/11/2026) : le
     seuil de 200 DH ne s'applique pas."""
     return (
-        type_commission(libelle) in TYPES_SANS_SEUIL
+        type_commission(libelle) in TYPES_SANS_SEUIL | TYPES_COMMISSIONS_SANS_SEUIL
         or type_frais_tva(libelle) in TYPES_FRAIS_SANS_SEUIL
     )
 

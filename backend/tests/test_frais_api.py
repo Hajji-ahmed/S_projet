@@ -1742,13 +1742,18 @@ def test_a_day_with_a_sage_com_entry_keeps_its_vat_out_of_the_manual_list(client
         ("FRAIS CAUTION NUMERO 2600457", False, None, "frais_caution"),
         ("FRAIS CAUTION NUMÉRO : 26/00457", False, None, "frais_caution"),
         ("FRAIS PDL CREDOC IMPORT EN FAVEUR DE SOCIETE X", False, None, "frais_pdl_credoc"),
+        # AWB (12/11/2026), TVA comprise, sans seuil (à la main avant)
+        ("FRAIS RELEVE CAUTION", False, None, "frais_releve_caution"),
+        ("COM.ADOBE", False, "commission_carte", None),
+        ("COMM VIR SRBM: AWBVCA0510261805", False, "commission_virement", None),
+        ("TIMBRE/REM LCN REF 1897734", True, None, None),
         # Restent à la main
-        ("FRAIS RELEVE CAUTION", False, None, None),
+        ("COMMISSION CAUTION", False, None, None),
+        ("FRAIS ET AGIOS TRIMESTRIELS T3 2026", False, None, None),
         ("AGIOS ESCOMPTE LCN N 2600114", False, None, None),
         ("TVA 10% SUR COMMISSION REF ILC26A0001", False, None, None),
         ("PRELEVEMENT DE LA TVA SUR L'ENSEMBLE DES FRAIS & COMMISSIONS", False, None, None),
         ("CREDOC IMPORT COMMISSION OUVERTURE ILC26A0001", False, None, None),
-        ("COM.ADOBE", False, None, None),
         ("FRAIS DE TENUE DE COMPTE", False, None, None),
     ],
 )
@@ -1831,7 +1836,7 @@ def test_cih_caution_and_pdl_credoc_fees_are_automatic_whatever_the_amount(
     compte = account(db, bank_code="CIH")
     operation(db, compte, "-110", JOUR, "FRAIS CAUTION NUMERO 2600457")
     operation(db, compte, "-660", JOUR, "FRAIS PDL CREDOC IMPORT EN FAVEUR DE SOCIETE X")
-    releve = operation(db, compte, "-22", JOUR, "FRAIS RELEVE CAUTION")
+    releve = operation(db, compte, "-22", JOUR, "FRAIS DE DOSSIER CAUTION")
 
     tableau = lire(client, comptable, db, None).json()
 
@@ -1860,6 +1865,64 @@ def test_cih_caution_and_pdl_credoc_fees_are_automatic_whatever_the_amount(
     response = client.get("/api/frais/justificatif", params=params, headers=direction)
     assert response.status_code == 409
     assert "Aucun frais de plus de 200 DH" in response.json()["detail"]
+
+
+def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commission(
+    client, comptable, db
+):
+    """12/11/2026 : commissions (virements, EBICS, carte) dans « COM », frais (Attijari Net,
+    DocNet, certification, opération, relevé caution) dans « FRAIS », TVA 10 % comprise et sans
+    seuil ; timbre LCN dans « DT D'ENREGISTREMENT » ; « COM & FRAIS » proposé ; agios trimestriels
+    et commission caution restent à la main."""
+    compte = account(db, bank_code="AWB")
+    for montant, libelle in (
+        ("-17.60", "COMM VIR EMIS 67783838"),
+        ("-165", "COMM VIR SRBM: AWBVCA0510261805"),
+        ("-660", "COM ABONNEMENT EBICS"),
+        ("-11", "COM.ADOBE"),
+        ("-82.50", "COM & FRAIS / 3 LCN PAYEES"),
+        ("-71.50", "FRAIS ATTIJARI NET ENTREPRISE"),
+        ("-214.50", "FRAIS MODULE DOCNET 5 ANS"),
+        ("-44", "FRAIS POUR CERTIFICATION CHEQUES"),
+        ("-33", "FRAIS OPERATION N 132593923"),
+        ("-22", "FRAIS RELEVE CAUTION"),
+        ("-40", "TIMBRE/REM LCN REF 1897734"),
+    ):
+        operation(db, compte, montant, JOUR, libelle)
+    agios = operation(db, compte, "-47917.73", JOUR, "FRAIS ET AGIOS TRIMESTRIELS T3 2026")
+    caution = operation(db, compte, "-2187.40", JOUR, "COMMISSION CAUTION")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    par_libelle = {p["libelle"]: p for p in tableau["propositions"]}
+    assert set(par_libelle) == {"DT D'ENREGISTREMENT", "COM", "FRAIS"}
+    assert par_libelle["DT D'ENREGISTREMENT"]["total"] == "40.00"
+    assert details(par_libelle["COM"]) == [
+        ("commission_lcn", 1, "75.00"),
+        ("commission_lcn_tva", 1, "7.50"),
+        ("commission_virement", 2, "166.00"),
+        ("commission_virement_tva", 2, "16.60"),
+        ("commission_ebics", 1, "600.00"),
+        ("commission_ebics_tva", 1, "60.00"),
+        ("commission_carte", 1, "10.00"),
+        ("commission_carte_tva", 1, "1.00"),
+    ]
+    assert par_libelle["COM"]["total"] == "936.10"
+    assert details(par_libelle["FRAIS"]) == [
+        ("frais_attijari_net", 1, "65.00"),
+        ("frais_attijari_net_tva", 1, "6.50"),
+        ("frais_docnet", 1, "195.00"),
+        ("frais_docnet_tva", 1, "19.50"),
+        ("frais_certification", 1, "40.00"),
+        ("frais_certification_tva", 1, "4.00"),
+        ("frais_operation", 1, "30.00"),
+        ("frais_operation_tva", 1, "3.00"),
+        ("frais_releve_caution", 1, "20.00"),
+        ("frais_releve_caution_tva", 1, "2.00"),
+    ]
+    comptes = {g["compte"] for p in tableau["propositions"] for g in p["lignes"] if g["debit"]}
+    assert comptes == {"61671000", "61473000", "34552142"}
+    assert {a["id"] for a in tableau["autres_frais"]} == {agios.id, caution.id}
 
 
 def test_the_fees_journal_is_the_account_journal_starting_with_55(client, comptable, db):
