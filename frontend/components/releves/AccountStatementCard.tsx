@@ -7,6 +7,13 @@ import { useEffect, useRef, useState } from "react";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
 import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
+import {
+  ChoixFiltre,
+  FiltreColonne,
+  FiltreDates,
+  FiltreRecherche,
+} from "@/components/rapprochement/FiltreColonne";
+import { FiltreMontant, FiltrePointage } from "@/components/releves/FiltresReleve";
 import { ManualOperationModal } from "@/components/releves/ManualOperationModal";
 import { PointageBadge, pointageSelectClasses } from "@/components/releves/PointageBadge";
 import { TransactionEditModal } from "@/components/releves/TransactionEditModal";
@@ -14,7 +21,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { DateInput, Field, Select, TextInput } from "@/components/ui/Field";
+import { Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -22,6 +29,15 @@ import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
 import { currencySuffix, formatDate } from "@/lib/balances";
 import { cn } from "@/lib/cn";
+import {
+  colonnesFiltreesReleve,
+  filtrerOperations,
+  filtresReleveActifs,
+  FILTRES_RELEVE_VIDES,
+  optionsPointage,
+  type FiltresReleve,
+  type StatutFiltre,
+} from "@/lib/filtresReleve";
 import { formatAmount } from "@/lib/format";
 import {
   commentaireAEnregistrer,
@@ -70,6 +86,13 @@ type AccountStatementCardProps = {
 
 const ID_LIGNE_CIBLE = "releve-ligne-du-solde";
 
+// « Non rapprochée » couvre aussi les lignes en proposition (« À vérifier » en base)
+const OPTIONS_STATUT = [
+  { value: "", label: "Tous les statuts" },
+  { value: "Rapprochée", label: "Rapprochée" },
+  { value: "Non rapprochée", label: "Non rapprochée" },
+] as const;
+
 /**
  * Relevé continu d'un compte : toutes ses opérations importées, quel que soit le fichier, au
  * format standard. Chaque nouvel import s'ajoute à la suite (décision métier du 02/10/2026).
@@ -103,6 +126,13 @@ export function AccountStatementCard({
   const [aSupprimer, setASupprimer] = useState<Set<number>>(new Set());
   const [confirmation, setConfirmation] = useState(false);
   const [suppression, setSuppression] = useState(false);
+  // Filtres dans les en-têtes, comme dans Excel (12/11/2026) ; celui de la Date est `period`
+  const [filtres, setFiltres] = useState<FiltresReleve>(FILTRES_RELEVE_VIDES);
+
+  function changerFiltres(modif: Partial<FiltresReleve>) {
+    setFiltres((actuels) => ({ ...actuels, ...modif }));
+    setShown(OPERATIONS_AFFICHEES);
+  }
 
   // Liste de choix de la fenêtre de modification (seulement pour qui peut modifier)
   useEffect(() => {
@@ -222,11 +252,25 @@ export function AccountStatementCard({
   const devise = data?.devise ?? accounts.find((a) => a.bank_account_id === selectedId)?.devise;
   const suffix = currencySuffix(devise ?? "MAD");
   const logo = data ? logos.get(data.bank_code) : undefined;
-  // Seul le tableau est raccourci : le résumé et l'export portent sur tout le relevé
-  const visible = showLast(
-    enCoursSeules ? enCours : (data?.operations ?? []),
-    shown,
-    OPERATIONS_AFFICHEES,
+  // Seul le tableau est raccourci et filtré : le résumé et l'export portent sur toute la période
+  const filtrees = filtrerOperations(enCoursSeules ? enCours : (data?.operations ?? []), filtres);
+  const visible = showLast(filtrees, shown, OPERATIONS_AFFICHEES);
+  const filtreEnCours = filtresReleveActifs(filtres);
+  const allumees = colonnesFiltreesReleve(filtres);
+  const choixPointage = optionsPointage(data?.operations ?? []);
+  const filtreMontant = (colonne: "Débit" | "Crédit") => (
+    <FiltreColonne colonne={colonne} actif={colonne === "Débit" ? allumees.debit : allumees.credit}>
+      {(fermer) => (
+        <FiltreMontant
+          id={`releve-montant-${colonne === "Débit" ? "debit" : "credit"}`}
+          valeurs={filtres}
+          onAppliquer={(valeurs) => {
+            changerFiltres(valeurs);
+            fermer();
+          }}
+        />
+      )}
+    </FiltreColonne>
   );
 
   // Les 11 colonnes du relevé standard, dans leur ordre, puis le statut de rapprochement
@@ -260,6 +304,17 @@ export function AccountStatementCard({
     {
       key: "pointage",
       header: "Pointage",
+      filtre: (
+        <FiltreColonne colonne="Pointage" actif={allumees.pointage}>
+          {() => (
+            <FiltrePointage
+              options={choixPointage}
+              coches={filtres.pointages}
+              onChanger={(pointages) => changerFiltres({ pointages })}
+            />
+          )}
+        </FiltreColonne>
+      ),
       render: (row) =>
         canEdit ? (
           <Select
@@ -288,6 +343,25 @@ export function AccountStatementCard({
     {
       key: "date_operation",
       header: "Date d'opération",
+      // Période rechargée depuis l'API : le résumé et l'export la suivent (champs Du / Au déplacés
+      // ici le 12/11/2026)
+      filtre: (
+        <FiltreColonne colonne="Date d'opération" actif={!!(period.from || period.to)}>
+          {(fermer) => (
+            <FiltreDates
+              id="releve-dates"
+              du={period.from ?? ""}
+              au={period.to ?? ""}
+              min=""
+              max=""
+              onAppliquer={(du, au) => {
+                changePeriod({ from: du || undefined, to: au || undefined });
+                fermer();
+              }}
+            />
+          )}
+        </FiltreColonne>
+      ),
       render: (row) => (
         <span
           id={row.id === cible?.ligne ? ID_LIGNE_CIBLE : undefined}
@@ -305,6 +379,28 @@ export function AccountStatementCard({
     {
       key: "libelle",
       header: "Libellé",
+      filtre: (
+        <FiltreColonne colonne="Libellé" actif={allumees.libelle}>
+          {() => (
+            <div className="space-y-2">
+              <FiltreRecherche
+                id="releve-libelle"
+                q={filtres.q}
+                placeholder="Libellé ou référence"
+                onAppliquer={(q) => changerFiltres({ q })}
+              />
+              <button
+                type="button"
+                onClick={() => changerFiltres({ q: "" })}
+                disabled={!filtres.q}
+                className="text-xs font-medium text-simtis-primary hover:underline disabled:pointer-events-none disabled:opacity-40"
+              >
+                Effacer
+              </button>
+            </div>
+          )}
+        </FiltreColonne>
+      ),
       // Largeur minimale : avec les 13 colonnes du relevé, le libellé serait écrasé
       render: (row) => (
         <span className="block min-w-[300px] break-words">
@@ -333,12 +429,14 @@ export function AccountStatementCard({
       key: "debit",
       header: "Débit",
       align: "right",
+      filtre: filtreMontant("Débit"),
       render: (row) => formatAmount(row.debit, suffix, { dashForZero: true }),
     },
     {
       key: "credit",
       header: "Crédit",
       align: "right",
+      filtre: filtreMontant("Crédit"),
       render: (row) => formatAmount(row.credit, suffix, { dashForZero: true }),
     },
     {
@@ -382,6 +480,21 @@ export function AccountStatementCard({
     {
       key: "statut",
       header: "Statut",
+      filtre: (
+        <FiltreColonne colonne="Statut" actif={allumees.statut}>
+          {(fermer) => (
+            <ChoixFiltre
+              titre="Statut"
+              options={OPTIONS_STATUT}
+              valeur={filtres.statut}
+              onChoisir={(valeur) => {
+                changerFiltres({ statut: valeur as StatutFiltre });
+                fermer();
+              }}
+            />
+          )}
+        </FiltreColonne>
+      ),
       render: (row) => <StatusBadge status={row.statut as Status} />,
     },
     {
@@ -443,6 +556,7 @@ export function AccountStatementCard({
               onClick={() => {
                 if (active) return;
                 setState("loading");
+                setFiltres(FILTRES_RELEVE_VIDES);
                 onSelect(account.bank_account_id);
               }}
               className={cn(
@@ -464,29 +578,6 @@ export function AccountStatementCard({
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="w-full max-w-[180px]">
-          <Field label="Du" htmlFor="releve-du">
-            <DateInput
-              id="releve-du"
-              value={period.from ?? ""}
-              onChange={(event) => changePeriod({ ...period, from: event.target.value })}
-            />
-          </Field>
-        </div>
-        <div className="w-full max-w-[180px]">
-          <Field label="Au" htmlFor="releve-au">
-            <DateInput
-              id="releve-au"
-              value={period.to ?? ""}
-              onChange={(event) => changePeriod({ ...period, to: event.target.value })}
-            />
-          </Field>
-        </div>
-        {(period.from || period.to) && (
-          <Button variant="ghost" icon={X} onClick={() => changePeriod({})}>
-            Tout l&apos;historique
-          </Button>
-        )}
         <div className="ml-auto">
           <Button
             variant="secondary"
@@ -609,7 +700,8 @@ export function AccountStatementCard({
           {visible.hidden > 0 && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
               <p className="text-simtis-muted">
-                {visible.rows.length} dernières opérations sur {data.operations.length}
+                {visible.rows.length} dernières opérations sur {filtrees.length}
+                {filtreEnCours && " filtrées"}
               </p>
               <Button
                 variant="ghost"
@@ -626,7 +718,11 @@ export function AccountStatementCard({
             columns={columns}
             rows={visible.rows}
             getRowKey={(row) => String(row.id)}
-            emptyMessage="Aucune opération sur cette période."
+            emptyMessage={
+              filtreEnCours
+                ? "Aucune opération ne correspond aux filtres."
+                : "Aucune opération sur cette période."
+            }
             isRowSelected={cible ? (row) => row.id === cible.ligne : undefined}
           />
         </>

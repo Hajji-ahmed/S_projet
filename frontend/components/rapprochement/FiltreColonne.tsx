@@ -310,7 +310,7 @@ export function EffacerFiltres({
 }
 
 /** Recherche dans le libellé : appliquée après une courte pause de frappe, ou avec Entrée. */
-function FiltreRecherche({
+export function FiltreRecherche({
   id,
   q,
   placeholder,
@@ -353,7 +353,7 @@ function FiltreRecherche({
 }
 
 /** Bas d'un menu à saisie : « Effacer » et « Appliquer ». */
-function PiedMenu({ onEffacer, effacable }: { onEffacer: () => void; effacable: boolean }) {
+export function PiedMenu({ onEffacer, effacable }: { onEffacer: () => void; effacable: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2 pt-1">
       <button
