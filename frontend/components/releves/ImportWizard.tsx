@@ -30,7 +30,7 @@ import {
   lineMotifs,
   type LineDraft,
 } from "@/lib/statementLines";
-import { assignField, fieldsByColumn, fileProblem, jourSuivant } from "@/lib/statements";
+import { assignField, fieldsByColumn, fileProblem, jourPrecedent } from "@/lib/statements";
 import { listAccounts } from "@/services/accounts";
 import { listPointageTypes } from "@/services/referentiel";
 import { analyseStatement, confirmStatement } from "@/services/statements";
@@ -491,6 +491,8 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
     const inchangee = periodeSaisie.du === periode.du && periodeSaisie.au === periode.au;
     const filtree = !!periode.du || !!periode.au;
     const derniere = current.derniere_operation_importee;
+    // Depuis la veille du dernier jour importé (13/11/2026) : ses lignes manquantes sont rattrapées
+    const veille = derniere ? jourPrecedent(derniere) : null;
     return (
       <div className="mb-4 flex flex-wrap items-end gap-4 rounded-[12px] border border-simtis-border bg-simtis-background px-4 py-3">
         <div className="w-[170px]">
@@ -526,13 +528,13 @@ export function ImportWizard({ companyId, onDone, onCancel }: ImportWizardProps)
           >
             Appliquer
           </Button>
-          {derniere && (
+          {veille && (
             <Button
               variant="secondary"
-              disabled={busy || (periode.du === jourSuivant(derniere) && !periode.au)}
-              onClick={() => appliquer({ du: jourSuivant(derniere), au: "" })}
+              disabled={busy || (periode.du === veille && !periode.au)}
+              onClick={() => appliquer({ du: veille, au: "" })}
             >
-              Après le dernier relevé ({formatDate(derniere)})
+              Depuis la veille du dernier relevé ({formatDate(veille)})
             </Button>
           )}
           {filtree && (

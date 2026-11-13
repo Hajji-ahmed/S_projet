@@ -9,6 +9,7 @@ import {
   fileProblem,
   formatDateTime,
   importForm,
+  jourPrecedent,
   jourSuivant,
   lienReleve,
   lireLienReleve,
@@ -244,6 +245,15 @@ describe("jourSuivant", () => {
     expect(jourSuivant("2026-09-30")).toBe("2026-10-01");
     expect(jourSuivant("2026-12-31")).toBe("2027-01-01");
     expect(jourSuivant("2028-02-28")).toBe("2028-02-29");
+  });
+});
+
+describe("jourPrecedent", () => {
+  it("donne la veille, y compris en début de mois et d'année", () => {
+    expect(jourPrecedent("2026-11-09")).toBe("2026-11-08");
+    expect(jourPrecedent("2026-11-01")).toBe("2026-10-31");
+    expect(jourPrecedent("2027-01-01")).toBe("2026-12-31");
+    expect(jourPrecedent("2028-03-01")).toBe("2028-02-29");
   });
 });
 

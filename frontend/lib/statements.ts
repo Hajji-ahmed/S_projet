@@ -98,6 +98,14 @@ export function jourSuivant(iso: string): string {
   return new Date(Date.UTC(annee, mois - 1, jour + 1)).toISOString().slice(0, 10);
 }
 
+/** Veille d'une date « AAAA-MM-JJ » (raccourci « Depuis la veille du dernier relevé », 13/11/2026 :
+ *  reprendre le dernier jour importé rattrape ses lignes manquantes, les doublons sont ignorés).
+ *  Calcul en UTC, comme `jourSuivant`. */
+export function jourPrecedent(iso: string): string {
+  const [annee, mois, jour] = iso.split("-").map(Number);
+  return new Date(Date.UTC(annee, mois - 1, jour - 1)).toISOString().slice(0, 10);
+}
+
 /** Nom du fichier exporté, identique à celui de l'API : « releve_CIH_MAD_2026-09-24_2026-09-26.xlsx ». */
 export function exportFilename(statement: {
   bank_code: string;
