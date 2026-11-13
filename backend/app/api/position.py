@@ -86,7 +86,7 @@ def get_previsions(
     _user: CurrentUser = Depends(can_view),
 ) -> PrevisionsOut:
     jour = jour or position_service.business_today()
-    rows, days = saisie_service.list_previsions(db, company_id, jour)
+    rows, days = saisie_service.list_previsions(db, company_id)
     return PrevisionsOut.from_rows(company_id, jour, rows, days)
 
 
@@ -99,11 +99,11 @@ def save_previsions(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_enter_previsions),
 ) -> PrevisionsOut:
-    """Remplace les lignes Prévisions datées `date` ou plus tard : une ligne absente est supprimée."""
+    """Remplace toutes les lignes Prévisions de la société (13/11/2026) : une ligne absente est
+    supprimée. `date` ne sert plus qu'à la réponse."""
     rows, days = saisie_service.save_previsions(
         db,
         company_id,
-        jour,
         body.lignes_saisies(),
         acteur_id=user.id,
         ip=client_ip(request),

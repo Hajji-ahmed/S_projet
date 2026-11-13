@@ -305,25 +305,27 @@ def test_previsions_round_trip_with_a_date_per_line(client, tresorerie, db):
     assert again["lignes"][2]["escompte"] == "5.00"
 
 
-def test_previsions_shows_lines_from_the_chosen_date_onwards(client, tresorerie, db):
+def test_previsions_shows_every_line_whatever_the_chosen_date(client, tresorerie, db):
+    """Décision du 13/11/2026 : le jour choisi ne masque plus les lignes plus anciennes."""
     put_previsions(
         client,
         db,
         tresorerie,
         [
-            {"jour": DAY.isoformat(), "libelle": "Aujourd'hui"},
             {"jour": LATER.isoformat(), "libelle": "Plus tard"},
+            {"jour": DAY.isoformat(), "libelle": "Ancienne"},
         ],
     )
 
     body = client.get(
-        PREVISIONS, params=params(db, jour=DAY + timedelta(days=1)), headers=tresorerie
-    )
+        PREVISIONS, params=params(db, jour=LATER + timedelta(days=1)), headers=tresorerie
+    ).json()
 
-    assert keys(body.json()) == [(LATER.isoformat(), 1, "Plus tard")]
+    assert body["jour"] == (LATER + timedelta(days=1)).isoformat()
+    assert keys(body) == [(DAY.isoformat(), 1, "Ancienne"), (LATER.isoformat(), 1, "Plus tard")]
 
 
-def test_saving_from_a_later_date_keeps_older_lines(client, tresorerie, db):
+def test_saving_replaces_older_lines_too(client, tresorerie, db):
     put_previsions(
         client,
         db,
@@ -334,10 +336,19 @@ def test_saving_from_a_later_date_keeps_older_lines(client, tresorerie, db):
         ],
     )
 
-    put_previsions(client, db, tresorerie, [], jour=DAY + timedelta(days=1))
+    put_previsions(
+        client,
+        db,
+        tresorerie,
+        [{"jour": DAY.isoformat(), "libelle": "Corrigée"}],
+        jour=LATER + timedelta(days=1),
+    )
 
     body = client.get(PREVISIONS, params=params(db), headers=tresorerie).json()
-    assert keys(body) == [(DAY.isoformat(), 1, "Ancienne")]
+    assert keys(body) == [(DAY.isoformat(), 1, "Corrigée")]
+    entry = audit(db, "saisie_previsions")[-1]
+    assert entry.ancienne_valeur[f"{DAY:%d/%m/%Y} · Ligne 1 · libellé"] == "Ancienne"
+    assert entry.nouvelle_valeur[f"{LATER:%d/%m/%Y} · Ligne 1 · libellé"] is None
 
 
 def test_deleted_line_is_removed_renumbered_and_audited(client, tresorerie, db):
@@ -387,7 +398,7 @@ def test_deleted_line_is_removed_renumbered_and_audited(client, tresorerie, db):
     assert db.scalar(select(SaisiePrevisionJour)) is None  # trois cellules vides : ligne supprimée
     entry = audit(db, "saisie_previsions")[-1]
     assert entry.ancienne_valeur == {
-        "a_partir_du": DAY.isoformat(),
+        "a_partir_du": "2000-01-01",
         "30/09/2026 · Ligne 1 · libellé": "Client A",
         "30/09/2026 · Ligne 1 · CIH": None,
         "30/09/2026 · Ligne 1 · Escompte": "10.00",
@@ -395,7 +406,7 @@ def test_deleted_line_is_removed_renumbered_and_audited(client, tresorerie, db):
         "30/09/2026 · Ligne 2 · CIH": "1.00",
     }
     assert entry.nouvelle_valeur == {
-        "a_partir_du": DAY.isoformat(),
+        "a_partir_du": "2000-01-01",
         "30/09/2026 · Ligne 1 · libellé": "Client B",
         "30/09/2026 · Ligne 1 · CIH": "1.00",
         "30/09/2026 · Ligne 1 · Escompte": None,
@@ -425,7 +436,7 @@ def test_formulas_are_kept_with_their_amount_and_audited(client, tresorerie, db)
     assert ligne["formule_encaissement"] == "=1 200,50+350*2"
     assert ligne["formule_douane"] is None
     assert audit(db, "saisie_previsions")[-1].nouvelle_valeur == {
-        "a_partir_du": DAY.isoformat(),
+        "a_partir_du": "2000-01-01",
         "30/09/2026 · Ligne 1 · CIH": {"montant": "1750.00", "formule": "=1000+500+250"},
         "30/09/2026 · Ligne 1 · Encaissement": "1900.50",
         "30/09/2026 · Ligne 1 · Encaissement (formule)": "=1 200,50+350*2",
@@ -468,12 +479,12 @@ def test_editing_a_formula_or_replacing_it_by_an_amount(client, tresorerie, db):
     assert ligne["formule_escompte"] is None
     entry = audit(db, "saisie_previsions")[-1]
     assert entry.ancienne_valeur == {
-        "a_partir_du": DAY.isoformat(),
+        "a_partir_du": "2000-01-01",
         "30/09/2026 · Ligne 1 · CIH": {"montant": "1750.00", "formule": "=1000+500+250"},
         "30/09/2026 · Ligne 1 · Escompte (formule)": "=1+2",
     }
     assert entry.nouvelle_valeur == {
-        "a_partir_du": DAY.isoformat(),
+        "a_partir_du": "2000-01-01",
         "30/09/2026 · Ligne 1 · CIH": {"montant": "1250.00", "formule": "=1000+250"},
         "30/09/2026 · Ligne 1 · Escompte (formule)": None,
     }
@@ -535,8 +546,9 @@ def test_empty_added_line_is_not_saved(client, tresorerie, db):
     assert keys(body) == [(LATER.isoformat(), 1, "A")]
 
 
-def test_line_before_the_chosen_date_is_added_after_that_dates_lines(client, tresorerie, db):
-    """Décision du 09/11/2026 : une ligne passée s'ajoute à sa date, rien n'y est remplacé."""
+def test_line_added_at_an_older_date_takes_its_rank_among_the_lines_sent(client, tresorerie, db):
+    """Décision du 13/11/2026 (remplace l'ajout à la suite du 09/11/2026) : toutes les lignes sont
+    envoyées, les rangs suivent l'ordre d'envoi pour chaque date."""
     veille = DAY - timedelta(days=1)
     put_previsions(
         client,
@@ -546,7 +558,6 @@ def test_line_before_the_chosen_date_is_added_after_that_dates_lines(client, tre
             {"jour": veille.isoformat(), "libelle": "Ancienne"},
             {"jour": veille.isoformat(), "douane": "5"},
         ],
-        jour=veille,
     )
 
     response = put_previsions(
@@ -554,35 +565,22 @@ def test_line_before_the_chosen_date_is_added_after_that_dates_lines(client, tre
         db,
         tresorerie,
         [
-            {"jour": DAY.isoformat(), "libelle": "Du jour"},
+            {"jour": veille.isoformat(), "libelle": "Ancienne"},
             {"jour": veille.isoformat(), "libelle": "Oubliée", "encaissement": "7"},
+            {"jour": veille.isoformat(), "douane": "5"},
+            {"jour": DAY.isoformat(), "libelle": "Du jour"},
         ],
     )
 
     assert response.status_code == 200
-    assert keys(response.json()) == [(DAY.isoformat(), 1, "Du jour")]
-    lignes = client.get(PREVISIONS, params=params(db, jour=veille), headers=tresorerie).json()
-    assert keys(lignes)[:3] == [
+    assert keys(response.json()) == [
         (veille.isoformat(), 1, "Ancienne"),
-        (veille.isoformat(), 2, None),
-        (veille.isoformat(), 3, "Oubliée"),
+        (veille.isoformat(), 2, "Oubliée"),
+        (veille.isoformat(), 3, None),
+        (DAY.isoformat(), 1, "Du jour"),
     ]
-    assert line(lignes, 3)["encaissement"] == "7.00"
-    entry = audit(db, "saisie_previsions")[-1]
-    assert entry.nouvelle_valeur[f"{veille:%d/%m/%Y} · Ligne 3 · libellé"] == "Oubliée"
-
-
-def test_line_before_the_chosen_date_respects_99_lines(client, tresorerie, db):
-    veille = DAY - timedelta(days=1)
-    lignes = [{"jour": veille.isoformat(), "libelle": f"L{n}"} for n in range(99)]
-    put_previsions(client, db, tresorerie, lignes, jour=veille)
-
-    response = put_previsions(
-        client, db, tresorerie, [{"jour": veille.isoformat(), "libelle": "Une de trop"}]
-    )
-
-    assert response.status_code == 409
-    assert "99 lignes" in response.json()["detail"]
+    assert line(response.json(), 2)["encaissement"] == "7.00"
+    assert line(response.json(), 3)["douane"] == "5.00"
 
 
 def test_mistyped_year_gives_409(client, tresorerie, db):

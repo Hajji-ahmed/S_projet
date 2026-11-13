@@ -60,10 +60,9 @@ type PrevisionsTableProps = {
 /**
  * Tableau Prévisions, saisi à la main : chaque ligne a sa date (décision du 30/10/2026), fusionnée à
  * gauche sur les lignes de la même date ; un libellé et un montant par banque, puis Encaissement,
- * Escompte et Douane. Le tableau montre les lignes datées du jour choisi ou plus tard ; la Trésorerie
- * ajoute une ligne (à une nouvelle date ou sous une date existante) ou la supprime, puis enregistre.
- * Une ligne datée avant le jour choisi s'ajoute à sa date (décision du 09/11/2026) et n'est plus
- * visible après l'enregistrement : un message dit quelle date choisir pour la revoir.
+ * Escompte et Douane. Le tableau montre toutes les lignes de la société, les plus anciennes en haut,
+ * quel que soit le jour choisi (décision du 13/11/2026) ; la Trésorerie ajoute une ligne (à une
+ * nouvelle date ou sous une date existante), la modifie ou la supprime, puis enregistre.
  * Rien n'y est calculé, sauf une formule tapée dans une cellule de montant (« =1000+500 ») : son
  * résultat est le montant, la formule est gardée pour la revoir et la corriger (10/11/2026).
  */
@@ -81,34 +80,7 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
       grid.draft,
       banks.map((bank) => bank.id),
     );
-    const passees = parsed.ok
-      ? [
-          ...new Set(
-            parsed.value.lignes
-              .filter(
-                (ligne) =>
-                  ligne.jour < jour &&
-                  (ligne.libelle !== null ||
-                    ligne.banques.length > 0 ||
-                    ligne.encaissement !== null ||
-                    ligne.escompte !== null ||
-                    ligne.douane !== null),
-              )
-              .map((ligne) => ligne.jour),
-          ),
-        ].sort()
-      : [];
-    if (!(await grid.submit(parsed))) return;
-    if (passees.length === 0) {
-      toast("Tableau Prévisions enregistré.");
-      return;
-    }
-    const dates = passees.map(formatDate).join(", ");
-    toast(
-      passees.length === 1
-        ? `Tableau Prévisions enregistré. Ligne du ${dates} ajoutée : choisissez le ${dates} en haut de page pour la voir.`
-        : `Tableau Prévisions enregistré. Lignes ajoutées aux dates ${dates} : choisissez une de ces dates en haut de page pour les voir.`,
-    );
+    if (await grid.submit(parsed)) toast("Tableau Prévisions enregistré.");
   }
 
   function ajouter(date: string) {
@@ -196,7 +168,7 @@ export function PrevisionsTable({ companyId, jour, banks, canEdit }: PrevisionsT
                       colSpan={2 + banks.length + COLONNES_JOUR.length + (canEdit ? 1 : 0)}
                       className="px-3 py-6 text-center text-sm text-simtis-muted"
                     >
-                      Aucune prévision à partir du {formatDate(jour)}.
+                      Aucune prévision.
                     </td>
                   </tr>
                 )}

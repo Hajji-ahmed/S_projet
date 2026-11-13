@@ -2,8 +2,8 @@
 
 Règles :
 - Devises : une grille par société et par date ; l'enregistrer remplace la grille de cette date ;
-- Prévisions : chaque ligne a sa date (30/10/2026) ; l'écran montre et remplace les lignes datées
-  du jour choisi ou plus tard ; une ligne datée avant est ajoutée à sa date (09/11/2026) ;
+- Prévisions : chaque ligne a sa date (30/10/2026) ; l'écran montre et remplace toutes les lignes
+  de la société, quel que soit le jour choisi (13/11/2026) ;
 - une cellule vide n'est pas enregistrée, jamais remplacée par 0 ; rien n'est calculé (pas de TOTAL
   automatique) en attendant P9 (devises) et P14 (prévisions) ;
 - seules les colonnes des banques actives se saisissent ; les valeurs d'une banque désactivée sont
@@ -196,13 +196,14 @@ class MontantFormule(NamedTuple):
 
 
 def list_previsions(
-    db: Session, company_id: int, depuis: date
+    db: Session, company_id: int
 ) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
-    """Les lignes dont la date est `depuis` ou plus tard (décision du 30/10/2026)."""
+    """Toutes les lignes de la société, les plus anciennes d'abord (décision du 13/11/2026 : le
+    jour choisi en haut de page ne masque plus les lignes plus anciennes)."""
     _company(db, company_id)
     return (
-        saisie_repository.list_previsions(db, company_id, depuis),
-        saisie_repository.list_previsions_jour(db, company_id, depuis),
+        saisie_repository.list_previsions(db, company_id, PREMIERE_DATE_SOLDE),
+        saisie_repository.list_previsions_jour(db, company_id, PREMIERE_DATE_SOLDE),
     )
 
 
@@ -225,19 +226,17 @@ def _formule(formule: str | None, montant: Decimal | None, colonne: str, jour: d
 
 def _numeroter(
     lignes: list[LignePrevision],
-    rangs_existants: Mapping[date, int],
     codes: Mapping[int, str] | None = None,
 ) -> tuple[
     dict[PrevisionCell, str | MontantFormule],
     dict[tuple[date, int], dict[str, Decimal | str | None]],
 ]:
     """Cellules et montants sans banque voulus, par (date, rang). Une ligne entièrement vide est
-    ignorée ; les autres sont numérotées dans l'ordre d'envoi, à partir de 1 pour chaque date, ou
-    après `rangs_existants` (lignes d'une date antérieure à la page, ajoutées le 09/11/2026).
+    ignorée ; les autres sont numérotées dans l'ordre d'envoi, à partir de 1 pour chaque date.
     Chaque formule doit donner son montant (`codes` nomme les banques dans le message d'erreur)."""
     cells: dict[PrevisionCell, str | MontantFormule] = {}
     days: dict[tuple[date, int], dict[str, Decimal | str | None]] = {}
-    rangs: dict[date, int] = dict(rangs_existants)
+    rangs: dict[date, int] = {}
     for item in lignes:
         if item.jour < PREMIERE_DATE_SOLDE:
             raise ConflictError(f"Date invalide : {_date(item.jour)}.")
@@ -291,23 +290,18 @@ def _ligne_label(jour: date, ligne: int, colonne: str) -> str:
 def save_previsions(
     db: Session,
     company_id: int,
-    depuis: date,
     lignes: list[LignePrevision],
     *,
     acteur_id: int,
     ip: str | None = None,
 ) -> tuple[list[SaisiePrevision], list[SaisiePrevisionJour]]:
-    """Remplace toutes les lignes datées `depuis` ou plus tard par `lignes` (décision du
-    30/10/2026) : une ligne absente est supprimée, les lignes plus anciennes ne bougent pas.
-    Une ligne datée avant `depuis` est ajoutée à la suite des lignes déjà enregistrées à sa date
-    (décision du 09/11/2026) : rien n'est remplacé ni supprimé avant `depuis`."""
+    """Remplace toutes les lignes de la société par `lignes` (décision du 13/11/2026, l'écran les
+    montre toutes) : une ligne absente est supprimée, quelle que soit sa date."""
     company = _company(db, company_id)
     banks = _active_banks(db, {bank_id for item in lignes for bank_id in item.banques})
-    passees = {item.jour for item in lignes if PREMIERE_DATE_SOLDE <= item.jour < depuis}
+    depuis = PREMIERE_DATE_SOLDE
     wanted, wanted_days = _numeroter(
-        lignes,
-        saisie_repository.dernier_rang_previsions(db, company.id, passees),
-        {bank_id: bank.code for bank_id, bank in banks.items()},
+        lignes, {bank_id: bank.code for bank_id, bank in banks.items()}
     )
     existing = {
         (row.jour, row.ligne, row.bank_id): row
@@ -399,4 +393,4 @@ def save_previsions(
             ip=ip,
         )
         db.commit()
-    return list_previsions(db, company.id, depuis)
+    return list_previsions(db, company.id)

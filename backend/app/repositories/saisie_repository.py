@@ -1,6 +1,6 @@
 from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import SaisieDevise, SaisiePrevision, SaisiePrevisionJour
@@ -29,22 +29,6 @@ def list_previsions_jour(db: Session, company_id: int, depuis: date) -> list[Sai
         SaisiePrevisionJour.company_id == company_id, SaisiePrevisionJour.jour >= depuis
     )
     return list(db.scalars(query.order_by(SaisiePrevisionJour.jour, SaisiePrevisionJour.ligne)))
-
-
-def dernier_rang_previsions(db: Session, company_id: int, jours: set[date]) -> dict[date, int]:
-    """Rang le plus élevé déjà utilisé à chacune de ces dates (cellules ou montants sans banque)."""
-    if not jours:
-        return {}
-    rangs: dict[date, int] = {}
-    for model in (SaisiePrevision, SaisiePrevisionJour):
-        query = (
-            select(model.jour, func.max(model.ligne))
-            .where(model.company_id == company_id, model.jour.in_(jours))
-            .group_by(model.jour)
-        )
-        for jour, rang in db.execute(query):
-            rangs[jour] = max(rangs.get(jour, 0), rang)
-    return rangs
 
 
 def add(db: Session, row: object) -> None:
