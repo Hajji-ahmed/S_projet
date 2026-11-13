@@ -3176,3 +3176,151 @@ def test_one_operation_is_deleted_unless_reconciled(client, tresorerie, account,
     assert "CIH-26-000042" in refus.json()["detail"]
     assert len(transactions(db, account)) == 2
     assert db.scalars(select(AuditLog).filter_by(action="suppression_operation")).all()
+
+
+# --- Doublons sans le solde, la date de valeur ni la ponctuation du libellé (13/11/2026) -----------
+
+SANS_SOLDE = ["Date opération", "Libellé", "Débit", "Crédit"]
+
+
+def _doublons(apercu) -> list[str]:
+    return [ligne["statut"] for ligne in apercu["lignes"]]
+
+
+def test_a_file_without_balances_recognises_lines_imported_with_theirs(
+    client, tresorerie, account, db
+):
+    """Les lignes d'octobre avaient un solde banque, le fichier suivant n'en a pas : l'empreinte
+    (qui contient le solde) diffère, la ligne reste pourtant un doublon."""
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    rows = [
+        SANS_SOLDE,
+        [date(2026, 9, 24), "VIR RECU CLIENT ABC REF: VR-001", None, 50000],
+        [date(2026, 9, 25), "CHQ N° 1234567 FOURNISSEUR X", "12 500,50", None],
+        [date(2026, 9, 28), "VIR RECU NOUVEAU", None, 1000],
+    ]
+
+    apercu = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="suite.xlsx"
+    ).json()
+
+    assert _doublons(apercu) == ["Doublon", "Doublon", "Valide"]
+    assert apercu["lignes"][0]["motifs"] == ["Déjà importée pour ce compte."]
+    # Le solde d'ouverture est la clôture du dernier jour importé, pas celle d'avant les doublons
+    assert apercu["resume"]["solde_ouverture"] == "1037349.50"
+
+
+def test_a_different_value_date_or_label_punctuation_is_still_a_duplicate(
+    client, tresorerie, account, db
+):
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    rows = [
+        ["Date opération", "Date valeur", "Libellé", "Débit", "Crédit"],
+        [date(2026, 9, 24), date(2026, 9, 29), "VIR RECU CLIENT ABC REF VR 001", None, 50000],
+        [date(2026, 9, 25), None, "CHQ N 1234567 FOURNISSEUR X", "12 500,50", None],
+    ]
+
+    apercu = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="suite.xlsx"
+    ).json()
+
+    assert _doublons(apercu) == ["Doublon", "Doublon"]
+
+
+def test_another_amount_or_day_is_a_new_line(client, tresorerie, account, db):
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    rows = [
+        SANS_SOLDE,
+        [date(2026, 9, 24), "VIR RECU CLIENT ABC REF: VR-001", None, 50001],
+        [date(2026, 9, 27), "CHQ N° 1234567 FOURNISSEUR X", "12 500,50", None],
+        [date(2026, 9, 25), "CHQ N° 1234567 FOURNISSEUR X", None, "12 500,50"],
+    ]
+
+    apercu = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="suite.xlsx"
+    ).json()
+
+    assert _doublons(apercu) == ["Valide"] * 3
+
+
+def test_identical_lines_are_matched_one_for_one_with_the_database(client, tresorerie, account, db):
+    """Deux frais identiques le même jour sont deux opérations : une seule en base, une seule
+    reconnue ; la deuxième est une opération nouvelle."""
+    initial = [HEADER, [date(2026, 9, 24), None, "FRAIS TENUE DE COMPTE", 150, None, 1000]]
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", initial)))
+    rows = [
+        SANS_SOLDE,
+        [date(2026, 9, 24), "FRAIS TENUE DE COMPTE", 150, None],
+        [date(2026, 9, 24), "FRAIS TENUE DE COMPTE", 150, None],
+    ]
+
+    apercu = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="suite.xlsx"
+    ).json()
+
+    assert sorted(_doublons(apercu)) == ["Doublon", "Valide"]
+
+
+def test_a_pending_operation_is_never_compared_for_duplicates(client, tresorerie, account, db):
+    """Une opération en cours « (*) » en base ne couvre pas une ligne du même montant et du même
+    jour : la définitive la remplace par son propre mécanisme."""
+    en_cours = [
+        HEADER,
+        [date(2026, 9, 24), None, "VIR WEB RECU DE ALPHA (*)", None, 2000, 2000],
+    ]
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", en_cours)))
+    rows = [SANS_SOLDE, [date(2026, 9, 24), "VIR WEB RECU DE ALPHA", None, 2000]]
+
+    apercu = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="suite.xlsx"
+    ).json()
+
+    assert _doublons(apercu) == ["Valide"]
+
+
+def test_confirming_a_line_already_in_the_database_without_its_balance_is_refused(
+    client, tresorerie, account, db
+):
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
+    rows = [SANS_SOLDE, [date(2026, 9, 24), "VIR RECU CLIENT ABC REF: VR-001", None, 50000]]
+    content = xlsx(("Relevé", rows))
+    lignes = submitted(client, tresorerie, account, content)
+
+    response = confirm(
+        client,
+        tresorerie,
+        account.id,
+        content,
+        nom="suite.xlsx",
+        solde_ouverture="1000000",
+        lignes=lignes,
+    )
+
+    assert response.status_code == 409, response.text
+    assert "déjà importée" in response.json()["detail"]
+    assert len(transactions(db, account)) == 3
+
+
+def test_a_label_completed_by_the_bank_is_a_duplicate_only_when_long_enough(
+    client, tresorerie, account, db
+):
+    """« …ABDELAZ » puis « …ABDELAZI » : le même virement. Un libellé court qui en commence un
+    autre n'est pas reconnu."""
+    initial = [
+        HEADER,
+        [date(2026, 9, 24), None, "VIREMENT RECU DE MR MALALI ABDELAZ", None, 5600, 5600],
+        [date(2026, 9, 24), None, "VIR RECU", None, 700, 6300],
+    ]
+    confirm(client, tresorerie, account.id, xlsx(("Relevé", initial)))
+    rows = [
+        SANS_SOLDE,
+        [date(2026, 9, 24), "Virement reçu de Mr MALALI ABDELAZI", None, 5600],
+        [date(2026, 9, 24), "VIR RECU CLIENT ABC", None, 700],
+        [date(2026, 9, 25), "VIREMENT RECU DE MR MALALI ABDELAZI", None, 5600],
+    ]
+
+    apercu = analyse(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), nom="suite.xlsx"
+    ).json()
+
+    assert _doublons(apercu) == ["Doublon", "Valide", "Valide"]

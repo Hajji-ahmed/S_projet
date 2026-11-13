@@ -7,6 +7,7 @@ import pytest
 
 from app.services.normalization_service import (
     balance_line_kind,
+    cle_doublon,
     clean_libelle,
     extract_reference,
     guess_pointage,
@@ -219,3 +220,22 @@ def test_a_starred_amount_of_a_pending_operation_is_read():
     assert parse_amount("213,68*") == Decimal("213.68")
     assert parse_amount("927.349,01*") == Decimal("927349.01")
     assert parse_amount("1.500.000,00 *") == Decimal("1500000.00")
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("PAIEMENT CHEQUE N° 0000271", "PAIEMENT CHEQUE N 0000271"),
+        ("COM & FRAIS REGLEMENT 3 LCN", "COM   FRAIS REGLEMENT    3 LCN"),
+        ("Virement reçu de Mr Malali", "VIREMENT RECU DE MR MALALI"),
+        ("VIR.WEB RECU DE CHATER", "VIR WEB RECU DE CHATER"),
+    ],
+)
+def test_two_labels_written_differently_by_the_bank_share_one_duplicate_key(a, b):
+    """13/11/2026 : « N° » / « N », « & » présent ou absent, accents et ponctuation ne comptent pas."""
+    assert cle_doublon(a) == cle_doublon(b)
+
+
+def test_the_duplicate_key_keeps_the_words_and_numbers_that_tell_operations_apart():
+    assert cle_doublon("PAIEMENT CHEQUE N 0000271") != cle_doublon("PAIEMENT CHEQUE N 0000272")
+    assert cle_doublon(None) == ""

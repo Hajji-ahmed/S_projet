@@ -51,6 +51,7 @@ from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
 from app.services.normalization_service import (
     balance_line_kind,
+    cle_doublon,
     clean_libelle,
     clean_text,
     est_en_cours,
@@ -577,6 +578,72 @@ def _mark_duplicates(db: Session, account: BankAccount, lines: list[AnalysedLine
     known = import_repository.existing_line_hashes(db, account.id, hashes)
     for line in lines:
         if line.hash_ligne in known:
+            line.statut = "Doublon"
+            line.doublon_de = None
+            line.motifs = ["Déjà importée pour ce compte."]
+    _mark_doublons_sans_solde(db, account, lines)
+
+
+def _cle_comparaison(line: AnalysedLine) -> tuple[date, str, Decimal] | None:
+    """(jour, libellé réduit, montant) d'une ligne, ou None si elle ne se compare pas : sans date
+    ni montant, ou opération en cours « (*) » (la définitive la remplace par son propre mécanisme)."""
+    if line.date_operation is None or line.montant is None or est_en_cours(line.libelle):
+        return None
+    return (line.date_operation, cle_doublon(line.libelle), line.montant)
+
+
+# Un libellé complété par la banque (« …ABDELAZ » puis « …ABDELAZI ») reste le même s'il commence
+# l'autre sur au moins ce nombre de lettres et de chiffres
+PREFIXE_DOUBLON_MIN = 25
+
+
+def _mark_doublons_sans_solde(db: Session, account: BankAccount, lines: list[AnalysedLine]) -> None:
+    """Doublon qui n'a pas la même empreinte (13/11/2026) : l'empreinte contient le solde et la date
+    de valeur, or une banque exporte tantôt avec les soldes, tantôt sans, et change la ponctuation
+    d'un libellé. Une ligne est donc aussi un doublon quand une opération importée a le même jour,
+    le même montant et le même libellé réduit (`cle_doublon`), ou un libellé qui commence l'autre
+    (au moins `PREFIXE_DOUBLON_MIN` caractères : la banque l'a complété).
+
+    Comptage un pour un, dans l'ordre du fichier : deux frais identiques d'un fichier sont deux
+    opérations, une seule en base n'en couvre qu'une. Une ligne déjà reconnue par son empreinte
+    consomme son opération en base, qui ne sert pas une deuxième fois."""
+    candidates = [
+        (line, cle)
+        for line in lines
+        if line.statut in ("Valide", "Doublon")
+        and line.doublon_de is None
+        and (cle := _cle_comparaison(line)) is not None
+    ]
+    if not candidates:
+        return
+    jours = [cle[0] for _, cle in candidates]
+    # (jour, montant) -> libellés réduits des opérations en base, avec leur nombre
+    disponibles: dict[tuple[date, Decimal], Counter[str]] = defaultdict(Counter)
+    for jour, libelle, montant in import_repository.operations_pour_doublons(
+        db, account.id, min(jours), max(jours)
+    ):
+        disponibles[(jour, montant)][cle_doublon(libelle)] += 1
+    for line, (jour, texte, montant) in candidates:
+        restants = disponibles[(jour, montant)]
+        if restants[texte] > 0:
+            restants[texte] -= 1
+        elif line.statut == "Valide":
+            proche = next(
+                (
+                    autre
+                    for autre, nombre in restants.items()
+                    if nombre > 0
+                    and min(len(autre), len(texte)) >= PREFIXE_DOUBLON_MIN
+                    and (autre.startswith(texte) or texte.startswith(autre))
+                ),
+                None,
+            )
+            if proche is None:
+                continue
+            restants[proche] -= 1
+        else:
+            continue
+        if line.statut == "Valide":
             line.statut = "Doublon"
             line.doublon_de = None
             line.motifs = ["Déjà importée pour ce compte."]

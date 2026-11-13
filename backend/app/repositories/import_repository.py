@@ -41,6 +41,24 @@ def existing_line_hashes(db: Session, account_id: int, hashes: list[str]) -> set
     return found
 
 
+def operations_pour_doublons(
+    db: Session, account_id: int, date_from: date, date_to: date
+) -> list[tuple[date, str, Decimal]]:
+    """(date d'opération, libellé, montant) des opérations importées du compte entre deux dates,
+    dans l'ordre d'enregistrement, hors opérations en cours « (*) » (13/11/2026). Sert à reconnaître
+    une ligne déjà importée dont l'empreinte diffère (solde, date de valeur, ponctuation)."""
+    rows = db.execute(
+        select(BankTransaction.date_operation, BankTransaction.libelle, BankTransaction.montant)
+        .where(
+            BankTransaction.bank_account_id == account_id,
+            BankTransaction.date_operation.between(date_from, date_to),
+            BankTransaction.en_cours.is_(False),
+        )
+        .order_by(BankTransaction.id)
+    )
+    return [(row[0], row[1], row[2]) for row in rows]
+
+
 def confirmed_file(
     db: Session, company_id: int, type_import: str, fichier_hash: str
 ) -> ImportBatch | None:

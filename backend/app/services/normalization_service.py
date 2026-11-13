@@ -163,6 +163,16 @@ def clean_libelle(value: object) -> str | None:
     return text.upper() if text else None
 
 
+def cle_doublon(libelle: str | None) -> str:
+    """Libellé comparé pour reconnaître une opération déjà importée (13/11/2026) : majuscules, sans
+    accents, seulement les lettres et les chiffres. Une banque change d'un export à l'autre la
+    ponctuation d'un même libellé (« N° 0000271 » / « N 0000271 », « COM & FRAIS » / « COM   FRAIS »)
+    sans que l'opération change."""
+    texte = unicodedata.normalize("NFKD", libelle or "")
+    texte = "".join(char for char in texte if not unicodedata.combining(char)).upper()
+    return "".join(char for char in texte if char.isalnum())
+
+
 def extract_reference(libelle: str | None) -> str | None:
     """Référence trouvée dans un libellé (n° de chèque, REF, N°, facture), sinon None."""
     if not libelle:
