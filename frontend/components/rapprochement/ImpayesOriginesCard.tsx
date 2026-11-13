@@ -35,10 +35,16 @@ const VUES: { value: Vue; label: string }[] = [
 ];
 
 function EcritureCell({ ecriture }: { ecriture: Ecriture }) {
+  // Montant signé sous le libellé (13/11/2026) : l'impayé et son origine ont des montants opposés
+  const montant = montantEcriture(ecriture);
+  const texte = formatAmount(montant, uniteEcriture(ecriture));
   return (
     <div className="min-w-56">
       <p className="text-xs text-simtis-muted tabular-nums">{formatDate(ecriture.date_ecriture)}</p>
       <p className="text-simtis-text">{ecriture.libelle}</p>
+      <p className="text-xs font-medium whitespace-nowrap text-simtis-muted tabular-nums">
+        {montant.startsWith("-") ? texte : `+${texte}`}
+      </p>
     </div>
   );
 }
