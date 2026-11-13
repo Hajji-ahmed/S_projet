@@ -96,11 +96,18 @@ def lire(client, headers, db, famille="timbres", **params):
 
 
 def valider(client, headers, db, *jours, famille="timbres"):
+    """`jours` : (compte, jour) pour toutes les écritures du jour, ou (compte, jour, opération)
+    pour l'écriture d'un frais (13/11/2026)."""
     body = {
         "company_id": company(db).id,
         "jours": [
-            {"famille": famille, "bank_account_id": compte.id, "date": str(jour)}
-            for compte, jour in jours
+            {
+                "famille": famille,
+                "bank_account_id": choix[0].id,
+                "date": str(choix[1]),
+                **({"transaction_id": choix[2]} if len(choix) > 2 else {}),
+            }
+            for choix in jours
         ],
     }
     return client.post("/api/frais/valider", json=body, headers=headers)
@@ -157,9 +164,12 @@ def _tx(id_, compte, jour, montant, libelle=VERSEMENT):
     )
 
 
-def test_stamps_are_grouped_per_account_and_day_without_credits_or_days_in_sage():
+def test_one_entry_per_stamp_without_credits_or_amounts_already_in_sage():
+    """13/11/2026 : une écriture par frais (plus une par jour) ; Sage bloque un frais du même
+    montant, ou toute la journée quand son écriture vaut le total du jour."""
     autre_jour = date(2026, 4, 24)
-    groupes = regrouper_timbres(
+    jour_total = date(2026, 4, 25)
+    pieces = regrouper_timbres(
         [
             _tx(1, 1, JOUR, "-1"),
             _tx(2, 1, JOUR, "-200", REMISE),
@@ -167,21 +177,29 @@ def test_stamps_are_grouped_per_account_and_day_without_credits_or_days_in_sage(
             _tx(4, 1, JOUR, "1"),  # remboursement : pas un frais
             _tx(5, 1, JOUR, "-50", "COMMISSION"),
             _tx(6, 1, autre_jour, "-1"),
+            _tx(7, 1, autre_jour, "-1"),
+            _tx(8, 1, autre_jour, "-20", REMISE),
+            _tx(9, 1, jour_total, "-1"),
+            _tx(10, 1, jour_total, "-20", REMISE),
         ],
-        {(1, autre_jour)},
+        # Sage : un timbre de 1,00 le 24 (un seul des deux) ; l'écriture du jour (21,00) le 25
+        {(1, autre_jour): [Decimal("1.00")], (1, jour_total): [Decimal("21.00")]},
     )
 
-    assert [(g.bank_account_id, g.jour, g.total) for g in groupes] == [
-        (1, JOUR, Decimal("201")),
-        (2, JOUR, Decimal("1")),
+    assert [(p.bank_account_id, p.jour, p.transaction_id, p.total) for p in pieces] == [
+        (1, JOUR, 1, Decimal("1")),
+        (1, JOUR, 2, Decimal("200")),
+        (2, JOUR, 3, Decimal("1")),
+        (1, autre_jour, 7, Decimal("1")),
+        (1, autre_jour, 8, Decimal("20")),
     ]
-    assert [tx.id for tx in groupes[0].operations] == [1, 2]
+    assert [[tx.id for tx in p.operations] for p in pieces[:2]] == [[1], [2]]
 
 
 # --- Préparer -------------------------------------------------------------------------------------
 
 
-def test_one_entry_is_proposed_per_day_and_nothing_is_written(client, comptable, db):
+def test_one_entry_is_proposed_per_fee_and_nothing_is_written(client, comptable, db):
     compte = bp(db)
     timbres_du_jour(db, compte)
     operation(db, compte, "-1", date(2026, 4, 24), VERSEMENT)
@@ -191,11 +209,17 @@ def test_one_entry_is_proposed_per_day_and_nothing_is_written(client, comptable,
 
     assert response.status_code == 200
     body = response.json()
+    # Une écriture par frais (13/11/2026), dans l'ordre du relevé pour un même jour
     assert [(p["date"], p["total"], p["nb_operations"]) for p in body["propositions"]] == [
         ("2026-04-24", "1.00", 1),
-        ("2026-04-23", "202.00", 3),
+        ("2026-04-23", "200.00", 1),
+        ("2026-04-23", "1.00", 1),
+        ("2026-04-23", "1.00", 1),
     ]
     assert body["propositions"][0]["libelle"] == "DT D'ENREGISTREMENT"
+    assert (
+        body["propositions"][1]["transaction_id"] == body["propositions"][1]["operations"][0]["id"]
+    )
     # Tableau unique : le total compte aussi la COMMISSION de 30 du même jour
     assert body["total_propositions"] == "233.00"
     assert body["ecritures"] == []
@@ -220,35 +244,59 @@ def test_validating_creates_the_entry_and_matches_it_at_once(client, comptable, 
     compte = bp(db)
     timbres = timbres_du_jour(db, compte)
 
+    # Le jour sans opération : ses trois écritures (une par frais, 13/11/2026)
     response = valider(client, comptable, db, (compte, JOUR))
 
     assert response.status_code == 200, response.text
-    code = response.json()["codes"][0]
-    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
+    codes = response.json()["codes"]
+    entries = list(
+        db.scalars(select(AccountingEntry).filter_by(origine="SIMTIS").order_by(AccountingEntry.id))
+    )
     # Pas de N° pièce avant l'export vers Sage (09/11/2026) : l'API rend le code du rapprochement
-    assert (entry.journal, entry.compte, entry.libelle, entry.numero_piece) == (
-        "5543",
-        "55410003",
-        "DT D'ENREGISTREMENT",
-        None,
+    assert {(e.journal, e.compte, e.libelle, e.numero_piece) for e in entries} == {
+        ("5543", "55410003", "DT D'ENREGISTREMENT", None)
+    }
+    assert [(e.debit, e.credit, e.montant) for e in entries] == [
+        (Decimal("0.00"), Decimal("200.00"), Decimal("200.00")),
+        (Decimal("0.00"), Decimal("1.00"), Decimal("1.00")),
+        (Decimal("0.00"), Decimal("1.00"), Decimal("1.00")),
+    ]
+    matches = list(
+        db.scalars(
+            select(ReconciliationMatch).filter_by(origine="Frais").order_by(ReconciliationMatch.id)
+        )
     )
-    assert (entry.debit, entry.credit, entry.montant) == (
-        Decimal("0.00"),
-        Decimal("202.00"),
-        Decimal("202.00"),
-    )
-    match = db.scalar(select(ReconciliationMatch).filter_by(origine="Frais"))
-    assert (match.statut, match.origine, match.type) == ("Validée", "Frais", "N-1")
-    assert statuses(db, *timbres, entry) == ["Rapprochée"] * 4
-    assert "comptabilisation_timbres" in actions(db)
+    assert {(m.statut, m.origine, m.type) for m in matches} == {("Validée", "Frais", "1-1")}
+    assert statuses(db, *timbres, *entries) == ["Rapprochée"] * 6
+    assert actions(db).count("comptabilisation_timbres") == 3
 
     body = lire(client, comptable, db).json()
     assert body["propositions"] == []
-    assert [
+    assert sorted(
         (e["code"], e["numero_piece"], e["nb_operations"], e["exportee_le"])
         for e in body["ecritures"]
-    ] == [(match.code, None, 3, None)]
-    assert code == match.code
+    ) == sorted((m.code, None, 1, None) for m in matches)
+    assert codes == [m.code for m in matches]
+
+
+def test_one_fee_is_validated_alone(client, comptable, db):
+    """13/11/2026 : l'opération choisie seulement ; les autres frais du jour restent proposés."""
+    compte = bp(db)
+    remise, versement, _ = timbres_du_jour(db, compte)
+
+    response = valider(client, comptable, db, (compte, JOUR, remise.id))
+
+    assert response.status_code == 200, response.text
+    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
+    assert entry.montant == Decimal("200.00")
+    assert statuses(db, remise, versement) == ["Rapprochée", "Non rapprochée"]
+    restantes = lire(client, comptable, db).json()["propositions"]
+    assert [p["total"] for p in restantes] == ["1.00", "1.00"]
+
+    # Déjà comptabilisé : 409, rien n'est écrit
+    again = valider(client, comptable, db, (compte, JOUR, remise.id))
+    assert again.status_code == 409
+    assert "ce frais n'est plus à comptabiliser" in again.json()["detail"]
 
 
 def test_validation_is_all_or_nothing_and_recomputed_by_the_server(client, comptable, db):
@@ -306,16 +354,25 @@ def test_export_writes_a_balanced_csv_entry_and_marks_the_entry(client, comptabl
     # première ligne est déjà une écriture, dans l'ordre des colonnes de Sage
     assert all(len(row) == len(frais_service.COLONNES_SAGE) for row in rows)
     vides = ("",) * 7
+    # Une pièce par frais, toutes ses lignes au libellé de l'opération du relevé (13/11/2026)
     assert rows == [
-        ("23/04/2026", code, "5543", "61671000", "", "DT D'ENREGISTREMENT", "202,00", "D") + vides,
-        # La banque opération par opération, avec le libellé du relevé (12/11/2026)
+        ("23/04/2026", code, "5543", "61671000", "", REMISE, "200,00", "D") + vides,
         ("23/04/2026", code, "5543", "55410003", "", REMISE, "200,00", "C") + vides,
-        ("23/04/2026", code, "5543", "55410003", "", VERSEMENT, "1,00", "C") + vides,
-        ("23/04/2026", code, "5543", "55410003", "", VERSEMENT, "1,00", "C") + vides,
+        ("23/04/2026", "BP2604046", "5543", "61671000", "", VERSEMENT, "1,00", "D") + vides,
+        ("23/04/2026", "BP2604046", "5543", "55410003", "", VERSEMENT, "1,00", "C") + vides,
+        ("23/04/2026", "BP2604047", "5543", "61671000", "", VERSEMENT, "1,00", "D") + vides,
+        ("23/04/2026", "BP2604047", "5543", "55410003", "", VERSEMENT, "1,00", "C") + vides,
     ]
-    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
-    db.refresh(entry)
-    assert (entry.numero_piece, entry.exportee_le is not None) == (code, True)
+    entries = list(
+        db.scalars(select(AccountingEntry).filter_by(origine="SIMTIS").order_by(AccountingEntry.id))
+    )
+    for entry in entries:
+        db.refresh(entry)
+    assert [(e.numero_piece, e.exportee_le is not None) for e in entries] == [
+        (code, True),
+        ("BP2604046", True),
+        ("BP2604047", True),
+    ]
     # Une écriture ne s'exporte qu'une fois (09/11/2026)
     again = exporter(client, comptable, db)
     assert again.status_code == 409
@@ -335,7 +392,9 @@ def test_an_entry_not_yet_exported_can_be_deleted(client, comptable, db):
     compte = bp(db)
     timbres = timbres_du_jour(db, compte)
     valider(client, comptable, db, (compte, JOUR))
-    entry_id = db.scalar(select(AccountingEntry.id).filter_by(origine="SIMTIS"))
+    entry_id = db.scalar(
+        select(AccountingEntry.id).filter_by(origine="SIMTIS").order_by(AccountingEntry.id)
+    )
 
     assert _supprimer(client, comptable, entry_id, motif=" ").status_code == 409
     response = _supprimer(client, comptable, entry_id)
@@ -343,7 +402,8 @@ def test_an_entry_not_yet_exported_can_be_deleted(client, comptable, db):
     assert response.status_code == 204
     db.expire_all()
     assert db.get(AccountingEntry, entry_id) is None
-    assert statuses(db, *timbres) == ["Non rapprochée"] * 3
+    # Une écriture par frais (13/11/2026) : seule l'opération de l'écriture supprimée revient
+    assert statuses(db, *timbres) == ["Non rapprochée", "Rapprochée", "Rapprochée"]
     assert "suppression_ecriture_frais" in actions(db)
     assert len(lire(client, comptable, db).json()["propositions"]) == 1
 
@@ -381,7 +441,7 @@ def test_a_simtis_entry_coming_back_from_sage_is_a_duplicate(client, comptable, 
     assert exporter(client, comptable, db).status_code == 200
     code = f"BP{JOUR:%y%m}001"
 
-    def ligne(numero, libelle, montant="202.00", piece=None):
+    def ligne(numero, libelle, montant="200.00", piece=None):
         return EntryLine(
             numero=numero,
             statut="Valide",
@@ -403,6 +463,13 @@ def test_a_simtis_entry_coming_back_from_sage_is_a_duplicate(client, comptable, 
     par_piece = ligne(4, "FRAIS DIVERS", piece=code.lower())
     _mark_simtis_entries(db, company(db).id, [par_piece])
     assert par_piece.statut == "Doublon"
+
+    # Une écriture par frais (13/11/2026) : ses lignes reviennent au libellé du relevé
+    par_releve = ligne(5, VERSEMENT.lower(), "1.00")
+    autre_libelle = ligne(6, "VIREMENT", "1.00")
+    _mark_simtis_entries(db, company(db).id, [par_releve, autre_libelle])
+    assert par_releve.statut == "Doublon"
+    assert autre_libelle.statut == "Valide"
 
 
 # --- Frais importés deux fois dans Sage (10/11/2026) -----------------------------------------------
@@ -430,9 +497,10 @@ def analyse_gl(client, headers, db, content: bytes, path: str = "analyse", **for
 
 
 def frais_exporte(client, comptable, db):
-    """Un jour de timbres comptabilisé par SIMTIS et exporté : pièce BP2604001, crédit 202,00."""
+    """Un droit de timbre comptabilisé par SIMTIS et exporté : pièce BP2604001, crédit 202,00
+    (une écriture par frais, 13/11/2026)."""
     compte = bp(db)
-    timbres_du_jour(db, compte)
+    operation(db, compte, "-202", JOUR, REMISE)
     valider(client, comptable, db, (compte, JOUR))
     assert exporter(client, comptable, db).status_code == 200
     return compte
@@ -523,7 +591,7 @@ def test_validated_entries_are_listed_with_their_code(db, comptable, client):
 
     items = frais_service.ecritures(db, company(db).id)
 
-    assert [(item.bank_code, item.nb_operations) for item in items] == [("BP", 3)]
+    assert [(item.bank_code, item.nb_operations) for item in items] == [("BP", 1)] * 3
 
 
 def test_the_reconciliation_screens_show_a_fees_match(client, comptable, db):
@@ -584,29 +652,47 @@ def commissions(db, compte_tva: str | None = "34552000"):
     return compte, lignes
 
 
-def test_one_com_entry_per_day_with_a_total_per_type(client, comptable, db):
+def test_one_com_entry_per_commission_and_per_vat_line(client, comptable, db):
+    """13/11/2026 : une écriture par opération ; une commission et sa TVA sur deux lignes du
+    relevé font deux écritures."""
     commissions(db)
 
     body = lire(client, comptable, db, "commissions").json()
 
-    assert len(body["propositions"]) == 1
-    item = body["propositions"][0]
-    assert (item["libelle"], item["total"], item["nb_operations"]) == ("COM", "66.00", 6)
-    assert [(d["type"], d["nb_operations"], d["total"]) for d in item["details"]] == [
-        ("commission", 2, "50.00"),
-        ("tva", 2, "5.00"),
-        ("commission_effet", 1, "10.00"),
-        ("tva_commission_effet", 1, "1.00"),
+    assert [
+        (p["libelle"], p["total"], p["nb_operations"], [d["type"] for d in p["details"]])
+        for p in body["propositions"]
+    ] == [
+        ("COM", "20.00", 1, ["commission"]),
+        ("COM", "30.00", 1, ["commission"]),
+        ("COM", "2.00", 1, ["tva"]),
+        ("COM", "3.00", 1, ["tva"]),
+        ("COM", "10.00", 1, ["commission_effet"]),
+        ("COM", "1.00", 1, ["tva_commission_effet"]),
     ]
     # Les timbres ne voient pas les commissions
     assert lire(client, comptable, db).json()["propositions"] == []
 
 
 def test_a_day_with_a_sage_com_entry_is_not_proposed(client, comptable, db):
+    """Une écriture Sage « COM » du total du jour (passée avant le 13/11/2026) couvre tous ses
+    frais."""
     compte, _ = commissions(db)
-    ecriture(db, compte, "231", JOUR, "COM")
+    ecriture(db, compte, "66", JOUR, "COM")
 
     assert lire(client, comptable, db, "commissions").json()["propositions"] == []
+
+
+def test_a_sage_com_entry_blocks_only_the_fee_of_its_amount(client, comptable, db):
+    """13/11/2026 : une écriture Sage « COM » d'un autre montant que le total du jour ne couvre
+    que le frais du même montant ; d'un montant sans frais, elle ne bloque rien."""
+    compte, _ = commissions(db)
+    ecriture(db, compte, "30", JOUR, "COM")
+    ecriture(db, compte, "231", JOUR, "COM")
+
+    totaux = [p["total"] for p in lire(client, comptable, db, "commissions").json()["propositions"]]
+
+    assert totaux == ["20.00", "2.00", "3.00", "10.00", "1.00"]
 
 
 def test_validating_commissions_matches_them_and_export_is_balanced(client, comptable, db):
@@ -615,9 +701,16 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     response = valider(client, comptable, db, (compte, JOUR), famille="commissions")
 
     assert response.status_code == 200, response.text
-    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS", libelle="COM"))
-    assert (entry.montant, entry.numero_piece) == (Decimal("66.00"), None)
-    code = f"BP{JOUR:%y%m}001"
+    entries = list(
+        db.scalars(
+            select(AccountingEntry)
+            .filter_by(origine="SIMTIS", libelle="COM")
+            .order_by(AccountingEntry.id)
+        )
+    )
+    assert [(e.montant, e.numero_piece) for e in entries] == [
+        (Decimal(m), None) for m in ("20.00", "30.00", "2.00", "3.00", "10.00", "1.00")
+    ]
     assert statuses(db, *lignes) == ["Rapprochée"] * 6 + ["Non rapprochée"]
     assert "comptabilisation_commissions" in actions(db)
     # Les écritures de timbres ne listent pas la COM
@@ -626,21 +719,22 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     export = exporter(client, comptable, db, "commissions")
     assert export.status_code == 200, export.text
     rows = lignes_csv(export)
-    # Chaque commission puis sa TVA au débit, la banque au crédit (11/11/2026)
+    # Une pièce par opération, la charge (ou la TVA) au débit et la banque au crédit, toutes deux
+    # au libellé du relevé (13/11/2026)
+    tva = "TAXE SUR VALEUR AJOUTEE"
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows] == [
-        ("61473000", code, "COM", "D", "20,00"),
-        ("34552142", code, "TVA COM", "D", "2,00"),
-        ("61473000", code, "COM", "D", "30,00"),
-        ("34552142", code, "TVA COM", "D", "3,00"),
-        ("61473000", code, "COM", "D", "10,00"),
-        ("34552142", code, "TVA COM", "D", "1,00"),
-        # La banque opération par opération, avec le libellé du relevé (12/11/2026)
-        ("55410003", code, "COMMISSION", "C", "20,00"),
-        ("55410003", code, "COMMISSION", "C", "30,00"),
-        ("55410003", code, "TAXE SUR VALEUR AJOUTEE", "C", "2,00"),
-        ("55410003", code, "TAXE SUR VALEUR AJOUTEE", "C", "3,00"),
-        ("55410003", code, COM_EFFET[:50], "C", "10,00"),
-        ("55410003", code, TVA_EFFET[:50], "C", "1,00"),
+        ("61473000", "BP2604001", "COMMISSION", "D", "20,00"),
+        ("55410003", "BP2604001", "COMMISSION", "C", "20,00"),
+        ("61473000", "BP2604002", "COMMISSION", "D", "30,00"),
+        ("55410003", "BP2604002", "COMMISSION", "C", "30,00"),
+        ("34552142", "BP2604003", tva, "D", "2,00"),
+        ("55410003", "BP2604003", tva, "C", "2,00"),
+        ("34552142", "BP2604004", tva, "D", "3,00"),
+        ("55410003", "BP2604004", tva, "C", "3,00"),
+        ("61473000", "BP2604005", COM_EFFET[:50], "D", "10,00"),
+        ("55410003", "BP2604005", COM_EFFET[:50], "C", "10,00"),
+        ("34552142", "BP2604006", TVA_EFFET[:50], "D", "1,00"),
+        ("55410003", "BP2604006", TVA_EFFET[:50], "C", "1,00"),
     ]
 
 
@@ -653,7 +747,7 @@ def test_a_simtis_com_entry_coming_back_from_sage_is_a_duplicate(client, comptab
         motifs=[],
         date_ecriture=JOUR,
         libelle="COM",
-        montant=Decimal("66.00"),
+        montant=Decimal("20.00"),
         bank_account_id=compte.id,
     )
 
@@ -670,44 +764,38 @@ def test_an_unknown_family_is_refused(client, comptable, db):
 # --- Format du grand livre, export unique (13/10/2026) --------------------------------------------
 
 
-def test_lines_follow_the_general_ledger_with_one_pair_per_commission(client, comptable, db):
+def test_lines_follow_the_general_ledger_one_entry_per_fee(client, comptable, db):
+    """13/11/2026 : une écriture par frais, toutes ses lignes au libellé du relevé."""
     compte, _ = commissions(db)
     timbres_du_jour(db, compte)
 
     tableau = lire(client, comptable, db, None).json()
 
-    # Un seul tableau : pour un même jour, les timbres puis la COM
-    assert [p["famille"] for p in tableau["propositions"]] == ["timbres", "commissions"]
-    timbre, com = tableau["propositions"]
+    # Un seul tableau : pour un même jour, les timbres puis la COM, dans l'ordre du relevé
+    assert [p["famille"] for p in tableau["propositions"]] == ["timbres"] * 3 + ["commissions"] * 6
+    timbre, com, tva = (tableau["propositions"][i] for i in (0, 3, 5))
     assert com["journal"] == "5543"
+
+    def lignes(proposition):
+        return [
+            (ligne["type"], ligne["compte"], ligne["libelle"], ligne["debit"], ligne["credit"])
+            for ligne in proposition["lignes"]
+        ]
+
+    assert lignes(com) == [
+        ("commission", "61473000", "COMMISSION", "20.00", None),
+        (None, "55410003", "COMMISSION", None, "20.00"),
+    ]
+    assert lignes(tva) == [
+        ("tva", "34552142", "TAXE SUR VALEUR AJOUTEE", "2.00", None),
+        (None, "55410003", "TAXE SUR VALEUR AJOUTEE", None, "2.00"),
+    ]
     assert [
-        (ligne["type"], ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in com["lignes"]
+        (ligne["type"], ligne["libelle"], ligne["debit"], ligne["credit"])
+        for ligne in timbre["lignes"]
     ] == [
-        # Une paire commission + TVA par commission (11/11/2026), puis la banque
-        ("commission", "61473000", "20.00", None),
-        ("tva", "34552142", "2.00", None),
-        ("commission", "61473000", "30.00", None),
-        ("tva", "34552142", "3.00", None),
-        ("commission_effet", "61473000", "10.00", None),
-        ("tva_commission_effet", "34552142", "1.00", None),
-        # Une ligne banque par opération (12/11/2026)
-        (None, "55410003", None, "20.00"),
-        (None, "55410003", None, "30.00"),
-        (None, "55410003", None, "2.00"),
-        (None, "55410003", None, "3.00"),
-        (None, "55410003", None, "10.00"),
-        (None, "55410003", None, "1.00"),
-    ]
-    # Le détail par type reste un total par type
-    assert [(d["type"], d["total"]) for d in com["details"]][:2] == [
-        ("commission", "50.00"),
-        ("tva", "5.00"),
-    ]
-    assert [(ligne["type"], ligne["debit"], ligne["credit"]) for ligne in timbre["lignes"]] == [
-        ("timbre", "202.00", None),
-        (None, None, "200.00"),
-        (None, None, "1.00"),
-        (None, None, "1.00"),
+        ("timbre", REMISE, "200.00", None),
+        (None, REMISE, None, "200.00"),
     ]
 
     # Les deux familles se valident ensemble, toutes ou aucune
@@ -720,18 +808,15 @@ def test_lines_follow_the_general_ledger_with_one_pair_per_commission(client, co
     }
     response = client.post("/api/frais/valider", json=body, headers=comptable)
     assert response.status_code == 200, response.text
-    assert response.json()["nb_ecritures"] == 2
+    assert response.json()["nb_ecritures"] == 9
     ecrites = lire(client, comptable, db, None).json()["ecritures"]
-    assert sorted(e["famille"] for e in ecrites) == ["commissions", "timbres"]
-    com_ecrite = next(e for e in ecrites if e["famille"] == "commissions")
-    assert [ligne["type"] for ligne in com_ecrite["lignes"]] == [
-        "commission",
-        "tva",
-        "commission",
-        "tva",
-        "commission_effet",
-        "tva_commission_effet",
-        *[None] * 6,
+    assert sorted(e["famille"] for e in ecrites) == ["commissions"] * 6 + ["timbres"] * 3
+    com_ecrite = next(
+        e for e in ecrites if e["famille"] == "commissions" and e["montant"] == "20.00"
+    )
+    assert [(ligne["type"], ligne["libelle"]) for ligne in com_ecrite["lignes"]] == [
+        ("commission", "COMMISSION"),
+        (None, "COMMISSION"),
     ]
 
 
@@ -745,18 +830,16 @@ def test_one_export_file_holds_stamps_and_commissions(client, comptable, db):
 
     assert response.status_code == 200, response.text
     rows = lignes_csv(response)
-    assert [(r[5], r[7]) for r in rows] == [
-        ("DT D'ENREGISTREMENT", "D"),
-        (REMISE, "C"),
-        (VERSEMENT, "C"),
-        (VERSEMENT, "C"),
-        *[("COM", "D"), ("TVA COM", "D")] * 3,
-        ("COMMISSION", "C"),
-        ("COMMISSION", "C"),
-        ("TAXE SUR VALEUR AJOUTEE", "C"),
-        ("TAXE SUR VALEUR AJOUTEE", "C"),
-        (COM_EFFET[:50], "C"),
-        (TVA_EFFET[:50], "C"),
+    tva = "TAXE SUR VALEUR AJOUTEE"
+    # Une pièce par frais, ses deux lignes au libellé du relevé (13/11/2026)
+    assert [(r[1], r[5], r[7]) for r in rows] == [
+        (f"BP2604{n:03d}", libelle, sens)
+        for n, libelle in enumerate(
+            (REMISE, VERSEMENT, VERSEMENT, "COMMISSION", "COMMISSION", tva, tva)
+            + (COM_EFFET[:50], TVA_EFFET[:50]),
+            start=1,
+        )
+        for sens in ("D", "C")
     ]
     montants = [(Decimal(r[6].replace(",", ".")), r[7]) for r in rows]
     assert sum(m for m, sens in montants if sens == "D") == 268
@@ -809,12 +892,12 @@ def test_other_fees_are_listed_apart_from_the_automatic_ones(client, comptable, 
 
 
 def test_an_automatic_fee_is_never_booked_by_hand(client, comptable, db):
-    """Jour où Sage a déjà sa COM : la commission n'est pas proposée en automatique, mais elle ne se
-    passe pas non plus à la main (elle se rapproche de l'écriture Sage)."""
+    """Commission déjà dans Sage : elle n'est pas proposée en automatique, mais elle ne se passe pas
+    non plus à la main."""
     compte = bp(db)
     commission = operation(db, compte, "-20", JOUR, "COMMISSION")
-    # Autre montant : la COM de Sage ne couvre pas cette commission, mais le jour est déjà passé
-    ecriture(db, compte, "35", JOUR, "COM")
+    # La COM de Sage du même montant (13/11/2026), déjà rapprochée ailleurs : pas « inclus »
+    ecriture(db, compte, "20", JOUR, "COM", statut="Rapprochée")
 
     body = lire(client, comptable, db, None).json()
     response = manuelle(client, comptable, db, [commission])
@@ -1267,20 +1350,33 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
 ):
     compte = bp(db)
     rtgs, recuperes, prelevement, remboursement = frais_tva_du_jour(db, compte)
+    libelle_rtgs = "COMMISSION VIR. RTGS EMIS VERS BMCE EN FAVEUR DE X"
+    libelle_prelevement = "COMMISSION REGLEMENT PRELEVEMENT EN FAVEUR DE X"
+    libelle_recuperes = "FRAIS RECUPERES PAR LA BANQUE"
 
     tous = lire(client, comptable, db, None).json()
     com, frais = (lire(client, comptable, db, nom).json() for nom in ("commissions", "frais"))
 
-    # COMMISSION… → « COM » ; FRAIS… → « FRAIS » (14/10/2026)
-    [ecriture_com] = com["propositions"]
-    assert (ecriture_com["libelle"], ecriture_com["total"]) == ("COM", "176.00")
-    assert [(ligne["type_libelle"], ligne["debit"]) for ligne in ecriture_com["lignes"]] == [
-        ("Commission RTGS", "150.00"),
-        ("TVA commission RTGS", "15.00"),
-        ("Commission prélèvement", "10.00"),
-        ("TVA commission prélèvement", "1.00"),
-        ("Banque", None),
-        ("Banque", None),
+    # COMMISSION… → « COM » ; FRAIS… → « FRAIS » (14/10/2026) ; une écriture par frais, avec sa
+    # TVA (et son timbre) comprise (13/11/2026)
+    assert [(p["libelle"], p["total"]) for p in com["propositions"]] == [
+        ("COM", "165.00"),
+        ("COM", "11.00"),
+    ]
+    assert [
+        [(ligne["type_libelle"], ligne["debit"], ligne["credit"]) for ligne in p["lignes"]]
+        for p in com["propositions"]
+    ] == [
+        [
+            ("Commission RTGS", "150.00", None),
+            ("TVA commission RTGS", "15.00", None),
+            ("Banque", None, "165.00"),
+        ],
+        [
+            ("Commission prélèvement", "10.00", None),
+            ("TVA commission prélèvement", "1.00", None),
+            ("Banque", None, "11.00"),
+        ],
     ]
     [ecriture_frais] = frais["propositions"]
     assert (ecriture_frais["libelle"], ecriture_frais["total"]) == ("FRAIS", "77.50")
@@ -1304,8 +1400,6 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     }
     response = client.post("/api/frais/valider", json=body, headers=comptable)
     assert response.status_code == 200, response.text
-    # Numérotés à l'export dans l'ordre de validation : COM puis FRAIS
-    code_com, code_frais = f"BP{JOUR:%y%m}001", f"BP{JOUR:%y%m}002"
     assert statuses(db, rtgs, recuperes, prelevement, remboursement) == [
         "Rapprochée",
         "Rapprochée",
@@ -1314,34 +1408,31 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     ]
     assert "comptabilisation_frais" in actions(db)
 
+    # Numérotés à l'export par date puis ordre de validation : RTGS, prélèvement, FRAIS ; toutes
+    # les lignes au libellé du relevé (13/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows] == [
-        (code_com, "61473000", "COM", "150,00", "D"),
-        (code_com, "34552142", "TVA COM", "15,00", "D"),
-        (code_com, "61473000", "COM", "10,00", "D"),
-        (code_com, "34552142", "TVA COM", "1,00", "D"),
-        # La banque opération par opération, avec le libellé du relevé (12/11/2026)
-        (code_com, "55410003", "COMMISSION VIR. RTGS EMIS VERS BMCE EN FAVEUR DE X", "165,00", "C"),
-        (code_com, "55410003", "COMMISSION REGLEMENT PRELEVEMENT EN FAVEUR DE X", "11,00", "C"),
-        (code_frais, "61473000", "FRAIS", "25,00", "D"),
-        (code_frais, "34552142", "TVA FRAIS", "2,50", "D"),
-        (code_frais, "61671000", "FRAIS", "50,00", "D"),
-        # Le libellé du relevé (12/11/2026, « COM » avant)
-        (code_frais, "55410003", "FRAIS RECUPERES PAR LA BANQUE", "77,50", "C"),
+        ("BP2604001", "61473000", libelle_rtgs, "150,00", "D"),
+        ("BP2604001", "34552142", libelle_rtgs, "15,00", "D"),
+        ("BP2604001", "55410003", libelle_rtgs, "165,00", "C"),
+        ("BP2604002", "61473000", libelle_prelevement, "10,00", "D"),
+        ("BP2604002", "34552142", libelle_prelevement, "1,00", "D"),
+        ("BP2604002", "55410003", libelle_prelevement, "11,00", "C"),
+        ("BP2604003", "61473000", libelle_recuperes, "25,00", "D"),
+        ("BP2604003", "34552142", libelle_recuperes, "2,50", "D"),
+        ("BP2604003", "61671000", libelle_recuperes, "50,00", "D"),
+        ("BP2604003", "55410003", libelle_recuperes, "77,50", "C"),
     ]
-    # Même libellé à l'écran (14/10/2026)
-    assert [ligne["libelle"] for ligne in ecriture_frais["lignes"]] == [
-        "FRAIS",
-        "TVA FRAIS",
-        "FRAIS",
-        "FRAIS RECUPERES PAR LA BANQUE",
-    ]
+    # Même libellé à l'écran
+    assert {ligne["libelle"] for ligne in ecriture_frais["lignes"]} == {libelle_recuperes}
 
 
 def test_a_day_with_a_sage_frais_entry_is_not_proposed(client, comptable, db):
+    """L'écriture Sage « FRAIS » du total du jour (déjà rapprochée : pas « inclus ») couvre ses
+    frais (13/11/2026 : un autre montant ne bloque plus le jour)."""
     compte = bp(db)
     frais_tva_du_jour(db, compte)
-    ecriture(db, compte, "999", JOUR, "FRAIS")
+    ecriture(db, compte, "77.50", JOUR, "FRAIS", statut="Rapprochée")
 
     assert lire(client, comptable, db, "frais").json()["propositions"] == []
 
@@ -1366,10 +1457,11 @@ def test_pieces_are_given_at_export_from_the_first_one_typed(client, comptable, 
     db.flush()
     autre_jour = JOUR + timedelta(days=1)
     mois_suivant = date(JOUR.year, JOUR.month % 12 + 1, 1)
+    # Un timbre par jour : une écriture chacun
     for jour in (autre_jour, JOUR, mois_suivant):
-        timbres_du_jour(db, compte, jour)
+        operation(db, compte, "-202", jour, REMISE)
         assert valider(client, comptable, db, (compte, jour)).status_code == 200
-    timbres_du_jour(db, awb)
+    operation(db, awb, "-202", JOUR, REMISE)
     valider(client, comptable, db, (awb, JOUR))
 
     avant = a_exporter(client, comptable, db)
@@ -1384,9 +1476,9 @@ def test_pieces_are_given_at_export_from_the_first_one_typed(client, comptable, 
     assert response.status_code == 200, response.text
     assert "BP-2026-04" in response.headers["content-disposition"]
     assert [(r[0], r[1]) for r in lignes_csv(response)] == [
-        # Le timbre, puis une ligne banque par opération (12/11/2026)
-        *[(f"{JOUR:%d/%m/%Y}", "BP2604017")] * 4,
-        *[(f"{autre_jour:%d/%m/%Y}", "BP2604018")] * 4,
+        # Le timbre au débit, la banque au crédit
+        *[(f"{JOUR:%d/%m/%Y}", "BP2604017")] * 2,
+        *[(f"{autre_jour:%d/%m/%Y}", "BP2604018")] * 2,
     ]
     pieces = dict(
         db.execute(
@@ -1460,7 +1552,8 @@ def valider_modifie(client, headers, db, compte, **modif):
 
 def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, comptable, db):
     compte = bp(db)
-    timbres_du_jour(db, compte)
+    # Un jour d'une seule écriture : la modification sans opération s'y applique
+    operation(db, compte, "-202", JOUR, REMISE)
     lignes = [
         {"compte": "61671", "libelle": "DT VERSEMENTS", "montant": "2.00", "sens": "Débit"},
         {"compte": "61473000", "libelle": "DT REMISE LCN", "montant": "200.00", "sens": "Débit"},
@@ -1488,14 +1581,15 @@ def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, c
     assert [(g["compte"], g["libelle"], g["debit"]) for g in ecrite["lignes"]] == [
         ("61671", "DT VERSEMENTS", "2.00"),
         ("61473000", "DT REMISE LCN", "200.00"),
-        ("55410003", "DT AVRIL", None),
+        # La ligne banque, jamais saisie, au libellé du relevé (13/11/2026)
+        ("55410003", REMISE, None),
     ]
     # La ligne banque est ajoutée aux lignes saisies (11/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[0], r[3], r[5], r[6], r[7]) for r in rows] == [
         ("25/04/2026", "61671", "DT VERSEMENTS", "2,00", "D"),
         ("25/04/2026", "61473000", "DT REMISE LCN", "200,00", "D"),
-        ("25/04/2026", "55410003", "DT AVRIL", "202,00", "C"),
+        ("25/04/2026", "55410003", REMISE, "202,00", "C"),
     ]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "comptabilisation_timbres"))
     assert audit.nouvelle_valeur["modifiee"] is True
@@ -1503,7 +1597,7 @@ def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, c
 
 def test_changed_lines_must_make_the_total_and_the_date_stay_in_bounds(client, comptable, db):
     compte = bp(db)
-    timbres_du_jour(db, compte)
+    operation(db, compte, "-202", JOUR, REMISE)
     faux = [{"compte": "61671", "libelle": "DT", "montant": "200.00", "sens": "Débit"}]
 
     total = valider_modifie(client, comptable, db, compte, lignes=faux)
@@ -1569,8 +1663,82 @@ def test_a_dismissed_day_comes_back_when_proposed_again(client, comptable, db):
         headers=comptable,
     )
 
-    [proposition] = lire(client, comptable, db).json()["propositions"]
-    assert proposition["total"] == "202.00"
+    totaux = [p["total"] for p in lire(client, comptable, db).json()["propositions"]]
+    assert totaux == ["200.00", "1.00", "1.00"]
+
+
+def test_a_modification_names_its_fee_on_a_day_of_several_fees(client, comptable, db):
+    """13/11/2026 : un jour de plusieurs écritures, une modification sans opération est refusée ;
+    avec l'opération, elle ne touche que son écriture."""
+    compte = bp(db)
+    remise, _, _ = timbres_du_jour(db, compte)
+
+    sans = valider_modifie(client, comptable, db, compte, libelle="DT")
+    avec = valider_modifie(
+        client, comptable, db, compte, transaction_id=remise.id, libelle="dt remise"
+    )
+
+    assert sans.status_code == 409
+    assert "modifiez-les un par un" in sans.json()["detail"]
+    assert avec.status_code == 200, avec.text
+    entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
+    assert (entry.libelle, entry.montant) == ("DT REMISE", Decimal("200.00"))
+    assert len(lire(client, comptable, db).json()["propositions"]) == 2
+
+
+def test_one_fee_is_dismissed_alone_and_proposed_again(client, comptable, db):
+    """13/11/2026 : « Écarter » porte sur l'opération ; les autres frais du jour restent proposés."""
+    compte = bp(db)
+    remise, versement, _ = timbres_du_jour(db, compte)
+    choix = {
+        "famille": "timbres",
+        "bank_account_id": compte.id,
+        "date": str(JOUR),
+        "transaction_id": remise.id,
+    }
+    body = {"company_id": company(db).id, "jours": [choix], "motif": "Contesté"}
+
+    response = client.post("/api/frais/ecarter", json=body, headers=comptable)
+
+    assert response.status_code == 200, response.text
+    tableau = lire(client, comptable, db, None).json()
+    assert [p["total"] for p in tableau["propositions"]] == ["1.00", "1.00"]
+    assert [a["id"] for a in tableau["autres_frais"]] == [remise.id]
+    [ecarte] = tableau["ecartes"]
+    assert (
+        ecarte["transaction_id"],
+        ecarte["libelle_operation"],
+        ecarte["montant"],
+        ecarte["motif"],
+    ) == (remise.id, REMISE, "-200.00", "Contesté")
+    # Le même frais deux fois : il n'est plus proposé
+    assert client.post("/api/frais/ecarter", json=body, headers=comptable).status_code == 409
+    # Les autres frais du jour s'écartent encore un par un
+    autre = {**choix, "transaction_id": versement.id}
+    assert (
+        client.post(
+            "/api/frais/ecarter",
+            json={"company_id": company(db).id, "jours": [autre]},
+            headers=comptable,
+        ).status_code
+        == 200
+    )
+
+    retour = client.post(
+        "/api/frais/reproposer",
+        json={"company_id": company(db).id, "jours": [choix]},
+        headers=comptable,
+    )
+
+    assert retour.status_code == 200, retour.text
+    assert [p["total"] for p in lire(client, comptable, db).json()["propositions"]] == [
+        "200.00",
+        "1.00",
+    ]
+    audit = db.scalar(
+        select(AuditLog).where(AuditLog.action == "ecartement_frais").order_by(AuditLog.id)
+    )
+    assert audit.nouvelle_valeur["operation"] == remise.id
 
 
 # --- Frais de plus de 200 DH : à la main et à justifier (19/10/2026) -----------------------------
@@ -1673,8 +1841,11 @@ def test_a_vat_without_its_commission_is_booked_by_hand(client, comptable, db):
 
     tableau = lire(client, comptable, db, None).json()
 
-    (com,) = tableau["propositions"]
-    assert (com["famille"], com["total"], com["nb_operations"]) == ("commissions", "49.50", 2)
+    # Une écriture par opération (13/11/2026) : la commission, puis sa TVA
+    assert [(p["famille"], p["total"]) for p in tableau["propositions"]] == [
+        ("commissions", "45.00"),
+        ("commissions", "4.50"),
+    ]
     assert tva_interet.id in {a["id"] for a in tableau["autres_frais"]}
     assert tva_commission.id not in {a["id"] for a in tableau["autres_frais"]}
     # La TVA de la commission ne se passe pas à la main, celle de l'intérêt oui
@@ -1699,18 +1870,19 @@ def test_a_commission_above_200_goes_automatically_with_its_vat(client, comptabl
 
     tableau = lire(client, comptable, db, None).json()
 
-    (com,) = tableau["propositions"]
-    assert (com["libelle"], com["total"], com["nb_operations"]) == ("COM", "704.00", 4)
-    # Chaque commission suivie de sa TVA, dans l'ordre du relevé, puis la banque (11/11/2026)
-    assert [(ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in com["lignes"]] == [
-        ("61473000", "40.00", None),
-        ("34552142", "4.00", None),
+    # Une écriture par opération, dans l'ordre du relevé (13/11/2026)
+    assert [(p["libelle"], p["total"]) for p in tableau["propositions"]] == [
+        ("COM", "40.00"),
+        ("COM", "600.00"),
+        ("COM", "4.00"),
+        ("COM", "60.00"),
+    ]
+    grande_com = tableau["propositions"][1]
+    assert [
+        (ligne["compte"], ligne["debit"], ligne["credit"]) for ligne in grande_com["lignes"]
+    ] == [
         ("61473000", "600.00", None),
-        ("34552142", "60.00", None),
-        ("55410003", None, "40.00"),
         ("55410003", None, "600.00"),
-        ("55410003", None, "4.00"),
-        ("55410003", None, "60.00"),
     ]
     assert tableau["autres_frais"] == []
     assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
@@ -1725,19 +1897,19 @@ def test_other_banks_commission_pairs_above_200_are_automatic_too(client, compta
 
     tableau = lire(client, comptable, db, None).json()
 
-    (com,) = tableau["propositions"]
-    assert (com["total"], com["nb_operations"]) == ("800.00", 3)
+    assert [p["total"] for p in tableau["propositions"]] == ["500.00", "50.00", "250.00"]
     assert tableau["autres_frais"] == []
     assert transfert.id and tva.id and effet.id
 
 
 def test_a_day_with_a_sage_com_entry_keeps_its_vat_out_of_the_manual_list(client, comptable, db):
-    """Sage a déjà la COM du jour : toutes ses TVA y sont, aucune ne se passe à la main."""
+    """Sage a déjà la COM du jour (son total, 13/11/2026) : toutes ses TVA y sont, aucune ne se
+    passe à la main."""
     compte = bp(db)
     operation(db, compte, "-45", JOUR, "COMMISSION")
     # TVA de l'intérêt de 196,82 (sous 200 DH, sinon elle passerait à la main de toute façon)
     tva_interet = operation(db, compte, "-19.68", JOUR, TVA)
-    ecriture(db, compte, "1000", JOUR, "COM")
+    ecriture(db, compte, "64.68", JOUR, "COM")
 
     tableau = lire(client, comptable, db, None).json()
 
@@ -1798,6 +1970,23 @@ def details(proposition):
     return [(d["type"], d["nb_operations"], d["total"]) for d in proposition["details"]]
 
 
+def details_de(tableau, libelle):
+    """Détails des écritures d'un libellé additionnés par type (une écriture par frais,
+    13/11/2026) : {type: (nombre, total)}."""
+    cumul: dict[str, tuple[int, Decimal]] = {}
+    for proposition in tableau["propositions"]:
+        if proposition["libelle"] != libelle:
+            continue
+        for d in proposition["details"]:
+            nb, total = cumul.get(d["type"], (0, Decimal(0)))
+            cumul[d["type"]] = (nb + d["nb_operations"], total + Decimal(d["total"]))
+    return {code: (nb, f"{total:.2f}") for code, (nb, total) in cumul.items()}
+
+
+def total_de(tableau, libelle):
+    return str(sum(Decimal(p["total"]) for p in tableau["propositions"] if p["libelle"] == libelle))
+
+
 def test_a_bmce_day_is_booked_like_bp(client, comptable, db):
     """Commission et TVA sur deux lignes, associées par les 10 % ; timbre de domiciliation ; une
     commission de plus de 200 DH entre dans la COM avec sa TVA (11/11/2026, à la main avant)."""
@@ -1812,19 +2001,15 @@ def test_a_bmce_day_is_booked_like_bp(client, comptable, db):
 
     tableau = lire(client, comptable, db, None).json()
 
-    par_famille = {p["famille"]: p for p in tableau["propositions"]}
-    assert set(par_famille) == {"timbres", "commissions"}
-    assert (par_famille["timbres"]["libelle"], par_famille["timbres"]["total"]) == (
-        "DT D'ENREGISTREMENT",
-        "50.00",
-    )
-    assert (par_famille["commissions"]["libelle"], par_famille["commissions"]["total"]) == (
-        "COM",
-        "685.52",
-    )
-    assert details(par_famille["commissions"]) == [
-        ("commission", 3, "623.20"),
-        ("tva", 3, "62.32"),
+    # Une écriture par opération (13/11/2026) : le timbre, puis chaque commission et chaque TVA
+    assert [(p["libelle"], p["total"], details(p)) for p in tableau["propositions"]] == [
+        ("DT D'ENREGISTREMENT", "50.00", [("timbre", 1, "50.00")]),
+        ("COM", "50.00", [("commission", 1, "50.00")]),
+        ("COM", "5.00", [("tva", 1, "5.00")]),
+        ("COM", "150.00", [("commission", 1, "150.00")]),
+        ("COM", "15.00", [("tva", 1, "15.00")]),
+        ("COM", "423.20", [("commission", 1, "423.20")]),
+        ("COM", "42.32", [("tva", 1, "42.32")]),
     ]
     assert tableau["autres_frais"] == []
     assert grande.id and tva_grande.id
@@ -1869,25 +2054,28 @@ def test_cih_caution_and_pdl_credoc_fees_are_automatic_whatever_the_amount(
 
     tableau = lire(client, comptable, db, None).json()
 
-    (proposition,) = tableau["propositions"]
-    assert (proposition["famille"], proposition["libelle"], proposition["total"]) == (
-        "frais",
-        "FRAIS",
-        "770.00",
-    )
-    assert details(proposition) == [
-        ("frais_caution", 1, "100.00"),
-        ("frais_caution_tva", 1, "10.00"),
-        ("frais_pdl_credoc", 1, "600.00"),
-        ("frais_pdl_credoc_tva", 1, "60.00"),
+    # Une écriture par frais, sa TVA comprise (13/11/2026)
+    assert [
+        (p["famille"], p["libelle"], p["total"], details(p)) for p in tableau["propositions"]
+    ] == [
+        (
+            "frais",
+            "FRAIS",
+            "110.00",
+            [("frais_caution", 1, "100.00"), ("frais_caution_tva", 1, "10.00")],
+        ),
+        (
+            "frais",
+            "FRAIS",
+            "660.00",
+            [("frais_pdl_credoc", 1, "600.00"), ("frais_pdl_credoc_tva", 1, "60.00")],
+        ),
     ]
-    assert [(g["compte"], g["debit"], g["credit"]) for g in proposition["lignes"]] == [
-        ("61473000", "100.00", None),
-        ("34552142", "10.00", None),
+    assert [
+        (g["compte"], g["debit"], g["credit"]) for g in tableau["propositions"][1]["lignes"]
+    ] == [
         ("61473000", "600.00", None),
         ("34552142", "60.00", None),
-        # Une ligne banque par opération (12/11/2026)
-        (compte.compte_comptable, None, "110.00"),
         (compte.compte_comptable, None, "660.00"),
     ]
     assert [a["id"] for a in tableau["autres_frais"]] == [releve.id]
@@ -1929,21 +2117,21 @@ def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
 
     tableau = lire(client, comptable, db, None).json()
 
-    (proposition,) = tableau["propositions"]
-    assert (proposition["famille"], proposition["libelle"], proposition["total"]) == (
-        "frais",
-        "FRAIS",
-        "21949.18",
-    )
-    assert details(proposition) == [
-        ("agios_escompte", 2, "19953.80"),
-        ("agios_escompte_tva", 2, "1995.38"),
+    # Une écriture par agio, sa TVA comprise (13/11/2026)
+    assert [(p["famille"], p["libelle"], p["total"]) for p in tableau["propositions"]] == [
+        ("frais", "FRAIS", "4.18"),
+        ("frais", "FRAIS", "21945.00"),
     ]
-    assert [(g["compte"], g["debit"], g["credit"]) for g in proposition["lignes"]] == [
-        ("63116300", "19953.80", None),
-        ("34552142", "1995.38", None),
-        ("55410005", None, "4.18"),
-        ("55410005", None, "21945.00"),
+    assert [
+        [(g["compte"], g["debit"], g["credit"]) for g in p["lignes"]]
+        for p in tableau["propositions"]
+    ] == [
+        [("63116300", "3.80", None), ("34552142", "0.38", None), ("55410005", None, "4.18")],
+        [
+            ("63116300", "19950.00", None),
+            ("34552142", "1995.00", None),
+            ("55410005", None, "21945.00"),
+        ],
     ]
     assert {a["id"] for a in tableau["autres_frais"]} == {remboursement.id, chez_awb.id}
 
@@ -1957,19 +2145,23 @@ def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
     response = exporter(client, comptable, db, banque="CIH")
     assert response.status_code == 200, response.text
     vides = ("",) * 7
+    # Une pièce par agio, toutes ses lignes au libellé du relevé (13/11/2026)
+    petit_l, grand_l = petit.libelle, grand.libelle
     assert lignes_csv(response) == [
-        ("23/04/2026", "CIH2604001", "5545", "63116300", "", "FRAIS", "19953,80", "D") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "34552142", "", "TVA FRAIS", "1995,38", "D") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit.libelle, "4,18", "C") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "55410005", "", grand.libelle, "21945,00", "C")
-        + vides,
+        ("23/04/2026", "CIH2604001", "5545", "63116300", "", petit_l, "3,80", "D") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "34552142", "", petit_l, "0,38", "D") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit_l, "4,18", "C") + vides,
+        ("23/04/2026", "CIH2604002", "5545", "63116300", "", grand_l, "19950,00", "D") + vides,
+        ("23/04/2026", "CIH2604002", "5545", "34552142", "", grand_l, "1995,00", "D") + vides,
+        ("23/04/2026", "CIH2604002", "5545", "55410005", "", grand_l, "21945,00", "C") + vides,
     ]
 
 
 def test_cih_escompte_agios_are_not_proposed_on_a_day_already_in_sage(client, comptable, db):
     compte = cih(db)
     agios = operation(db, compte, "-4.18", JOUR, "AGIOS ESCOMPTE LCN N 2600114")
-    ecriture(db, compte, "1000", JOUR, "FRAIS")
+    # L'écriture « FRAIS » de Sage du même montant (13/11/2026), déjà rapprochée : pas « inclus »
+    ecriture(db, compte, "4.18", JOUR, "FRAIS", statut="Rapprochée")
 
     tableau = lire(client, comptable, db, None).json()
 
@@ -2004,32 +2196,37 @@ def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commiss
 
     tableau = lire(client, comptable, db, None).json()
 
-    par_libelle = {p["libelle"]: p for p in tableau["propositions"]}
-    assert set(par_libelle) == {"DT D'ENREGISTREMENT", "COM", "FRAIS"}
-    assert par_libelle["DT D'ENREGISTREMENT"]["total"] == "40.00"
-    assert details(par_libelle["COM"]) == [
-        ("commission_lcn", 1, "75.00"),
-        ("commission_lcn_tva", 1, "7.50"),
-        ("commission_virement", 2, "166.00"),
-        ("commission_virement_tva", 2, "16.60"),
-        ("commission_ebics", 1, "600.00"),
-        ("commission_ebics_tva", 1, "60.00"),
-        ("commission_carte", 1, "10.00"),
-        ("commission_carte_tva", 1, "1.00"),
-    ]
-    assert par_libelle["COM"]["total"] == "936.10"
-    assert details(par_libelle["FRAIS"]) == [
-        ("frais_attijari_net", 1, "65.00"),
-        ("frais_attijari_net_tva", 1, "6.50"),
-        ("frais_docnet", 1, "195.00"),
-        ("frais_docnet_tva", 1, "19.50"),
-        ("frais_certification", 1, "40.00"),
-        ("frais_certification_tva", 1, "4.00"),
-        ("frais_operation", 1, "30.00"),
-        ("frais_operation_tva", 1, "3.00"),
-        ("frais_releve_caution", 1, "20.00"),
-        ("frais_releve_caution_tva", 1, "2.00"),
-    ]
+    # Une écriture par frais (13/11/2026) : 11 écritures, additionnées ici par type
+    assert len(tableau["propositions"]) == 11
+    assert {p["libelle"] for p in tableau["propositions"]} == {
+        "DT D'ENREGISTREMENT",
+        "COM",
+        "FRAIS",
+    }
+    assert total_de(tableau, "DT D'ENREGISTREMENT") == "40.00"
+    assert details_de(tableau, "COM") == {
+        "commission_lcn": (1, "75.00"),
+        "commission_lcn_tva": (1, "7.50"),
+        "commission_virement": (2, "166.00"),
+        "commission_virement_tva": (2, "16.60"),
+        "commission_ebics": (1, "600.00"),
+        "commission_ebics_tva": (1, "60.00"),
+        "commission_carte": (1, "10.00"),
+        "commission_carte_tva": (1, "1.00"),
+    }
+    assert total_de(tableau, "COM") == "936.10"
+    assert details_de(tableau, "FRAIS") == {
+        "frais_attijari_net": (1, "65.00"),
+        "frais_attijari_net_tva": (1, "6.50"),
+        "frais_docnet": (1, "195.00"),
+        "frais_docnet_tva": (1, "19.50"),
+        "frais_certification": (1, "40.00"),
+        "frais_certification_tva": (1, "4.00"),
+        "frais_operation": (1, "30.00"),
+        "frais_operation_tva": (1, "3.00"),
+        "frais_releve_caution": (1, "20.00"),
+        "frais_releve_caution_tva": (1, "2.00"),
+    }
     comptes = {g["compte"] for p in tableau["propositions"] for g in p["lignes"] if g["debit"]}
     assert comptes == {"61671000", "61473000", "34552142"}
     assert {a["id"] for a in tableau["autres_frais"]} == {agios.id, caution.id}
@@ -2042,50 +2239,51 @@ def awb(db):
     return compte
 
 
-def test_the_bank_side_has_one_line_per_operation_with_the_statement_label(client, comptable, db):
-    """12/11/2026 : au crédit du compte bancaire, une ligne par opération du relevé, avec son
-    libellé (50 caractères au plus) et son montant, dans l'ordre du relevé ; les charges restent
-    regroupées par type. Même chose dans le fichier pour Sage."""
+def test_every_line_of_an_entry_carries_the_statement_label(client, comptable, db):
+    """13/11/2026 (remplace « la banque en détail, les charges regroupées » du 12/11/2026) : une
+    écriture par opération ; toutes ses lignes, débit comme crédit, portent le libellé de
+    l'opération du relevé (50 caractères au plus), à l'écran, une fois validée et dans le fichier
+    pour Sage."""
     compte = awb(db)
     long = "COMM VIR SRBM: AWBVCA0510261805 POUR LE COMPTE DE SOCIETE X SARL"
     operation(db, compte, "-660", JOUR, "COM ABONNEMENT EBICS")
     operation(db, compte, "-165", JOUR, long)
     operation(db, compte, "-11", JOUR, "COM.ADOBE")
+    libelles = ["COM ABONNEMENT EBICS", long[:50], "COM.ADOBE"]
 
-    (proposition,) = lire(client, comptable, db, None).json()["propositions"]
+    propositions = lire(client, comptable, db, None).json()["propositions"]
 
-    lignes = [(g["compte"], g["libelle"], g["debit"], g["credit"]) for g in proposition["lignes"]]
-    banque = [ligne for ligne in lignes if ligne[0] == compte.compte_comptable]
-    assert banque == [
-        (compte.compte_comptable, "COM ABONNEMENT EBICS", None, "660.00"),
-        (compte.compte_comptable, long[:50], None, "165.00"),
-        (compte.compte_comptable, "COM.ADOBE", None, "11.00"),
+    assert [
+        [(g["compte"], g["libelle"], g["debit"], g["credit"]) for g in p["lignes"]]
+        for p in propositions
+    ] == [
+        [
+            ("61473000", libelle, ht, None),
+            ("34552142", libelle, tva, None),
+            (compte.compte_comptable, libelle, None, total),
+        ]
+        for libelle, ht, tva, total in (
+            (libelles[0], "600.00", "60.00", "660.00"),
+            (libelles[1], "150.00", "15.00", "165.00"),
+            (libelles[2], "10.00", "1.00", "11.00"),
+        )
     ]
-    assert [ligne[0] for ligne in lignes[:6]] == ["61473000", "34552142"] * 3
 
     response = valider(client, comptable, db, (compte, JOUR), famille="commissions")
     assert response.status_code == 200, response.text
-    (validee,) = lire(client, comptable, db, None).json()["ecritures"]
-    assert [g["libelle"] for g in validee["lignes"] if g["credit"]] == [
-        "COM ABONNEMENT EBICS",
-        long[:50],
-        "COM.ADOBE",
-    ]
+    validees = lire(client, comptable, db, None).json()["ecritures"]
+    assert sorted({g["libelle"] for e in validees for g in e["lignes"]}) == sorted(libelles)
     rows = lignes_csv(exporter(client, comptable, db, banque="AWB"))
-    assert [row[5] for row in rows if row[7] == "C"] == [
-        "COM ABONNEMENT EBICS",
-        long[:50],
-        "COM.ADOBE",
-    ]
+    assert [row[5] for row in rows] == [libelle for libelle in libelles for _ in range(3)]
 
 
 def test_a_modified_entry_keeps_one_bank_line_with_the_total(client, comptable, db):
-    """Une écriture modifiée avant validation garde une seule ligne banque, le total."""
+    """Une écriture modifiée avant validation garde une seule ligne banque, le total, et ses
+    libellés saisis."""
     compte = awb(db)
     operation(db, compte, "-660", JOUR, "COM ABONNEMENT EBICS")
-    operation(db, compte, "-11", JOUR, "COM.ADOBE")
     lignes = [
-        {"compte": "61473000", "libelle": "COM", "montant": "671.00", "sens": "Débit"},
+        {"compte": "61473000", "libelle": "COM", "montant": "660.00", "sens": "Débit"},
     ]
     body = {
         "company_id": company(db).id,
@@ -2103,8 +2301,10 @@ def test_a_modified_entry_keeps_one_bank_line_with_the_total(client, comptable, 
 
     assert response.status_code == 200, response.text
     (validee,) = lire(client, comptable, db, None).json()["ecritures"]
-    assert [(g["compte"], g["credit"]) for g in validee["lignes"] if g["credit"]] == [
-        (compte.compte_comptable, "671.00")
+    assert [(g["compte"], g["libelle"], g["credit"]) for g in validee["lignes"]] == [
+        ("61473000", "COM", None),
+        # La ligne banque, jamais saisie, au libellé du relevé (13/11/2026)
+        (compte.compte_comptable, "COM ABONNEMENT EBICS", "660.00"),
     ]
 
 
@@ -2114,7 +2314,7 @@ def test_the_fees_journal_is_the_account_journal_starting_with_55(client, compta
     compte.journal_sage = "1456,5541"
     compte.compte_comptable = "55410002"
     db.flush()
-    timbres_du_jour(db, compte)
+    operation(db, compte, "-202", JOUR, REMISE)
 
     (proposition,) = lire(client, comptable, db).json()["propositions"]
     response = valider(client, comptable, db, (compte, JOUR))

@@ -19,8 +19,13 @@ import {
 } from "@/lib/frais";
 import type { CompteFrais, LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
 
-const jour = (bank_account_id: number, date: string, total: string, famille = "timbres") =>
-  ({ famille, bank_account_id, date, total }) as PropositionTimbres;
+const jour = (
+  bank_account_id: number,
+  date: string,
+  total: string,
+  famille = "timbres",
+  transaction_id: number | null = null,
+) => ({ famille, bank_account_id, date, total, transaction_id }) as PropositionTimbres;
 
 describe("droits de timbre", () => {
   it("additionne exactement les jours cochés", () => {
@@ -43,6 +48,17 @@ describe("droits de timbre", () => {
     expect(selectionTimbres([timbre, com], new Set([cleJour(com)]))).toEqual({
       nb: 1,
       total: "66.00",
+    });
+  });
+
+  it("distingue les frais d'un même jour par leur opération (13/11/2026)", () => {
+    const premier = jour(3, "2026-04-23", "200.00", "timbres", 11);
+    const second = jour(3, "2026-04-23", "1.00", "timbres", 12);
+
+    expect(cleJour(premier)).not.toBe(cleJour(second));
+    expect(selectionTimbres([premier, second], new Set([cleJour(second)]))).toEqual({
+      nb: 1,
+      total: "1.00",
     });
   });
 });
@@ -172,7 +188,23 @@ describe("propositions modifiées (19/10/2026)", () => {
       libelle: "COM",
       credit: "671.00",
     });
-    expect(ligneBanqueTotale([banque], "77.50", "FRAIS").libelle).toBe("COM");
+    expect(ligneBanqueTotale([banque, banque], "77.50", "FRAIS").libelle).toBe("COM");
+    // Une écriture d'un seul frais (13/11/2026) : le libellé du relevé reste
+    expect(ligneBanqueTotale([banque], "660.00", "FRAIS").libelle).toBe("COM ABONNEMENT EBICS");
+  });
+
+  it("keeps the statement label of a line when the entry label changes", () => {
+    const ligne: LigneGL = {
+      type: "commission",
+      type_libelle: "Commission",
+      libelle: "COMMISSION VIR. RTGS EMIS",
+      compte: "61473000",
+      debit: "150.00",
+      credit: null,
+    };
+
+    expect(libelleModifie(ligne, "COM", "COM RTGS")).toBe("COMMISSION VIR. RTGS EMIS");
+    expect(libelleModifie({ ...ligne, libelle: "COM" }, "COM", "COM RTGS")).toBe("COM RTGS");
   });
 
   it("limits a line label to 50 characters, the length Sage 100 accepts", () => {

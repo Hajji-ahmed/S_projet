@@ -3,11 +3,14 @@ import { formatAmount } from "@/lib/format";
 import { fromCents, toCents } from "@/lib/statementLines";
 import type { CompteFrais, LigneGL, LigneSaisie, PropositionTimbres } from "@/types/frais";
 
-/** Identifiant d'une écriture proposée : sa famille, un compte et un jour. */
+/** Identifiant d'une écriture proposée : sa famille, un compte, un jour et son opération (une
+ * écriture par frais, 13/11/2026). */
 export function cleJour(
-  item: Pick<PropositionTimbres, "famille" | "bank_account_id" | "date">,
+  item: Pick<PropositionTimbres, "famille" | "bank_account_id" | "date"> & {
+    transaction_id?: number | null;
+  },
 ): string {
-  return `${item.famille}|${item.bank_account_id}|${item.date}`;
+  return `${item.famille}|${item.bank_account_id}|${item.date}|${item.transaction_id ?? ""}`;
 }
 
 /** Nombre de jours cochés et leur total exact (centimes en BigInt, jamais de float). */
@@ -242,22 +245,27 @@ export function etatLignes(
 }
 
 /** Libellé d'une ligne quand seul le libellé de l'écriture change : « TVA … » pour la TVA ; une
- * ligne banque garde le libellé du relevé (12/11/2026). */
+ * ligne banque (12/11/2026) et une ligne au libellé du relevé (une écriture par frais,
+ * 13/11/2026) gardent le leur, comme le serveur. */
 export function libelleModifie(ligne: LigneGL, libelleOrigine: string, libelle: string): string {
   if (ligne.type === null) return ligne.libelle;
-  return ligne.libelle === `TVA ${libelleOrigine}` ? `TVA ${libelle}` : libelle;
+  if (ligne.libelle === `TVA ${libelleOrigine}`) return `TVA ${libelle}`;
+  return ligne.libelle === libelleOrigine ? libelle : ligne.libelle;
 }
 
 /**
  * Ligne banque d'une écriture dont les lignes ont été saisies (« Modifier ») : une seule ligne
- * avec le total, comme le serveur la calcule (12/11/2026) ; « COM » pour une écriture « FRAIS ».
+ * avec le total, comme le serveur la calcule (12/11/2026). Une écriture d'un seul frais garde le
+ * libellé du relevé de sa ligne banque (13/11/2026) ; sinon le libellé de l'écriture, « COM »
+ * pour une écriture « FRAIS ».
  */
 export function ligneBanqueTotale(lignes: LigneGL[], total: string, libelle: string): LigneGL {
+  const banques = lignes.filter((ligne) => ligne.type === null);
   return {
     type: null,
     type_libelle: "Banque",
-    libelle: libelle === "FRAIS" ? "COM" : libelle,
-    compte: lignes.find((ligne) => ligne.type === null)?.compte ?? null,
+    libelle: banques.length === 1 ? banques[0].libelle : libelle === "FRAIS" ? "COM" : libelle,
+    compte: banques[0]?.compte ?? null,
     debit: null,
     credit: total,
   };

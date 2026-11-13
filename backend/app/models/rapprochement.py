@@ -205,15 +205,23 @@ class FraisLigne(Base):
 
 
 class FraisJourEcarte(Base, TimestampMixin):
-    """Journée de frais écartée de la comptabilisation automatique (0032, 19/10/2026) : elle n'est
-    plus proposée, ses frais passent dans « Autres frais à passer à la main ». « Reproposer »
-    supprime la ligne."""
+    """Frais écartés de la comptabilisation automatique (0032, 19/10/2026) : ils ne sont plus
+    proposés et passent dans « Autres frais à passer à la main ». « Reproposer » supprime la ligne.
+
+    Sans opération : toute la journée de la famille (avant le 13/11/2026). Avec une opération
+    (0053, 13/11/2026, une écriture par frais) : ce frais seulement, `jour` = sa date."""
 
     __tablename__ = "frais_jours_ecartes"
     __table_args__ = (
-        UniqueConstraint(
-            "bank_account_id", "jour", "famille", name="uq_frais_jours_ecartes_compte_jour_famille"
+        Index(
+            "uq_frais_jours_ecartes_compte_jour_famille",
+            "bank_account_id",
+            "jour",
+            "famille",
+            unique=True,
+            postgresql_where=text("bank_transaction_id IS NULL"),
         ),
+        UniqueConstraint("bank_transaction_id", name="uq_frais_jours_ecartes_operation"),
         check_in("famille_valide", "famille", ("timbres", "commissions", "frais")),
     )
 
@@ -222,5 +230,9 @@ class FraisJourEcarte(Base, TimestampMixin):
     bank_account_id: Mapped[int] = mapped_column(ForeignKey("bank_accounts.id"))
     jour: Mapped[date] = mapped_column(Date)
     famille: Mapped[str] = mapped_column(String(20))
+    # L'opération supprimée (suppression d'import ou d'une ligne) emporte son écartement
+    bank_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_transactions.id", ondelete="CASCADE")
+    )
     motif: Mapped[str | None] = mapped_column(String(500))
     cree_par_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))

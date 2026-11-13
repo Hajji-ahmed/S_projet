@@ -32,6 +32,7 @@ from app.repositories import (
 from app.services import (
     account_service,
     audit_service,
+    frais_service,
     import_file,
     position_service,
     solde_comptable_service,
@@ -414,7 +415,8 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
     """Une écriture comptabilisée par SIMTIS (droits de timbre, commissions, 13/10/2026) revient
     dans l'export Sage une fois intégrée : sa ligne banque est un doublon, jamais importée deux
     fois. Reconnue par le même compte, le même jour et le même montant, avec son N° de pièce (le
-    code du rapprochement) ou son libellé (« DT D'ENREGISTREMENT », « COM »)."""
+    code du rapprochement) ou son libellé (« DT D'ENREGISTREMENT », « COM »), ou depuis le
+    13/11/2026 le libellé de son opération du relevé."""
     candidates = [
         line
         for line in lines
@@ -422,6 +424,13 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
     ]
     keys = {(line.bank_account_id, line.date_ecriture) for line in candidates}
     remaining = frais_repository.simtis_entries_like(db, company_id, keys)
+    # Une écriture par frais (13/11/2026) : ses lignes portent le libellé de l'opération du relevé
+    libelles_releve = {
+        entry_id: {frais_service.libelle_releve(tx) for tx in operations}
+        for entry_id, operations in frais_repository.operations_of_entries(
+            db, [entry.id for entry in remaining]
+        ).items()
+    }
     for line in candidates:
         for entry in remaining:
             if (entry.bank_account_id, entry.date_ecriture, entry.montant) != (
@@ -441,6 +450,10 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
                 if regle is not None
                 # Écriture saisie à la main (13/10/2026) : même libellé
                 else " ".join((line.libelle or "").upper().split()) == entry.libelle
+            )
+            libelle_ligne = " ".join((line.libelle or "").upper().split())
+            meme_libelle = bool(meme_libelle) or libelle_ligne in libelles_releve.get(
+                entry.id, set()
             )
             if same_piece or meme_libelle:
                 line.statut = "Doublon"

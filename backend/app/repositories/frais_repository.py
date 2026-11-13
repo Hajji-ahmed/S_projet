@@ -2,6 +2,7 @@
 commissions (13/10/2026)."""
 
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
@@ -74,28 +75,36 @@ def frais_libres(
     return list(db.scalars(query))
 
 
-def jours_dans_sage(
+def montants_dans_sage(
     db: Session,
     company_id: int,
     account_ids: list[int],
     date_from: date,
     date_to: date,
     ecriture_sql: str,
-) -> set[tuple[int, date]]:
-    """(compte, jour) où Sage a déjà l'écriture du jour (« DT D'ENREGISTREMENT », « COM ») :
-    jamais comptabilisé deux fois."""
+) -> dict[tuple[int, date], list[Decimal]]:
+    """Montants (positifs) des écritures Sage de la famille (« DT D'ENREGISTREMENT », « COM »,
+    « FRAIS »), par (compte, jour) : un frais du même montant, ou une journée dont les frais font
+    ce total, est déjà passé dans Sage (13/11/2026, une écriture par frais)."""
     if not account_ids:
-        return set()
+        return {}
     rows = db.execute(
-        select(AccountingEntry.bank_account_id, AccountingEntry.date_ecriture).where(
+        select(
+            AccountingEntry.bank_account_id, AccountingEntry.date_ecriture, AccountingEntry.montant
+        )
+        .where(
             AccountingEntry.company_id == company_id,
             AccountingEntry.origine != "SIMTIS",
             AccountingEntry.bank_account_id.in_(account_ids),
             AccountingEntry.date_ecriture.between(date_from, date_to),
             AccountingEntry.libelle.op("~*")(ecriture_sql),
         )
+        .order_by(AccountingEntry.id)
     )
-    return {(row[0], row[1]) for row in rows}
+    montants: dict[tuple[int, date], list[Decimal]] = {}
+    for account_id, jour, montant in rows:
+        montants.setdefault((account_id, jour), []).append(abs(montant))
+    return montants
 
 
 def ecritures_simtis(
@@ -289,30 +298,38 @@ def lignes_saisies(db: Session, entry_ids: list[int]) -> dict[int, list[FraisLig
 
 def jours_ecartes(
     db: Session, account_ids: list[int], date_from: date, date_to: date
-) -> list[FraisJourEcarte]:
-    """Journées écartées des comptes sur la période, de la plus récente à la plus ancienne."""
+) -> list[tuple[FraisJourEcarte, BankTransaction | None]]:
+    """Journées et opérations écartées des comptes sur la période, de la plus récente à la plus
+    ancienne, avec l'opération écartée (None pour une journée entière)."""
     if not account_ids:
         return []
-    return list(
-        db.scalars(
-            select(FraisJourEcarte)
-            .where(
-                FraisJourEcarte.bank_account_id.in_(account_ids),
-                FraisJourEcarte.jour.between(date_from, date_to),
-            )
-            .order_by(FraisJourEcarte.jour.desc(), FraisJourEcarte.id.desc())
+    rows = db.execute(
+        select(FraisJourEcarte, BankTransaction)
+        .outerjoin(BankTransaction, BankTransaction.id == FraisJourEcarte.bank_transaction_id)
+        .where(
+            FraisJourEcarte.bank_account_id.in_(account_ids),
+            FraisJourEcarte.jour.between(date_from, date_to),
         )
+        .order_by(FraisJourEcarte.jour.desc(), FraisJourEcarte.id.desc())
     )
+    return [(ecarte, tx) for ecarte, tx in rows]
 
 
 def jour_ecarte(
-    db: Session, bank_account_id: int, jour: date, famille: str
+    db: Session, bank_account_id: int, jour: date, famille: str, transaction_id: int | None = None
 ) -> FraisJourEcarte | None:
+    """Écartement d'une journée (sans opération) ou d'une opération (13/11/2026)."""
+    operation = (
+        FraisJourEcarte.bank_transaction_id.is_(None)
+        if transaction_id is None
+        else FraisJourEcarte.bank_transaction_id == transaction_id
+    )
     return db.scalar(
         select(FraisJourEcarte).where(
             FraisJourEcarte.bank_account_id == bank_account_id,
             FraisJourEcarte.jour == jour,
             FraisJourEcarte.famille == famille,
+            operation,
         )
     )
 

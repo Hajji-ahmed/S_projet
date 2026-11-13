@@ -15,7 +15,8 @@ export type LigneGL = {
   /** Type du frais (« commission », « tva »…), null pour la ligne banque. */
   type: string | null;
   type_libelle: string;
-  /** Libellé exporté pour Sage : « COM », « TVA COM », « TVA FRAIS »… (14/10/2026). */
+  /** Libellé exporté pour Sage : celui de l'opération du relevé pour une écriture d'un seul frais
+   * (13/11/2026), sinon « COM », « TVA COM »… (14/10/2026). */
   libelle: string;
   compte: string | null;
   debit: string | null;
@@ -29,10 +30,13 @@ export type Timbre = {
   montant: string;
 };
 
-/** Écriture « DT D'ENREGISTREMENT » à passer : un jour, un compte, ses timbres (calculée). */
+/** Écriture à passer (calculée) : depuis le 13/11/2026 une par frais, toutes ses lignes au
+ * libellé de l'opération du relevé. */
 export type PropositionTimbres = {
   famille: FamilleFrais;
   bank_account_id: number;
+  /** L'opération de l'écriture : identifie la proposition (13/11/2026). */
+  transaction_id: number | null;
   bank_code: string;
   bank_logo: string | null;
   devise: string;
@@ -87,7 +91,7 @@ export type ModificationFrais = {
   lignes?: LigneSaisie[];
 };
 
-/** Journée écartée de la comptabilisation automatique (19/10/2026). */
+/** Journée (19/10/2026) ou frais (13/11/2026) écarté de la comptabilisation automatique. */
 export type JourEcarte = {
   famille: FamilleFrais;
   famille_libelle: string;
@@ -95,6 +99,10 @@ export type JourEcarte = {
   bank_code: string;
   bank_logo: string | null;
   date: string;
+  /** Null : toute la journée de la famille (écartements d'avant le 13/11/2026). */
+  transaction_id?: number | null;
+  libelle_operation?: string | null;
+  montant?: string | null;
   motif: string | null;
   ecarte_le: string;
 };

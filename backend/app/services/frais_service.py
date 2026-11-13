@@ -464,11 +464,13 @@ class Detail:
 
 @dataclass
 class JourFrais:
-    """L'écriture d'un jour et d'un compte : ses opérations et leur type."""
+    """Une écriture à passer : son compte, son jour, ses opérations et leur type. Depuis le
+    13/11/2026, une écriture par frais : une seule opération, `transaction_id`."""
 
     bank_account_id: int
     jour: date
     lignes: list[tuple[BankTransaction, str]] = field(default_factory=list)
+    transaction_id: int | None = None
 
     @property
     def operations(self) -> list[BankTransaction]:
@@ -582,18 +584,35 @@ def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
     return a_la_main
 
 
-def regrouper(
-    famille: Famille,
-    operations: list[BankTransaction],
-    jours_dans_sage: set[tuple[int, date]] | None = None,
-    hors_famille: set[int] | None = None,
-) -> list[JourFrais]:
-    """Un groupe par (compte, jour) : seulement des frais débités de la famille ; un jour déjà
-    passé dans Sage est écarté. Trié par jour puis compte. `hors_famille` : opérations du libellé
-    de la famille qui se passent pourtant à la main (TVA sans sa commission, 09/11/2026)."""
-    jours_dans_sage = jours_dans_sage or set()
+MontantsSage = dict[tuple[int, date], list[Decimal]]
+
+
+@dataclass(frozen=True)
+class Ecartes:
+    """Frais écartés de la comptabilisation automatique (19/10/2026) : des journées entières
+    (compte, jour, famille), lignes d'avant le 13/11/2026, et des opérations (13/11/2026)."""
+
+    jours: frozenset[tuple[int, date, str]] = frozenset()
+    operations: frozenset[int] = frozenset()
+
+    def contient(self, tx: BankTransaction, famille: str) -> bool:
+        return (
+            tx.id in self.operations
+            or (tx.bank_account_id, tx.date_operation, famille) in self.jours
+        )
+
+
+def _ordre_releve(lignes: list[tuple[BankTransaction, str]]) -> list[tuple[BankTransaction, str]]:
+    return sorted(lignes, key=lambda item: (item[0].date_operation, item[0].ordre or 0, item[0].id))
+
+
+def _eligibles(
+    famille: Famille, operations: list[BankTransaction], hors_famille: set[int] | None
+) -> dict[tuple[int, date], list[tuple[BankTransaction, str]]]:
+    """Frais débités de la famille, par (compte, jour). `hors_famille` : opérations du libellé de
+    la famille qui se passent pourtant à la main (TVA sans sa commission, 09/11/2026)."""
     hors_famille = hors_famille or set()
-    groupes: dict[tuple[int, date], JourFrais] = {}
+    par_jour: dict[tuple[int, date], list[tuple[BankTransaction, str]]] = {}
     for tx in operations:
         banque = banque_de(tx)
         code = famille.type_de(tx.libelle, banque)
@@ -604,17 +623,63 @@ def regrouper(
             or tx.id in hors_famille
         ):
             continue
-        cle = (tx.bank_account_id, tx.date_operation)
-        if cle in jours_dans_sage:
+        par_jour.setdefault((tx.bank_account_id, tx.date_operation), []).append((tx, code))
+    return par_jour
+
+
+def bloques_par_sage(
+    famille: Famille,
+    operations: list[BankTransaction],
+    montants_sage: MontantsSage | None,
+    hors_famille: set[int] | None = None,
+) -> set[int]:
+    """Frais de la famille déjà passés dans Sage (13/11/2026, remplace « un jour où Sage a
+    l'écriture de la famille est écarté ») : par compte et par jour, une écriture Sage de la
+    famille égale au total des frais du jour les couvre tous (écriture du jour, passée avant) ;
+    sinon chaque écriture Sage couvre un frais du même montant, dans l'ordre du relevé."""
+    if not montants_sage:
+        return set()
+    bloques: set[int] = set()
+    for cle, lignes in _eligibles(famille, operations, hors_famille).items():
+        restants = list(montants_sage.get(cle, []))
+        if not restants:
             continue
-        groupes.setdefault(cle, JourFrais(*cle)).lignes.append((tx, code))
-    return [groupes[cle] for cle in sorted(groupes, key=lambda cle: (cle[1], cle[0]))]
+        if -sum((tx.montant for tx, _ in lignes), ZERO) in restants:
+            bloques.update(tx.id for tx, _ in lignes)
+            continue
+        for tx, _ in _ordre_releve(lignes):
+            if -tx.montant in restants:
+                restants.remove(-tx.montant)
+                bloques.add(tx.id)
+    return bloques
+
+
+def regrouper(
+    famille: Famille,
+    operations: list[BankTransaction],
+    montants_sage: MontantsSage | None = None,
+    hors_famille: set[int] | None = None,
+    ecartes: Ecartes | None = None,
+) -> list[JourFrais]:
+    """Une écriture par frais (13/11/2026, remplace « un groupe par (compte, jour) ») : seulement
+    des frais débités de la famille, ni déjà dans Sage (`bloques_par_sage`), ni écartés. Triées
+    par jour, compte, puis ordre du relevé."""
+    # Le total du jour compte aussi les TVA sans commission : l'écriture Sage du jour les avait
+    bloques = bloques_par_sage(famille, operations, montants_sage)
+    ecartes = ecartes or Ecartes()
+    par_jour = _eligibles(famille, operations, hors_famille)
+    return [
+        JourFrais(cle[0], cle[1], [(tx, code)], tx.id)
+        for cle in sorted(par_jour, key=lambda cle: (cle[1], cle[0]))
+        for tx, code in _ordre_releve(par_jour[cle])
+        if tx.id not in bloques and not ecartes.contient(tx, famille.code)
+    ]
 
 
 def regrouper_timbres(
-    operations: list[BankTransaction], jours_dans_sage: set[tuple[int, date]] | None = None
+    operations: list[BankTransaction], montants_sage: MontantsSage | None = None
 ) -> list[JourFrais]:
-    return regrouper(TIMBRES, operations, jours_dans_sage)
+    return regrouper(TIMBRES, operations, montants_sage)
 
 
 # --- Préparer -------------------------------------------------------------------------------------
@@ -654,52 +719,53 @@ def _jours(
     date_to: date,
     inclus: "dict[int, AccountingEntry] | None" = None,
 ) -> list[JourFrais]:
-    """Jours à comptabiliser, sans les frais déjà inclus dans une écriture Sage libre, ni les
-    journées écartées par l'utilisateur (19/10/2026)."""
+    """Écritures à comptabiliser (une par frais, 13/11/2026), sans les frais déjà inclus dans une
+    écriture Sage libre, déjà passés dans Sage, ni écartés par l'utilisateur (19/10/2026)."""
     if inclus is None:
         inclus = frais_inclus(db, company_id, account_ids, date_from, date_to)
-    ecartes = {
-        (a, j) for a, j, f in _ecartes(db, account_ids, date_from, date_to) if f == famille.code
-    }
     libres = frais_repository.frais_libres(db, account_ids, date_from, date_to, famille.libelle_sql)
     return regrouper(
         famille,
         [tx for tx in libres if tx.id not in inclus],
-        frais_repository.jours_dans_sage(
+        frais_repository.montants_dans_sage(
             db, company_id, account_ids, date_from, date_to, famille.ecriture_sql
-        )
-        | ecartes,
+        ),
         # Association TVA ↔ commission sur toutes les opérations libres, avant de retirer les frais
         # inclus dans Sage (09/11/2026)
         tva_a_la_main(libres) if famille is COMMISSIONS else None,
+        _ecartes(db, account_ids, date_from, date_to),
     )
 
 
 def _tva_a_la_main(
     db: Session, company_id: int, account_ids: list[int], date_from: date, date_to: date
 ) -> set[int]:
-    """TVA libres de la période qui se passent à la main (sans commission associée). Un jour où
-    Sage a déjà son écriture « COM » n'est pas concerné : sa TVA y est déjà, la passer à la main
-    la compterait deux fois."""
+    """TVA libres de la période qui se passent à la main (sans commission associée). Une TVA que
+    Sage a déjà (son montant, ou le total « COM » du jour, `bloques_par_sage`) n'est pas
+    concernée : la passer à la main la compterait deux fois."""
     libres = frais_repository.frais_libres(
         db, account_ids, date_from, date_to, COMMISSIONS.libelle_sql
     )
-    dans_sage = frais_repository.jours_dans_sage(
-        db, company_id, account_ids, date_from, date_to, COMMISSIONS.ecriture_sql
+    dans_sage = bloques_par_sage(
+        COMMISSIONS,
+        libres,
+        frais_repository.montants_dans_sage(
+            db, company_id, account_ids, date_from, date_to, COMMISSIONS.ecriture_sql
+        ),
     )
-    return tva_a_la_main(
-        [tx for tx in libres if (tx.bank_account_id, tx.date_operation) not in dans_sage]
-    )
+    return tva_a_la_main([tx for tx in libres if tx.id not in dans_sage])
 
 
-def _ecartes(
-    db: Session, account_ids: list[int], date_from: date, date_to: date
-) -> set[tuple[int, date, str]]:
-    """(compte, jour, famille) des journées écartées (19/10/2026)."""
-    return {
-        (row.bank_account_id, row.jour, row.famille)
-        for row in frais_repository.jours_ecartes(db, account_ids, date_from, date_to)
-    }
+def _ecartes(db: Session, account_ids: list[int], date_from: date, date_to: date) -> Ecartes:
+    """Journées (19/10/2026) et opérations (13/11/2026) écartées."""
+    jours: set[tuple[int, date, str]] = set()
+    operations: set[int] = set()
+    for row, _ in frais_repository.jours_ecartes(db, account_ids, date_from, date_to):
+        if row.bank_transaction_id is None:
+            jours.add((row.bank_account_id, row.jour, row.famille))
+        else:
+            operations.add(row.bank_transaction_id)
+    return Ecartes(frozenset(jours), frozenset(operations))
 
 
 def sans_seuil(libelle: str | None, banque: str | None = None) -> bool:
@@ -741,15 +807,13 @@ def famille_automatique(
     )
 
 
-def a_la_main(
-    tx: BankTransaction, ecartes: set[tuple[int, date, str]], tva_main: set[int] | None = None
-) -> bool:
-    """Frais qui se passe à la main : pas d'une famille automatique, d'une journée écartée, ou une
-    TVA sans sa commission (`tva_main`, 09/11/2026)."""
+def a_la_main(tx: BankTransaction, ecartes: Ecartes, tva_main: set[int] | None = None) -> bool:
+    """Frais qui se passe à la main : pas d'une famille automatique, écarté (sa journée ou
+    lui-même), ou une TVA sans sa commission (`tva_main`, 09/11/2026)."""
     if tva_main and tx.id in tva_main:
         return True
     code = famille_automatique(tx.libelle, tx.montant, banque_de(tx))
-    return code is None or (tx.bank_account_id, tx.date_operation, code) in ecartes
+    return code is None or ecartes.contient(tx, code)
 
 
 def _frais_a_controler(
@@ -855,9 +919,20 @@ def propositions(
         for regle in familles
         for jour in _jours(db, regle, company_id, list(accounts), date_from, date_to, inclus)
     ]
-    items.sort(
-        key=lambda item: (item.jour.jour, -item.jour.bank_account_id, -rang[item.famille.code])
-    )
+
+    # Une écriture par frais (13/11/2026) : pour un même jour, compte et famille, dans l'ordre du
+    # relevé
+    def cle(item: Proposition) -> tuple:
+        premiere = item.jour.operations[0]
+        return (
+            item.jour.jour,
+            -item.jour.bank_account_id,
+            -rang[item.famille.code],
+            -(premiere.ordre or 0),
+            -premiere.id,
+        )
+
+    items.sort(key=cle)
     return list(reversed(items))
 
 
@@ -902,22 +977,30 @@ def _retenus(
     famille: Famille,
     company_id: int,
     company_accounts: dict[int, BankAccount],
-    choix: list[tuple[int, date]],
+    choix: list[tuple[int, date, int | None]],
 ) -> list[tuple[BankAccount, str, JourFrais]]:
-    """Jours d'une famille à écrire, recalculés ; 409 si l'un n'est plus à comptabiliser."""
-    account_ids = sorted({account_id for account_id, _ in choix})
-    calcules = {
-        (jour.bank_account_id, jour.jour): jour
-        for jour in _jours(db, famille, company_id, account_ids, choix[0][1], choix[-1][1])
-    }
+    """Écritures d'une famille à passer, recalculées (une par frais, 13/11/2026) : celle de
+    l'opération choisie, ou toutes celles du jour sans opération ; 409 si l'une n'est plus à
+    comptabiliser."""
+    account_ids = sorted({account_id for account_id, _, _ in choix})
+    jours = sorted(jour for _, jour, _ in choix)
+    calcules: dict[tuple[int, date], list[JourFrais]] = {}
+    for piece in _jours(db, famille, company_id, account_ids, jours[0], jours[-1]):
+        calcules.setdefault((piece.bank_account_id, piece.jour), []).append(piece)
     retenus = []
-    for cle in choix:
-        account = company_accounts[cle[0]]
-        jour = calcules.get(cle)
-        if jour is None:
+    vus: set[int | None] = set()
+    for account_id, jour, transaction_id in choix:
+        account = company_accounts[account_id]
+        pieces = [
+            piece
+            for piece in calcules.get((account_id, jour), [])
+            if transaction_id is None or piece.transaction_id == transaction_id
+        ]
+        if not pieces:
+            quoi = "ce frais n'est plus" if transaction_id else f"plus de {famille.nom}"
             raise ConflictError(
-                f"{account.bank.code}, {cle[1]:%d/%m/%Y} : plus de {famille.nom} à "
-                "comptabiliser ce jour-là. Rien n'a été comptabilisé, rechargez la liste."
+                f"{account.bank.code}, {jour:%d/%m/%Y} : {quoi} à comptabiliser. Rien n'a été "
+                "comptabilisé, rechargez la liste."
             )
         journal = journal_des_frais(account)
         if journal is None or not compte_principal(account):
@@ -925,7 +1008,12 @@ def _retenus(
                 f"Compte {account.bank.code} {account.devise} : renseignez son compte comptable et "
                 "son journal des frais (écran Comptes). Rien n'a été comptabilisé."
             )
-        retenus.append((account, journal, jour))
+        for piece in pieces:
+            # Un frais choisi deux fois (seul et avec sa journée) ne s'écrit qu'une fois
+            if piece.transaction_id in vus:
+                continue
+            vus.add(piece.transaction_id)
+            retenus.append((account, journal, piece))
     return retenus
 
 
@@ -988,31 +1076,38 @@ def _lignes_valides(lignes: tuple[LigneSaisie, ...], total: Decimal, cle: str) -
     return propres
 
 
+Choix = tuple[Famille, int, date, int | None]
+CleModification = tuple[str, int, date, int | None]
+
+
 def valider(
     db: Session,
     company_id: int,
-    jours: list[tuple[Famille, int, date]],
+    jours: list[Choix],
     *,
     acteur_id: int,
     ip: str | None,
-    modifications: dict[tuple[str, int, date], Modification] | None = None,
+    modifications: dict[CleModification, Modification] | None = None,
 ) -> list[AccountingEntry]:
-    """Comptabilise les jours choisis, toutes familles, tous ou aucun : pour chacun, l'écriture de
-    sa famille est créée et rapprochée de ses opérations, recalculées par le serveur.
+    """Comptabilise les écritures choisies, toutes familles, toutes ou aucune : pour chacune,
+    l'écriture de sa famille est créée et rapprochée de son opération, recalculée par le serveur.
+    Depuis le 13/11/2026 une écriture par frais : (famille, compte, jour, opération), ou toutes
+    celles du jour sans opération.
 
     `modifications` (19/10/2026) : libellé, date et lignes changés par l'utilisateur, contrôlés
-    avant toute écriture ; les lignes saisies remplacent le calcul automatique."""
+    avant toute écriture ; les lignes saisies remplacent le calcul automatique. Clé avec
+    l'opération ; sans opération, seulement pour un jour d'une seule écriture."""
     modifications = modifications or {}
     if not jours:
-        raise ConflictError("Choisissez au moins un jour à comptabiliser.")
+        raise ConflictError("Choisissez au moins un frais à comptabiliser.")
     reconciliation_repository.lock_company(db, company_id)
     company_accounts = {a.id: a for a in _accounts(db, company_id, None)}
-    par_famille: dict[str, set[tuple[int, date]]] = {}
-    for regle, account_id, jour in jours:
+    par_famille: dict[str, set[tuple[int, date, int | None]]] = {}
+    for regle, account_id, jour, transaction_id in jours:
         if account_id not in company_accounts:
             raise NotFoundError("Compte bancaire introuvable.")
-        par_famille.setdefault(regle.code, set()).add((account_id, jour))
-    # Tout est contrôlé avant d'écrire : tous les jours, ou aucun
+        par_famille.setdefault(regle.code, set()).add((account_id, jour, transaction_id))
+    # Tout est contrôlé avant d'écrire : toutes les écritures, ou aucune
     retenus = [
         (FAMILLES[code], account, journal, jour)
         for code in FAMILLES
@@ -1022,17 +1117,29 @@ def valider(
             FAMILLES[code],
             company_id,
             company_accounts,
-            sorted(par_famille[code], key=lambda cle: (cle[1], cle[0])),
+            sorted(par_famille[code], key=lambda cle: (cle[1], cle[0], cle[2] or 0)),
         )
     ]
     retenus.sort(key=lambda item: (item[3].jour, item[1].id))
+    pieces_du_jour: dict[tuple[str, int, date], int] = {}
+    for famille, account, _, jour in retenus:
+        cle_jour = (famille.code, account.id, jour.jour)
+        pieces_du_jour[cle_jour] = pieces_du_jour.get(cle_jour, 0) + 1
 
     # Modifications contrôlées avant la première écriture
-    effectives: dict[tuple[str, int, date], tuple[str, date, list[LigneSaisie] | None]] = {}
+    effectives: dict[int | None, tuple[str, date, list[LigneSaisie] | None]] = {}
     for famille, account, _, jour in retenus:
-        cle = (famille.code, account.id, jour.jour)
-        modif = modifications.get(cle, Modification())
         nom = f"{account.bank.code}, {jour.jour:%d/%m/%Y}"
+        cle_jour = (famille.code, account.id, jour.jour)
+        modif = modifications.get((*cle_jour, jour.transaction_id))
+        if modif is None and (*cle_jour, None) in modifications:
+            if pieces_du_jour[cle_jour] > 1:
+                raise ConflictError(
+                    f"{nom} : plusieurs frais ce jour-là, modifiez-les un par un. Rien n'a été "
+                    "comptabilisé."
+                )
+            modif = modifications[(*cle_jour, None)]
+        modif = modif or Modification()
         libelle = _libelle_manuel(modif.libelle) if modif.libelle else famille.libelle
         date_ecriture = modif.date_ecriture or jour.jour
         if date_ecriture < jour.jour or date_ecriture > business_today():
@@ -1043,12 +1150,12 @@ def valider(
         lignes = (
             _lignes_valides(modif.lignes, jour.total, nom) if modif.lignes is not None else None
         )
-        effectives[cle] = (libelle, date_ecriture, lignes)
+        effectives[jour.transaction_id] = (libelle, date_ecriture, lignes)
 
     entries = []
     for famille, account, journal, jour in retenus:
         ids = [tx.id for tx in jour.operations]
-        libelle, date_ecriture, lignes = effectives[(famille.code, account.id, jour.jour)]
+        libelle, date_ecriture, lignes = effectives[jour.transaction_id]
         entry = AccountingEntry(
             company_id=company_id,
             bank_account_id=account.id,
@@ -1370,7 +1477,7 @@ def lignes_banque(
         return [ligne_banque(compte, total)]
     ordonnees = sorted(operations, key=lambda tx: (tx.date_operation, tx.ordre or 0, tx.id))
     return [
-        replace(ligne_banque(compte, -tx.montant + ZERO), libelle=_plain(tx.libelle)[:LIBELLE_SAGE])
+        replace(ligne_banque(compte, -tx.montant + ZERO), libelle=libelle_releve(tx))
         for tx in ordonnees
     ]
 
@@ -1383,8 +1490,11 @@ def lignes_gl(
 ) -> list[LigneGL]:
     """Une ligne par détail AU DÉBIT de son compte de charge ou de TVA, puis la banque au crédit du
     compte bancaire (11/11/2026, remplace les lignes au crédit sans ligne banque du 17/10/2026) :
-    une ligne par opération depuis le 12/11/2026 (`lignes_banque`), le total sans opérations."""
-    return [
+    une ligne par opération depuis le 12/11/2026 (`lignes_banque`), le total sans opérations.
+
+    Une écriture d'une seule opération (une écriture par frais, 13/11/2026) porte sur TOUTES ses
+    lignes, débit comme crédit, le libellé de l'opération du relevé (`libelle_releve`)."""
+    lignes = [
         *(
             LigneGL(
                 detail.type,
@@ -1397,6 +1507,15 @@ def lignes_gl(
         ),
         *lignes_banque(account.compte_comptable, operations or [], total),
     ]
+    if operations and len(operations) == 1 and -operations[0].montant == total:
+        texte = libelle_releve(operations[0])
+        lignes = [replace(ligne, libelle=texte) for ligne in lignes]
+    return lignes
+
+
+def libelle_releve(tx: BankTransaction) -> str:
+    """Libellé de l'opération pour Sage : espaces réduits, `LIBELLE_SAGE` caractères au plus."""
+    return _plain(tx.libelle)[:LIBELLE_SAGE]
 
 
 def _lignes_de(
@@ -1452,7 +1571,15 @@ def lignes_ecriture(
     saisies: list[FraisLigne] | None = None,
 ) -> list[LigneGL]:
     if saisies:
-        # Lignes saisies avant la validation (19/10/2026) : telles quelles, puis la banque
+        # Lignes saisies avant la validation (19/10/2026) : telles quelles, puis la banque, au
+        # libellé du relevé pour une écriture automatique d'un seul frais (13/11/2026)
+        banque = ligne_banque(account.compte_comptable, entry.montant)
+        if (
+            famille is not MANUELLE
+            and len(operations) == 1
+            and -operations[0].montant == entry.montant
+        ):
+            banque = replace(banque, libelle=libelle_releve(operations[0]))
         return [
             *(
                 LigneGL(
@@ -1465,7 +1592,7 @@ def lignes_ecriture(
                 )
                 for ligne in saisies
             ),
-            ligne_banque(account.compte_comptable, entry.montant),
+            banque,
         ]
     if famille is MANUELLE:
         return lignes_manuelle(
@@ -1747,12 +1874,13 @@ class FraisInclus:
 
 @dataclass
 class JourEcarte:
-    """Journée écartée de la comptabilisation automatique (19/10/2026)."""
+    """Journée (19/10/2026) ou frais (13/11/2026) écarté de la comptabilisation automatique."""
 
     ecarte: FraisJourEcarte
     bank_code: str
     bank_logo: str | None
     famille: Famille
+    operation: BankTransaction | None = None
 
 
 @dataclass
@@ -1798,8 +1926,11 @@ def tableau(
                 accounts[row.bank_account_id].bank.code,
                 accounts[row.bank_account_id].bank.logo,
                 FAMILLES[row.famille],
+                operation,
             )
-            for row in frais_repository.jours_ecartes(db, list(accounts), date_from, date_to)
+            for row, operation in frais_repository.jours_ecartes(
+                db, list(accounts), date_from, date_to
+            )
         ],
     )
 
@@ -1999,16 +2130,17 @@ def comptabiliser_manuellement(
 def ecarter(
     db: Session,
     company_id: int,
-    jours: list[tuple[Famille, int, date]],
+    jours: list[Choix],
     *,
     motif: str | None,
     acteur_id: int,
     ip: str | None,
 ) -> int:
-    """Écarte des journées proposées, toutes ou aucune : elles ne sont plus proposées, leurs frais
-    passent dans « Autres frais à passer à la main »."""
+    """Écarte des frais proposés, tous ou aucun : ils ne sont plus proposés et passent dans
+    « Autres frais à passer à la main ». Avec une opération, ce frais seulement (13/11/2026) ;
+    sans, toute la journée de la famille (19/10/2026)."""
     if not jours:
-        raise ConflictError("Choisissez au moins une journée à écarter.")
+        raise ConflictError("Choisissez au moins un frais à écarter.")
     texte = " ".join((motif or "").split()) or None
     if texte and len(texte) > reconciliation_service.COMMENTAIRE_MAX:
         raise ConflictError(
@@ -2016,22 +2148,31 @@ def ecarter(
         )
     reconciliation_repository.lock_company(db, company_id)
     accounts = {a.id: a for a in _accounts(db, company_id, None)}
-    for regle, account_id, jour in jours:
+    for regle, account_id, jour, transaction_id in jours:
         if account_id not in accounts:
             raise NotFoundError("Compte bancaire introuvable.")
-        proposes = {j.jour for j in _jours(db, regle, company_id, [account_id], jour, jour)}
-        if jour not in proposes:
-            raise ConflictError(
-                f"{accounts[account_id].bank.code}, {jour:%d/%m/%Y} : plus de {regle.nom} "
-                "proposés ce jour-là. Rien n'a été écarté, rechargez la liste."
+        proposes = {
+            piece.transaction_id
+            for piece in _jours(db, regle, company_id, [account_id], jour, jour)
+        }
+        if not proposes or (transaction_id is not None and transaction_id not in proposes):
+            detail = (
+                "ce frais n'est plus proposé"
+                if transaction_id is not None
+                else f"plus de {regle.nom} proposés ce jour-là"
             )
-    for regle, account_id, jour in jours:
+            raise ConflictError(
+                f"{accounts[account_id].bank.code}, {jour:%d/%m/%Y} : {detail}. Rien n'a été "
+                "écarté, rechargez la liste."
+            )
+    for regle, account_id, jour, transaction_id in jours:
         db.add(
             FraisJourEcarte(
                 company_id=company_id,
                 bank_account_id=account_id,
                 jour=jour,
                 famille=regle.code,
+                bank_transaction_id=transaction_id,
                 motif=texte,
                 cree_par_id=acteur_id,
             )
@@ -2042,7 +2183,12 @@ def ecarter(
             action="ecartement_frais",
             entite="bank_account",
             entite_id=account_id,
-            apres={"jour": jour, "famille": regle.code, "motif": texte},
+            apres={
+                "jour": jour,
+                "famille": regle.code,
+                "operation": transaction_id,
+                "motif": texte,
+            },
             ip=ip,
         )
     _commit(db)
@@ -2052,26 +2198,28 @@ def ecarter(
 def reproposer(
     db: Session,
     company_id: int,
-    jours: list[tuple[Famille, int, date]],
+    jours: list[Choix],
     *,
     acteur_id: int,
     ip: str | None,
 ) -> int:
-    """Annule l'écartement de journées : SIMTIS les propose de nouveau."""
+    """Annule l'écartement de journées ou de frais : SIMTIS les propose de nouveau."""
     if not jours:
-        raise ConflictError("Choisissez au moins une journée à reproposer.")
+        raise ConflictError("Choisissez au moins un frais à reproposer.")
     reconciliation_repository.lock_company(db, company_id)
     accounts = {a.id: a for a in _accounts(db, company_id, None)}
     lignes = []
-    for regle, account_id, jour in jours:
+    for regle, account_id, jour, transaction_id in jours:
         if account_id not in accounts:
             raise NotFoundError("Compte bancaire introuvable.")
-        row = frais_repository.jour_ecarte(db, account_id, jour, regle.code)
+        row = frais_repository.jour_ecarte(db, account_id, jour, regle.code, transaction_id)
         if row is None:
-            raise NotFoundError(
-                f"{accounts[account_id].bank.code}, {jour:%d/%m/%Y} : cette journée n'est pas "
-                "écartée."
+            detail = (
+                "ce frais n'est pas écarté"
+                if transaction_id is not None
+                else "cette journée n'est pas écartée"
             )
+            raise NotFoundError(f"{accounts[account_id].bank.code}, {jour:%d/%m/%Y} : {detail}.")
         lignes.append(row)
     for row in lignes:
         audit_service.log(
@@ -2080,7 +2228,12 @@ def reproposer(
             action="reproposition_frais",
             entite="bank_account",
             entite_id=row.bank_account_id,
-            avant={"jour": row.jour, "famille": row.famille, "motif": row.motif},
+            avant={
+                "jour": row.jour,
+                "famille": row.famille,
+                "operation": row.bank_transaction_id,
+                "motif": row.motif,
+            },
             ip=ip,
         )
         db.delete(row)

@@ -66,23 +66,31 @@ type FraisCardProps = {
 };
 
 function plural(n: number, word: string): string {
-  return `${n} ${word}${n > 1 ? "s" : ""}`;
+  return `${n} ${word}${n > 1 && !word.endsWith("s") ? "s" : ""}`;
+}
+
+/** Nom d'une proposition : le libellé de son opération du relevé (une écriture par frais,
+ * 13/11/2026), sinon celui de l'écriture. */
+function libelleProposition(item: PropositionTimbres): string {
+  return item.operations.length === 1 ? item.operations[0].libelle : item.libelle;
 }
 
 /** Libellé d'une ligne : « DT D'ENREGISTREMENT · 9 timbres », « COM · Commission effet ». */
 function libelleLigne(famille: EcritureFrais["famille"], ligne: LigneGL, nb: number) {
   // Le libellé de la ligne, comme dans le fichier Sage (« TVA COM » pour une TVA, 14/10/2026)
   if (ligne.type === null) return `${ligne.libelle} · Banque`;
-  if (famille === "timbres") return `${ligne.libelle} · ${plural(nb, "timbre")}`;
+  // Plusieurs timbres dans une écriture (avant le 13/11/2026) : leur nombre
+  if (famille === "timbres" && nb > 1) return `${ligne.libelle} · ${plural(nb, "timbre")}`;
   // Écriture manuelle sans TVA : une seule ligne, sans type
   return ligne.type_libelle ? `${ligne.libelle} · ${ligne.type_libelle}` : ligne.libelle;
 }
 
 /**
- * Frais comptabilisés par SIMTIS (13/10/2026), en UN tableau : droits de timbre (une ligne par
- * jour, « DT D'ENREGISTREMENT ») et commissions (« COM », une ligne par type), au format du grand
- * livre Sage : chaque ligne de charge et de TVA au débit de son compte, la banque au crédit de
- * son compte comptable (11/11/2026). La validation enregistre l'écriture
+ * Frais comptabilisés par SIMTIS (13/10/2026), en UN tableau : une écriture par frais
+ * (13/11/2026 ; une par jour avant), « DT D'ENREGISTREMENT », « COM » ou « FRAIS », au format du
+ * grand livre Sage : chaque ligne de charge et de TVA au débit de son compte, la banque au crédit
+ * de son compte comptable (11/11/2026), toutes au libellé du relevé. La validation enregistre
+ * l'écriture
  * et la rapproche d'emblée de ses opérations ; l'export pour Sage est commun.
  */
 export function FraisCard({
@@ -157,6 +165,7 @@ export function FraisCard({
         famille: item.famille,
         bank_account_id: item.bank_account_id,
         date: item.date,
+        transaction_id: item.transaction_id,
         ...modifs.get(cleJour(item)),
       }));
     setBusy(true);
@@ -185,12 +194,13 @@ export function FraisCard({
             famille: ecartement.famille,
             bank_account_id: ecartement.bank_account_id,
             date: ecartement.date,
+            transaction_id: ecartement.transaction_id,
           },
         ],
         motif,
       );
       setEcartement(null);
-      onChanged("Proposition écartée : ses frais sont à passer à la main.");
+      onChanged("Frais écarté : il est à passer à la main.");
     } catch (error) {
       setModalError(error instanceof ApiError ? error.message : "L'écartement a échoué.");
     } finally {
@@ -202,11 +212,12 @@ export function FraisCard({
     famille: PropositionTimbres["famille"];
     bank_account_id: number;
     date: string;
+    transaction_id?: number | null;
   }) {
     setBusy(true);
     try {
       await reproposerFrais(companyId, [jour]);
-      onChanged("Journée proposée de nouveau.");
+      onChanged(jour.transaction_id ? "Frais proposé de nouveau." : "Journée proposée de nouveau.");
     } catch (error) {
       toast(error instanceof ApiError ? error.message : "L'opération a échoué.", "error");
     } finally {
@@ -232,9 +243,9 @@ export function FraisCard({
   return (
     <Card title="Frais bancaires" icon={Landmark}>
       <p className="-mt-2 mb-4 text-sm text-simtis-muted">
-        Droits de timbre (« DT D&apos;ENREGISTREMENT », une ligne par jour) et commissions (« COM »,
-        une ligne par type : COMMISSION, COMMISSION EFFET et leurs TVA), chacun au crédit de son
-        compte. Rapprochés dès la validation. Les autres frais restent à passer à la main.
+        Une écriture par frais (« DT D&apos;ENREGISTREMENT », « COM », « FRAIS ») : la charge et sa
+        TVA au débit, la banque au crédit, toutes les lignes au libellé du relevé. Rapprochées dès
+        la validation. Les autres frais restent à passer à la main.
       </p>
 
       {state === "loading" && <LoadingState rows={3} />}
@@ -285,7 +296,7 @@ export function FraisCard({
               >
                 {propositions.map((item) => {
                   const cle = cleJour(item);
-                  const label = `${item.libelle} du ${formatDate(item.date)} ${item.bank_code}`;
+                  const label = `${libelleProposition(item)} du ${formatDate(item.date)} ${item.bank_code}`;
                   const open = ouverts.has(cle);
                   const Chevron = open ? ChevronDown : ChevronRight;
                   const modif = modifs.get(cle);
@@ -365,7 +376,7 @@ export function FraisCard({
           {(data.ecartes ?? []).length > 0 && (
             <details className="rounded-[12px] border border-simtis-border bg-simtis-background">
               <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-simtis-text">
-                Propositions écartées · {plural((data.ecartes ?? []).length, "journée")}
+                Propositions écartées · {plural((data.ecartes ?? []).length, "frais")}
               </summary>
               <div className="overflow-x-auto border-t border-simtis-border bg-simtis-card">
                 <table className="w-full text-sm">
@@ -385,14 +396,26 @@ export function FraisCard({
                   </thead>
                   <tbody className="divide-y divide-simtis-border">
                     {(data.ecartes ?? []).map((jour) => (
-                      <tr key={`${jour.famille}|${jour.bank_account_id}|${jour.date}`}>
+                      <tr key={cleJour(jour)}>
                         <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">
                           {formatDate(jour.date)}
                         </td>
                         <td className="px-3 py-1.5">
                           <BankLabel code={jour.bank_code} logo={jour.bank_logo} />
                         </td>
-                        <td className="px-3 py-1.5">{jour.famille_libelle}</td>
+                        <td className="px-3 py-1.5">
+                          {jour.transaction_id ? (
+                            <>
+                              <span className="block">{jour.libelle_operation}</span>
+                              <span className="text-xs text-simtis-muted tabular-nums">
+                                {jour.famille_libelle} ·{" "}
+                                {formatAmount((jour.montant ?? "0").replace(/^-/, ""), "DH")}
+                              </span>
+                            </>
+                          ) : (
+                            `${jour.famille_libelle} · journée entière`
+                          )}
+                        </td>
                         <td className="px-3 py-1.5 text-simtis-muted">{jour.motif ?? "-"}</td>
                         <td className="px-3 py-1.5 whitespace-nowrap">
                           {formatDateTime(jour.ecarte_le)}
@@ -408,6 +431,7 @@ export function FraisCard({
                                   famille: jour.famille,
                                   bank_account_id: jour.bank_account_id,
                                   date: jour.date,
+                                  transaction_id: jour.transaction_id,
                                 })
                               }
                             >
@@ -665,9 +689,9 @@ export function FraisCard({
         )}
         <p className="mb-4 text-simtis-muted">
           {ecartement &&
-            `${ecartement.libelle} du ${formatDate(ecartement.date)} (${ecartement.bank_code}) : `}
-          la journée ne sera plus proposée et ses frais passeront dans « Autres frais à passer à la
-          main ». « Reproposer » l&apos;annule.
+            `${libelleProposition(ecartement)} du ${formatDate(ecartement.date)} (${ecartement.bank_code}) : `}
+          ce frais ne sera plus proposé et passera dans « Autres frais à passer à la main ». «
+          Reproposer » l&apos;annule.
         </p>
         <Field label="Motif (facultatif)" htmlFor="frais-ecart-motif">
           <TextInput

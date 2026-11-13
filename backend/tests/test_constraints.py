@@ -1120,6 +1120,31 @@ def test_a_dismissed_fee_day_has_a_known_family_and_is_unique(db, world):
     assert_rejected(db, "uq_frais_jours_ecartes_compte_jour_famille", ecarte())
 
 
+def test_a_dismissed_fee_operation_is_unique_beside_its_day(db, world):
+    """0053 (13/11/2026) : une opération ne s'écarte qu'une fois ; l'unicité (compte, jour,
+    famille) ne vaut que pour les journées entières (sans opération)."""
+    premiere = save(db, build_transaction(world.statement))
+    seconde = save(db, build_transaction(world.statement))
+
+    def ecarte(**over) -> FraisJourEcarte:
+        return FraisJourEcarte(
+            **{
+                "company_id": world.company.id,
+                "bank_account_id": world.account.id,
+                "jour": date(2026, 9, 24),
+                "famille": "timbres",
+                **over,
+            }
+        )
+
+    # Deux opérations du même jour, et la journée entière à côté : acceptés
+    save(db, ecarte(bank_transaction_id=premiere.id))
+    save(db, ecarte(bank_transaction_id=seconde.id))
+    save(db, ecarte())
+
+    assert_rejected(db, "uq_frais_jours_ecartes_operation", ecarte(bank_transaction_id=premiere.id))
+
+
 def test_only_a_pending_operation_can_be_replaced(db, world):
     """0033 (20/10/2026) : `remplacee_par_id` exige une opération en cours."""
     definitive = save(db, build_transaction(world.statement))

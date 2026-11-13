@@ -186,13 +186,23 @@ def valider(
         db,
         body.company_id,
         [
-            (frais_service.famille(jour.famille), jour.bank_account_id, jour.date)
+            (
+                frais_service.famille(jour.famille),
+                jour.bank_account_id,
+                jour.date,
+                jour.transaction_id,
+            )
             for jour in body.jours
         ],
         acteur_id=user.id,
         ip=client_ip(request),
         modifications={
-            (jour.famille, jour.bank_account_id, jour.date): frais_service.Modification(
+            (
+                jour.famille,
+                jour.bank_account_id,
+                jour.date,
+                jour.transaction_id,
+            ): frais_service.Modification(
                 libelle=jour.libelle,
                 date_ecriture=jour.date_ecriture,
                 lignes=None
@@ -220,11 +230,15 @@ def ecarter(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_prepare),
 ) -> NombreOut:
-    """Écarte des journées proposées (toutes ou aucune) : leurs frais passent à la main."""
+    """Écarte des frais proposés (13/11/2026) ou des journées, tous ou aucun : ils passent à
+    la main."""
     nb = frais_service.ecarter(
         db,
         body.company_id,
-        [(frais_service.famille(j.famille), j.bank_account_id, j.date) for j in body.jours],
+        [
+            (frais_service.famille(j.famille), j.bank_account_id, j.date, j.transaction_id)
+            for j in body.jours
+        ],
         motif=body.motif,
         acteur_id=user.id,
         ip=client_ip(request),
@@ -243,7 +257,10 @@ def reproposer(
     nb = frais_service.reproposer(
         db,
         body.company_id,
-        [(frais_service.famille(j.famille), j.bank_account_id, j.date) for j in body.jours],
+        [
+            (frais_service.famille(j.famille), j.bank_account_id, j.date, j.transaction_id)
+            for j in body.jours
+        ],
         acteur_id=user.id,
         ip=client_ip(request),
     )

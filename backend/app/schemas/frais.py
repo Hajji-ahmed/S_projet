@@ -84,10 +84,13 @@ FamilleFrais = Literal["timbres", "commissions", "frais"]
 
 
 class PropositionTimbresOut(BaseModel):
-    """Écriture à passer (« DT D'ENREGISTREMENT », « COM ») : un jour, un compte, ses opérations."""
+    """Écriture à passer (« DT D'ENREGISTREMENT », « COM », « FRAIS ») : un frais (13/11/2026),
+    son compte, son jour ; ses lignes portent le libellé de l'opération du relevé."""
 
     famille: FamilleFrais
     bank_account_id: int
+    # L'opération de l'écriture (une écriture par frais) ; identifie la proposition
+    transaction_id: int | None
     bank_code: str
     bank_logo: str | None
     devise: str
@@ -106,6 +109,7 @@ class PropositionTimbresOut(BaseModel):
         return cls(
             famille=item.famille.code,
             bank_account_id=item.account.id,
+            transaction_id=item.jour.transaction_id,
             bank_code=item.bank_code,
             bank_logo=item.account.bank.logo,
             devise=item.account.devise,
@@ -243,7 +247,8 @@ class FraisInclusOut(BaseModel):
 
 
 class JourEcarteOut(BaseModel):
-    """Journée écartée de la comptabilisation automatique (19/10/2026)."""
+    """Journée (19/10/2026) ou frais (13/11/2026) écarté de la comptabilisation automatique ;
+    `transaction_id` absent : toute la journée de la famille."""
 
     famille: FamilleFrais
     famille_libelle: str
@@ -251,12 +256,15 @@ class JourEcarteOut(BaseModel):
     bank_code: str
     bank_logo: str | None
     date: date
+    transaction_id: int | None = None
+    libelle_operation: str | None = None
+    montant: Decimal | None = None
     motif: str | None
     ecarte_le: datetime
 
     @classmethod
     def of(cls, item: JourEcarte) -> "JourEcarteOut":
-        row = item.ecarte
+        row, tx = item.ecarte, item.operation
         return cls(
             famille=item.famille.code,
             famille_libelle=item.famille.libelle,
@@ -264,6 +272,9 @@ class JourEcarteOut(BaseModel):
             bank_code=item.bank_code,
             bank_logo=item.bank_logo,
             date=row.jour,
+            transaction_id=row.bank_transaction_id,
+            libelle_operation=tx.libelle if tx else None,
+            montant=tx.montant if tx else None,
             motif=row.motif,
             ecarte_le=row.created_at,
         )
@@ -293,11 +304,15 @@ class LigneIn(BaseModel):
 
 
 class JourIn(BaseModel):
+    """Écriture choisie : celle de l'opération (13/11/2026), ou sans opération toutes celles du
+    jour de la famille."""
+
     model_config = ConfigDict(extra="forbid")
 
     famille: FamilleFrais
     bank_account_id: int
     date: date
+    transaction_id: int | None = None
     # Modifications avant validation (19/10/2026), toutes facultatives
     libelle: Annotated[str | None, Field(max_length=120)] = None
     date_ecriture: date | None = None
@@ -305,11 +320,14 @@ class JourIn(BaseModel):
 
 
 class JourChoisiIn(BaseModel):
+    """Frais à écarter ou reproposer : l'opération (13/11/2026), ou sans elle toute la journée."""
+
     model_config = ConfigDict(extra="forbid")
 
     famille: FamilleFrais
     bank_account_id: int
     date: date
+    transaction_id: int | None = None
 
 
 class EcarterIn(BaseModel):
