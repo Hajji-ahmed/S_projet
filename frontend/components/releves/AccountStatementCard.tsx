@@ -13,7 +13,7 @@ import {
   FiltreDates,
   FiltreRecherche,
 } from "@/components/rapprochement/FiltreColonne";
-import { FiltreMontant, FiltrePointage } from "@/components/releves/FiltresReleve";
+import { FiltreMontant } from "@/components/releves/FiltresReleve";
 import { ManualOperationModal } from "@/components/releves/ManualOperationModal";
 import { PointageBadge, pointageSelectClasses } from "@/components/releves/PointageBadge";
 import { TransactionEditModal } from "@/components/releves/TransactionEditModal";
@@ -34,7 +34,6 @@ import {
   filtrerOperations,
   filtresReleveActifs,
   FILTRES_RELEVE_VIDES,
-  optionsPointage,
   type FiltresReleve,
   type StatutFiltre,
 } from "@/lib/filtresReleve";
@@ -257,7 +256,6 @@ export function AccountStatementCard({
   const visible = showLast(filtrees, shown, OPERATIONS_AFFICHEES);
   const filtreEnCours = filtresReleveActifs(filtres);
   const allumees = colonnesFiltreesReleve(filtres);
-  const choixPointage = optionsPointage(data?.operations ?? []);
   const filtreMontant = (colonne: "Débit" | "Crédit") => (
     <FiltreColonne colonne={colonne} actif={colonne === "Débit" ? allumees.debit : allumees.credit}>
       {(fermer) => (
@@ -307,11 +305,22 @@ export function AccountStatementCard({
       filtre: (
         <FiltreColonne colonne="Pointage" actif={allumees.pointage}>
           {() => (
-            <FiltrePointage
-              options={choixPointage}
-              coches={filtres.pointages}
-              onChanger={(pointages) => changerFiltres({ pointages })}
-            />
+            <div className="space-y-2">
+              <FiltreRecherche
+                id="releve-pointage"
+                q={filtres.pointage}
+                placeholder="Pointage ou « À choisir »"
+                onAppliquer={(pointage) => changerFiltres({ pointage })}
+              />
+              <button
+                type="button"
+                onClick={() => changerFiltres({ pointage: "" })}
+                disabled={!filtres.pointage}
+                className="text-xs font-medium text-simtis-primary hover:underline disabled:pointer-events-none disabled:opacity-40"
+              >
+                Effacer
+              </button>
+            </div>
           )}
         </FiltreColonne>
       ),

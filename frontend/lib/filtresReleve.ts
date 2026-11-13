@@ -19,8 +19,9 @@ export type SensMontant = "" | "Débit" | "Crédit";
 export type StatutFiltre = "" | "Rapprochée" | "Non rapprochée";
 
 export type FiltresReleve = {
-  /** Pointages cochés (null = « À choisir ») ; vide = tous. */
-  pointages: (string | null)[];
+  /** Recherche dans le pointage (« À choisir » quand il n'est pas choisi), comme le libellé
+   * (13/11/2026, remplace les cases du 12/11/2026). */
+  pointage: string;
   /** Recherche dans le libellé et la référence. */
   q: string;
   /** Débit, Crédit ou les deux (vide). */
@@ -33,7 +34,7 @@ export type FiltresReleve = {
 };
 
 export const FILTRES_RELEVE_VIDES: FiltresReleve = {
-  pointages: [],
+  pointage: "",
   q: "",
   sens: "",
   exact: "",
@@ -91,32 +92,21 @@ export function filtrerOperations<T extends LigneFiltrable>(
   filtres: FiltresReleve,
 ): T[] {
   const q = normaliser(filtres.q.trim());
+  const pointage = normaliser(filtres.pointage.trim());
   return lignes.filter(
     (ligne) =>
-      (filtres.pointages.length === 0 || filtres.pointages.includes(ligne.pointage)) &&
+      (!pointage || normaliser(ligne.pointage ?? LIBELLE_A_CHOISIR).includes(pointage)) &&
       (!q || normaliser(`${ligne.libelle} ${ligne.reference ?? ""}`).includes(q)) &&
       garderMontant(ligne, filtres) &&
       garderStatut(ligne.statut, filtres.statut),
   );
 }
 
-/** Choix du filtre Pointage : « À choisir » d'abord s'il y en a, puis les pointages présents. */
-export function optionsPointage(lignes: readonly LigneFiltrable[]): (string | null)[] {
-  const presents = new Set<string>();
-  let aChoisir = false;
-  for (const ligne of lignes) {
-    if (ligne.pointage === null) aChoisir = true;
-    else presents.add(ligne.pointage);
-  }
-  const tries = [...presents].sort((a, b) => a.localeCompare(b, "fr"));
-  return aChoisir ? [null, ...tries] : tries;
-}
-
 /** Colonnes dont l'entonnoir est allumé (la Date suit la période du relevé). */
 export function colonnesFiltreesReleve(filtres: FiltresReleve) {
   const montant = montantFiltre(filtres);
   return {
-    pointage: filtres.pointages.length > 0,
+    pointage: !!filtres.pointage.trim(),
     libelle: !!filtres.q.trim(),
     debit: montant && filtres.sens !== "Crédit",
     credit: montant && filtres.sens !== "Débit",

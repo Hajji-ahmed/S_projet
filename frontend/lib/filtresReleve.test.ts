@@ -4,7 +4,6 @@ import {
   colonnesFiltreesReleve,
   filtrerOperations,
   FILTRES_RELEVE_VIDES,
-  optionsPointage,
   type LigneFiltrable,
 } from "@/lib/filtresReleve";
 
@@ -57,18 +56,19 @@ describe("filtrerOperations", () => {
     expect(ids(filtrerOperations(LIGNES, { ...FILTRES_RELEVE_VIDES, q: "4521" }))).toEqual([3]);
   });
 
-  it("filtre le pointage, null étant « À choisir »", () => {
-    expect(ids(filtrerOperations(LIGNES, { ...FILTRES_RELEVE_VIDES, pointages: [null] }))).toEqual([
-      3,
+  it("cherche dans le pointage sans tenir compte des majuscules ni des accents", () => {
+    expect(ids(filtrerOperations(LIGNES, { ...FILTRES_RELEVE_VIDES, pointage: "frais" }))).toEqual([
+      1,
     ]);
     expect(
-      ids(
-        filtrerOperations(LIGNES, {
-          ...FILTRES_RELEVE_VIDES,
-          pointages: ["Frais bancaires", "Encaissement"],
-        }),
-      ),
-    ).toEqual([1, 2, 4]);
+      ids(filtrerOperations(LIGNES, { ...FILTRES_RELEVE_VIDES, pointage: " ENCAISS " })),
+    ).toEqual([2, 4]);
+  });
+
+  it("trouve les lignes sans pointage par « À choisir »", () => {
+    expect(
+      ids(filtrerOperations(LIGNES, { ...FILTRES_RELEVE_VIDES, pointage: "a choisir" })),
+    ).toEqual([3]);
   });
 
   it("filtre un montant exact au centime, débit ou crédit", () => {
@@ -123,25 +123,12 @@ describe("filtrerOperations", () => {
       ids(
         filtrerOperations(LIGNES, {
           ...FILTRES_RELEVE_VIDES,
-          pointages: ["Encaissement"],
+          pointage: "Encaissement",
           exact: "500",
           statut: "Non rapprochée",
         }),
       ),
     ).toEqual([4]);
-  });
-});
-
-describe("optionsPointage", () => {
-  it("donne « À choisir » d'abord, puis les pointages présents par ordre alphabétique", () => {
-    expect(optionsPointage(LIGNES)).toEqual([null, "Encaissement", "Frais bancaires"]);
-  });
-
-  it("n'ajoute pas « À choisir » quand toutes les lignes ont un pointage", () => {
-    expect(optionsPointage(LIGNES.filter((l) => l.pointage !== null))).toEqual([
-      "Encaissement",
-      "Frais bancaires",
-    ]);
   });
 });
 
@@ -166,7 +153,7 @@ describe("colonnesFiltreesReleve", () => {
   it("allume Pointage, Libellé et Statut", () => {
     const allumees = colonnesFiltreesReleve({
       ...FILTRES_RELEVE_VIDES,
-      pointages: [null],
+      pointage: "choisir",
       q: "CHQ",
       statut: "Rapprochée",
     });
