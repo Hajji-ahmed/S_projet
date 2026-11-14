@@ -11,7 +11,7 @@ import {
   RotateCcw,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
 import { EditFraisModal } from "@/components/rapprochement/EditFraisModal";
@@ -19,7 +19,7 @@ import { ManualFeeModal } from "@/components/rapprochement/ManualFeeModal";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { Field, TextInput } from "@/components/ui/Field";
+import { Field, Select, TextInput } from "@/components/ui/Field";
 import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
@@ -29,11 +29,15 @@ import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import {
   cleJour,
+  filtrerPropositions,
   libelleModifie,
   ligneBanqueTotale,
+  optionsFiltres,
+  PAR_LOT,
   selectionTimbres,
   sommeMontants,
   totalGrandLivre,
+  type FiltreFrais,
 } from "@/lib/frais";
 import type { ReconciliationFilter } from "@/lib/reconciliation";
 import { formatDateTime } from "@/lib/statements";
@@ -120,6 +124,11 @@ export function FraisCard({
   const [modifs, setModifs] = useState<Map<string, ModificationFrais>>(new Map());
   const [edition, setEdition] = useState<PropositionTimbres | null>(null);
   const [ecartement, setEcartement] = useState<PropositionTimbres | null>(null);
+  // Tableau « À valider » (14/11/2026) : filtres Famille et Date, 20 écritures puis 20 de plus
+  // chaque fois qu'on arrive en bas du tableau
+  const [filtre, setFiltre] = useState<FiltreFrais>({ famille: "", jour: "" });
+  const [nbAffichees, setNbAffichees] = useState(PAR_LOT);
+  const repereFin = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +140,7 @@ export function FraisCard({
         setSelection(new Set(result.propositions.map(cleJour)));
         setManuels(new Set());
         setModifs(new Map());
+        setNbAffichees(PAR_LOT);
         setState("ready");
         onAExporter(result.ecritures.filter((item) => !item.exportee_le).length);
       },
@@ -146,7 +156,35 @@ export function FraisCard({
   const propositions = data?.propositions ?? [];
   const ecritures = data?.ecritures ?? [];
   const choisis = selectionTimbres(propositions, selection);
+  const filtrees = filtrerPropositions(propositions, filtre);
+  const affichees = filtrees.slice(0, nbAffichees);
+  const reste = filtrees.length - affichees.length;
+  const options = optionsFiltres(propositions, filtre);
+  const clesFiltrees = new Set(filtrees.map(cleJour));
+  // Écritures cochées que les filtres cachent : validées quand même
+  const horsFiltre = propositions.filter(
+    (item) => selection.has(cleJour(item)) && !clesFiltrees.has(cleJour(item)),
+  ).length;
   const autres = data?.autres_frais ?? [];
+
+  // Arrivé en bas du tableau, les 20 écritures suivantes s'ajoutent (pas de pages)
+  useEffect(() => {
+    const repere = repereFin.current;
+    if (!repere || reste <= 0 || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setNbAffichees((n) => n + PAR_LOT);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(repere);
+    return () => observer.disconnect();
+  }, [reste, nbAffichees]);
+
+  function filtrer(changement: Partial<FiltreFrais>) {
+    setFiltre((actuel) => ({ ...actuel, ...changement }));
+    setNbAffichees(PAR_LOT);
+  }
   const inclus = data?.frais_inclus ?? [];
   const autresCoches = autres.filter((tx) => manuels.has(tx.id));
   const unSeulCompte = new Set(autresCoches.map((tx) => tx.bank_account_id)).size <= 1;
@@ -243,9 +281,10 @@ export function FraisCard({
   return (
     <Card title="Frais bancaires" icon={Landmark}>
       <p className="-mt-2 mb-4 text-sm text-simtis-muted">
-        Une écriture par frais (« DT D&apos;ENREGISTREMENT », « COM », « FRAIS ») : la charge et sa
-        TVA au débit, la banque au crédit, toutes les lignes au libellé du relevé. Rapprochées dès
-        la validation. Les autres frais restent à passer à la main.
+        Une écriture par frais (« DT D&apos;ENREGISTREMENT », « COM », « FRAIS », « FRAIS
+        D&apos;ESCOMPTE ») : la charge et sa TVA au débit, la banque au crédit, toutes les lignes au
+        libellé du relevé. Rapprochées dès la validation. Les autres frais restent à passer à la
+        main.
       </p>
 
       {state === "loading" && <LoadingState rows={3} />}
@@ -269,32 +308,79 @@ export function FraisCard({
               </h3>
               {canPrepare && propositions.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* « Tout cocher / décocher » : seulement les écritures des filtres (14/11/2026) */}
                   <Button
                     variant="ghost"
-                    onClick={() => setSelection(new Set(propositions.map(cleJour)))}
+                    onClick={() => setSelection((set) => new Set([...set, ...clesFiltrees]))}
                   >
                     Tout cocher
                   </Button>
-                  <Button variant="ghost" onClick={() => setSelection(new Set())}>
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      setSelection((set) => new Set([...set].filter((c) => !clesFiltrees.has(c))))
+                    }
+                  >
                     Tout décocher
                   </Button>
-                  <Button icon={Check} disabled={busy || choisis.nb === 0} onClick={valider}>
-                    Valider la sélection ({choisis.nb} · {formatAmount(choisis.total, "DH")})
-                  </Button>
+                  <div className="flex flex-col items-end">
+                    <Button icon={Check} disabled={busy || choisis.nb === 0} onClick={valider}>
+                      Valider la sélection ({choisis.nb} · {formatAmount(choisis.total, "DH")})
+                    </Button>
+                    {horsFiltre > 0 && (
+                      <span className="mt-1 text-xs text-simtis-warning-fg">
+                        dont {plural(horsFiltre, "écriture")} hors du filtre
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
+            {propositions.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-end gap-3">
+                <div className="w-full sm:w-64">
+                  <Field label="Famille" htmlFor="frais-filtre-famille">
+                    <Select
+                      id="frais-filtre-famille"
+                      value={filtre.famille}
+                      onChange={(event) => filtrer({ famille: event.target.value })}
+                      placeholder={`Toutes les familles · ${propositions.length}`}
+                      options={options.familles.map((f) => ({
+                        value: f.value,
+                        label: `${f.label} · ${f.nb}`,
+                      }))}
+                    />
+                  </Field>
+                </div>
+                <div className="w-full sm:w-56">
+                  <Field label="Date" htmlFor="frais-filtre-jour">
+                    <Select
+                      id="frais-filtre-jour"
+                      value={filtre.jour}
+                      onChange={(event) => filtrer({ jour: event.target.value })}
+                      placeholder="Toutes les dates"
+                      options={options.jours.map((j) => ({
+                        value: j.value,
+                        label: `${formatDate(j.value)} · ${j.nb}`,
+                      }))}
+                    />
+                  </Field>
+                </div>
+              </div>
+            )}
             {propositions.length === 0 ? (
               <Vide>Aucun frais à comptabiliser sur cette période.</Vide>
+            ) : filtrees.length === 0 ? (
+              <Vide>Aucune écriture pour ces filtres.</Vide>
             ) : (
               <GrandLivre
                 avecCase={canPrepare}
                 fin={canPrepare ? ["Opérations", "Actions"] : ["Opérations"]}
                 total={totalGrandLivre(
-                  propositions.map((item) => lignesAffichees(item, modifs.get(cleJour(item)))),
+                  filtrees.map((item) => lignesAffichees(item, modifs.get(cleJour(item)))),
                 )}
               >
-                {propositions.map((item) => {
+                {affichees.map((item) => {
                   const cle = cleJour(item);
                   const label = `${libelleProposition(item)} du ${formatDate(item.date)} ${item.bank_code}`;
                   const open = ouverts.has(cle);
@@ -371,6 +457,14 @@ export function FraisCard({
                 })}
               </GrandLivre>
             )}
+            {filtrees.length > PAR_LOT && (
+              <p className="mt-2 text-sm text-simtis-muted" aria-live="polite">
+                {affichees.length} sur {filtrees.length} affichées
+                {reste > 0 && " · descendez pour voir la suite"}
+              </p>
+            )}
+            {/* Repère sous le tableau : visible, il ajoute les 20 écritures suivantes */}
+            <div ref={repereFin} aria-hidden className="h-px" />
           </section>
 
           {(data.ecartes ?? []).length > 0 && (

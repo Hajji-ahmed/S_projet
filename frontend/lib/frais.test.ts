@@ -7,9 +7,11 @@ import {
   compteValide,
   comptesDeLaBanque,
   etatLignes,
+  filtrerPropositions,
   libelleModifie,
   ligneBanqueTotale,
   lignesSaisies,
+  optionsFiltres,
   selectionTimbres,
   sommeMontants,
   suggestionsLibelles,
@@ -312,5 +314,59 @@ describe("comptes de charge des frais (05/11/2026)", () => {
     expect(suggestions[0]).toBe("AGIOS");
     expect(suggestions).toContain("INTERET CRED SPOT");
     expect(new Set(suggestions).size).toBe(suggestions.length);
+  });
+});
+
+describe("filtres du tableau « À valider » (14/11/2026)", () => {
+  const propositions = [
+    jour(1, "2026-11-12", "1.00", "timbres", 1),
+    jour(1, "2026-11-12", "150.00", "commissions", 2),
+    jour(1, "2026-11-11", "15.00", "commissions", 3),
+    jour(1, "2026-11-13", "4524.56", "escompte", 4),
+    jour(1, "2026-11-12", "452.46", "escompte", 5),
+  ];
+
+  it("garde tout sans filtre, et filtre par famille, par jour ou les deux", () => {
+    const ids = (items: PropositionTimbres[]) => items.map((item) => item.transaction_id);
+    expect(ids(filtrerPropositions(propositions, { famille: "", jour: "" }))).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    expect(ids(filtrerPropositions(propositions, { famille: "commissions", jour: "" }))).toEqual([
+      2, 3,
+    ]);
+    expect(ids(filtrerPropositions(propositions, { famille: "", jour: "2026-11-12" }))).toEqual([
+      1, 2, 5,
+    ]);
+    expect(
+      ids(filtrerPropositions(propositions, { famille: "escompte", jour: "2026-11-12" })),
+    ).toEqual([5]);
+  });
+
+  it("propose les familles présentes dans l'ordre de l'écran et les jours du plus récent", () => {
+    expect(optionsFiltres(propositions, { famille: "", jour: "" })).toEqual({
+      familles: [
+        { value: "timbres", label: "DT D'ENREGISTREMENT", nb: 1 },
+        { value: "commissions", label: "COM", nb: 2 },
+        { value: "escompte", label: "FRAIS D'ESCOMPTE", nb: 2 },
+      ],
+      jours: [
+        { value: "2026-11-13", nb: 1 },
+        { value: "2026-11-12", nb: 3 },
+        { value: "2026-11-11", nb: 1 },
+      ],
+    });
+  });
+
+  it("compte chaque liste avec l'autre filtre", () => {
+    const options = optionsFiltres(propositions, { famille: "commissions", jour: "2026-11-12" });
+    expect(options.familles).toEqual([
+      { value: "timbres", label: "DT D'ENREGISTREMENT", nb: 1 },
+      { value: "commissions", label: "COM", nb: 1 },
+      { value: "escompte", label: "FRAIS D'ESCOMPTE", nb: 1 },
+    ]);
+    expect(options.jours).toEqual([
+      { value: "2026-11-12", nb: 1 },
+      { value: "2026-11-11", nb: 1 },
+    ]);
   });
 });

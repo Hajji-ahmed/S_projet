@@ -28,6 +28,61 @@ export function selectionTimbres(
   return { nb, total: fromCents(total) };
 }
 
+/** Écritures « À valider » affichées d'abord, puis ajoutées à chaque fois qu'on arrive en bas du
+ * tableau (14/11/2026). */
+export const PAR_LOT = 20;
+
+/** Filtres du tableau « À valider » (14/11/2026) : "" = tout. */
+export type FiltreFrais = { famille: string; jour: string };
+
+/** Libellé d'écriture de chaque famille, dans l'ordre de l'écran. */
+export const FAMILLES_FRAIS: { value: PropositionTimbres["famille"]; label: string }[] = [
+  { value: "timbres", label: "DT D'ENREGISTREMENT" },
+  { value: "commissions", label: "COM" },
+  { value: "frais", label: "FRAIS" },
+  { value: "escompte", label: "FRAIS D'ESCOMPTE" },
+];
+
+/** Propositions qui répondent au filtre, dans leur ordre. */
+export function filtrerPropositions<T extends Pick<PropositionTimbres, "famille" | "date">>(
+  propositions: T[],
+  filtre: FiltreFrais,
+): T[] {
+  return propositions.filter(
+    (item) =>
+      (!filtre.famille || item.famille === filtre.famille) &&
+      (!filtre.jour || item.date === filtre.jour),
+  );
+}
+
+/** Choix des deux filtres avec leur nombre d'écritures : les familles présentes dans l'ordre de
+ * l'écran, les jours du plus récent au plus ancien. Chaque liste tient compte de l'autre filtre. */
+export function optionsFiltres(
+  propositions: Pick<PropositionTimbres, "famille" | "date">[],
+  filtre: FiltreFrais,
+): {
+  familles: { value: string; label: string; nb: number }[];
+  jours: { value: string; nb: number }[];
+} {
+  const parFamille = new Map<string, number>();
+  for (const item of filtrerPropositions(propositions, { famille: "", jour: filtre.jour })) {
+    parFamille.set(item.famille, (parFamille.get(item.famille) ?? 0) + 1);
+  }
+  const parJour = new Map<string, number>();
+  for (const item of filtrerPropositions(propositions, { famille: filtre.famille, jour: "" })) {
+    parJour.set(item.date, (parJour.get(item.date) ?? 0) + 1);
+  }
+  return {
+    familles: FAMILLES_FRAIS.filter((f) => parFamille.has(f.value)).map((f) => ({
+      ...f,
+      nb: parFamille.get(f.value) ?? 0,
+    })),
+    jours: [...parJour.entries()]
+      .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+      .map(([value, nb]) => ({ value, nb })),
+  };
+}
+
 /** Libellés proposés pour une écriture saisie à la main (saisie libre). */
 export const LIBELLES_SUGGERES = [
   "AGIOS",
