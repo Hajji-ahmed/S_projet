@@ -2793,6 +2793,8 @@ def test_a_bp_pending_line_is_imported_then_deleted_before_the_next_statement(
     assert db.scalar(select(AuditLog).where(AuditLog.action == "suppression_en_cours"))
     soldes = dict(soldes_par_compte(db, [account.id], date(2026, 9, 30))[account.id])
     assert soldes[date(2026, 9, 24)] == Decimal("105975.00")
+    # Les soldes écrits par la banque ne sont jamais décalés
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "recalcul_soldes")) is None
     # La définitive du relevé suivant s'importe normalement, sans rien remplacer
     suivant = _releve_en_cours(
         [[date(2026, 9, 26), date(2026, 9, 26), "VIREMENT ATLAS SARL", None, 5000, 110975]]
@@ -3176,6 +3178,108 @@ def test_one_operation_is_deleted_unless_reconciled(client, tresorerie, account,
     assert "CIH-26-000042" in refus.json()["detail"]
     assert len(transactions(db, account)) == 2
     assert db.scalars(select(AuditLog).filter_by(action="suppression_operation")).all()
+
+
+# --- Suppression d'une opération : les soldes calculés qui suivent sont décalés (14/11/2026) --------
+
+AVEC_EN_COURS = [
+    ["Date opération", "Libellé", "Débit", "Crédit"],
+    ["01/09/2026", "VIR A", None, 1000],
+    ["01/09/2026", "VIR WEB DE CLIENT (*)", None, 500],
+    ["02/09/2026", "CHQ B", 300, None],
+    ["03/09/2026", "VIR C", None, 200],
+]
+
+
+def _soldes(db, account) -> list[tuple[str, Decimal]]:
+    return [(tx.libelle, tx.solde) for tx in transactions(db, account)]
+
+
+def test_deleting_a_pending_line_shifts_the_computed_balances_after_it(
+    client, tresorerie, account, db
+):
+    """AWB du 14/11/2026 : le fichier n'a pas de soldes, l'opération « (*) » supprimée restait
+    comptée dans les soldes calculés suivants, donc dans le solde d'ouverture du relevé suivant."""
+    content = xlsx(("Relevé", AVEC_EN_COURS))
+    assert confirm(client, tresorerie, account.id, content, solde_ouverture="5000")
+    assert _soldes(db, account) == [
+        ("VIR A", Decimal("6000.00")),
+        ("VIR WEB DE CLIENT (*)", Decimal("6500.00")),
+        ("CHQ B", Decimal("6200.00")),
+        ("VIR C", Decimal("6400.00")),
+    ]
+    en_cours = db.scalar(select(BankTransaction).filter_by(en_cours=True))
+
+    response = _supprimer_en_cours(client, tresorerie, [en_cours.id])
+
+    assert response.status_code == 200, response.text
+    assert _soldes(db, account) == [
+        ("VIR A", Decimal("6000.00")),
+        ("CHQ B", Decimal("5700.00")),
+        ("VIR C", Decimal("5900.00")),
+    ]
+    releve = db.scalar(select(BankStatement).filter_by(bank_account_id=account.id))
+    assert (releve.solde_ouverture, releve.solde_cloture) == (
+        Decimal("5000.00"),
+        Decimal("5900.00"),
+    )
+    assert day_balance(db, account, date(2026, 9, 3)).solde == Decimal("5900.00")
+    [entry] = db.scalars(select(AuditLog).filter_by(action="recalcul_soldes")).all()
+    assert (entry.entite, entry.entite_id) == ("bank_account", str(account.id))
+    assert entry.ancienne_valeur["operations"] == 2
+    assert entry.nouvelle_valeur["releves"] == [
+        {"id": releve.id, "solde_ouverture": "5000.00", "solde_cloture": "5900.00"}
+    ]
+    # Le relevé suivant repart du solde corrigé
+    suivant = xlsx(
+        ("Relevé", [AVEC_EN_COURS[0], ["04/09/2026", "VIR WEB RECU DE CLIENT", None, 500]])
+    )
+    apercu = analyse(client, tresorerie, account.id, suivant, nom="suivant.xlsx").json()
+    assert apercu["solde_ouverture_propose"] == "5900.00"
+    assert apercu["resume"]["solde_cloture"] == "6400.00"
+
+
+def test_deleting_the_last_line_of_a_day_restores_the_balance_of_that_day(
+    client, tresorerie, account, db
+):
+    """L'opération supprimée était la dernière de son jour, jour de clôture du relevé : le solde
+    du jour et la clôture redeviennent ceux de l'opération restante."""
+    rows = [*AVEC_EN_COURS[:2], ["01/09/2026", "VIR WEB DE CLIENT (*)", None, 500]]
+    assert confirm(client, tresorerie, account.id, xlsx(("Relevé", rows)), solde_ouverture="5000")
+    assert day_balance(db, account, date(2026, 9, 1)).solde == Decimal("6500.00")
+    en_cours = db.scalar(select(BankTransaction).filter_by(en_cours=True))
+
+    assert _supprimer_en_cours(client, tresorerie, [en_cours.id]).status_code == 200
+
+    releve = db.scalar(select(BankStatement).filter_by(bank_account_id=account.id))
+    assert releve.solde_cloture == Decimal("6000.00")
+    assert day_balance(db, account, date(2026, 9, 1)).solde == Decimal("6000.00")
+
+
+def test_deleting_one_operation_by_hand_shifts_the_computed_balances_after_it(
+    client, tresorerie, account, db
+):
+    """La suppression avec motif (24/10/2026) suit la même règle que celle des en-cours."""
+    content = xlsx(("Relevé", AVEC_EN_COURS))
+    assert confirm(client, tresorerie, account.id, content, solde_ouverture="5000")
+    cheque = db.scalar(select(BankTransaction).filter_by(libelle="CHQ B"))
+
+    response = client.post(
+        f"/api/statements/transactions/{cheque.id}/supprimer",
+        json={"motif": "Chèque en double"},
+        headers=tresorerie,
+    )
+
+    assert response.status_code == 204, response.text
+    assert _soldes(db, account) == [
+        ("VIR A", Decimal("6000.00")),
+        ("VIR WEB DE CLIENT (*)", Decimal("6500.00")),
+        ("VIR C", Decimal("6700.00")),
+    ]
+    releve = db.scalar(select(BankStatement).filter_by(bank_account_id=account.id))
+    assert releve.solde_cloture == Decimal("6700.00")
+    assert day_balance(db, account, date(2026, 9, 3)).solde == Decimal("6700.00")
+    assert db.scalars(select(AuditLog).filter_by(action="recalcul_soldes")).all()
 
 
 # --- Doublons sans le solde, la date de valeur ni la ponctuation du libellé (13/11/2026) -----------

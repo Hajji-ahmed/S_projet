@@ -26,7 +26,12 @@ from app.repositories import (
     import_repository,
     reconciliation_repository,
 )
-from app.services import account_service, audit_service, suppression_import_service
+from app.services import (
+    account_service,
+    audit_service,
+    import_service,
+    suppression_import_service,
+)
 from app.services.errors import ConflictError, NotFoundError
 from app.services.normalization_service import line_hash
 from app.services.position_service import PREMIERE_DATE_SOLDE, business_today
@@ -207,6 +212,8 @@ def supprimer_operation(
     reconciliation_repository.lock_company(db, tx.bank_account.company_id)
     avant = _etat_operation(tx)
     propositions = suppression_import_service.liberer(db, [tx.id], [])
+    # Les soldes calculés qui suivaient ne comptent plus son montant (14/11/2026)
+    import_service.decaler_suite(db, [tx], acteur_id=acteur_id, ip=ip)
     import_repository.delete_transactions(db, [tx.id])
     audit_service.log(
         db,

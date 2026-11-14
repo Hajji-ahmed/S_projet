@@ -918,6 +918,117 @@ def _recalculer_suite(
     )
 
 
+def decaler_suite(
+    db: Session,
+    supprimees: list[BankTransaction],
+    *,
+    acteur_id: int | None,
+    ip: str | None,
+) -> None:
+    """Avant de supprimer des opérations (14/11/2026) : le montant de chaque opération supprimée
+    qui porte un solde sort des soldes **calculés** qui la suivent dans le relevé continu du
+    compte, jusqu'au premier solde écrit par la banque (gardé : le calcul repart de lui). La
+    clôture des relevés touchés et leurs soldes du jour (source « Relevé ») suivent, avec un audit
+    `recalcul_soldes`. Les soldes sont décalés, jamais rejoués depuis l'ouverture : une opération
+    remplacée garde le sien. Sans effet pour une opération sans solde (fichier à part)."""
+    par_compte: dict[int, list[BankTransaction]] = defaultdict(list)
+    for tx in supprimees:
+        if tx.solde is not None:
+            par_compte[tx.bank_account_id].append(tx)
+    for account_id, retirees in par_compte.items():
+        _decaler_suite_du_compte(db, account_id, retirees, acteur_id, ip)
+
+
+def _decaler_suite_du_compte(
+    db: Session,
+    account_id: int,
+    retirees: list[BankTransaction],
+    acteur_id: int | None,
+    ip: str | None,
+) -> None:
+    ids = {tx.id for tx in retirees}
+    premier_jour = min(tx.date_operation for tx in retirees)
+    operations = import_repository.operations_depuis(db, account_id, premier_jour)
+    decalage, modifiees, restantes = Decimal("0"), [], []
+    for tx in operations:
+        if tx.id in ids:
+            decalage += tx.montant
+            continue
+        if tx.solde is None:
+            continue
+        restantes.append(tx)
+        if not tx.solde_calcule:
+            decalage = Decimal("0")
+        elif decalage:
+            tx.solde -= decalage
+            modifiees.append(tx)
+    # Relevés : ouverture et clôture de ceux dont des soldes ont bougé ; clôture seule de ceux
+    # qui perdent une opération (leur dernière, peut-être)
+    recalcules = {tx.statement_id for tx in modifiees}
+    avant_releves, apres_releves = [], []
+    for releve_id in sorted(recalcules | {tx.statement_id for tx in retirees}):
+        releve = import_repository.get_statement(db, releve_id)
+        ordonnees = [
+            tx
+            for tx in import_repository.statement_transactions_in_order(db, releve_id)
+            if tx.solde is not None and tx.id not in ids
+        ]
+        if not ordonnees:
+            continue
+        ouverture = (
+            ordonnees[0].solde - ordonnees[0].montant
+            if releve_id in recalcules
+            else releve.solde_ouverture
+        )
+        cloture = ordonnees[-1].solde
+        if (ouverture, cloture) == (releve.solde_ouverture, releve.solde_cloture):
+            continue
+        avant_releves.append(
+            {
+                "id": releve_id,
+                "solde_ouverture": releve.solde_ouverture,
+                "solde_cloture": releve.solde_cloture,
+            }
+        )
+        releve.solde_ouverture, releve.solde_cloture = ouverture, cloture
+        apres_releves.append(
+            {"id": releve_id, "solde_ouverture": ouverture, "solde_cloture": cloture}
+        )
+    # Soldes du jour des jours touchés : la dernière opération restante du jour
+    jours = {tx.date_operation for tx in (*modifiees, *retirees)}
+    dernier_du_jour = {tx.date_operation: tx.solde for tx in restantes}
+    avant_jours, apres_jours = [], []
+    for jour in sorted(jours & dernier_du_jour.keys()):
+        existant = balance_repository.get(db, account_id, jour)
+        solde = dernier_du_jour[jour]
+        if existant is None or existant.source != "Relevé" or existant.solde == solde:
+            continue
+        avant_jours.append({"date": jour, "solde": existant.solde})
+        existant.solde, existant.saisi_par_id = solde, acteur_id
+        apres_jours.append({"date": jour, "solde": solde})
+    db.flush()
+    if not (modifiees or apres_releves or apres_jours):
+        return
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="recalcul_soldes",
+        entite="bank_account",
+        entite_id=account_id,
+        avant={
+            "operations": len(modifiees),
+            "releves": avant_releves,
+            "soldes_du_jour": avant_jours,
+        },
+        apres={
+            "operations_supprimees": sorted(ids),
+            "releves": apres_releves,
+            "soldes_du_jour": apres_jours,
+        },
+        ip=ip,
+    )
+
+
 @dataclass
 class Ouverture:
     """Solde d'ouverture proposé, d'où il vient, et un avertissement s'il est à vérifier."""
@@ -1932,8 +2043,9 @@ def supprimer_en_cours(
     """Supprime des opérations en cours (21/10/2026), avant l'import du relevé suivant : toutes
     ou aucune. Seule une opération en cours, non rapprochée et sans correspondance active se
     supprime ; chacune est tracée (`suppression_en_cours`). Le solde du jour redevient celui de la
-    dernière opération restante (le relevé suivant fait foi) ; le montant d'une opération d'un
-    fichier à part sort du solde du compte."""
+    dernière opération restante (le relevé suivant fait foi) et les soldes calculés qui suivaient
+    sont décalés (`decaler_suite`, 14/11/2026) ; le montant d'une opération d'un fichier à part
+    sort du solde du compte."""
     ids = sorted(set(ids))
     if not ids:
         raise ConflictError("Choisissez au moins une opération en cours à supprimer.")
@@ -1973,6 +2085,7 @@ def supprimer_en_cours(
             },
             ip=ip,
         )
+    decaler_suite(db, operations, acteur_id=acteur_id, ip=ip)
     import_repository.delete_transactions(db, ids)
     db.commit()
     return len(ids)
