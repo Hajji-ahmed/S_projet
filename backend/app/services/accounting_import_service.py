@@ -408,6 +408,8 @@ _ECRITURES_SIMTIS = {
     "DT D'ENREGISTREMENT": re.compile(frais_repository.ECRITURE_TIMBRE_SQL, re.IGNORECASE),
     "COM": re.compile(frais_repository.ECRITURE_COMMISSION_SQL, re.IGNORECASE),
     "FRAIS": re.compile(frais_repository.ECRITURE_FRAIS_SQL, re.IGNORECASE),
+    # Intérêts d'escompte et leur TVA (14/11/2026)
+    "FRAIS D'ESCOMPTE": re.compile(frais_repository.ECRITURE_ESCOMPTE_SQL, re.IGNORECASE),
 }
 
 

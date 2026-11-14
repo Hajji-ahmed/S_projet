@@ -57,6 +57,7 @@ from app.services.reconciliation_scoring import _plain as reconciliation_scoring
 LIBELLE_TIMBRE = "DT D'ENREGISTREMENT"
 LIBELLE_COMMISSION = "COM"
 LIBELLE_FRAIS = "FRAIS"
+LIBELLE_ESCOMPTE = "FRAIS D'ESCOMPTE"
 ENTITE = "accounting_entry"
 # Garde-fou contre une année mal saisie, comme le moteur de rapprochement
 PERIODE_MAX_JOURS = 1827
@@ -113,6 +114,10 @@ _COMMISSIONS = (
     ("commission", re.compile(r"^COMMISSION SUR VIREMENT SRBM\b")),
     ("tva", re.compile(r"^TVA 10 ?% SUR COMMISSION TRF")),
     ("tva", re.compile(r"^TVA COMMISSION SUR VIREMENT SRBM\b")),
+    # BP (14/11/2026) : abonnement et sa TVA sur une ligne à part, « TVA COM ABONNEMENT BP
+    # E-CORPORATE » en production (150,00 + 15,00 le 30/10/2026)
+    ("abonnement", re.compile(r"^ABONNEMENT BP E-? ?CORPORATE\b")),
+    ("tva", re.compile(r"^TVA COM ABONNEMENT BP E-? ?CORPORATE\b")),
 )
 # Frais à TVA comprise de 10 % (14/10/2026), sur le libellé sans ponctuation ni accents
 # Le début du libellé décide de l'écriture du jour : COMMISSION… → « COM », FRAIS… → « FRAIS »
@@ -153,6 +158,9 @@ _FRAIS_RECUPERES = (
 # main (choix du métier du 09/11/2026)
 _AGIOS_ESCOMPTE = re.compile(r"^AGIOS ESCOMPTE LCN\b")
 BANQUES_AGIOS_ESCOMPTE = frozenset({"CIH"})
+# Intérêts d'escompte LCN de BP (14/11/2026), sur le libellé sans ponctuation : écriture
+# « FRAIS D'ESCOMPTE », leur TVA de 10 % sur une ligne « TAXE SUR VALEUR AJOUTEE » à part
+_INTERET_ESCOMPTE = re.compile(r"^INTERET REMISE LCN A L ?ESCOMPTE\b")
 _FRAIS_TVA = (
     *_COMMISSIONS_TVA,
     ("commission_carte", _COMMISSION_CARTE),
@@ -167,7 +175,10 @@ SEUIL_MANUEL = Decimal("200")
 # « TAXE SUR VALEUR AJOUTEE » de BP, et les mêmes paires des autres banques) passe en automatique
 # même au-dessus de `SEUIL_MANUEL`, et sort du fichier des frais à justifier ; les commissions à TVA
 # comprise et les autres frais suivent toujours le seuil
-TYPES_SANS_SEUIL = frozenset({"commission", "tva", "commission_effet", "tva_commission_effet"})
+# Abonnement BP E-CORPORATE et sa TVA aussi (14/11/2026)
+TYPES_SANS_SEUIL = frozenset(
+    {"commission", "tva", "commission_effet", "tva_commission_effet", "abonnement"}
+)
 # Frais CIH à TVA comprise toujours automatiques, quel que soit le montant (11/11/2026)
 TYPES_FRAIS_SANS_SEUIL = frozenset(
     {
@@ -199,6 +210,7 @@ COMPTE_FRAIS_BANCAIRES = "61473000"  # FRAIS COMMISSIONS BANCAIRE
 # lignes saisies non exportées)
 COMPTE_COMMISSION = COMPTE_FRAIS_BANCAIRES
 COMPTE_TVA = "34552142"  # TVA BANQUE 10 %
+COMPTE_ESCOMPTE = "63117000"  # FRAIS D'ESCOMPTE (intérêts d'escompte LCN, 14/11/2026)
 COMPTES_AGIOS = {
     "BMCE": "63111000",
     "BP": "63112000",
@@ -264,6 +276,9 @@ COMPTE_PAR_TYPE = {
     "frais_releve_caution": COMPTE_FRAIS_BANCAIRES,
     # CIH (12/11/2026) : AGIOS CIH
     "agios_escompte": COMPTES_AGIOS["CIH"],
+    # BP (14/11/2026)
+    "abonnement": COMPTE_FRAIS_BANCAIRES,
+    "interet_escompte": COMPTE_ESCOMPTE,
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
@@ -330,6 +345,14 @@ TYPES = {
     # CIH (12/11/2026)
     "agios_escompte": ("Agios escompte LCN", "compte_commission", "compte de charge"),
     "agios_escompte_tva": ("TVA agios escompte LCN", "compte_tva", "compte de TVA"),
+    # BP (14/11/2026)
+    "abonnement": ("Abonnement e-corporate", "compte_commission", "compte de charge"),
+    "interet_escompte": (
+        "Intérêt remise LCN à l'escompte",
+        "compte_commission",
+        "compte de charge",
+    ),
+    "tva_escompte": ("TVA de l'intérêt d'escompte", "compte_tva", "compte de TVA récupérable"),
 }
 
 
@@ -381,6 +404,15 @@ def type_frais_tva(libelle: str | None, banque: str | None = None) -> str | None
         return "agios_escompte"
     # Seulement FRAIS RECUPERES PAR LA BANQUE : les commissions à TVA comprise vont dans « COM »
     return next((code for code, regle in _FRAIS_RECUPERES if regle.match(texte)), None)
+
+
+def type_escompte(libelle: str | None, banque: str | None = None) -> str | None:
+    """Intérêt d'escompte LCN (« INTERET REMISE LCN A L'ESCOMPTE », BP, 14/11/2026) ou une TVA sur
+    une ligne à part, sinon None. Une TVA n'entre dans « FRAIS D'ESCOMPTE » que rattachée à un
+    intérêt (`associer_tva`). La banque ne compte pas."""
+    if _INTERET_ESCOMPTE.match(_sans_ponctuation(libelle)):
+        return "interet_escompte"
+    return "tva_escompte" if type_commission(libelle) == "tva" else None
 
 
 def _sans_ponctuation(libelle: str | None) -> str:
@@ -438,7 +470,18 @@ FRAIS_TVA = Famille(
     frais_repository.LIBELLE_FRAIS_SQL,
     frais_repository.ECRITURE_FRAIS_SQL,
 )
-FAMILLES = {famille.code: famille for famille in (TIMBRES, COMMISSIONS, FRAIS_TVA)}
+# Intérêts d'escompte et leur TVA (14/11/2026), une écriture par opération, sans seuil
+ESCOMPTE = Famille(
+    "escompte",
+    "intérêts d'escompte",
+    LIBELLE_ESCOMPTE,
+    type_escompte,
+    frais_repository.LIBELLE_ESCOMPTE_SQL,
+    frais_repository.ECRITURE_ESCOMPTE_SQL,
+)
+FAMILLES = {famille.code: famille for famille in (TIMBRES, COMMISSIONS, FRAIS_TVA, ESCOMPTE)}
+# Familles dont une TVA sur une ligne à part suit une autre opération (`associer_tva`)
+FAMILLES_AVEC_TVA = (COMMISSIONS, ESCOMPTE)
 # Écriture saisie à la main (13/10/2026) : libellé libre, pas de règle de libellé ni de type
 MANUELLE = Famille("manuelle", "frais", "", lambda _libelle, _banque=None: None, "", "")
 PAR_LIBELLE = {famille.libelle: famille for famille in FAMILLES.values()}
@@ -555,33 +598,65 @@ def tva_attendue(commission: Decimal) -> Decimal:
     return (commission * TAUX_TVA_FRAIS / 100).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
-    """« TAXE SUR VALEUR AJOUTEE » qui n'entrent pas dans l'écriture « COM » (09/11/2026).
+def est_tva_separee(tx: BankTransaction) -> bool:
+    """TVA débitée sur une ligne à part (« TAXE SUR VALEUR AJOUTEE »…)."""
+    return tx.montant < 0 and type_commission(tx.libelle) == "tva"
 
-    Par compte et par jour, chaque TVA (dans l'ordre du relevé) prend une « COMMISSION » encore
-    libre dont la TVA de 10 % vaut exactement son montant ; une commission ne prend qu'une TVA.
-    Reste à la main : une TVA sans commission (celle d'un INTERET REMISE LCN A L'ESCOMPTE…). Une
-    commission de plus de `SEUIL_MANUEL` passe avec sa TVA depuis le 11/11/2026."""
+
+def partenaire_tva(libelle: str | None) -> str | None:
+    """Famille d'une opération qu'une TVA sur une ligne à part peut suivre : une « COMMISSION » ou
+    l'abonnement BP E-CORPORATE (« commissions »), un intérêt d'escompte (« escompte »,
+    14/11/2026) ; None sinon."""
+    if type_commission(libelle) in ("commission", "abonnement"):
+        return COMMISSIONS.code
+    if type_escompte(libelle) == "interet_escompte":
+        return ESCOMPTE.code
+    return None
+
+
+def associer_tva(operations: list[BankTransaction]) -> dict[int, str]:
+    """TVA sur une ligne à part rattachées à leur opération : {TVA : famille de l'opération}
+    (09/11/2026 ; abonnement et intérêts d'escompte depuis le 14/11/2026).
+
+    Par compte et par jour, chaque TVA (dans l'ordre du relevé) prend la première opération encore
+    libre (commission, abonnement ou intérêt d'escompte) dont la TVA de 10 % vaut exactement son
+    montant ; une opération ne prend qu'une TVA. Une TVA sans opération n'est pas rattachée."""
     par_jour: dict[tuple[int, date], list[BankTransaction]] = {}
     for tx in operations:
-        if tx.montant < 0 and type_commission(tx.libelle) in ("commission", "tva"):
+        if est_tva_separee(tx) or (tx.montant < 0 and partenaire_tva(tx.libelle)):
             par_jour.setdefault((tx.bank_account_id, tx.date_operation), []).append(tx)
-    a_la_main: set[int] = set()
+    associees: dict[int, str] = {}
     for lignes in par_jour.values():
         lignes.sort(key=lambda tx: (tx.ordre or 0, tx.id))
-        libres: dict[Decimal, list[BankTransaction]] = {}
+        libres: dict[Decimal, list[str]] = {}
         for tx in lignes:
-            if type_commission(tx.libelle) == "commission":
-                libres.setdefault(tva_attendue(-tx.montant), []).append(tx)
+            if (famille_partenaire := partenaire_tva(tx.libelle)) is not None:
+                libres.setdefault(tva_attendue(-tx.montant), []).append(famille_partenaire)
         for tx in lignes:
-            if type_commission(tx.libelle) != "tva":
+            if not est_tva_separee(tx):
                 continue
             candidates = libres.get(-tx.montant)
-            if not candidates:
-                a_la_main.add(tx.id)
-                continue
-            candidates.pop(0)
-    return a_la_main
+            if candidates:
+                associees[tx.id] = candidates.pop(0)
+    return associees
+
+
+def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
+    """TVA sur une ligne à part qui se passent à la main (09/11/2026) : celles qu'aucune
+    commission, abonnement ni intérêt d'escompte ne prend (`associer_tva`). Une commission de plus
+    de `SEUIL_MANUEL` passe avec sa TVA depuis le 11/11/2026."""
+    associees = associer_tva(operations)
+    return {tx.id for tx in operations if est_tva_separee(tx) and tx.id not in associees}
+
+
+def tva_hors_famille(famille: "Famille", operations: list[BankTransaction]) -> set[int]:
+    """TVA sur une ligne à part qui n'entrent pas dans la famille : sans opération (à la main), ou
+    rattachées à une opération d'une autre famille (la TVA d'un intérêt d'escompte ne va pas dans
+    « COM », 14/11/2026)."""
+    associees = associer_tva(operations)
+    return {
+        tx.id for tx in operations if est_tva_separee(tx) and associees.get(tx.id) != famille.code
+    }
 
 
 MontantsSage = dict[tuple[int, date], list[Decimal]]
@@ -664,8 +739,11 @@ def regrouper(
     """Une écriture par frais (13/11/2026, remplace « un groupe par (compte, jour) ») : seulement
     des frais débités de la famille, ni déjà dans Sage (`bloques_par_sage`), ni écartés. Triées
     par jour, compte, puis ordre du relevé."""
-    # Le total du jour compte aussi les TVA sans commission : l'écriture Sage du jour les avait
-    bloques = bloques_par_sage(famille, operations, montants_sage)
+    # Le total du jour « COM » compte aussi les TVA sans commission : l'écriture Sage du jour les
+    # avait. « FRAIS D'ESCOMPTE » (14/11/2026) ne compte que les TVA de ses intérêts.
+    bloques = bloques_par_sage(
+        famille, operations, montants_sage, hors_famille if famille is ESCOMPTE else None
+    )
     ecartes = ecartes or Ecartes()
     par_jour = _eligibles(famille, operations, hors_famille)
     return [
@@ -724,15 +802,23 @@ def _jours(
     if inclus is None:
         inclus = frais_inclus(db, company_id, account_ids, date_from, date_to)
     libres = frais_repository.frais_libres(db, account_ids, date_from, date_to, famille.libelle_sql)
+    hors_famille = None
+    if famille in FAMILLES_AVEC_TVA:
+        # Association TVA ↔ commission, abonnement ou intérêt d'escompte sur toutes les opérations
+        # libres, avant de retirer les frais inclus dans Sage (09/11/2026, 14/11/2026)
+        hors_famille = tva_hors_famille(
+            famille,
+            frais_repository.frais_libres(
+                db, account_ids, date_from, date_to, frais_repository.LIBELLE_TVA_SQL
+            ),
+        )
     return regrouper(
         famille,
         [tx for tx in libres if tx.id not in inclus],
         frais_repository.montants_dans_sage(
             db, company_id, account_ids, date_from, date_to, famille.ecriture_sql
         ),
-        # Association TVA ↔ commission sur toutes les opérations libres, avant de retirer les frais
-        # inclus dans Sage (09/11/2026)
-        tva_a_la_main(libres) if famille is COMMISSIONS else None,
+        hors_famille,
         _ecartes(db, account_ids, date_from, date_to),
     )
 
@@ -740,20 +826,28 @@ def _jours(
 def _tva_a_la_main(
     db: Session, company_id: int, account_ids: list[int], date_from: date, date_to: date
 ) -> set[int]:
-    """TVA libres de la période qui se passent à la main (sans commission associée). Une TVA que
-    Sage a déjà (son montant, ou le total « COM » du jour, `bloques_par_sage`) n'est pas
-    concernée : la passer à la main la compterait deux fois."""
+    """TVA libres de la période qui se passent à la main (sans commission, abonnement ni intérêt
+    d'escompte associé). Une TVA que Sage a déjà (son montant, ou le total « COM » ou « FRAIS
+    D'ESCOMPTE » du jour, `bloques_par_sage`) n'est pas concernée : la passer à la main la
+    compterait deux fois.
+
+    Le rattachement se fait sur toutes les opérations libres, comme dans `_jours` (14/11/2026) :
+    la TVA d'une commission ou d'un intérêt déjà dans Sage reste proposée en automatique, elle
+    n'est pas aussi listée à la main."""
     libres = frais_repository.frais_libres(
-        db, account_ids, date_from, date_to, COMMISSIONS.libelle_sql
+        db, account_ids, date_from, date_to, frais_repository.LIBELLE_TVA_SQL
     )
-    dans_sage = bloques_par_sage(
-        COMMISSIONS,
-        libres,
-        frais_repository.montants_dans_sage(
-            db, company_id, account_ids, date_from, date_to, COMMISSIONS.ecriture_sql
-        ),
-    )
-    return tva_a_la_main([tx for tx in libres if tx.id not in dans_sage])
+    dans_sage: set[int] = set()
+    for famille in FAMILLES_AVEC_TVA:
+        dans_sage |= bloques_par_sage(
+            famille,
+            libres,
+            frais_repository.montants_dans_sage(
+                db, company_id, account_ids, date_from, date_to, famille.ecriture_sql
+            ),
+            tva_hors_famille(famille, libres) if famille is ESCOMPTE else None,
+        )
+    return tva_a_la_main(libres) - dans_sage
 
 
 def _ecartes(db: Session, account_ids: list[int], date_from: date, date_to: date) -> Ecartes:
@@ -770,10 +864,12 @@ def _ecartes(db: Session, account_ids: list[int], date_from: date, date_to: date
 
 def sans_seuil(libelle: str | None, banque: str | None = None) -> bool:
     """Commission ou TVA sur deux lignes, frais CIH de caution ou de PDL credoc (11/11/2026),
-    agios d'escompte LCN de CIH (12/11/2026) : le seuil de 200 DH ne s'applique pas."""
+    agios d'escompte LCN de CIH (12/11/2026), abonnement BP E-CORPORATE et intérêt d'escompte LCN
+    de BP (14/11/2026) : le seuil de 200 DH ne s'applique pas."""
     return (
         type_commission(libelle) in TYPES_SANS_SEUIL | TYPES_COMMISSIONS_SANS_SEUIL
         or type_frais_tva(libelle, banque) in TYPES_FRAIS_SANS_SEUIL
+        or type_escompte(libelle) == "interet_escompte"
     )
 
 
@@ -781,9 +877,10 @@ def au_dessus_du_seuil(
     famille: "Famille", montant: Decimal, libelle: str | None, banque: str | None = None
 ) -> bool:
     """Frais débité de plus de `SEUIL_MANUEL` (19/10/2026) : jamais en automatique, sauf un droit
-    de timbre et, depuis le 11/11/2026, une commission ou sa TVA sur deux lignes."""
+    de timbre, depuis le 11/11/2026 une commission ou sa TVA sur deux lignes, et depuis le
+    14/11/2026 les intérêts d'escompte et leur TVA."""
     return (
-        famille.code != "timbres"
+        famille.code not in (TIMBRES.code, ESCOMPTE.code)
         and -montant > SEUIL_MANUEL
         and not (famille in (COMMISSIONS, FRAIS_TVA) and sans_seuil(libelle, banque))
     )

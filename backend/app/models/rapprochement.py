@@ -222,7 +222,7 @@ class FraisJourEcarte(Base, TimestampMixin):
             postgresql_where=text("bank_transaction_id IS NULL"),
         ),
         UniqueConstraint("bank_transaction_id", name="uq_frais_jours_ecartes_operation"),
-        check_in("famille_valide", "famille", ("timbres", "commissions", "frais")),
+        check_in("famille_valide", "famille", ("timbres", "commissions", "frais", "escompte")),
     )
 
     id: Mapped[int] = mapped_column(Identity(), primary_key=True)

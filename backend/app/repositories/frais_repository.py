@@ -27,7 +27,9 @@ LIBELLE_COMMISSION_SQL = (
     r"^\s*(COMMISSION|TAXE\s+SUR\s+VALEUR\s+AJOUTEE|TVA\s|TRANSFERT\s+EMIS"
     # « COM & FRAIS / 3 LCN PAYEES » (AWB) : tout signe entre les deux mots (12/11/2026) ;
     # AWB : « COMM VIR EMIS / SRBM », « COM ABONNEMENT EBICS », commission carte « COM.ADOBE »
-    r"|COM\W+FRAIS|COMM\s+VIR|COM\s+ABONNEMENT\s+EBICS|COM\.\S)"
+    r"|COM\W+FRAIS|COMM\s+VIR|COM\s+ABONNEMENT\s+EBICS|COM\.\S"
+    # BP (14/11/2026) : « ABONNEMENT BP E-CORPORATE », TVA sur une ligne à part
+    r"|ABONNEMENT\W+BP\W+E\W*CORPORATE)"
 )
 # Écriture Sage d'un jour : « DT D'ENREGISTREMENT » (apostrophe droite ou non), « COM »
 ECRITURE_TIMBRE_SQL = r"^\s*DT\s+D.?\s*ENREGISTREMENT"
@@ -45,6 +47,17 @@ LIBELLE_FRAIS_SQL = (
     r"|AGIOS\W+ESCOMPTE\W+LCN)"
 )
 ECRITURE_FRAIS_SQL = r"^\s*FRAIS\s*$"
+# Intérêts d'escompte LCN de BP et leur TVA sur une ligne à part (14/11/2026) : écriture
+# « FRAIS D'ESCOMPTE ». La TVA est rattachée à son intérêt par `frais_service.associer_tva`
+LIBELLE_ESCOMPTE_SQL = (
+    r"^\s*(INTERET\W+REMISE\W+LCN\W+A\W+L\W*ESCOMPTE|TAXE\s+SUR\s+VALEUR\s+AJOUTEE|TVA\s)"
+)
+# Écriture Sage « FRAIS D'ESCOMPTE », seule ou suivie du n° de remise (« FRAIS D'ESCOMPTE/7122271 »
+# en production)
+ECRITURE_ESCOMPTE_SQL = r"^\s*FRAIS\s+D\W?\s*ESCOMPTE\s*($|/)"
+# Opérations qu'une TVA sur une ligne à part peut suivre, et ces TVA : commissions, abonnement,
+# intérêts d'escompte (14/11/2026)
+LIBELLE_TVA_SQL = f"{LIBELLE_COMMISSION_SQL}|{LIBELLE_ESCOMPTE_SQL}"
 STATUTS_LIBRES = ("Non rapprochée", "À vérifier")
 
 

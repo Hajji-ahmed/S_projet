@@ -1810,8 +1810,9 @@ INTERET_ESCOMPTE = "INTERET REMISE LCN A L'ESCOMPTE"
 
 
 def test_a_vat_goes_with_a_commission_of_ten_times_its_amount():
-    """Relevé BP du 22/04/2026 : la TVA d'un intérêt d'escompte n'a pas de commission, celle d'une
-    commission de plus de 200 DH entre avec elle (11/11/2026) ; une commission ne prend qu'une TVA."""
+    """Relevé BP du 22/04/2026 : la TVA d'une commission de plus de 200 DH entre avec elle
+    (11/11/2026) ; une commission ne prend qu'une TVA ; la TVA d'un intérêt d'escompte suit son
+    intérêt dans « FRAIS D'ESCOMPTE » (14/11/2026, à la main avant)."""
     autre_jour = date(2026, 4, 24)
     operations = [
         _tx(1, 1, JOUR, "-45", "COMMISSION"),
@@ -1828,15 +1829,36 @@ def test_a_vat_goes_with_a_commission_of_ten_times_its_amount():
         _tx(12, 1, autre_jour, "-4.51", TVA),  # au centime près
     ]
 
-    assert frais_service.tva_a_la_main(operations) == {5, 7, 8, 9, 12}
+    assert frais_service.tva_a_la_main(operations) == {7, 8, 9, 12}
+    assert frais_service.associer_tva(operations) == {
+        4: "commissions",
+        5: "escompte",
+        6: "commissions",
+        11: "commissions",
+    }
+    assert frais_service.tva_hors_famille(frais_service.COMMISSIONS, operations) == {
+        5,
+        7,
+        8,
+        9,
+        12,
+    }
+    assert frais_service.tva_hors_famille(frais_service.ESCOMPTE, operations) == {
+        4,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+    }
 
 
 def test_a_vat_without_its_commission_is_booked_by_hand(client, comptable, db):
     compte = bp(db)
     commission = operation(db, compte, "-45", JOUR, "COMMISSION")
-    operation(db, compte, "-196.82", JOUR, INTERET_ESCOMPTE)
     tva_commission = operation(db, compte, "-4.50", JOUR, TVA)
-    # 10 % de l'intérêt, sous 200 DH : avant le 09/11/2026 elle entrait dans la COM
+    # Ni commission, ni abonnement, ni intérêt d'escompte de 10 fois son montant
     tva_interet = operation(db, compte, "-19.68", JOUR, TVA)
 
     tableau = lire(client, comptable, db, None).json()
@@ -1915,6 +1937,195 @@ def test_a_day_with_a_sage_com_entry_keeps_its_vat_out_of_the_manual_list(client
 
     assert tableau["propositions"] == []
     assert tva_interet.id not in {a["id"] for a in tableau["autres_frais"]}
+
+
+# --- Intérêts d'escompte et abonnement E-CORPORATE de BP, avec leur TVA (14/11/2026) --------------
+
+ABONNEMENT = "ABONNEMENT BP E-CORPORATE"
+TVA_ABONNEMENT = "TVA COM ABONNEMENT BP E-CORPORATE"
+
+
+@pytest.mark.parametrize(
+    ("libelle", "attendu"),
+    [
+        (INTERET_ESCOMPTE, "interet_escompte"),
+        ("INTERET REMISE LCN A L ESCOMPTE", "interet_escompte"),
+        ("INTERET REMISE LCN A L’ESCOMPTE", "interet_escompte"),  # apostrophe typographique
+        ("INTERET REMISE LCN A L'ESCOMPTE N 7100271", "interet_escompte"),
+        (TVA, "tva_escompte"),
+        ("INTERETS DEBITEURS", None),
+        ("AGIOS ESCOMPTE LCN N 2600114", None),
+        ("COMMISSION", None),
+    ],
+)
+def test_an_escompte_interest_is_read_from_the_label(libelle, attendu):
+    assert frais_service.type_escompte(libelle) == attendu
+
+
+@pytest.mark.parametrize(
+    ("libelle", "attendu"),
+    [
+        (ABONNEMENT, "abonnement"),
+        ("ABONNEMENT BP E CORPORATE NOV 2026", "abonnement"),
+        (TVA_ABONNEMENT, "tva"),
+        ("ABONNEMENT CARTE", None),
+    ],
+)
+def test_the_e_corporate_subscription_is_a_commission(libelle, attendu):
+    assert type_commission(libelle) == attendu
+
+
+def test_escompte_interests_and_their_vat_are_booked_automatically_whatever_the_amount(
+    client, comptable, direction, db
+):
+    """Chaque intérêt d'escompte et sa TVA (10 %, ligne à part) sont deux écritures « FRAIS
+    D'ESCOMPTE », l'intérêt sur 63117000 et la TVA sur 34552142, quel que soit le montant ; la TVA
+    d'une commission du même jour reste dans « COM »."""
+    compte = bp(db)
+    commission = operation(db, compte, "-45", JOUR, "COMMISSION")
+    interet = operation(db, compte, "-4524.56", JOUR, INTERET_ESCOMPTE)
+    tva_commission = operation(db, compte, "-4.50", JOUR, TVA)
+    tva_interet = operation(db, compte, "-452.46", JOUR, TVA)
+    seule = operation(db, compte, "-3.00", JOUR, TVA)
+
+    tableau = lire(client, comptable, db, None).json()
+
+    assert [(p["famille"], p["libelle"], p["total"]) for p in tableau["propositions"]] == [
+        ("commissions", "COM", "45.00"),
+        ("commissions", "COM", "4.50"),
+        ("escompte", "FRAIS D'ESCOMPTE", "4524.56"),
+        ("escompte", "FRAIS D'ESCOMPTE", "452.46"),
+    ]
+    assert [
+        [(g["compte"], g["debit"], g["credit"]) for g in p["lignes"]]
+        for p in tableau["propositions"][2:]
+    ] == [
+        [("63117000", "4524.56", None), ("55410003", None, "4524.56")],
+        [("34552142", "452.46", None), ("55410003", None, "452.46")],
+    ]
+    assert {a["id"] for a in tableau["autres_frais"]} == {seule.id}
+    # L'intérêt et sa TVA se passent en automatique, jamais à la main
+    assert manuelle(client, comptable, db, [interet], libelle="FRAIS D'ESCOMPTE").status_code == 409
+    assert manuelle(client, comptable, db, [tva_interet], libelle="TVA").status_code == 409
+
+    # Sans seuil : pas dans le fichier des frais à justifier auprès de la banque
+    params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30"}
+    justificatif = client.get("/api/frais/justificatif", params=params, headers=direction)
+    assert justificatif.status_code == 409
+
+    response = valider(client, comptable, db, (compte, JOUR), famille="escompte")
+    assert response.status_code == 200, response.text
+    assert statuses(db, commission, tva_commission, interet, tva_interet, seule) == [
+        "Non rapprochée",
+        "Non rapprochée",
+        "Rapprochée",
+        "Rapprochée",
+        "Non rapprochée",
+    ]
+    entries = db.scalars(
+        select(AccountingEntry).filter_by(origine="SIMTIS").order_by(AccountingEntry.id)
+    )
+    assert [(e.libelle, e.famille_frais, e.montant) for e in entries] == [
+        ("FRAIS D'ESCOMPTE", "escompte", Decimal("4524.56")),
+        ("FRAIS D'ESCOMPTE", "escompte", Decimal("452.46")),
+    ]
+
+    export = exporter(client, comptable, db)
+    assert export.status_code == 200, export.text
+    assert [(r[3], r[1], r[5], r[7], r[6]) for r in lignes_csv(export)] == [
+        ("63117000", "BP2604001", INTERET_ESCOMPTE, "D", "4524,56"),
+        ("55410003", "BP2604001", INTERET_ESCOMPTE, "C", "4524,56"),
+        ("34552142", "BP2604002", TVA, "D", "452,46"),
+        ("55410003", "BP2604002", TVA, "C", "452,46"),
+    ]
+
+
+def test_an_escompte_interest_already_in_sage_is_not_proposed(client, comptable, db):
+    """Une écriture Sage « FRAIS D'ESCOMPTE/… » du même montant (déjà rapprochée) bloque l'intérêt ;
+    sa TVA, absente de Sage, reste proposée."""
+    compte = bp(db)
+    interet = operation(db, compte, "-196.82", JOUR, INTERET_ESCOMPTE)
+    tva = operation(db, compte, "-19.68", JOUR, TVA)
+    # Libellé de Sage en production : suivi du n° de remise
+    ecriture(db, compte, "196.82", JOUR, "FRAIS D'ESCOMPTE/7122271", statut="Rapprochée")
+
+    tableau = lire(client, comptable, db, None).json()
+
+    assert [(p["famille"], p["total"]) for p in tableau["propositions"]] == [
+        ("escompte", "19.68"),
+    ]
+    assert interet.id not in {a["id"] for a in tableau["autres_frais"]}
+    assert tva.id not in {a["id"] for a in tableau["autres_frais"]}
+
+
+def test_a_simtis_escompte_entry_coming_back_from_sage_is_a_duplicate(client, comptable, db):
+    compte = bp(db)
+    operation(db, compte, "-196.82", JOUR, INTERET_ESCOMPTE)
+    assert valider(client, comptable, db, (compte, JOUR), famille="escompte").status_code == 200
+    line = EntryLine(
+        numero=2,
+        statut="Valide",
+        motifs=[],
+        date_ecriture=JOUR,
+        libelle="FRAIS D'ESCOMPTE",
+        montant=Decimal("196.82"),
+        bank_account_id=compte.id,
+    )
+
+    _mark_simtis_entries(db, company(db).id, [line])
+
+    assert line.statut == "Doublon"
+
+
+def test_a_dismissed_escompte_vat_goes_to_the_manual_list(client, comptable, db):
+    compte = bp(db)
+    operation(db, compte, "-196.82", JOUR, INTERET_ESCOMPTE)
+    tva = operation(db, compte, "-19.68", JOUR, TVA)
+    body = {
+        "company_id": company(db).id,
+        "jours": [
+            {
+                "famille": "escompte",
+                "bank_account_id": compte.id,
+                "date": str(JOUR),
+                "transaction_id": tva.id,
+            }
+        ],
+    }
+
+    response = client.post("/api/frais/ecarter", json=body, headers=comptable)
+
+    assert response.status_code == 200, response.text
+    tableau = lire(client, comptable, db, None).json()
+    assert [p["total"] for p in tableau["propositions"]] == ["196.82"]
+    assert tva.id in {a["id"] for a in tableau["autres_frais"]}
+
+
+def test_the_e_corporate_subscription_and_its_vat_go_to_com_whatever_the_amount(
+    client, comptable, db
+):
+    compte = bp(db)
+    """Relevé BP du 30/10/2026 en production : 150,00 et sa TVA « TVA COM ABONNEMENT BP
+    E-CORPORATE » de 15,00 ; ici 1 500,00 pour vérifier qu'aucun seuil de 200 DH ne s'applique."""
+    abonnement = operation(db, compte, "-1500", JOUR, ABONNEMENT)
+    tva = operation(db, compte, "-150", JOUR, TVA_ABONNEMENT)
+
+    tableau = lire(client, comptable, db, None).json()
+
+    assert [(p["famille"], p["total"]) for p in tableau["propositions"]] == [
+        ("commissions", "1500.00"),
+        ("commissions", "150.00"),
+    ]
+    assert [
+        [(g["compte"], g["debit"], g["credit"]) for g in p["lignes"]]
+        for p in tableau["propositions"]
+    ] == [
+        [("61473000", "1500.00", None), ("55410003", None, "1500.00")],
+        [("34552142", "150.00", None), ("55410003", None, "150.00")],
+    ]
+    assert tableau["autres_frais"] == []
+    assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
+    assert statuses(db, abonnement, tva) == ["Rapprochée", "Rapprochée"]
 
 
 # --- Frais des autres banques, comme BP (09/11/2026) ----------------------------------------------

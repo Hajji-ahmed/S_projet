@@ -1009,6 +1009,8 @@ def test_a_simtis_entry_has_a_known_fee_family_and_a_sage_entry_none(db, world):
     save(db, _entry(world, origine="SIMTIS", famille_frais="manuelle"))
     # Frais à TVA comprise (migration 0027)
     save(db, _entry(world, origine="SIMTIS", famille_frais="frais"))
+    # Intérêts d'escompte et leur TVA (migration 0054)
+    save(db, _entry(world, origine="SIMTIS", famille_frais="escompte"))
 
     assert_rejected(
         db,
@@ -1115,6 +1117,8 @@ def test_a_dismissed_fee_day_has_a_known_family_and_is_unique(db, world):
         )
 
     save(db, ecarte())
+    # Intérêts d'escompte (migration 0054)
+    save(db, ecarte(famille="escompte"))
 
     assert_rejected(db, "ck_frais_jours_ecartes_famille_valide", ecarte(famille="agios"))
     assert_rejected(db, "uq_frais_jours_ecartes_compte_jour_famille", ecarte())

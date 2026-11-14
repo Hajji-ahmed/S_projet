@@ -80,7 +80,7 @@ class LigneGLOut(BaseModel):
         )
 
 
-FamilleFrais = Literal["timbres", "commissions", "frais"]
+FamilleFrais = Literal["timbres", "commissions", "frais", "escompte"]
 
 
 class PropositionTimbresOut(BaseModel):
@@ -136,7 +136,7 @@ class EcritureFraisOut(BaseModel):
     """Écriture comptabilisée par SIMTIS, rapprochée de ses opérations."""
 
     # « manuelle » : écriture saisie à la main (13/10/2026)
-    famille: Literal["timbres", "commissions", "frais", "manuelle"]
+    famille: Literal["timbres", "commissions", "frais", "escompte", "manuelle"]
     id: int
     bank_account_id: int
     bank_code: str

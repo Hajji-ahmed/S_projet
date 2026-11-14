@@ -1,6 +1,6 @@
 /** Comptabilisation des frais bancaires par SIMTIS : droits de timbre, commissions (13/10/2026). */
 
-export type FamilleFrais = "timbres" | "commissions" | "frais";
+export type FamilleFrais = "timbres" | "commissions" | "frais" | "escompte";
 
 /** Total d'un type dans l'écriture (commission, TVA, commission effet…). */
 export type DetailFrais = {

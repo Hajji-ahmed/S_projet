@@ -189,7 +189,7 @@ class AccountingEntry(TimestampMixin, Base):
         # séparée seulement pour une écriture manuelle
         CheckConstraint(
             "(origine = 'SIMTIS') = (famille_frais IS NOT NULL) AND (famille_frais IS NULL OR "
-            "famille_frais IN ('timbres', 'commissions', 'frais', 'manuelle'))",
+            "famille_frais IN ('timbres', 'commissions', 'frais', 'escompte', 'manuelle'))",
             name="famille_frais",
         ),
         CheckConstraint(
