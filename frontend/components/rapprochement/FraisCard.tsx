@@ -124,11 +124,12 @@ export function FraisCard({
   const [modifs, setModifs] = useState<Map<string, ModificationFrais>>(new Map());
   const [edition, setEdition] = useState<PropositionTimbres | null>(null);
   const [ecartement, setEcartement] = useState<PropositionTimbres | null>(null);
-  // Tableau « À valider » (14/11/2026) : filtres Famille et Date, 20 écritures puis 20 de plus
-  // chaque fois qu'on arrive en bas du tableau
+  // Tableau « À valider » (14/11/2026) : filtres Famille et Date. Les trois tableaux défilent dans
+  // leur cadre et chargent 20 lignes de plus en bas du cadre (16/11/2026)
   const [filtre, setFiltre] = useState<FiltreFrais>({ famille: "", jour: "" });
   const [nbAffichees, setNbAffichees] = useState(PAR_LOT);
-  const repereFin = useRef<HTMLDivElement>(null);
+  const [nbAutres, setNbAutres] = useState(PAR_LOT);
+  const [nbEcritures, setNbEcritures] = useState(PAR_LOT);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +142,8 @@ export function FraisCard({
         setManuels(new Set());
         setModifs(new Map());
         setNbAffichees(PAR_LOT);
+        setNbAutres(PAR_LOT);
+        setNbEcritures(PAR_LOT);
         setState("ready");
         onAExporter(result.ecritures.filter((item) => !item.exportee_le).length);
       },
@@ -166,20 +169,8 @@ export function FraisCard({
     (item) => selection.has(cleJour(item)) && !clesFiltrees.has(cleJour(item)),
   ).length;
   const autres = data?.autres_frais ?? [];
-
-  // Arrivé en bas du tableau, les 20 écritures suivantes s'ajoutent (pas de pages)
-  useEffect(() => {
-    const repere = repereFin.current;
-    if (!repere || reste <= 0 || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) setNbAffichees((n) => n + PAR_LOT);
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(repere);
-    return () => observer.disconnect();
-  }, [reste, nbAffichees]);
+  const autresAffiches = autres.slice(0, nbAutres);
+  const ecrituresAffichees = ecritures.slice(0, nbEcritures);
 
   function filtrer(changement: Partial<FiltreFrais>) {
     setFiltre((actuel) => ({ ...actuel, ...changement }));
@@ -379,6 +370,8 @@ export function FraisCard({
                 total={totalGrandLivre(
                   filtrees.map((item) => lignesAffichees(item, modifs.get(cleJour(item)))),
                 )}
+                reste={reste}
+                onSuite={() => setNbAffichees((n) => n + PAR_LOT)}
               >
                 {affichees.map((item) => {
                   const cle = cleJour(item);
@@ -457,14 +450,7 @@ export function FraisCard({
                 })}
               </GrandLivre>
             )}
-            {filtrees.length > PAR_LOT && (
-              <p className="mt-2 text-sm text-simtis-muted" aria-live="polite">
-                {affichees.length} sur {filtrees.length} affichées
-                {reste > 0 && " · descendez pour voir la suite"}
-              </p>
-            )}
-            {/* Repère sous le tableau : visible, il ajoute les 20 écritures suivantes */}
-            <div ref={repereFin} aria-hidden className="h-px" />
+            <PiedCadre affichees={affichees.length} total={filtrees.length} />
           </section>
 
           {(data.ecartes ?? []).length > 0 && (
@@ -572,9 +558,12 @@ export function FraisCard({
             {autres.length === 0 ? (
               <Vide>Aucun autre frais à comptabiliser sur cette période.</Vide>
             ) : (
-              <div className="overflow-x-auto rounded-[12px] border border-simtis-border">
+              <CadreDefilant
+                reste={autres.length - autresAffiches.length}
+                onSuite={() => setNbAutres((n) => n + PAR_LOT)}
+              >
                 <table className="w-full text-sm">
-                  <thead className="bg-simtis-light text-left text-xs text-simtis-primary-dark">
+                  <thead className={THEAD_COLLE}>
                     <tr>
                       {canPrepare && (
                         <th className="w-10 px-3 py-2">
@@ -589,7 +578,7 @@ export function FraisCard({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-simtis-border">
-                    {autres.map((tx) => (
+                    {autresAffiches.map((tx) => (
                       <tr key={tx.id}>
                         {canPrepare && (
                           <td className="px-3 py-1.5">
@@ -622,8 +611,9 @@ export function FraisCard({
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </CadreDefilant>
             )}
+            <PiedCadre affichees={autresAffiches.length} total={autres.length} />
           </section>
 
           {inclus.length > 0 && (
@@ -695,8 +685,12 @@ export function FraisCard({
             {ecritures.length === 0 ? (
               <Vide>Aucune écriture de frais comptabilisée par SIMTIS sur cette période.</Vide>
             ) : (
-              <TableauSage fin={canPrepare ? ["Export Sage", "Actions"] : ["Export Sage"]}>
-                {ecritures.map((item) => (
+              <TableauSage
+                fin={canPrepare ? ["Export Sage", "Actions"] : ["Export Sage"]}
+                reste={ecritures.length - ecrituresAffichees.length}
+                onSuite={() => setNbEcritures((n) => n + PAR_LOT)}
+              >
+                {ecrituresAffichees.map((item) => (
                   <EcritureSage
                     key={item.id}
                     journal={item.journal}
@@ -737,6 +731,7 @@ export function FraisCard({
                 ))}
               </TableauSage>
             )}
+            <PiedCadre affichees={ecrituresAffichees.length} total={ecritures.length} />
           </section>
         </div>
       )}
@@ -891,25 +886,85 @@ function Vide({ children }: { children: ReactNode }) {
 }
 
 const TH = "px-3 py-2 font-semibold whitespace-nowrap";
+// Titres de colonnes collés en haut du cadre qui défile (16/11/2026)
+const THEAD_COLLE = "sticky top-0 z-10 bg-simtis-light text-left text-xs text-simtis-primary-dark";
+
+/**
+ * Cadre d'un tableau de frais (16/11/2026), comme le volet « Écritures comptables » : au plus la
+ * hauteur de l'écran, sa propre barre de défilement ; arrivé en bas du cadre, `onSuite` ajoute les
+ * 20 lignes suivantes tant qu'il en `reste`.
+ */
+function CadreDefilant({
+  reste,
+  onSuite,
+  children,
+}: {
+  reste: number;
+  onSuite: () => void;
+  children: ReactNode;
+}) {
+  const cadre = useRef<HTMLDivElement>(null);
+  const repere = useRef<HTMLDivElement>(null);
+  const suite = useRef(onSuite);
+  useEffect(() => {
+    suite.current = onSuite;
+  });
+  useEffect(() => {
+    if (!cadre.current || !repere.current || reste <= 0) return;
+    if (typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) suite.current();
+      },
+      { root: cadre.current, rootMargin: "200px" },
+    );
+    observer.observe(repere.current);
+    return () => observer.disconnect();
+  }, [reste]);
+  return (
+    <div
+      ref={cadre}
+      className="max-h-[calc(100dvh-7rem)] overflow-auto rounded-[12px] border border-simtis-border"
+    >
+      {children}
+      <div ref={repere} aria-hidden className="h-px" />
+    </div>
+  );
+}
+
+/** « 40 sur 321 affichées » sous un cadre, tant qu'il en reste à charger. */
+function PiedCadre({ affichees, total }: { affichees: number; total: number }) {
+  if (total <= PAR_LOT) return null;
+  return (
+    <p className="mt-2 text-sm text-simtis-muted" aria-live="polite">
+      {affichees} sur {total} affichées
+      {affichees < total && " · descendez dans le tableau pour voir la suite"}
+    </p>
+  );
+}
 
 /** Tableau au format du grand livre Sage ; chaque écriture est un `<tbody>`. */
 function GrandLivre({
   avecCase,
   fin,
   total,
+  reste,
+  onSuite,
   children,
 }: {
   avecCase: boolean;
   fin: string[];
   /** Ligne « Total » en bas (11/11/2026) : Débit, Crédit et équilibre avant l'export. */
   total?: ReturnType<typeof totalGrandLivre>;
+  reste: number;
+  onSuite: () => void;
   children: ReactNode;
 }) {
   const equilibre = total?.ecart === "0.00";
   return (
-    <div className="overflow-x-auto rounded-[12px] border border-simtis-border">
+    <CadreDefilant reste={reste} onSuite={onSuite}>
       <table className="w-full text-sm">
-        <thead className="bg-simtis-light text-left text-xs text-simtis-primary-dark">
+        <thead className={THEAD_COLLE}>
           <tr>
             {avecCase && (
               <th className="w-10 px-3 py-2">
@@ -932,7 +987,7 @@ function GrandLivre({
         </thead>
         {children}
         {total && (
-          <tfoot className="border-t-2 border-simtis-primary/30 bg-simtis-light font-semibold text-simtis-primary-dark">
+          <tfoot className="sticky bottom-0 z-10 border-t-2 border-simtis-primary/30 bg-simtis-light font-semibold text-simtis-primary-dark">
             <tr>
               <td colSpan={(avecCase ? 1 : 0) + 5} className="px-3 py-2">
                 Total · {plural(total.pieces, "pièce")}
@@ -970,7 +1025,7 @@ function GrandLivre({
           </tfoot>
         )}
       </table>
-    </div>
+    </CadreDefilant>
   );
 }
 
@@ -1049,11 +1104,21 @@ function Ecriture({
  * même ordre, même libellé, Montant toujours positif et son Sens « D » / « C » (11/11/2026) ; les 7 colonnes facultatives,
  * toujours vides, ne sont pas affichées.
  */
-function TableauSage({ fin, children }: { fin: string[]; children: ReactNode }) {
+function TableauSage({
+  fin,
+  reste,
+  onSuite,
+  children,
+}: {
+  fin: string[];
+  reste: number;
+  onSuite: () => void;
+  children: ReactNode;
+}) {
   return (
-    <div className="overflow-x-auto rounded-[12px] border border-simtis-border">
+    <CadreDefilant reste={reste} onSuite={onSuite}>
       <table className="w-full text-sm">
-        <thead className="bg-simtis-light text-left text-xs text-simtis-primary-dark">
+        <thead className={THEAD_COLLE}>
           <tr>
             <th className={TH}>Date de pièce</th>
             <th className={TH}>N° pièce</th>
@@ -1072,7 +1137,7 @@ function TableauSage({ fin, children }: { fin: string[]; children: ReactNode }) 
         </thead>
         {children}
       </table>
-    </div>
+    </CadreDefilant>
   );
 }
 
