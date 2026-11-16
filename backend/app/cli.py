@@ -7,6 +7,8 @@
         --compta compta.xlsx --jusqu-au 2026-09-30 --motif "…" --email … [--appliquer]
     python -m app.cli completer-echeances --societe SIMTIS --fichier "gl awb.xls" \
         [--colonne-echeance J] --motif "…" --email … [--appliquer]
+    python -m app.cli corriger-ecriture-sage --societe SIMTIS --fichier "gl cih.xls" \
+        --ecriture 17421 [--ligne 925] --motif "…" --email … [--appliquer]
 
 Le mot de passe est généré aléatoirement et affiché UNE SEULE FOIS : il n'est stocké que haché.
 """
@@ -17,7 +19,13 @@ from datetime import date
 from pathlib import Path
 
 from app.core.db import SessionLocal
-from app.services import auth_service, echeance_service, import_service, reprise_service
+from app.services import (
+    auth_service,
+    correction_ecriture_service,
+    echeance_service,
+    import_service,
+    reprise_service,
+)
 from app.services.auth_service import AccountError
 from app.services.errors import DomainError
 from app.services.normalization_service import parse_amount
@@ -106,6 +114,21 @@ def main(argv: list[str] | None = None) -> int:
         "--appliquer", action="store_true", help="écrire (sans cette option : simulation)"
     )
 
+    correction = commands.add_parser(
+        "corriger-ecriture-sage",
+        help="aligner une écriture corrigée dans Sage sur sa ligne du grand livre, sur place",
+    )
+    correction.add_argument("--societe", required=True, help="code de la société (SIMTIS, SOCX)")
+    correction.add_argument("--fichier", required=True, help="grand livre Sage corrigé")
+    correction.add_argument("--ecriture", type=int, required=True, help="id de l'écriture absente")
+    correction.add_argument("--ligne", type=int, help="ligne Excel, si plusieurs sont possibles")
+    correction.add_argument("--feuille", help="feuille à lire (sinon celle de l'import)")
+    correction.add_argument("--motif", help="obligatoire avec --appliquer")
+    correction.add_argument("--email", help="auteur ; obligatoire avec --appliquer")
+    correction.add_argument(
+        "--appliquer", action="store_true", help="écrire (sans cette option : simulation)"
+    )
+
     args = parser.parse_args(argv)
     if args.command == "recalculer-soldes":
         return _recompute(args.releve, args.solde_ouverture)
@@ -113,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         return _reprise(args)
     if args.command == "completer-echeances":
         return _echeances(args)
+    if args.command == "corriger-ecriture-sage":
+        return _correction(args)
     password = auth_service.generate_password()
 
     try:
@@ -269,6 +294,41 @@ def _echeances(args: argparse.Namespace) -> int:
         return 1
     _afficher_echeances(bilan)
     print(f"Enregistré : {len(bilan.a_remplir)} échéances remplies.")
+    return 0
+
+
+def _correction(args: argparse.Namespace) -> int:
+    try:
+        content = Path(args.fichier).read_bytes()
+    except OSError as error:
+        print(f"Erreur : fichier illisible ({error})", file=sys.stderr)
+        return 1
+    options = {
+        "code_societe": args.societe,
+        "fichier_nom": Path(args.fichier).name,
+        "content": content,
+        "ecriture_id": args.ecriture,
+        "ligne": args.ligne,
+        "feuille": args.feuille,
+    }
+    try:
+        with SessionLocal() as db:
+            if not args.appliquer:
+                bilan = correction_ecriture_service.analyser(db, **options)
+                print("\n".join(correction_ecriture_service.afficher(bilan)))
+                print("Simulation : rien n'a été écrit (ajoutez --appliquer).")
+                return 0
+            if not args.motif or not args.email:
+                print("Erreur : --motif et --email sont obligatoires avec --appliquer.")
+                return 1
+            bilan = correction_ecriture_service.appliquer(
+                db, **options, motif=args.motif, email=args.email
+            )
+    except DomainError as error:
+        print(f"Erreur : {error.message}", file=sys.stderr)
+        return 1
+    print("\n".join(correction_ecriture_service.afficher(bilan)))
+    print(f"Enregistré : écriture {bilan.ecriture_id} corrigée.")
     return 0
 
 
