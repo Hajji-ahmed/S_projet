@@ -32,6 +32,8 @@ SEUILS = ("SEUIL_PROPOSITION", "SEUIL_FORT", "ECART_AMBIGUITE")
 FENETRE = "FENETRE"
 # Recherche élargie (20/10/2026) : de 31 à 366 jours
 FENETRE_ELARGIE = "FENETRE_ELARGIE"
+# Pointage automatique (16/11/2026) : confirmations avant qu'un libellé reçoive son pointage seul
+POINTAGE_CONFIRMATIONS = "POINTAGE_CONFIRMATIONS"
 CENT = Decimal("100")
 
 # Ce que chaque règle laisse modifier, pour l'écran : points, jours, activation
@@ -40,6 +42,7 @@ GENRES = {
     **{code: "seuil" for code in SEUILS},
     FENETRE: "fenetre",
     FENETRE_ELARGIE: "fenetre",
+    POINTAGE_CONFIRMATIONS: "pointage",
 }
 
 
@@ -107,6 +110,15 @@ def verifier(rules: dict[str, ReconciliationRule], changements: list[Changement]
                 "tolerance": _jours(changement.tolerance, mini, maxi, quoi),
                 "actif": True,
             }
+        elif genre == "pointage":
+            valeur = changement.tolerance
+            if valeur is None or valeur != valeur.to_integral_value() or not 1 <= valeur <= 10:
+                raise ConflictError(f"{quoi} : un nombre entier entre 1 et 10.")
+            finales[changement.code] = {
+                "poids": rule.poids,
+                "tolerance": Decimal(int(valeur)),
+                "actif": True,
+            }
         else:
             raise ConflictError(f"Le paramètre {changement.code} ne se modifie pas à l'écran.")
 
@@ -134,9 +146,13 @@ def verifier(rules: dict[str, ReconciliationRule], changements: list[Changement]
 
 
 def grille(db: Session) -> list[ReconciliationRule]:
-    """Les règles dans l'ordre de l'écran : critères, fenêtre, seuils."""
+    """Les règles dans l'ordre de l'écran : critères, fenêtre, seuils, puis le pointage
+    automatique (16/11/2026, carte à part)."""
     ordre = {
-        code: index for index, code in enumerate((*CRITERES, FENETRE, FENETRE_ELARGIE, *SEUILS))
+        code: index
+        for index, code in enumerate(
+            (*CRITERES, FENETRE, FENETRE_ELARGIE, *SEUILS, POINTAGE_CONFIRMATIONS)
+        )
     }
     return sorted(
         parametres_repository.rules(db), key=lambda rule: ordre.get(rule.code, len(ordre))

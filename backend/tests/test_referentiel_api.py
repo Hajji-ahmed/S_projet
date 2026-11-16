@@ -55,16 +55,17 @@ def test_pointage_types_are_listed_for_any_logged_in_user(client, reference):
 
     assert response.status_code == 200
     libelles = [item["libelle"] for item in response.json()]
-    # Les 74 catégories du métier (08/10/2026), par ordre alphabétique sans casse ni accents
-    assert len(libelles) == 74
-    assert libelles[:3] == ["A NOUVEAU", "A voir", "AGIOS"]
-    assert libelles.index("Cheque de banque") < libelles.index("CHEQUE SOFT")
-    assert not {"Encaissement", "Décaissement", "Frais bancaires"} & set(libelles)
+    # La liste du 16/11/2026, par ordre alphabétique sans casse ni accents ; les anciennes
+    # catégories (08/10/2026 et 02/10/2026) ne sont plus proposées
+    assert len(libelles) == 47
+    assert libelles[:3] == ["À analyser", "Agios d'échelle décaissé", "Agios d'escompte décaissé"]
+    assert libelles.index("Échéance leasing décaissé") < libelles.index("Effet client encaissé")
+    assert not {"COM", "A voir", "Encaissement", "Frais bancaires"} & set(libelles)
     assert set(response.json()[0]) == {"id", "code", "libelle"}
 
 
 def test_inactive_pointage_types_are_not_listed(client, reference, db):
-    frais = db.scalar(select(PointageType).filter_by(code="FRAIS"))
+    frais = db.scalar(select(PointageType).filter_by(code="VIREMENT_ELECTRONIQUE_DECAISSE"))
     frais.actif = False
     db.flush()
     make_auth_user(reference, "DIRECTION", email="direction.pointage2@example.com")
@@ -73,7 +74,7 @@ def test_inactive_pointage_types_are_not_listed(client, reference, db):
         "/api/pointage-types", headers=bearer(login(client, "direction.pointage2@example.com"))
     ).json()
 
-    assert "FRAIS" not in {item["code"] for item in body}
+    assert "VIREMENT_ELECTRONIQUE_DECAISSE" not in {item["code"] for item in body}
 
 
 def test_pointage_types_need_a_login(client):

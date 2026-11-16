@@ -13,6 +13,17 @@ def rules(db: Session, *, lock: bool = False) -> list[ReconciliationRule]:
     return list(db.scalars(query))
 
 
+def confirmations_pointage(db: Session) -> int:
+    """Nombre de fois qu'un libellé doit avoir reçu le même pointage pour le recevoir
+    automatiquement (règle `POINTAGE_CONFIRMATIONS`, 16/11/2026) ; 1 si la règle manque."""
+    valeur = db.scalar(
+        select(ReconciliationRule.tolerance).where(
+            ReconciliationRule.code == "POINTAGE_CONFIRMATIONS"
+        )
+    )
+    return max(1, int(valeur)) if valeur is not None else 1
+
+
 def mappings(db: Session) -> list[ColumnMapping]:
     return list(
         db.scalars(

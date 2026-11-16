@@ -77,13 +77,14 @@ def test_reference_seed_creates_the_expected_rows(db):
         companies=2,
         banks=5,
         currencies=3,
-        # Les 74 catégories de pointage sont déjà créées par la migration 0017
+        # Les catégories de pointage sont déjà créées par les migrations 0017 et 0055
         forecast_categories=7,
         # accounting.prepare est créée par la migration 0024
         permissions=11,
         roles=5,
         # + FENETRE_ELARGIE (20/10/2026), MONTANT_ROND et BONUS_SANS_REFERENCE (28/10/2026) ;
-        # FENETRE_ESPECES retiré le 30/10/2026 (barème fixe)
+        # FENETRE_ESPECES retiré le 30/10/2026 (barème fixe) ; POINTAGE_CONFIRMATIONS (16/11/2026)
+        # est déjà créée par la migration 0055
         reconciliation_rules=12,
     )
 

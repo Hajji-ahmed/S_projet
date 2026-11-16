@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import AuditLog, Bank, ColumnMapping, ReconciliationRule
+from app.repositories import parametres_repository
 from app.services import reconciliation_service
 from tests.helpers import bearer, login, make_auth_user
 
@@ -80,6 +81,11 @@ def test_an_unchanged_value_writes_no_audit(client, admin, db):
         ({"code": "SEUIL_FORT", "poids": "40"}, "ne peut pas être inférieur"),
         ({"code": "MONTANT", "poids": "50", "actif": False}, "Montant doit rester actif"),
         ({"code": "MONTANT", "poids": "0"}, "Montant doit rester actif"),
+        # Pointage automatique (16/11/2026) : de 1 à 10 confirmations, en nombre entier
+        ({"code": "POINTAGE_CONFIRMATIONS", "poids": "0", "tolerance": "0"}, "entre 1 et 10"),
+        ({"code": "POINTAGE_CONFIRMATIONS", "poids": "0", "tolerance": "11"}, "entre 1 et 10"),
+        ({"code": "POINTAGE_CONFIRMATIONS", "poids": "0", "tolerance": "2.5"}, "entre 1 et 10"),
+        ({"code": "POINTAGE_CONFIRMATIONS", "poids": "0"}, "entre 1 et 10"),
     ],
 )
 def test_wrong_values_are_refused(client, admin, regle, message):
@@ -100,6 +106,29 @@ def test_a_refused_batch_changes_nothing(client, admin, db):
     assert response.status_code == 409
     libelle = db.scalar(select(ReconciliationRule).where(ReconciliationRule.code == "LIBELLE"))
     assert libelle.poids == Decimal("20.00")
+
+
+def test_the_automatic_pointage_setting_is_listed_last_changed_and_audited(client, admin, db):
+    """16/11/2026 : confirmations avant pointage automatique, 1 par défaut, lues par l'import."""
+    body = client.get("/api/parametres/rapprochement", headers=admin).json()
+    assert (body[-1]["code"], body[-1]["genre"], body[-1]["tolerance"]) == (
+        "POINTAGE_CONFIRMATIONS",
+        "pointage",
+        "1.000000",
+    )
+    assert parametres_repository.confirmations_pointage(db) == 1
+
+    response = envoyer(
+        client, admin, {"code": "POINTAGE_CONFIRMATIONS", "poids": "0", "tolerance": "3"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert parametres_repository.confirmations_pointage(db) == 3
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "modification_parametre"))
+    assert (audit.ancienne_valeur["tolerance"], audit.nouvelle_valeur["tolerance"]) == (
+        "1.000000",
+        "3",
+    )
 
 
 def test_unknown_rules_are_refused(client, admin):

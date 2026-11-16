@@ -1,6 +1,6 @@
 "use client";
 
-import { FileSpreadsheet, SlidersHorizontal, Trash2 } from "lucide-react";
+import { FileSpreadsheet, SlidersHorizontal, Trash2, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/Button";
@@ -11,7 +11,14 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
-import { brouillonDe, reglesModifiees } from "@/lib/parametres";
+import {
+  brouillonDe,
+  confirmationsValides,
+  nombreSaisi,
+  reglePointage,
+  reglesGrille,
+  reglesModifiees,
+} from "@/lib/parametres";
 import { formatDateTime } from "@/lib/statements";
 import { deleteMapping, getGrille, getMappings, saveGrille } from "@/services/parametres";
 import type { ModeleMapping, Regle, RegleInput } from "@/types/parametres";
@@ -34,11 +41,13 @@ const SECTIONS: [Regle["genre"], string, string][] = [
   ],
 ];
 
-/** Paramètres (P16.3) : grille du rapprochement et modèles de mapping d'import. */
+/** Paramètres (P16.3) : grille du rapprochement, pointage automatique (16/11/2026) et modèles de
+ * mapping d'import. */
 export function ParametresTab() {
   return (
     <div className="space-y-6">
       <GrilleCard />
+      <PointageCard />
       <MappingsCard />
     </div>
   );
@@ -56,8 +65,9 @@ function GrilleCard() {
   useEffect(() => {
     let annule = false;
     getGrille().then(
-      (r) => {
+      (toutes) => {
         if (annule) return;
+        const r = reglesGrille(toutes);
         setRegles(r);
         setBrouillon(brouillonDe(r));
         setErreur(false);
@@ -83,7 +93,7 @@ function GrilleCard() {
   async function enregistrer() {
     setEnvoi(true);
     try {
-      const resultat = await saveGrille(modifiees);
+      const resultat = reglesGrille(await saveGrille(modifiees));
       setRegles(resultat);
       setBrouillon(brouillonDe(resultat));
       toast("Grille enregistrée : elle vaut pour le prochain lancement du rapprochement.");
@@ -192,6 +202,112 @@ function GrilleCard() {
               {envoi ? "Enregistrement..." : "Enregistrer la grille"}
             </Button>
           </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Pointage automatique (16/11/2026) : nombre de fois qu'un libellé doit avoir reçu le même
+ * pointage à l'import pour le recevoir ensuite tout seul. */
+function PointageCard() {
+  const { toast } = useToast();
+  const [regle, setRegle] = useState<Regle | null>(null);
+  const [saisie, setSaisie] = useState("");
+  const [etat, setEtat] = useState<"chargement" | "pret" | "erreur">("chargement");
+  const [envoi, setEnvoi] = useState(false);
+  const [version, setVersion] = useState(0);
+  const recharger = useCallback(() => setVersion((n) => n + 1), []);
+
+  useEffect(() => {
+    let annule = false;
+    getGrille().then(
+      (toutes) => {
+        if (annule) return;
+        const r = reglePointage(toutes);
+        setRegle(r);
+        setSaisie(r ? nombreSaisi(r.tolerance) : "");
+        setEtat("pret");
+      },
+      () => {
+        if (!annule) setEtat("erreur");
+      },
+    );
+    return () => {
+      annule = true;
+    };
+  }, [version]);
+
+  const initiale = regle ? nombreSaisi(regle.tolerance) : "";
+  const valide = confirmationsValides(saisie);
+  const modifiee = saisie.trim() !== initiale;
+
+  async function enregistrer() {
+    if (!regle) return;
+    setEnvoi(true);
+    try {
+      const r = reglePointage(
+        await saveGrille([
+          {
+            code: regle.code,
+            poids: nombreSaisi(regle.poids),
+            tolerance: saisie.trim(),
+            actif: true,
+          },
+        ]),
+      );
+      setRegle(r);
+      setSaisie(r ? nombreSaisi(r.tolerance) : "");
+      toast("Réglage enregistré : il vaut pour le prochain import de relevé.");
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : "Enregistrement impossible.", "error");
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <Card title="Pointage automatique" icon={Wand2}>
+      <p className="mb-4 max-w-3xl text-sm text-simtis-muted">
+        À l&apos;import d&apos;un relevé, une opération reçoit seule le pointage déjà donné à son
+        libellé (numéros et dates ignorés) au moins ce nombre de fois. Le pointage reste modifiable
+        dans l&apos;aperçu avant la confirmation.
+      </p>
+      {etat === "erreur" ? (
+        <ErrorState message="Impossible de charger le réglage." onRetry={recharger} />
+      ) : etat === "chargement" ? (
+        <LoadingState rows={1} />
+      ) : regle === null ? (
+        <p className="text-sm text-simtis-muted">Réglage absent : une confirmation suffit.</p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border border-simtis-border px-4 py-3">
+          <div className="min-w-[220px] flex-1">
+            <p className="text-sm font-medium text-simtis-text">{regle.libelle}</p>
+            <p className="font-mono text-[11px] text-simtis-muted">
+              {regle.code} · modifié le {formatDateTime(regle.updated_at)}
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-simtis-muted">
+            <NumberInput
+              aria-label={regle.libelle}
+              className="h-9 w-20"
+              inputMode="numeric"
+              value={saisie}
+              invalid={saisie.trim() !== "" && !valide}
+              onChange={(e) => setSaisie(e.target.value)}
+            />
+            fois (1 à 10)
+          </label>
+          <Button
+            variant="secondary"
+            onClick={() => setSaisie(initiale)}
+            disabled={envoi || !modifiee}
+          >
+            Annuler
+          </Button>
+          <Button onClick={enregistrer} disabled={envoi || !modifiee || !valide}>
+            {envoi ? "Enregistrement..." : "Enregistrer"}
+          </Button>
         </div>
       )}
     </Card>

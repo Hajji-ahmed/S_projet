@@ -1,12 +1,66 @@
-"""Catégories de pointage du métier (décision du 08/10/2026), libellés exactement comme fournis.
+"""Catégories de pointage du métier, libellés exactement comme fournis.
 
-Elles remplacent les trois types du 02/10/2026 (Encaissement, Décaissement, Frais bancaires), qui
-restent en base désactivés. Leur code interne est tiré du libellé (`pointage_code`). La migration 0017
-en contient une copie figée : une nouvelle catégorie s'ajoute ici (seeds) ; elle sera créée au
-prochain démarrage.
+Liste du 16/11/2026 (« Pointage position.xlsx », 46 catégories + « À analyser ») : elle remplace les
+74 catégories du 08/10/2026 (`ANCIENNES_CATEGORIES`), désactivées par la migration 0055 et gardées sur
+les opérations déjà pointées. Les trois types du 02/10/2026 (Encaissement, Décaissement, Frais
+bancaires) restent eux aussi désactivés. Le code interne est tiré du libellé (`pointage_code`). Les
+migrations 0017 et 0055 en contiennent une copie figée : une nouvelle catégorie s'ajoute ici (seeds) ;
+elle sera créée au prochain démarrage.
 """
 
 CATEGORIES_POINTAGE: tuple[str, ...] = (
+    "Solde à nouveau",
+    "Cheque interne compte à compte",
+    "Real Time Gross Settlement (RTGS) compte à compte",
+    "Mouvement compte courant associé encaissé",
+    "Mouvement compte courant associé décaissé",
+    "Chèque client encaissé",
+    "Effet client encaissé",
+    "Versement client encaissé",
+    "Virement client encaissé",
+    "Chèque intra-groupe prêt décaissé",
+    "Chèque intra-groupe emprunt encaissé",
+    "Rapatriement client etranger encaissé",
+    "Impayé / rejet client décaissé",
+    "Effet client escompté",
+    "Effet intra-groupe emprunt escompté",
+    "Effet intra-groupe emprunt encaissé",
+    "Autres valeurs encaissées",
+    "Déblocage crédit moyen terme (CMT) encaissé",
+    "Échéance Crédit moyen terme (CMT) décaissé",
+    "Tombée refinancement en devise décaissé",
+    "Tombée refinancement en devise avec interet décaissé",
+    "Tombée refinancement en MAD décaissé",
+    "Déblocage crédit refinancement en MAD encaissé",
+    "Déblocage crédit spot encaissé",
+    "Échéance crédit spot décaissé",
+    "Échéance crédit spot avec interet décaissé",
+    "Échéance leasing décaissé",
+    "Allimentation caisse SIMTIS encaissé",
+    "Autres valeurs décaissées",
+    "Agios d'escompte décaissé",
+    "Agios d'échelle décaissé",
+    "Intérêts débiteurs refinancement en devise décaissé",
+    "Intérêts débiteurs refinancement en MAD décaissé",
+    "Intérêts débiteurs crédit spot décaissé",
+    "Droit de timbre décaissé",
+    "Commissions et frais bancaires décaissé",
+    "Tva/commissions et frais bancaires décaissé",
+    "Paiement par cartes bancaires décaissé",
+    "Restitutions bancaires encaissé",
+    "Effet fournisseur décaissé",
+    "Chéque fournisseur décaissé",
+    "Virement fournisseur décaissé",
+    "Virement fournisseur étranger décaissé",
+    "Virement électronique décaissé",
+    "Impôts et taxes DGI décaissé",
+    "Charges sociales décaissé",
+    "À analyser",
+)
+
+# Les 74 catégories du 08/10/2026, désactivées le 16/11/2026 (migration 0055) : elles restent sur les
+# opérations déjà pointées, ne sont plus proposées et ne nourrissent plus la mémoire
+ANCIENNES_CATEGORIES: tuple[str, ...] = (
     "A NOUVEAU",
     "A voir",
     "AGIOS",

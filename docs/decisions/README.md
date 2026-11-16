@@ -7,7 +7,7 @@ Ces textes ont été déplacés tels quels depuis `CLAUDE.md` le 04/11/2026, en 
 | Fichier | Contenu |
 |---|---|
 | [position-bancaire.md](position-bancaire.md) | Tableaux Banques, Prévisions (lignes datées, formules), Devises (EUR / USD en lecture), graphique « Évolution de la position » |
-| [releves.md](releves.md) | Import des relevés : pointage (74 catégories), sens par le solde, lignes SOLDE AU, relevé continu par compte, aperçu modifiable, `.xls`, gros fichiers, abréviations d'en-têtes, relevés sans solde, PDF, libellés BP collés |
+| [releves.md](releves.md) | Import des relevés : pointage (liste du 16/11/2026, mémoire sans chiffres, seuil N), sens par le solde, lignes SOLDE AU, relevé continu par compte, aperçu modifiable, `.xls`, gros fichiers, abréviations d'en-têtes, relevés sans solde, PDF, libellés BP collés |
 | [operations-en-cours.md](operations-en-cours.md) | Opérations « (*) », fichiers d'opérations en cours séparés, suppression à la main, complément AWB, règle de solde |
 | [ecritures-sage.md](ecritures-sage.md) | Import Sage (P10), journaux par compte, solde comptable, plusieurs comptes comptables, reprise des échéances |
 | [saisies-suppressions-reprises.md](saisies-suppressions-reprises.md) | Opérations et écritures manuelles, suppression d'un import, reprise d'un état de rapprochement Excel (BP, BMCE) |

@@ -6,8 +6,11 @@ from decimal import Decimal
 import pytest
 
 from app.services.normalization_service import (
+    CREDIT,
+    DEBIT,
     balance_line_kind,
     cle_doublon,
+    cle_memoire,
     clean_libelle,
     extract_reference,
     guess_pointage,
@@ -17,6 +20,7 @@ from app.services.normalization_service import (
     parse_amount,
     parse_date,
     pointage_code,
+    sens_categorie,
 )
 
 
@@ -114,54 +118,82 @@ def test_reference_is_extracted_from_the_label(libelle, reference):
     assert extract_reference(libelle) == reference
 
 
-CATEGORIES = (
-    "A voir",
-    "AGIOS",
-    "AGIOS D'ECHELLE",
-    "CNSS",
-    "VIR CNSS",
-    "COM",
-    "FRAIS",
-    "FRAIS D'APPROCHE",
-    "LA PAIE",
-    "INTERET",
-    "RESTITUTION INTERETS DEBITEURS/FC",
-    "REMBOURSEMENT PRÊT",
-    "SIMTIS-TEFIL",
-    "TVA",
-)
+TIMBRE = "Droit de timbre décaissé"
+COMMISSIONS = "Commissions et frais bancaires décaissé"
+TVA = "Tva/commissions et frais bancaires décaissé"
 
 
 @pytest.mark.parametrize(
-    ("libelle", "expected"),
+    ("libelle", "sens", "expected"),
     [
-        ("AGIOS TRIMESTRE 3", "AGIOS"),
-        ("Agios d'échelle T3", "AGIOS D'ECHELLE"),  # le plus long nom gagne
-        ("VIR CNSS SEPTEMBRE", "VIR CNSS"),
-        ("PRLV CNSS", "CNSS"),
-        ("COMMISSION SUR REMISE", "COM"),  # synonyme
-        ("COM/VIREMENT", "COM"),  # la ponctuation sépare les mots
-        ("FRAIS TENUE DE COMPTE", "FRAIS"),
-        ("FRAIS D'APPROCHE IMPORT", "FRAIS D'APPROCHE"),
-        ("VIR SALAIRES SEPT", "LA PAIE"),
-        ("INTERETS DEBITEURS", "INTERET"),
-        ("RESTITUTION INTERETS DEBITEURS/FC", "RESTITUTION INTERETS DEBITEURS/FC"),
-        ("REMBOURSEMENT PRET 12", "REMBOURSEMENT PRÊT"),
-        ("VIREMENT SIMTIS TEFIL", "SIMTIS-TEFIL"),
-        ("COMPTE COURANT", None),  # « COM » en mot entier seulement
+        # Mots-clés sûrs (16/11/2026), dans l'ordre de priorité
+        ("TAXE SUR VALEUR AJOUTEE", DEBIT, TVA),
+        ("TVA SUR COMMISSION", DEBIT, TVA),  # la TVA passe avant la commission
+        ("DROITS DE TIMBRE", DEBIT, TIMBRE),
+        ("DT D'ENREGISTREMENT", DEBIT, TIMBRE),
+        ("TIMBRE/REM LCN REF 1234", DEBIT, TIMBRE),
+        ("FRAIS DE TIMBRE", DEBIT, TIMBRE),  # le timbre passe avant les frais
+        ("AGIOS D'ESCOMPTE T3", DEBIT, "Agios d'escompte décaissé"),
+        ("AGIOS TRIMESTRE 3", DEBIT, "Agios d'échelle décaissé"),
+        ("COMMISSION SUR REMISE", DEBIT, COMMISSIONS),
+        ("COM/VIREMENT", DEBIT, COMMISSIONS),  # la ponctuation sépare les mots
+        ("COM.ADOBE", DEBIT, COMMISSIONS),
+        ("FRAIS TENUE DE COMPTE", DEBIT, COMMISSIONS),
+        ("PRLV CNSS SEPTEMBRE", DEBIT, "Charges sociales décaissé"),
+        ("VIREMENT DGI IS", DEBIT, "Impôts et taxes DGI décaissé"),
+        ("COMMISSION SUR REMISE", None, COMMISSIONS),  # sens inconnu : toutes les catégories
+        # Une catégorie « … décaissé » ne va pas à un crédit (16/11/2026)
+        ("RESTITUTION COMMISSION", CREDIT, None),
+        ("AGIOS RESTITUES", CREDIT, None),
+        # Le nom d'une catégorie dans le libellé, avec le sens
+        ("VIREMENT CLIENT ENCAISSE", CREDIT, "Virement client encaissé"),
+        ("VIREMENT CLIENT ENCAISSE", DEBIT, None),
+        ("COMPTE COURANT", DEBIT, None),  # « COM » en mot entier seulement
         # Une fin d'adresse web ne compte pas (11/11/2026) : « STE.BIS.COM » n'est pas une COM
-        ("CHEQUE N 5100983 REMIS PAR CAM EN FAVEUR DE STE.BIS.COM", None),
-        ("PAIEMENT SITE.MA", None),
-        ("COM.ADOBE", "COM"),
-        ("FRAISIER SA", None),
-        ("A VOIR AVEC LA BANQUE", None),  # « A voir » n'est jamais automatique
-        ("VIR CLIENT ATLAS", None),
-        ("", None),
-        (None, None),
+        ("CHEQUE N 5100983 REMIS PAR CAM EN FAVEUR DE STE.BIS.COM", DEBIT, None),
+        ("PAIEMENT SITE.MA", DEBIT, None),
+        ("FRAISIER SA", DEBIT, None),
+        # « À analyser » et « Solde à nouveau » ne sont jamais automatiques
+        ("A ANALYSER AVEC LA BANQUE", DEBIT, None),
+        ("SOLDE A NOUVEAU", CREDIT, None),
+        ("VIR CLIENT ATLAS", CREDIT, None),
+        ("", DEBIT, None),
+        (None, None, None),
     ],
 )
-def test_pointage_is_the_category_named_in_the_label(libelle, expected):
-    assert guess_pointage(libelle, CATEGORIES) == expected
+def test_pointage_comes_from_a_category_name_or_a_safe_keyword(libelle, sens, expected):
+    from app.seeds.pointages import CATEGORIES_POINTAGE
+
+    assert guess_pointage(libelle, CATEGORIES_POINTAGE, sens) == expected
+
+
+def test_old_categories_are_never_guessed_once_inactive():
+    """La liste ne reçoit que les catégories actives : sans la nouvelle, rien n'est proposé."""
+    assert guess_pointage("COMMISSION SUR REMISE", ("COM", "FRAIS"), DEBIT) is None
+
+
+@pytest.mark.parametrize(
+    ("libelle", "cle"),
+    [
+        ("CHQ 5100983 REMIS PAR SOFT RETAIL", "CHQ REMIS PAR SOFT RETAIL"),
+        ("Chq 5100990 remis par Soft-Retail", "CHQ REMIS PAR SOFT RETAIL"),
+        ("VIR RECU 01/10/2026 REF20261001 ATLAS", "VIR RECU ATLAS"),
+        ("FRAIS 3T2026", "FRAIS"),
+        ("123456 01/10", ""),
+        (None, ""),
+    ],
+)
+def test_memory_key_ignores_words_with_digits(libelle, cle):
+    assert cle_memoire(libelle) == cle
+
+
+def test_category_direction_comes_from_its_last_word():
+    assert sens_categorie("Virement fournisseur décaissé") == DEBIT
+    assert sens_categorie("Autres valeurs décaissées") == DEBIT
+    assert sens_categorie("Chèque client encaissé") == CREDIT
+    assert sens_categorie("Autres valeurs encaissées") == CREDIT
+    assert sens_categorie("Effet client escompté") is None
+    assert sens_categorie("À analyser") is None
 
 
 def test_label_key_and_code_ignore_accents_case_and_punctuation():
@@ -170,13 +202,16 @@ def test_label_key_and_code_ignore_accents_case_and_punctuation():
     assert pointage_code("REMBOURSEMENT PRÊT") == "REMBOURSEMENT_PRET"
 
 
-def test_the_74_categories_have_distinct_codes_that_fit_the_column():
-    from app.seeds.pointages import CATEGORIES_POINTAGE
+def test_the_pointage_list_has_distinct_codes_that_fit_the_column():
+    """Liste du 16/11/2026 : 46 catégories + « À analyser », aucun code repris de l'ancienne."""
+    from app.seeds.pointages import ANCIENNES_CATEGORIES, CATEGORIES_POINTAGE
 
     codes = [pointage_code(libelle) for libelle in CATEGORIES_POINTAGE]
-    assert len(CATEGORIES_POINTAGE) == 74
-    assert len(set(codes)) == 74
+    assert len(CATEGORIES_POINTAGE) == 47
+    assert len(set(codes)) == 47
     assert max(len(code) for code in codes) <= 60
+    assert CATEGORIES_POINTAGE[-1] == "À analyser"
+    assert not set(codes) & {pointage_code(libelle) for libelle in ANCIENNES_CATEGORIES}
 
 
 @pytest.mark.parametrize(

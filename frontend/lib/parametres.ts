@@ -29,3 +29,20 @@ export function reglesModifiees(regles: Regle[], brouillon: RegleInput[]): Regle
     );
   });
 }
+
+/** Règles de la grille de rapprochement : sans le réglage du pointage automatique, qui a sa carte
+ * (16/11/2026). */
+export function reglesGrille(regles: Regle[]): Regle[] {
+  return regles.filter((regle) => regle.genre !== "pointage");
+}
+
+/** Réglage « Confirmations avant pointage automatique » (16/11/2026), null s'il manque. */
+export function reglePointage(regles: Regle[]): Regle | null {
+  return regles.find((regle) => regle.genre === "pointage") ?? null;
+}
+
+/** Nombre de confirmations accepté : un entier de 1 à 10 (l'API le vérifie aussi). */
+export function confirmationsValides(saisie: string): boolean {
+  const texte = saisie.trim();
+  return /^\d+$/.test(texte) && Number(texte) >= 1 && Number(texte) <= 10;
+}

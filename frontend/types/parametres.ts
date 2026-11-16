@@ -4,8 +4,9 @@ export type Regle = {
   id: number;
   code: string;
   libelle: string;
-  /** critere : points + actif (DATE : + jours) ; seuil : points ; fenetre : jours. */
-  genre: "critere" | "seuil" | "fenetre" | "autre";
+  /** critere : points + actif (DATE : + jours) ; seuil : points ; fenetre : jours ; pointage
+   * (16/11/2026) : confirmations avant pointage automatique, dans `tolerance`. */
+  genre: "critere" | "seuil" | "fenetre" | "pointage" | "autre";
   poids: string;
   tolerance: string | null;
   actif: boolean;

@@ -1056,6 +1056,49 @@ def test_a_commercial_transfer_or_documentary_remittance_is_never_a_fee(client, 
     assert {virement.id, remise.id, cheque.id} <= {op["id"] for op in tous["operations"]}
 
 
+FRAIS_NOUVELLE_LISTE = (
+    "AGIOS_D_ESCOMPTE_DECAISSE",
+    "AGIOS_D_ECHELLE_DECAISSE",
+    "INTERETS_DEBITEURS_REFINANCEMENT_EN_DEVISE_DECAISSE",
+    "INTERETS_DEBITEURS_REFINANCEMENT_EN_MAD_DECAISSE",
+    "INTERETS_DEBITEURS_CREDIT_SPOT_DECAISSE",
+    "DROIT_DE_TIMBRE_DECAISSE",
+    "COMMISSIONS_ET_FRAIS_BANCAIRES_DECAISSE",
+    "TVA_COMMISSIONS_ET_FRAIS_BANCAIRES_DECAISSE",
+    "PAIEMENT_PAR_CARTES_BANCAIRES_DECAISSE",
+    "RESTITUTIONS_BANCAIRES_ENCAISSE",
+)
+
+
+def test_the_fee_pointages_of_the_new_list_are_to_be_booked(client, comptable, db):
+    """16/11/2026 : les 10 pointages de frais de la nouvelle liste, dont Paiement par cartes
+    bancaires et Restitutions bancaires ; un virement fournisseur n'en est pas un."""
+    from app.models import PointageType
+
+    compte = account(db)
+    frais = []
+    for code in FRAIS_NOUVELLE_LISTE:
+        pointage = db.scalar(select(PointageType).filter_by(code=code))
+        montant = "45" if code.endswith("_ENCAISSE") else "-45"
+        # Libellé sans mot de frais : seul le pointage les classe
+        frais.append(
+            operation(
+                db, compte, montant=montant, libelle="OPERATION X", pointage_type_id=pointage.id
+            )
+        )
+    virement = db.scalar(select(PointageType).filter_by(code="VIREMENT_FOURNISSEUR_DECAISSE"))
+    autre = operation(
+        db, compte, montant="-45", libelle="OPERATION X", pointage_type_id=virement.id
+    )
+    url = "/api/reconciliation/transactions"
+    params = {"company_id": company(db).id, "a_comptabiliser": "true"}
+
+    body = client.get(url, params=params, headers=comptable).json()
+
+    assert {op["id"] for op in body["operations"]} == {tx.id for tx in frais}
+    assert autre.id not in {op["id"] for op in body["operations"]}
+
+
 def test_a_reconciled_fee_is_no_longer_to_be_booked(client, comptable, db):
     compte = account(db)
     frais = operation(db, compte, montant="-25", libelle="COMMISSION")

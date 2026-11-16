@@ -1114,3 +1114,52 @@ def test_migration_0051_puts_the_saved_lines_not_yet_exported_on_the_debit(empty
     with engine.connect() as connection:
         sens = dict(connection.execute(text("SELECT id, sens FROM frais_lignes")).all())
     assert sens == {1: "Crédit", 2: "Débit", 3: "Crédit"}
+
+
+def test_migration_0055_switches_to_the_new_pointage_list(empty_database):
+    """Décision du 16/11/2026 : la liste de « Pointage position.xlsx » remplace les 74 catégories,
+    désactivées (gardées pour les opérations déjà pointées), et la règle N = 1 est créée."""
+    from app.seeds.pointages import CATEGORIES_POINTAGE
+    from app.services.normalization_service import pointage_code
+
+    config, engine = empty_database
+    command.upgrade(config, "0054")
+    with engine.connect() as connection:
+        anciens = {
+            row[0]
+            for row in connection.execute(text("SELECT code FROM pointage_types WHERE actif"))
+        }
+    assert len(anciens) == 74
+
+    command.upgrade(config, "0055")
+
+    with engine.connect() as connection:
+        actifs = dict(
+            connection.execute(text("SELECT code, libelle FROM pointage_types WHERE actif")).all()
+        )
+        inactifs = {
+            row[0]
+            for row in connection.execute(text("SELECT code FROM pointage_types WHERE NOT actif"))
+        }
+        regle = connection.execute(
+            text(
+                "SELECT critere, tolerance, actif FROM reconciliation_rules "
+                "WHERE code = 'POINTAGE_CONFIRMATIONS'"
+            )
+        ).one()
+    assert actifs == {pointage_code(libelle): libelle for libelle in CATEGORIES_POINTAGE}
+    assert anciens <= inactifs
+    assert tuple(regle) == ("pointage", D("1"), True)
+
+    command.downgrade(config, "0054")
+
+    with engine.connect() as connection:
+        actifs_apres = {
+            row[0]
+            for row in connection.execute(text("SELECT code FROM pointage_types WHERE actif"))
+        }
+        regles = connection.scalar(
+            text("SELECT count(*) FROM reconciliation_rules WHERE code = 'POINTAGE_CONFIRMATIONS'")
+        )
+    assert actifs_apres == anciens
+    assert regles == 0

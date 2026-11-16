@@ -816,9 +816,17 @@ def active_matches_by_entry(db: Session, entry_ids: list[int]) -> dict[int, Reco
 # Pointages des frais bancaires (code interne = `pointage_code` du libellé de la catégorie)
 # CERTIFICATION_CHEQUE retiré le 21/10/2026 : l'opération porte le montant du chèque certifié
 # (57 847,94…), pas un frais
+# Liste du 16/11/2026 : les anciens codes restent pour les opérations déjà pointées ; Paiement par
+# cartes bancaires et Restitutions bancaires deviennent des frais (décision du 16/11/2026)
 POINTAGES_FRAIS = (
     "COM", "DROIT", "TVA", "FRAIS", "AGIOS", "AGIOS_D_ECHELLE", "INTERET", "TCA",
     "FRAIS_RETENUE_A_LA_SOURCE",
+    "AGIOS_D_ESCOMPTE_DECAISSE", "AGIOS_D_ECHELLE_DECAISSE",
+    "INTERETS_DEBITEURS_REFINANCEMENT_EN_DEVISE_DECAISSE",
+    "INTERETS_DEBITEURS_REFINANCEMENT_EN_MAD_DECAISSE",
+    "INTERETS_DEBITEURS_CREDIT_SPOT_DECAISSE", "DROIT_DE_TIMBRE_DECAISSE",
+    "COMMISSIONS_ET_FRAIS_BANCAIRES_DECAISSE", "TVA_COMMISSIONS_ET_FRAIS_BANCAIRES_DECAISSE",
+    "PAIEMENT_PAR_CARTES_BANCAIRES_DECAISSE", "RESTITUTIONS_BANCAIRES_ENCAISSE",
 )  # fmt: skip
 # Sans pointage : mots du libellé (droit de timbre, TVA, commission, frais, agios, intérêts).
 # PRELEV / PRLV retirés le 21/10/2026 : un prélèvement (DGI, leasing, assurance) ou « FINEX

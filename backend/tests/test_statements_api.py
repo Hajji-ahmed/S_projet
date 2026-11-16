@@ -22,6 +22,7 @@ from app.models import (
     Company,
     ImportBatch,
     PointageType,
+    ReconciliationRule,
 )
 from app.repositories import import_repository
 from app.services.position_service import business_today
@@ -162,7 +163,10 @@ def test_lines_are_normalised(client, tresorerie, account, db):
     assert cheque["reference"] == "1234567"
     assert cheque["pointage_libelle"] is None
     assert fees["libelle"] == "FRAIS TENUE DE COMPTE"
-    assert (fees["pointage_libelle"], fees["pointage_auto"]) == ("FRAIS", True)
+    assert (fees["pointage_libelle"], fees["pointage_auto"]) == (
+        "Commissions et frais bancaires décaissé",
+        True,
+    )
     assert len({line["hash_ligne"] for line in body["lignes"]}) == 3
 
 
@@ -336,7 +340,13 @@ def test_unsigned_amount_takes_its_direction_from_the_balance(client, tresorerie
     ] == [
         ("VIR RECU ALPHA MODE", "0.00", "38500.00", "Valide", None),
         ("PRLV FOURNISSEUR TEXTILE", "12800.00", "0.00", "Valide", None),
-        ("COMMISSION BANCAIRE", "175.00", "0.00", "Valide", "COM"),  # synonyme
+        (
+            "COMMISSION BANCAIRE",
+            "175.00",
+            "0.00",
+            "Valide",
+            "Commissions et frais bancaires décaissé",
+        ),  # mot-clé
     ]
     assert body["resume"]["soldes_coherents"] is True
     assert (body["resume"]["total_debit"], body["resume"]["total_credit"]) == (
@@ -1040,26 +1050,45 @@ def test_excel_pdf_and_pending_files_keep_their_own_mapping(client, tresorerie, 
 def test_pointage_of_the_file_wins_and_is_guessed_otherwise(client, tresorerie, account, db):
     rows = [
         ["Date", "Libellé", "Débit", "Crédit", "Pointage"],
-        ["24/09/2026", "VIR INTERNE", 10, None, "tva"],  # le fichier l'emporte
-        ["24/09/2026", "DGI ACOMPTE", 20, None, "Virement interne"],  # inconnu → libellé
-        ["24/09/2026", "AGIOS D'ECHELLE T3", 30, None, None],  # vide → le plus long nom
+        ["24/09/2026", "VIR INTERNE", 10, None, "Charges sociales décaissé"],  # le fichier gagne
+        ["24/09/2026", "DGI ACOMPTE", 20, None, "Virement interne"],  # inconnu → mot-clé
+        ["24/09/2026", "AGIOS D'ESCOMPTE T3", 30, None, None],  # vide → mot-clé le plus précis
         ["24/09/2026", "VIR CLIENT", None, 40, None],  # rien de reconnu → sans pointage
+        ["24/09/2026", "VIR INTERNE", 50, None, "COM"],  # ancienne liste : inconnue → rien
     ]
 
     preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
     confirm(client, tresorerie, account.id, xlsx(("Relevé", rows)))
 
     assert [(line["pointage_libelle"], line["pointage_auto"]) for line in preview] == [
-        ("TVA", False),
-        ("DGI", True),  # une valeur inconnue ne bloque jamais la ligne
-        ("AGIOS D'ECHELLE", True),
+        ("Charges sociales décaissé", False),
+        ("Impôts et taxes DGI décaissé", True),  # une valeur inconnue ne bloque jamais la ligne
+        ("Agios d'escompte décaissé", True),
+        (None, False),
         (None, False),
     ]
     assert {line["statut"] for line in preview} == {"Valide"}
     assert [row.pointage_type_id for row in transactions(db, account)] == [
-        pointage_id(db, "TVA"),
-        pointage_id(db, "DGI"),
-        pointage_id(db, "AGIOS_D_ECHELLE"),
+        pointage_id(db, "CHARGES_SOCIALES_DECAISSE"),
+        pointage_id(db, "IMPOTS_ET_TAXES_DGI_DECAISSE"),
+        pointage_id(db, "AGIOS_D_ESCOMPTE_DECAISSE"),
+        None,
+        None,
+    ]
+
+
+def test_a_keyword_only_gives_a_category_of_the_line_direction(client, tresorerie, account):
+    """16/11/2026 : « Commissions … décaissé » va à un débit, jamais à un crédit."""
+    rows = [
+        ["Date", "Libellé", "Débit", "Crédit"],
+        ["24/09/2026", "COMMISSION SUR REMISE", 15, None],
+        ["24/09/2026", "RESTITUTION COMMISSION", None, 15],
+    ]
+
+    preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+
+    assert [line["pointage_libelle"] for line in preview] == [
+        "Commissions et frais bancaires décaissé",
         None,
     ]
 
@@ -1153,7 +1182,7 @@ def test_history_needs_a_company(client, tresorerie):
 def test_statement_transactions_are_listed_in_order(client, tresorerie, account, db):
     rows = [
         ["Date", "Libellé", "Débit", "Crédit", "Pointage"],
-        ["25/09/2026", "CHQ N° 1234567", "12 500,50", None, "Cheque de banque"],
+        ["25/09/2026", "CHQ N° 1234567", "12 500,50", None, "Chéque fournisseur décaissé"],
         ["24/09/2026", "VIR RECU", None, 50000, None],
     ]
     body = confirm(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()
@@ -1172,7 +1201,7 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
     assert second | {"id": 0} == {
         "id": 0,
         "societe": "Simtis",
-        "pointage": "Cheque de banque",
+        "pointage": "Chéque fournisseur décaissé",
         "banque": "CIH",
         "date_operation": "2026-09-25",
         "date_valeur": None,
@@ -1187,7 +1216,7 @@ def test_statement_transactions_are_listed_in_order(client, tresorerie, account,
         "montant": "-12500.50",
         "statut": "Non rapprochée",
         "origine": "Fichier",
-        "pointage_type_id": pointage_id(db, "CHEQUE_DE_BANQUE"),
+        "pointage_type_id": pointage_id(db, "CHEQUE_FOURNISSEUR_DECAISSE"),
         "code_rapprochement": None,
         "en_cours": False,
         "remplacee": False,
@@ -1239,7 +1268,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
             None,
             50000,
             1050000,
-            "encaissement client",
+            "virement client encaissé",
             "L-12",
             None,
         ],
@@ -1273,7 +1302,7 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
     ]
     assert values[1] == [
         "Simtis",
-        "ENCAISSEMENT CLIENT",
+        "Virement client encaissé",
         "CIH",
         datetime(2026, 9, 24),
         datetime(2026, 9, 24),
@@ -1285,8 +1314,8 @@ def test_export_is_the_standard_statement_in_excel(client, tresorerie, account):
         None,
         None,  # pas encore rapprochée
     ]
-    # Pointage inconnu du fichier : déduit du libellé (FRAIS) ; montants en vrais nombres
-    assert values[2][:3] == ["Simtis", "FRAIS", "CIH"]
+    # Pointage inconnu du fichier : déduit du libellé (mot-clé FRAIS) ; montants en vrais nombres
+    assert values[2][:3] == ["Simtis", "Commissions et frais bancaires décaissé", "CIH"]
     assert (values[2][6], values[2][8], values[2][10]) == (12.5, 1049987.5, "à justifier")
     assert sheet["D2"].number_format == "DD/MM/YYYY"
     assert sheet["H2"].number_format == "#,##0.00"
@@ -1649,12 +1678,15 @@ def test_malformed_lines(client, tresorerie, account, value, status):
 # --- Modification après l'import (champs métier) ---------------------------------------------------
 
 
+TVA_COMMISSIONS = "TVA_COMMISSIONS_ET_FRAIS_BANCAIRES_DECAISSE"
+
+
 def first_transaction(client, tresorerie, account, db) -> BankTransaction:
-    """Première opération du relevé STATEMENT, pointée « TVA » (le libellé ne nomme aucune
-    catégorie) pour que les tests de modification partent d'un pointage connu."""
+    """Première opération du relevé STATEMENT, pointée « Tva/commissions… » (le libellé ne nomme
+    aucune catégorie) pour que les tests de modification partent d'un pointage connu."""
     confirm(client, tresorerie, account.id, xlsx(("Relevé", STATEMENT)))
     transaction = transactions(db, account)[0]
-    transaction.pointage_type_id = pointage_id(db, "TVA")
+    transaction.pointage_type_id = pointage_id(db, TVA_COMMISSIONS)
     db.flush()
     return transaction
 
@@ -1667,7 +1699,7 @@ def patch(client, headers, transaction_id, body):
 
 def test_business_fields_can_be_changed_and_are_audited(client, tresorerie, account, db):
     transaction = first_transaction(client, tresorerie, account, db)
-    frais = pointage_id(db, "FRAIS")
+    frais = pointage_id(db, "COMMISSIONS_ET_FRAIS_BANCAIRES_DECAISSE")
 
     response = patch(
         client,
@@ -1683,14 +1715,14 @@ def test_business_fields_can_be_changed_and_are_audited(client, tresorerie, acco
     assert response.status_code == 200, response.text
     body = response.json()
     assert (body["pointage"], body["lettrage_escompte"], body["commentaire"], body["origine"]) == (
-        "FRAIS",
+        "Commissions et frais bancaires décaissé",
         "L-12",
         "Vu avec la banque",
         "Fichier",
     )
     [entry] = db.scalars(select(AuditLog).filter_by(action="modification_operation")).all()
     assert entry.ancienne_valeur == {
-        "pointage_type_id": pointage_id(db, "TVA"),
+        "pointage_type_id": pointage_id(db, TVA_COMMISSIONS),
         "lettrage_escompte": None,
         "commentaire": None,
     }
@@ -2011,18 +2043,40 @@ def test_ignored_lines_come_back_with_their_reason(client, tresorerie, account):
     assert [line["numero"] for line in body["lignes"]] == [3]
 
 
-# --- Catégories de pointage et mémoire (08/10/2026) -----------------------------------------------
+# --- Catégories de pointage et mémoire (08/10/2026, liste et règles du 16/11/2026) ---------------
+
+ENTETE = ["Date", "Libellé", "Débit", "Crédit"]
+
+
+def _pointe(client, tresorerie, db, account, libelle: str, code: str, jour: date) -> None:
+    """Une opération importée, puis pointée par Salma."""
+    rows = [ENTETE, [jour.strftime("%d/%m/%Y"), libelle, 100, None]]
+    # Le solde d'ouverture d'un import suivant vient du relevé précédent
+    ouverture = None if transactions(db, account) else "0"
+    response = confirm(
+        client, tresorerie, account.id, xlsx(("Relevé", rows)), solde_ouverture=ouverture
+    )
+    assert response.status_code == 201, response.text
+    operation = max(transactions(db, account), key=lambda tx: tx.id)
+    operation.pointage_type_id = pointage_id(db, code)
+    db.flush()
+
+
+def _pointage_propose(client, tresorerie, account, libelle: str) -> str | None:
+    rows = [ENTETE, ["03/09/2026", libelle, 900, None]]
+    lignes = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
+    return lignes[0]["pointage_libelle"]
 
 
 def test_pointage_is_remembered_per_label_within_the_company(client, tresorerie, account, db):
     """Un libellé déjà pointé par quelqu'un reprend le même pointage, avant les mots-clés."""
-    first = [["Date", "Libellé", "Débit", "Crédit"], ["01/09/2026", "PRLV ONEE  ", 500, None]]
+    first = [ENTETE, ["01/09/2026", "PRLV ONEE  ", 500, None]]
     confirm(client, tresorerie, account.id, xlsx(("Relevé", first)))
     [done] = transactions(db, account)
-    done.pointage_type_id = pointage_id(db, "REDEVANCE")  # choisi par un utilisateur
+    done.pointage_type_id = pointage_id(db, "AUTRES_VALEURS_DECAISSEES")  # choisi par Salma
     db.flush()
     rows = [
-        ["Date", "Libellé", "Débit", "Crédit"],
+        ENTETE,
         ["02/09/2026", "prlv onee", 600, None],  # même libellé, casse et espaces près
         ["02/09/2026", "PRLV ONEE TVA", 700, None],  # autre libellé : mot-clé
     ]
@@ -2030,9 +2084,96 @@ def test_pointage_is_remembered_per_label_within_the_company(client, tresorerie,
     preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", rows))).json()["lignes"]
 
     assert [(line["pointage_libelle"], line["pointage_auto"]) for line in preview] == [
-        ("REDEVANCE", True),
-        ("TVA", True),
+        ("Autres valeurs décaissées", True),
+        ("Tva/commissions et frais bancaires décaissé", True),
     ]
+
+
+def test_pointage_memory_ignores_cheque_numbers_and_dates(client, tresorerie, account, db):
+    """16/11/2026 : le n° de chèque et la date changent, le pointage de Salma se retrouve."""
+    _pointe(
+        client,
+        tresorerie,
+        db,
+        account,
+        "CHQ 5100983 DU 01/09 FOURNISSEUR ATLAS",
+        "CHEQUE_FOURNISSEUR_DECAISSE",
+        date(2026, 9, 1),
+    )
+
+    pointage = _pointage_propose(
+        client, tresorerie, account, "CHQ 5100990 DU 03/09 FOURNISSEUR ATLAS"
+    )
+
+    assert pointage == "Chéque fournisseur décaissé"
+
+
+def test_pointage_memory_waits_for_n_confirmations(client, tresorerie, account, db):
+    """Avec N = 2, un seul pointage de Salma ne suffit pas ; le deuxième rend le libellé
+    automatique (16/11/2026)."""
+    regle = db.scalar(
+        select(ReconciliationRule).where(ReconciliationRule.code == "POINTAGE_CONFIRMATIONS")
+    )
+    regle.tolerance = Decimal("2")
+    _pointe(
+        client,
+        tresorerie,
+        db,
+        account,
+        "VIR 0012 LOYER DEPOT",
+        "VIREMENT_FOURNISSEUR_DECAISSE",
+        date(2026, 9, 1),
+    )
+
+    assert _pointage_propose(client, tresorerie, account, "VIR 0013 LOYER DEPOT") is None
+
+    _pointe(
+        client,
+        tresorerie,
+        db,
+        account,
+        "VIR 0014 LOYER DEPOT",
+        "VIREMENT_FOURNISSEUR_DECAISSE",
+        date(2026, 9, 2),
+    )
+
+    assert (
+        _pointage_propose(client, tresorerie, account, "VIR 0013 LOYER DEPOT")
+        == "Virement fournisseur décaissé"
+    )
+
+
+def test_pointage_memory_gives_nothing_on_a_tie(client, tresorerie, account, db):
+    """Deux pointages différents autant de fois : rien n'est proposé (16/11/2026)."""
+    _pointe(
+        client,
+        tresorerie,
+        db,
+        account,
+        "VIR LOYER DEPOT",
+        "VIREMENT_FOURNISSEUR_DECAISSE",
+        date(2026, 9, 1),
+    )
+    _pointe(
+        client,
+        tresorerie,
+        db,
+        account,
+        "VIR LOYER DEPOT",
+        "VIREMENT_ELECTRONIQUE_DECAISSE",
+        date(2026, 9, 2),
+    )
+
+    assert _pointage_propose(client, tresorerie, account, "VIR LOYER DEPOT") is None
+
+
+def test_old_pointages_do_not_feed_the_memory(client, tresorerie, account, db):
+    """Les opérations pointées avec l'ancienne liste gardent leur pointage, mais ne le transmettent
+    plus (16/11/2026)."""
+    _pointe(client, tresorerie, db, account, "PRLV ONEE", "REDEVANCE", date(2026, 9, 1))
+
+    assert _pointage_propose(client, tresorerie, account, "PRLV ONEE") is None
+    assert db.scalar(select(PointageType.actif).filter_by(code="REDEVANCE")) is False
 
 
 def test_pointage_memory_never_crosses_companies(client, tresorerie, account, db):
@@ -2044,7 +2185,7 @@ def test_pointage_memory_never_crosses_companies(client, tresorerie, account, db
     first = [["Date", "Libellé", "Débit", "Crédit"], ["01/09/2026", "PRLV ONEE", 500, None]]
     confirm(client, tresorerie, other.id, xlsx(("Relevé", first)))
     [done] = transactions(db, other)
-    done.pointage_type_id = pointage_id(db, "REDEVANCE")
+    done.pointage_type_id = pointage_id(db, "AUTRES_VALEURS_DECAISSEES")
     db.flush()
 
     preview = analyse(client, tresorerie, account.id, xlsx(("Relevé", first))).json()["lignes"]

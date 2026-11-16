@@ -13,7 +13,8 @@ class RegleOut(BaseModel):
     id: int
     code: str
     libelle: str
-    # critere (points + actif ; DATE a aussi une tolérance en jours), seuil (points), fenetre (jours)
+    # critere (points + actif ; DATE a aussi une tolérance en jours), seuil (points), fenetre (jours),
+    # pointage (16/11/2026 : confirmations avant pointage automatique, dans `tolerance`)
     genre: str
     poids: Decimal
     tolerance: Decimal | None

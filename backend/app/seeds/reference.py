@@ -42,8 +42,8 @@ CURRENCIES = [
     ("USD", "Dollar américain"),
 ]
 
-# Les 74 catégories du métier (décision du 08/10/2026) ; liste ouverte, l'administrateur pourra en
-# ajouter (P16). Code interne tiré du libellé.
+# Les catégories du métier (liste du 16/11/2026, qui remplace les 74 du 08/10/2026) ; code interne
+# tiré du libellé.
 POINTAGE_TYPES = [(pointage_code(libelle), libelle) for libelle in CATEGORIES_POINTAGE]
 
 # (code, libellé, sens par défaut). Le sens n'est renseigné que lorsqu'il est certain : Escompte,
@@ -99,6 +99,16 @@ RECONCILIATION_RULES = [
         "seuil",
         "10",
         None,
+        True,
+    ),
+    # Pointage automatique (16/11/2026) : un libellé reçoit le pointage que Salma lui a donné au moins
+    # N fois (valeur dans `tolerance`) ; lu par `import_service._pointages`, pas par le moteur
+    (
+        "POINTAGE_CONFIRMATIONS",
+        "Confirmations avant pointage automatique",
+        "pointage",
+        "0",
+        "1",
         True,
     ),
 ]

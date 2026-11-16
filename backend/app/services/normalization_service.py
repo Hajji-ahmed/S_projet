@@ -184,25 +184,48 @@ def extract_reference(libelle: str | None) -> str | None:
     return None
 
 
-# --- Pointage automatique (décision métier du 08/10/2026, remplace celle du 02/10/2026) -----------
+# --- Pointage automatique (16/11/2026, remplace les règles du 08/10/2026) -----------------------
 #
-# Les pointages sont les 74 catégories du métier (seeds, migration 0017). À l'import, une ligne sans
-# pointage dans le fichier prend, dans l'ordre : le pointage le plus fréquent des opérations de la
-# société qui ont le même libellé (mémoire, dans `import_service`), sinon la catégorie dont le nom
-# apparaît en mots entiers dans le libellé (`guess_pointage`), sinon rien. Jamais bloquant.
+# Les pointages sont la liste du métier du 16/11/2026 (seeds, migration 0055). À l'import, une ligne
+# sans pointage dans le fichier prend, dans l'ordre : le pointage que Salma a donné au moins N fois aux
+# opérations de la société de même libellé, chiffres ignorés (mémoire, `cle_memoire`, dans
+# `import_service`), sinon la catégorie nommée dans le libellé ou un mot-clé sûr (`guess_pointage`),
+# selon le sens de la ligne, sinon rien. Jamais bloquant.
 
-# Mots du libellé bancaire → catégorie, quand le nom de la catégorie n'y figure pas tel quel
-POINTAGE_SYNONYMES = {
-    "COMMISSION": "COM",
-    "COMMISSIONS": "COM",
-    "TENUE DE COMPTE": "FRAIS",
-    "SALAIRE": "LA PAIE",
-    "SALAIRES": "LA PAIE",
-    "INTERETS": "INTERET",
-    "REMBOURSEMENT PRET": "REMBOURSEMENT PRET",
+# Mots du libellé bancaire → catégorie, dans l'ordre de priorité : le premier qui figure en mots
+# entiers dans le libellé et dont la catégorie va avec le sens de la ligne gagne (« TVA SUR
+# COMMISSION » → TVA, « AGIOS D'ESCOMPTE » avant « AGIOS »).
+POINTAGE_MOTS_CLES: tuple[tuple[str, str], ...] = (
+    ("TAXE SUR VALEUR AJOUTEE", "Tva/commissions et frais bancaires décaissé"),
+    ("TVA", "Tva/commissions et frais bancaires décaissé"),
+    ("DROITS DE TIMBRE", "Droit de timbre décaissé"),
+    ("DROIT DE TIMBRE", "Droit de timbre décaissé"),
+    ("DT D ENREGISTREMENT", "Droit de timbre décaissé"),
+    ("TIMBRE", "Droit de timbre décaissé"),
+    ("AGIOS D ESCOMPTE", "Agios d'escompte décaissé"),
+    ("AGIOS", "Agios d'échelle décaissé"),
+    ("COMMISSIONS", "Commissions et frais bancaires décaissé"),
+    ("COMMISSION", "Commissions et frais bancaires décaissé"),
+    ("COM", "Commissions et frais bancaires décaissé"),
+    ("FRAIS", "Commissions et frais bancaires décaissé"),
+    ("TENUE DE COMPTE", "Commissions et frais bancaires décaissé"),
+    ("CNSS", "Charges sociales décaissé"),
+    ("DGI", "Impôts et taxes DGI décaissé"),
+)
+# Catégories que seul un humain choisit (« A voir » : ancienne liste)
+POINTAGE_JAMAIS_AUTO = frozenset({"A ANALYSER", "SOLDE A NOUVEAU", "A VOIR"})
+# Sens d'une ligne, pour `guess_pointage`
+DEBIT, CREDIT = "debit", "credit"
+_SENS_CATEGORIE = {
+    "DECAISSE": DEBIT,
+    "DECAISSES": DEBIT,
+    "DECAISSEE": DEBIT,
+    "DECAISSEES": DEBIT,
+    "ENCAISSE": CREDIT,
+    "ENCAISSES": CREDIT,
+    "ENCAISSEE": CREDIT,
+    "ENCAISSEES": CREDIT,
 }
-# Catégories que seul un humain choisit
-POINTAGE_JAMAIS_AUTO = frozenset({"A VOIR"})
 
 _NON_ALNUM = re.compile(r"[^A-Z0-9]+")
 
@@ -233,28 +256,52 @@ def _contains_words(text: str, words: str) -> bool:
     return bool(words) and f" {words} " in f" {text} "
 
 
-def guess_pointage(libelle: str | None, categories: Iterable[str]) -> str | None:
-    """Catégorie (libellé tel qu'en base) dont le nom, ou un synonyme, apparaît en mots entiers
-    dans le libellé bancaire ; la plus longue gagne (« AGIOS D'ECHELLE » avant « AGIOS »).
-    None si rien ne correspond. « A voir » n'est jamais choisi automatiquement. Une fin d'adresse
-    web collée à un mot ne compte pas (11/11/2026) : « STE.BIS.COM » ne donne pas COM."""
+def cle_memoire(libelle: str | None) -> str:
+    """Libellé de la mémoire du pointage (16/11/2026) : `label_key` sans les mots qui contiennent un
+    chiffre (n° de chèque, référence, date), pour que « CHQ 5100983 REMIS PAR X » et « CHQ 5100990
+    REMIS PAR X » se reconnaissent. Vide si le libellé n'a que des chiffres."""
+    return " ".join(mot for mot in label_key(libelle).split() if not any(c.isdigit() for c in mot))
+
+
+def sens_categorie(category: str) -> str | None:
+    """DEBIT pour une catégorie « … décaissé », CREDIT pour « … encaissé », sinon None (les deux)."""
+    mots = label_key(category).split()
+    return _SENS_CATEGORIE.get(mots[-1]) if mots else None
+
+
+def guess_pointage(
+    libelle: str | None, categories: Iterable[str], sens: str | None = None
+) -> str | None:
+    """Catégorie (libellé tel qu'en base) dont le nom apparaît en mots entiers dans le libellé
+    bancaire (la plus longue gagne), sinon celle du premier mot-clé sûr trouvé
+    (`POINTAGE_MOTS_CLES`) ; None si rien ne correspond. Avec `sens` (DEBIT / CREDIT), une catégorie
+    « … décaissé » ne va qu'à un débit et « … encaissé » qu'à un crédit (16/11/2026). « À analyser »
+    et « Solde à nouveau » ne sont jamais choisis automatiquement. Une fin d'adresse web collée à un
+    mot ne compte pas (11/11/2026) : « STE.BIS.COM » ne donne pas COM."""
     text = label_key(_FIN_ADRESSE_WEB.sub("", _plain(libelle or "")))
     if not text:
         return None
-    by_key = {label_key(category): category for category in categories}
+    by_key = {
+        label_key(category): category
+        for category in categories
+        if sens is None or sens_categorie(category) in (None, sens)
+    }
     by_key = {key: value for key, value in by_key.items() if key not in POINTAGE_JAMAIS_AUTO}
-    found: list[tuple[int, str, str]] = []
-    for key, category in by_key.items():
-        if _contains_words(text, key):
-            found.append((len(key), key, category))
-    for word, target in POINTAGE_SYNONYMES.items():
+    found = sorted(
+        (
+            (len(key), key, category)
+            for key, category in by_key.items()
+            if _contains_words(text, key)
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    if found:
+        return found[0][2]
+    for word, target in POINTAGE_MOTS_CLES:
         target_key = label_key(target)
         if target_key in by_key and _contains_words(text, label_key(word)):
-            found.append((len(label_key(word)), target_key, by_key[target_key]))
-    if not found:
-        return None
-    found.sort(key=lambda item: (-item[0], item[1]))
-    return found[0][2]
+            return by_key[target_key]
+    return None
 
 
 # --- Lignes de solde d'un relevé -------------------------------------------------------------------

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { brouillonDe, nombreSaisi, reglesModifiees } from "@/lib/parametres";
+import {
+  brouillonDe,
+  confirmationsValides,
+  nombreSaisi,
+  reglePointage,
+  reglesGrille,
+  reglesModifiees,
+} from "@/lib/parametres";
 import type { Regle } from "@/types/parametres";
 
 const regles: Regle[] = [
@@ -44,5 +51,31 @@ describe("paramètres", () => {
 
     brouillon[0] = { ...brouillon[0], actif: false };
     expect(reglesModifiees(regles, brouillon)).toHaveLength(2);
+  });
+
+  it("sépare le réglage du pointage automatique de la grille", () => {
+    const pointage: Regle = {
+      id: 3,
+      code: "POINTAGE_CONFIRMATIONS",
+      libelle: "Confirmations avant pointage automatique",
+      genre: "pointage",
+      poids: "0.00",
+      tolerance: "1.000000",
+      actif: true,
+      updated_at: "",
+    };
+    const toutes = [...regles, pointage];
+    expect(reglesGrille(toutes).map((r) => r.code)).toEqual(["DATE", "SEUIL_FORT"]);
+    expect(reglePointage(toutes)?.code).toBe("POINTAGE_CONFIRMATIONS");
+    expect(reglePointage(regles)).toBeNull();
+  });
+
+  it("accepte de 1 à 10 confirmations, en nombre entier", () => {
+    expect(confirmationsValides("1")).toBe(true);
+    expect(confirmationsValides(" 10 ")).toBe(true);
+    expect(confirmationsValides("0")).toBe(false);
+    expect(confirmationsValides("11")).toBe(false);
+    expect(confirmationsValides("2.5")).toBe(false);
+    expect(confirmationsValides("")).toBe(false);
   });
 });

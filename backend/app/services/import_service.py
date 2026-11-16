@@ -18,6 +18,7 @@ Règles :
 
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
@@ -44,14 +45,18 @@ from app.repositories import (
     account_repository,
     balance_repository,
     import_repository,
+    parametres_repository,
     reconciliation_repository,
 )
 from app.services import account_service, audit_service, import_file, position_service
 from app.services.errors import ConflictError, NotFoundError
 from app.services.import_file import Column, IgnoredLine, ImportField, Mapping
 from app.services.normalization_service import (
+    CREDIT,
+    DEBIT,
     balance_line_kind,
     cle_doublon,
+    cle_memoire,
     clean_libelle,
     clean_text,
     est_en_cours,
@@ -261,7 +266,7 @@ def _bank_matches(value: object, bank: Bank) -> bool:
 @dataclass
 class Pointages:
     """Types de pointage actifs : retrouvés par code ou libellé (sans casse ni accents), et la
-    mémoire de la société (libellé → pointage le plus fréquent)."""
+    mémoire de la société (libellé sans chiffres → pointage donné au moins N fois, 16/11/2026)."""
 
     by_key: dict[str, int]
     labels: dict[int, str]
@@ -270,13 +275,31 @@ class Pointages:
     def find(self, text: str | None) -> int | None:
         return self.by_key.get(normalize_header(text)) if text else None
 
-    def guess(self, libelle: str | None) -> int | None:
-        """Pointage d'une ligne sans valeur dans le fichier (décision du 08/10/2026) : la mémoire
-        de la société pour ce libellé, sinon la catégorie nommée dans le libellé, sinon None."""
-        remembered = self.memory.get(label_key(libelle))
+    def guess(self, libelle: str | None, sens: str | None = None) -> int | None:
+        """Pointage d'une ligne sans valeur dans le fichier (16/11/2026) : la mémoire de la société
+        pour ce libellé (chiffres ignorés), sinon la catégorie nommée dans le libellé ou un mot-clé
+        sûr qui va avec le sens de la ligne, sinon None."""
+        remembered = self.memory.get(cle_memoire(libelle))
         if remembered is not None:
             return remembered
-        return self.find(guess_pointage(libelle, self.labels.values()))
+        return self.find(guess_pointage(libelle, self.labels.values(), sens))
+
+
+def memoire_pointages(lignes: Iterable[tuple[str, int]], confirmations: int) -> dict[str, int]:
+    """Mémoire du pointage automatique (16/11/2026) : pour chaque libellé sans chiffres
+    (`cle_memoire`), le pointage le plus fréquent s'il a été donné au moins `confirmations` fois ;
+    rien en cas d'égalité entre deux pointages."""
+    counts: dict[str, Counter[int]] = defaultdict(Counter)
+    for libelle, pointage_type_id in lignes:
+        key = cle_memoire(libelle)
+        if key:
+            counts[key][pointage_type_id] += 1
+    memory: dict[str, int] = {}
+    for key, counter in counts.items():
+        (premier, nombre), *suite = counter.most_common(2)
+        if nombre >= confirmations and not (suite and suite[0][1] == nombre):
+            memory[key] = premier
+    return memory
 
 
 def _pointages(db: Session, company_id: int) -> Pointages:
@@ -286,16 +309,10 @@ def _pointages(db: Session, company_id: int) -> Pointages:
         by_key[normalize_header(item.code)] = item.id
         by_key[normalize_header(item.libelle)] = item.id
         labels[item.id] = item.libelle
-    counts: dict[str, Counter[int]] = defaultdict(Counter)
-    for libelle, pointage_type_id in import_repository.pointages_of_company(db, company_id):
-        key = label_key(libelle)
-        if key:
-            counts[key][pointage_type_id] += 1
-    # Le plus fréquent ; à égalité, le plus petit identifiant (résultat stable)
-    memory = {
-        key: min(counter.items(), key=lambda item: (-item[1], item[0]))[0]
-        for key, counter in counts.items()
-    }
+    memory = memoire_pointages(
+        import_repository.pointages_of_company(db, company_id),
+        parametres_repository.confirmations_pointage(db),
+    )
     return Pointages(by_key, labels, memory)
 
 
@@ -359,12 +376,13 @@ def _read_line(
     line.solde = amount("solde")
     reference = clean_text(cells.get("reference")) or extract_reference(line.libelle)
     line.reference = reference[:REFERENCE_MAX] if reference else None
-    # Pointage : la valeur connue du fichier l'emporte ; sinon la mémoire, puis le libellé
-    # (décision métier du 02/10/2026). Une valeur inconnue ne bloque jamais la ligne.
+    # Pointage : la valeur connue du fichier l'emporte ; sinon la mémoire, puis le libellé selon le
+    # sens de la ligne (16/11/2026). Une valeur inconnue ne bloque jamais la ligne.
     line.pointage = clean_text(cells.get("pointage"))
     line.pointage_type_id = pointages.find(line.pointage)
     if line.pointage_type_id is None:
-        line.pointage_type_id = pointages.guess(line.libelle)
+        sens = None if not line.montant else DEBIT if line.montant < 0 else CREDIT
+        line.pointage_type_id = pointages.guess(line.libelle, sens)
         line.pointage_auto = line.pointage_type_id is not None
     line.pointage_libelle = pointages.labels.get(line.pointage_type_id)
     line.lettrage_escompte = clean_text(cells.get("lettrage_escompte"))
@@ -428,6 +446,11 @@ def _direction_from_balances(
         if sens == "debit":
             line.debit, line.credit = line.credit, Decimal("0.00")
             line.montant = -line.debit
+            # Le pointage proposé suit le sens (16/11/2026) : il était cherché pour un crédit
+            if line.pointage_type_id is None or line.pointage_auto:
+                line.pointage_type_id = pointages.guess(line.libelle, DEBIT)
+                line.pointage_auto = line.pointage_type_id is not None
+                line.pointage_libelle = pointages.labels.get(line.pointage_type_id)
         elif sens is None:
             line.motifs.append(SENS_INTROUVABLE)
             line.statut = "Erreur"
