@@ -19,6 +19,30 @@ def list_companies(db: Session) -> list[Company]:
     return list(db.scalars(select(Company).where(Company.actif.is_(True)).order_by(Company.id)))
 
 
+def list_all_companies(db: Session) -> list[Company]:
+    """Toutes les sociétés, actives ou non (gestion par l'administrateur)."""
+    return list(db.scalars(select(Company).order_by(Company.id)))
+
+
+def company_by_code(db: Session, code: str) -> Company | None:
+    return db.scalar(select(Company).where(Company.code == code))
+
+
+def company_by_nom(db: Session, nom: str) -> Company | None:
+    """Recherche sans tenir compte de la casse."""
+    return db.scalar(select(Company).where(func.lower(Company.nom) == nom.lower()))
+
+
+def count_active_companies(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(Company).where(Company.actif.is_(True))) or 0
+
+
+def add_company(db: Session, company: Company) -> Company:
+    db.add(company)
+    db.flush()
+    return company
+
+
 def list_currencies(db: Session) -> list[Currency]:
     # Le dirham d'abord, puis les devises par ordre alphabétique
     return list(

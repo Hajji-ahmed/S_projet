@@ -27,6 +27,55 @@ class CompanyOut(BaseModel):
     nom: str
 
 
+SOCIETE_CODE_PATTERN = re.compile(r"^[A-Z0-9_-]{2,20}$")
+
+
+def _clean_nom_societe(value: str) -> str:
+    value = " ".join(value.split())
+    if not 1 <= len(value) <= 120:
+        raise ValueError("Le nom doit contenir entre 1 et 120 caractères.")
+    return value
+
+
+class CompanyAdminOut(CompanyOut):
+    """Pour l'administrateur : toutes les sociétés, actives ou non."""
+
+    actif: bool
+
+
+class CompanyCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+    nom: str
+
+    @field_validator("code")
+    @classmethod
+    def _code(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not SOCIETE_CODE_PATTERN.match(value):
+            raise ValueError(
+                "Le code doit contenir 2 à 20 lettres, chiffres, « _ » ou « - » (ex. SOCX)."
+            )
+        return value
+
+    _nom = field_validator("nom")(_clean_nom_societe)
+
+
+class CompanyUpdate(BaseModel):
+    """Le code n'en fait pas partie : il n'est plus modifiable après la création."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nom: str | None = None
+    actif: bool | None = None
+
+    @field_validator("nom")
+    @classmethod
+    def _nom(cls, value: str | None) -> str | None:
+        return None if value is None else _clean_nom_societe(value)
+
+
 class CurrencyOut(BaseModel):
     code: str
     libelle: str

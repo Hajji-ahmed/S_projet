@@ -13,6 +13,8 @@ type CompanyContextValue = {
   company: Company | null;
   setCompanyId: (id: number) => void;
   status: "loading" | "ready" | "error";
+  /** Relit la liste après une création, un renommage ou une (dés)activation de société. */
+  reload: () => Promise<void>;
 };
 
 const CompanyContext = createContext<CompanyContextValue | null>(null);
@@ -51,6 +53,10 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const reload = useCallback(async () => {
+    setCompanies(await listCompanies());
+  }, []);
+
   const setCompanyId = useCallback((id: number) => {
     setSelectedId(id);
     try {
@@ -64,7 +70,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const company = companies.find((item) => item.id === selectedId) ?? companies[0] ?? null;
 
   return (
-    <CompanyContext.Provider value={{ companies, company, setCompanyId, status }}>
+    <CompanyContext.Provider value={{ companies, company, setCompanyId, status, reload }}>
       {children}
     </CompanyContext.Provider>
   );
