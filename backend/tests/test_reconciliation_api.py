@@ -1034,6 +1034,22 @@ def test_a_manual_match_between_two_types_is_refused(client, comptable, db):
     }
 
 
+def test_imp_lcn_on_the_credit_side_cannot_be_matched_by_hand_to_an_ear_effet(
+    client, comptable, db
+):
+    # Décision du 17/11/2026 : « IMP LCN » est un impayé, même au crédit
+    compte = account(db)
+    tx = operation(db, compte, libelle="IMP LCN 0534881/18955802")
+    entry = ecriture(db, compte, libelle="EAR° 0534881 ANDALOUSSI AMINE.")
+
+    response = manual(client, comptable, tx, entry)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Une opération Impayé ne se rapproche pas d'une écriture Effet."
+    }
+
+
 # --- Frais bancaires « À comptabiliser » (12/10/2026) ---------------------------------------------
 
 
@@ -1456,7 +1472,7 @@ LIBELLES_BANQUE = {
     "RTGS EMIS VERS BMCE": "Virement",
     "IMPAYE SUR EFFET ESCOMPTE N 2600009 TIRE SUR X": "Impayé",
     "IMP LCN 1099850/18942568": "Impayé",  # au débit (MONTANTS_BANQUE)
-    "IMP LCN 2987576/18942568": "Effet",  # au crédit : encaissement de la LCN (17/11/2026)
+    "IMP LCN 2987576/18942568": "Impayé",  # au crédit aussi (17/11/2026, plus un effet)
     "VERSEMENT ESPECE N 1881955780": "Espèces",
     "VER/ORD:BOULBAROUD HASSAN CIN": "Espèces",
     "VER/ORD:S I M T I S": "Autre",  # apport de SIMTIS, pas des espèces de client
@@ -1465,7 +1481,7 @@ LIBELLES_BANQUE = {
     "VIRGULE SARL PAIEMENT": "Autre",  # « VIR » n'est pas un mot entier
     "AGIOS BANCAIRES": "Autre",
 }
-# Montant des lignes du test (crédit de 50 000 sinon) : le type d'un « IMP LCN » dépend du sens
+# Montant des lignes du test (crédit de 50 000 sinon) : « IMP LCN » est un impayé dans les deux sens
 MONTANTS_BANQUE = {"IMP LCN 1099850/18942568": "-20000"}
 LIBELLES_SAGE = {
     "EAR1° AXK 173813": "Chèque",

@@ -707,7 +707,7 @@ def test_new_labels_get_their_type():
     assert type_operation("VERSEMENT CNSS") is None
 
 
-# --- Versements d'espèces et « IMP LCN » au crédit (17/11/2026) ----------------------------------
+# --- Versements d'espèces (17/11/2026) et « IMP LCN » impayé dans les deux sens ------------------
 
 
 @pytest.mark.parametrize(
@@ -744,24 +744,28 @@ def test_a_cash_deposit_is_proposed_against_its_esp_entry():
     )
 
 
-def test_imp_lcn_is_an_effet_on_the_credit_side_and_an_impaye_on_the_debit_side():
+def test_imp_lcn_is_an_impaye_on_both_sides():
+    # Décision métier du 17/11/2026 (annule « IMP LCN au crédit = Effet » du matin)
     libelle = "IMP LCN 2987576/18942568"
-    assert type_operation(libelle, Decimal("10000")) == "Effet"
+    assert type_operation(libelle, Decimal("10000")) == "Impayé"
     assert type_operation(libelle, Decimal("-10000")) == "Impayé"
-    # Sans montant connu : le libellé seul (impayé)
     assert type_operation(libelle) == "Impayé"
-    # Les autres impayés ne changent pas avec le sens
-    assert type_operation("IMPAYE SUR EFFET N 2600009", Decimal("10000")) == "Impayé"
 
 
-def test_imp_lcn_on_the_credit_side_is_proposed_against_its_effet():
-    effet = ec(id=1, montant="-10000", libelle="EAR° EA 2987576 HMAMOU ANAS")
-    credit = op(id=1, montant="10000", libelle="IMP LCN 2987576/18942568")
-    resultat = proposer([credit], [effet])
-    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
-    # Au débit, c'est un impayé : jamais face à l'effet
-    debit = op(id=2, montant="-10000", libelle="IMP LCN 2987576/18942568")
-    assert not comparable(debit, ec(montant="10000", libelle=effet.libelle), GRILLE_PAR_DEFAUT)
+def test_imp_lcn_is_never_proposed_against_an_ear_effet():
+    # Cas réels de production (AWB) : « IMP LCN » au crédit face à l'« EAR° » du même n°
+    paires = [
+        ("50000", "IMP LCN 0534881/18955802", "EAR° 0534881 ANDALOUSSI AMINE."),
+        ("20000", "IMP LCN 9539988/18982291", "EAR° DA 9539988 SQALI EXPO SARLAU"),
+        ("6700", "IMP LCN 2383326/18982291", "EAR° EA 2383326 GHARBAOUI ABDELGHANI"),
+    ]
+    for numero, (montant, libelle_banque, libelle_sage) in enumerate(paires, start=1):
+        credit = op(id=numero, montant=montant, libelle=libelle_banque)
+        effet = ec(id=numero, montant=f"-{montant}", libelle=libelle_sage)
+        assert not comparable(credit, effet, GRILLE_PAR_DEFAUT)
+        assert proposer([credit], [effet]).propositions == []
+    # Au débit, toujours face à l'impayé Sage du même n°
+    debit = op(id=9, montant="-10000", libelle="IMP LCN 2987576/18942568")
     assert comparable(
         debit, ec(montant="10000", libelle="IMP EAR° EA 2987576 HMAMOU"), GRILLE_PAR_DEFAUT
     )

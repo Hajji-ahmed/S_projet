@@ -20,7 +20,6 @@ from app.models import (
 )
 from app.services.reconciliation_scoring import (
     AUTRE,
-    EFFET_AU_CREDIT,
     EXCEPTIONS_BANQUE,
     TYPES_BANQUE,
     TYPES_SAGE,
@@ -368,24 +367,16 @@ def type_condition(column, regles: tuple[tuple[str, str], ...], type_operation: 
 
 
 def type_condition_banque(type_operation: str):
-    """`type_condition` d'une opération bancaire, avec les deux règles du 17/11/2026 de
+    """`type_condition` d'une opération bancaire, avec la règle du 17/11/2026 de
     `reconciliation_scoring.type_operation` : les exceptions (« VER/ORD:S I M T I S ») restent
-    « Autre », et « IMP LCN » au crédit est un effet (un impayé seulement au débit)."""
+    « Autre ». (« IMP LCN » au crédit n'est plus un effet depuis le même jour : impayé partout.)"""
     libelle = BankTransaction.libelle
     exceptions = regex_prefixes(EXCEPTIONS_BANQUE)
-    imp_lcn = regex_prefixes((EFFET_AU_CREDIT,))
-    # Négations écrites avec `!~*` (un `not_` sur `~*` est refusé par SQLAlchemy)
-    hors_exception = libelle.op("!~*")(exceptions)
-    effet_au_credit = and_(libelle.op("~*")(imp_lcn), BankTransaction.montant > 0)
-    pas_effet_au_credit = or_(libelle.op("!~*")(imp_lcn), BankTransaction.montant <= 0)
     selon_libelle = type_condition(libelle, TYPES_BANQUE, type_operation)
     if type_operation == AUTRE:
         return or_(selon_libelle, libelle.op("~*")(exceptions))
-    if type_operation == "Effet":
-        return and_(hors_exception, or_(selon_libelle, effet_au_credit))
-    if type_operation == "Impayé":
-        return and_(hors_exception, selon_libelle, pas_effet_au_credit)
-    return and_(hors_exception, selon_libelle)
+    # Négation écrite avec `!~*` (un `not_` sur `~*` est refusé par SQLAlchemy)
+    return and_(libelle.op("!~*")(exceptions), selon_libelle)
 
 
 def transactions_query(

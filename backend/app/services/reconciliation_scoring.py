@@ -304,10 +304,8 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
 # ordonné par SIMTIS elle-même (« VER/ORD:S I M T I S ») est un apport de fonds, que Sage peut
 # saisir en « VIREMENTS DE FONDS » plutôt qu'en « ESP »
 EXCEPTIONS_BANQUE: tuple[str, ...] = ("VER ORD S I M T I S", "VER ORD SIMTIS")
-# AWB inscrit une LCN « IMP LCN 2987576/18942568 » deux fois le même jour : au crédit c'est
-# l'encaissement de la LCN (un effet, face à l'« EAR° » du même n°), au débit son impayé
-# (17/11/2026)
-EFFET_AU_CREDIT = "IMP LCN"
+# « IMP LCN … » d'AWB est un impayé dans les deux sens : il n'est jamais proposé face à l'« EAR° »
+# du même n° (décision métier du 17/11/2026, qui annule « IMP LCN au crédit = Effet » du matin)
 
 
 def _commence_par(texte: str, prefixe: str) -> bool:
@@ -327,8 +325,8 @@ def _type(libelle: str | None, regles: tuple[tuple[str, str], ...]) -> str | Non
 
 def type_operation(libelle: str | None, montant: Decimal | None = None) -> str | None:
     """Type d'une opération bancaire (Chèque, Effet, Espèces, Virement, Impayé) ; None = autre.
-    Le montant (signé, positif = crédit) départage « IMP LCN » : effet au crédit, impayé au débit
-    ou quand il n'est pas connu."""
+    Le montant (signé, positif = crédit) est accepté pour une règle qui dépendrait du sens ; depuis
+    le 17/11/2026 (« IMP LCN » redevenu un impayé au crédit), aucun type n'en dépend."""
     return _type_operation(libelle, montant is not None and montant > 0)
 
 
@@ -337,8 +335,6 @@ def _type_operation(libelle: str | None, credit: bool) -> str | None:
     texte = _plain(libelle)
     if any(_commence_par(texte, exception) for exception in EXCEPTIONS_BANQUE):
         return None
-    if credit and _commence_par(texte, EFFET_AU_CREDIT):
-        return "Effet"
     return _type(libelle, TYPES_BANQUE)
 
 
