@@ -224,9 +224,10 @@ def _numeros_operation(libelle: str | None, reference: str | None) -> frozenset[
 
 
 @lru_cache(maxsize=200_000)
-def _principale_possible(libelle: str | None) -> tuple[bool, str | None]:
-    """(frais ?, type) d'une opération, calculés une fois par libellé (15/10/2026)."""
-    return bool(famille_frais(libelle)), type_operation(libelle)
+def _principale_possible(libelle: str | None, credit: bool) -> tuple[bool, str | None]:
+    """(frais ?, type) d'une opération, calculés une fois par libellé et sens (15/10/2026 ; le
+    sens départage « IMP LCN » depuis le 17/11/2026)."""
+    return bool(famille_frais(libelle)), type_operation(libelle, Decimal(1 if credit else -1))
 
 
 # Taux de TVA d'une commission bancaire, et tolérance d'arrondi (15/10/2026)
@@ -262,7 +263,7 @@ def _groupes_possibles(
         paires = sommes.commissions_tva((compte, principale.date_operation))
         if not paires:
             continue
-        frais, type_op = _principale_possible(principale.libelle)
+        frais, type_op = _principale_possible(principale.libelle, principale.montant > 0)
         # `types_compatibles` sans appel par opération : le même type (autre avec autre)
         if frais or principale.id in frais_ids or type_op != type_sage:
             continue
@@ -426,7 +427,7 @@ def operations_couvertes(
             continue
         paires_du_jour[cle] = table
         for op in ops:
-            frais, _ = _principale_possible(op.libelle)
+            frais, _ = _principale_possible(op.libelle, op.montant > 0)
             if not frais and op.id not in frais_ids:
                 principales.setdefault((cle[0], cle[1], op.montant), []).append(op)
 
@@ -449,7 +450,7 @@ def operations_couvertes(
                 continue
             for somme, paires in table.items():
                 for principale in principales.get((compte, jour, cible - somme), ()):
-                    type_op = _principale_possible(principale.libelle)[1]
+                    type_op = _principale_possible(principale.libelle, principale.montant > 0)[1]
                     if type_op != type_sage:
                         continue
                     for commission, tva in paires:

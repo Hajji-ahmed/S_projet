@@ -1455,12 +1455,18 @@ LIBELLES_BANQUE = {
     "VIR.RECU DE Y": "Virement",
     "RTGS EMIS VERS BMCE": "Virement",
     "IMPAYE SUR EFFET ESCOMPTE N 2600009 TIRE SUR X": "Impayé",
-    "IMP LCN 1099850/18942568": "Impayé",
+    "IMP LCN 1099850/18942568": "Impayé",  # au débit (MONTANTS_BANQUE)
+    "IMP LCN 2987576/18942568": "Effet",  # au crédit : encaissement de la LCN (17/11/2026)
+    "VERSEMENT ESPECE N 1881955780": "Espèces",
+    "VER/ORD:BOULBAROUD HASSAN CIN": "Espèces",
+    "VER/ORD:S I M T I S": "Autre",  # apport de SIMTIS, pas des espèces de client
     "IMPOTS ET TAXES": "Autre",  # « IMP » n'est pas un mot entier
     "COMMISSION": "Autre",
     "VIRGULE SARL PAIEMENT": "Autre",  # « VIR » n'est pas un mot entier
     "AGIOS BANCAIRES": "Autre",
 }
+# Montant des lignes du test (crédit de 50 000 sinon) : le type d'un « IMP LCN » dépend du sens
+MONTANTS_BANQUE = {"IMP LCN 1099850/18942568": "-20000"}
 LIBELLES_SAGE = {
     "EAR1° AXK 173813": "Chèque",
     "EAR° 2600114 CLIENT": "Effet",
@@ -1479,7 +1485,7 @@ def test_the_type_filter_reads_labels_exactly_like_the_engine(client, comptable,
 
     compte = account(db)
     for libelle in LIBELLES_BANQUE:
-        operation(db, compte, libelle=libelle)
+        operation(db, compte, libelle=libelle, montant=MONTANTS_BANQUE.get(libelle, "50000"))
     for libelle in LIBELLES_SAGE:
         ecriture(db, compte, libelle=libelle)
     base = {"company_id": str(company(db).id)}
@@ -1498,7 +1504,10 @@ def test_the_type_filter_reads_labels_exactly_like_the_engine(client, comptable,
         assert {op["libelle"] for op in ops} == attendu_banque, nom
         assert {e["libelle"] for e in ecritures} == attendu_sage, nom
         # Mêmes réponses que le moteur
-        assert {(type_operation(lib) or "Autre") for lib in attendu_banque} <= {nom}
+        assert {
+            (type_operation(lib, Decimal(MONTANTS_BANQUE.get(lib, "50000"))) or "Autre")
+            for lib in attendu_banque
+        } <= {nom}
         assert {(type_ecriture(lib) or "Autre") for lib in attendu_sage} <= {nom}
 
     inconnu = client.get(

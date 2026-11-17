@@ -18,7 +18,15 @@ from app.models import (
     ReconciliationRule,
     User,
 )
-from app.services.reconciliation_scoring import AUTRE, TYPES_BANQUE, TYPES_SAGE, regex_type
+from app.services.reconciliation_scoring import (
+    AUTRE,
+    EFFET_AU_CREDIT,
+    EXCEPTIONS_BANQUE,
+    TYPES_BANQUE,
+    TYPES_SAGE,
+    regex_prefixes,
+    regex_type,
+)
 
 # Statuts d'une correspondance qui retiennent ses éléments
 STATUTS_ACTIFS = ("Proposée", "Validée")
@@ -359,6 +367,27 @@ def type_condition(column, regles: tuple[tuple[str, str], ...], type_operation: 
     return column.op("~*")(regex_type(regles, type_operation))
 
 
+def type_condition_banque(type_operation: str):
+    """`type_condition` d'une opération bancaire, avec les deux règles du 17/11/2026 de
+    `reconciliation_scoring.type_operation` : les exceptions (« VER/ORD:S I M T I S ») restent
+    « Autre », et « IMP LCN » au crédit est un effet (un impayé seulement au débit)."""
+    libelle = BankTransaction.libelle
+    exceptions = regex_prefixes(EXCEPTIONS_BANQUE)
+    imp_lcn = regex_prefixes((EFFET_AU_CREDIT,))
+    # Négations écrites avec `!~*` (un `not_` sur `~*` est refusé par SQLAlchemy)
+    hors_exception = libelle.op("!~*")(exceptions)
+    effet_au_credit = and_(libelle.op("~*")(imp_lcn), BankTransaction.montant > 0)
+    pas_effet_au_credit = or_(libelle.op("!~*")(imp_lcn), BankTransaction.montant <= 0)
+    selon_libelle = type_condition(libelle, TYPES_BANQUE, type_operation)
+    if type_operation == AUTRE:
+        return or_(selon_libelle, libelle.op("~*")(exceptions))
+    if type_operation == "Effet":
+        return and_(hors_exception, or_(selon_libelle, effet_au_credit))
+    if type_operation == "Impayé":
+        return and_(hors_exception, selon_libelle, pas_effet_au_credit)
+    return and_(hors_exception, selon_libelle)
+
+
 def transactions_query(
     company_id: int,
     *,
@@ -384,7 +413,7 @@ def transactions_query(
     if date_to is not None:
         query = query.where(BankTransaction.date_operation <= date_to)
     if type_operation is not None:
-        query = query.where(type_condition(BankTransaction.libelle, TYPES_BANQUE, type_operation))
+        query = query.where(type_condition_banque(type_operation))
     if sens == "Débit":
         query = query.where(BankTransaction.debit > 0)
     elif sens == "Crédit":

@@ -438,11 +438,11 @@ def test_different_types_are_never_compared():
     assert comparable(autre, ecriture_cheque, GRILLE_PAR_DEFAUT)
     assert comparable(cheque, ecriture_autre, GRILLE_PAR_DEFAUT)
     assert comparable(autre, ecriture_autre, GRILLE_PAR_DEFAUT)
-    # … sauf face à des espèces : une écriture ESP ne va qu'avec un VERSEMENT DEPLACE
+    # … sauf face à des espèces : une écriture ESP ne va qu'avec un versement d'espèces (élargi le
+    # 17/11/2026 : « VERSEMENT PAR VOUS-MEME » en est un)
     assert not comparable(autre, ecriture_especes, GRILLE_PAR_DEFAUT)
-    assert not comparable(
-        op(libelle="VERSEMENT PAR VOUS-MEME"), ecriture_especes, GRILLE_PAR_DEFAUT
-    )
+    assert not comparable(op(libelle="VERSEMENT CNSS"), ecriture_especes, GRILLE_PAR_DEFAUT)
+    assert comparable(op(libelle="VERSEMENT PAR VOUS-MEME"), ecriture_especes, GRILLE_PAR_DEFAUT)
 
 
 def test_especes_are_compared_at_their_due_date():
@@ -702,9 +702,69 @@ def test_new_labels_get_their_type():
         ec(libelle="EAR1° ABB 3332221 CLIENT D"),
         GRILLE_PAR_DEFAUT,
     )
-    # Un autre versement que « VERSEMENT (ESPECE) DEPLACE » reste « Autre » (choix du métier)
-    assert type_operation("VERSEMENT PAR VOUS-MEME") is None
-    assert type_operation("VERSEMENT EFFECTUE PAR CLIENT E") is None
+    # Depuis le 17/11/2026, les autres versements d'espèces le sont aussi (voir plus bas) ; un
+    # versement qui n'est pas des espèces reste « Autre »
+    assert type_operation("VERSEMENT CNSS") is None
+
+
+# --- Versements d'espèces et « IMP LCN » au crédit (17/11/2026) ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "libelle",
+    [
+        "VERSEMENT ESPECE N 1881955780",  # AWB
+        "VER/ORD:BOULBAROUD HASSAN CIN",  # AWB
+        "VERS ESP REF FES",  # AWB
+        "VERSEMENT ESPECE DEPLACE",  # AWB, déjà Espèces
+        "VERSEMENT ESPECE EFFECTUE - AGENCE 17014 PAR EL HA",  # BMCE
+        "VERSEMENT PAR VOUS-MEME",  # BP
+        "VERSEMENT EFFECTUE PAR HAMID OUARAR BE63 6126",  # BP
+        "VERSEMENT DEPLACE PAR MOHAMMED AIT SIDI PB265124",  # BP, déjà Espèces
+    ],
+)
+def test_cash_deposits_are_especes(libelle):
+    assert type_operation(libelle) == "Espèces"
+
+
+def test_a_deposit_by_simtis_itself_stays_autre():
+    # Apport de SIMTIS : Sage peut l'avoir saisi en « VIREMENTS DE FONDS », pas en « ESP »
+    assert type_operation("VER/ORD:S I M T I S") is None
+    assert type_operation("VER/ORD:SIMTIS") is None
+
+
+def test_a_cash_deposit_is_proposed_against_its_esp_entry():
+    operation = op(id=1, montant="41000", libelle="VERSEMENT ESPECE N 1881955780")
+    ecriture = ec(id=1, montant="-41000", libelle="ESP 1881955780", echeance=JOUR)
+    resultat = proposer([operation], [ecriture])
+    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
+    # Espèces : jamais face à un chèque
+    assert not comparable(
+        operation, ec(montant="-41000", libelle="EAR1° ABB 3332221 CLIENT D"), GRILLE_PAR_DEFAUT
+    )
+
+
+def test_imp_lcn_is_an_effet_on_the_credit_side_and_an_impaye_on_the_debit_side():
+    libelle = "IMP LCN 2987576/18942568"
+    assert type_operation(libelle, Decimal("10000")) == "Effet"
+    assert type_operation(libelle, Decimal("-10000")) == "Impayé"
+    # Sans montant connu : le libellé seul (impayé)
+    assert type_operation(libelle) == "Impayé"
+    # Les autres impayés ne changent pas avec le sens
+    assert type_operation("IMPAYE SUR EFFET N 2600009", Decimal("10000")) == "Impayé"
+
+
+def test_imp_lcn_on_the_credit_side_is_proposed_against_its_effet():
+    effet = ec(id=1, montant="-10000", libelle="EAR° EA 2987576 HMAMOU ANAS")
+    credit = op(id=1, montant="10000", libelle="IMP LCN 2987576/18942568")
+    resultat = proposer([credit], [effet])
+    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
+    # Au débit, c'est un impayé : jamais face à l'effet
+    debit = op(id=2, montant="-10000", libelle="IMP LCN 2987576/18942568")
+    assert not comparable(debit, ec(montant="10000", libelle=effet.libelle), GRILLE_PAR_DEFAUT)
+    assert comparable(
+        debit, ec(montant="10000", libelle="IMP EAR° EA 2987576 HMAMOU"), GRILLE_PAR_DEFAUT
+    )
 
 
 @pytest.mark.parametrize(

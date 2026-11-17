@@ -285,14 +285,34 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
     ("ENCAISSEMENT EFFET", "Effet"),
     ("REMISE D EFFETS", "Effet"),
     ("VERSEMENT DEPLACE", "Espèces"),
-    # Versement déplacé chez AWB (11/11/2026) : « VERSEMENT ESPECE DEPLACE CLIENT »
-    ("VERSEMENT ESPECE DEPLACE", "Espèces"),
+    # Versements d'espèces (17/11/2026, remplace « VERSEMENT ESPECE DEPLACE » du 11/11/2026) :
+    # AWB « VERSEMENT ESPECE DEPLACE », « VERSEMENT ESPECE N 1881955780 », « VER/ORD:NOM CIN … »,
+    # « VERS ESP REF … » ; BMCE « VERSEMENT ESPECE EFFECTUE - AGENCE … » ; BP « VERSEMENT PAR
+    # VOUS-MEME », « VERSEMENT EFFECTUE PAR … »
+    ("VERSEMENT ESPECE", "Espèces"),
+    ("VERSEMENT PAR", "Espèces"),
+    ("VERSEMENT EFFECTUE", "Espèces"),
+    ("VER ORD", "Espèces"),
+    ("VERS ESP", "Espèces"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
     ("VIREMENT", "Virement"),
     ("VIRT", "Virement"),
     ("VIR", "Virement"),
     ("RTGS", "Virement"),
 )
+# Libellés qui commencent comme un type mais restent « Autre » (17/11/2026) : un versement
+# ordonné par SIMTIS elle-même (« VER/ORD:S I M T I S ») est un apport de fonds, que Sage peut
+# saisir en « VIREMENTS DE FONDS » plutôt qu'en « ESP »
+EXCEPTIONS_BANQUE: tuple[str, ...] = ("VER ORD S I M T I S", "VER ORD SIMTIS")
+# AWB inscrit une LCN « IMP LCN 2987576/18942568 » deux fois le même jour : au crédit c'est
+# l'encaissement de la LCN (un effet, face à l'« EAR° » du même n°), au débit son impayé
+# (17/11/2026)
+EFFET_AU_CREDIT = "IMP LCN"
+
+
+def _commence_par(texte: str, prefixe: str) -> bool:
+    """Le texte normalisé commence par le préfixe, en mot entier."""
+    return texte == prefixe or texte.startswith(prefixe + " ")
 
 
 # Type lu au début du libellé, préfixe en mot entier : « VIR SOCIETE » → Virement, mais
@@ -300,15 +320,31 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
 def _type(libelle: str | None, regles: tuple[tuple[str, str], ...]) -> str | None:
     texte = _plain(libelle)
     for prefixe, nom in regles:
-        if texte == prefixe or texte.startswith(prefixe + " "):
+        if _commence_par(texte, prefixe):
             return nom
     return None
 
 
+def type_operation(libelle: str | None, montant: Decimal | None = None) -> str | None:
+    """Type d'une opération bancaire (Chèque, Effet, Espèces, Virement, Impayé) ; None = autre.
+    Le montant (signé, positif = crédit) départage « IMP LCN » : effet au crédit, impayé au débit
+    ou quand il n'est pas connu."""
+    return _type_operation(libelle, montant is not None and montant > 0)
+
+
 @lru_cache(maxsize=_CACHE)
-def type_operation(libelle: str | None) -> str | None:
-    """Type d'une opération bancaire (Chèque, Effet, Espèces) ; None = autre."""
+def _type_operation(libelle: str | None, credit: bool) -> str | None:
+    texte = _plain(libelle)
+    if any(_commence_par(texte, exception) for exception in EXCEPTIONS_BANQUE):
+        return None
+    if credit and _commence_par(texte, EFFET_AU_CREDIT):
+        return "Effet"
     return _type(libelle, TYPES_BANQUE)
+
+
+def type_de(operation: "Operation") -> str | None:
+    """Type d'une opération du moteur, avec son sens."""
+    return type_operation(operation.libelle, operation.montant)
 
 
 @lru_cache(maxsize=_CACHE)
@@ -326,7 +362,7 @@ SEUIL_LIBELLE_ELARGIE = Decimal("0.70")
 
 def sans_reference(operation: Operation, ecriture: Ecriture) -> bool:
     """Les deux lignes sont du même type, sans référence (espèces, virement ou autre)."""
-    type_ = type_operation(operation.libelle)
+    type_ = type_de(operation)
     return type_ in TYPES_SANS_REFERENCE and type_ == type_ecriture(ecriture.libelle)
 
 
@@ -364,12 +400,12 @@ def types_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
     """Le moteur ne compare que deux lignes du même type (28/10/2026) : chèque avec chèque,
     espèces avec espèces…, et un type inconnu (autre) seulement avec un autre type inconnu. Le
     rapprochement manuel garde sa propre règle (deux types connus différents refusés)."""
-    return type_operation(operation.libelle) == type_ecriture(ecriture.libelle)
+    return type_de(operation) == type_ecriture(ecriture.libelle)
 
 
 def type_different(operation: Operation, ecriture: Ecriture) -> bool:
     """Les deux lignes n'ont pas le même type (« Autre » face à un type connu, 11/11/2026)."""
-    return type_operation(operation.libelle) != type_ecriture(ecriture.libelle)
+    return type_de(operation) != type_ecriture(ecriture.libelle)
 
 
 def types_proposables(operation: Operation, ecriture: Ecriture) -> bool:
@@ -377,7 +413,7 @@ def types_proposables(operation: Operation, ecriture: Ecriture) -> bool:
     reconnu) face à un type connu, jamais face à des espèces (une écriture ESP ne va qu'avec un
     VERSEMENT DEPLACE). Deux types connus différents ne se comparent jamais ; les groupes gardent
     `types_compatibles`."""
-    type_op, type_ec = type_operation(operation.libelle), type_ecriture(ecriture.libelle)
+    type_op, type_ec = type_de(operation), type_ecriture(ecriture.libelle)
     if type_op == type_ec:
         return True
     if ESPECES in (type_op, type_ec):
@@ -517,7 +553,7 @@ ESPECES = "Espèces"
 def est_especes(operation: Operation, ecriture: Ecriture) -> bool:
     """Un des deux côtés est des espèces (une écriture « ESP » face à un versement au libellé non
     reconnu compte)."""
-    return ESPECES in (type_operation(operation.libelle), type_ecriture(ecriture.libelle))
+    return ESPECES in (type_de(operation), type_ecriture(ecriture.libelle))
 
 
 def points_montant(montant_banque: Decimal, montant_sage: Decimal, grille: Grille) -> Decimal:
@@ -662,7 +698,7 @@ def meme_numero_et_montant(operation: Operation, ecriture: Ecriture) -> bool:
     montant (sens opposé) et un n° commun (`numeros_communs`)."""
     if not types_proposables(operation, ecriture):
         return False
-    connu = type_operation(operation.libelle) or type_ecriture(ecriture.libelle)
+    connu = type_de(operation) or type_ecriture(ecriture.libelle)
     if connu not in TYPES_PAR_NUMERO:
         return False
     if operation.montant != -ecriture.montant:
@@ -960,7 +996,7 @@ def _paires_comparables(
         # Écritures déjà proposées pour cette opération (évite de sortir deux fois la même paire)
         vues: set[int] = set()
         # 1) Chèque / effet / impayé : d'abord les écritures au même n°, même loin en date
-        if type_operation(operation.libelle) in _TYPES_INDEXES:
+        if type_de(operation) in _TYPES_INDEXES:
             cles = {
                 cle
                 for numero in numeros(operation.libelle, operation.reference)
@@ -1011,12 +1047,14 @@ def regex_type(regles: tuple[tuple[str, str], ...], nom: str | None = None) -> s
     des préfixes, mot entier (la ponctuation compte comme un espace). Sans `nom`, tous les types."""
     # Exemple : type Effet côté banque → ^[^A-Za-z0-9]*(ENCAISSEMENT[^A-Za-z0-9]+EFFET|REMISE…)…
     # utilisé par le filtre « Type » des écrans, pour qu'il donne le même résultat que le moteur
-    prefixes = [
-        f"{_SEPARATEUR}+".join(prefixe.split())
-        for prefixe, type_ in regles
-        if nom is None or type_ == nom
-    ]
-    return f"^{_SEPARATEUR}*({'|'.join(prefixes)})({_SEPARATEUR}|$)"
+    return regex_prefixes(prefixe for prefixe, type_ in regles if nom is None or type_ == nom)
+
+
+def regex_prefixes(prefixes: Iterable[str]) -> str:
+    """Expression régulière PostgreSQL (`~*`) : le libellé commence par l'un des préfixes, mot
+    entier, la ponctuation comptant comme un espace (« VER ORD » reconnaît « VER/ORD:… »)."""
+    motifs = [f"{_SEPARATEUR}+".join(prefixe.split()) for prefixe in prefixes]
+    return f"^{_SEPARATEUR}*({'|'.join(motifs)})({_SEPARATEUR}|$)"
 
 
 # --- Recherche élargie (20/10/2026) ---------------------------------------------------------------
@@ -1054,7 +1092,7 @@ def proposer_elargi(
     for operation in operations:
         numeros_op = numeros(operation.libelle, operation.reference)
         # Espèces / virement / autre : comparés par libellé ; chèque / effet / impayé : par n°
-        par_libelle = type_operation(operation.libelle) in TYPES_SANS_REFERENCE
+        par_libelle = type_de(operation) in TYPES_SANS_REFERENCE
         if not numeros_op and not par_libelle:
             continue
         for ecriture in par_montant.get((operation.bank_account_id, -operation.montant), ()):

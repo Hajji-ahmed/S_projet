@@ -155,7 +155,7 @@ def _detail_json(resultat: Score, second: Decimal | None = None) -> dict[str, st
 def _types_json(tx: BankTransaction, entry: AccountingEntry) -> dict[str, str]:
     """« Autre » face à un type connu (11/11/2026) : `type_different` = « Autre / Chèque » (banque /
     Sage), affiché en badge ; rien quand les deux lignes ont le même type."""
-    type_banque, type_sage = type_operation(tx.libelle), type_ecriture(entry.libelle)
+    type_banque, type_sage = type_operation(tx.libelle, tx.montant), type_ecriture(entry.libelle)
     if type_banque == type_sage:
         return {}
     return {"type_different": f"{type_banque or 'Autre'} / {type_sage or 'Autre'}"}
@@ -1310,14 +1310,15 @@ def match_manually(
             "Les montants doivent être égaux, en sens opposé (un crédit en banque correspond à "
             f"un débit dans Sage) : écart de {abs(total_banque + total_sage):.2f}."
         )
-    types = {type_operation(tx.libelle) for tx in operations} | {
+    types = {type_operation(tx.libelle, tx.montant) for tx in operations} | {
         type_ecriture(entry.libelle) for entry in entries
     }
     types.discard(None)
     if len(types) > 1:
         if len(operations) == 1 and len(entries) == 1:
+            seule = operations[0]
             raise ConflictError(
-                f"Une opération {type_operation(operations[0].libelle)} ne se rapproche pas "
+                f"Une opération {type_operation(seule.libelle, seule.montant)} ne se rapproche pas "
                 f"d'une écriture {type_ecriture(entries[0].libelle)}."
             )
         raise ConflictError(
@@ -1628,7 +1629,11 @@ def list_matches(
     if type_operation is not None:
         # Type de l'opération principale (la seule en 1 → 1, la plus grosse d'un groupe)
         voulu = None if type_operation == AUTRE else type_operation
-        views = [view for view in views if _type_de(view.transaction.libelle) == voulu]
+        views = [
+            view
+            for view in views
+            if _type_de(view.transaction.libelle, view.transaction.montant) == voulu
+        ]
     return regles.seuil_fort, views
 
 
