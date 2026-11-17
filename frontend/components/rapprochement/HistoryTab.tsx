@@ -1,10 +1,9 @@
 "use client";
 
-import { Ban, Download, History } from "lucide-react";
+import { Ban, Download, History, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ScoreBadge } from "@/components/rapprochement/Score";
-import { StatButton } from "@/components/rapprochement/StatButton";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -15,11 +14,11 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Pagination } from "@/components/ui/Pagination";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
+import { normalizeAmountInput } from "@/lib/accounts";
 import { pageCount } from "@/lib/accounting";
 import { ApiError } from "@/lib/api";
 import { formatDate } from "@/lib/balances";
-import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatNombre } from "@/lib/format";
 import {
   unite,
   lettrageFilename,
@@ -27,25 +26,15 @@ import {
   montantBanque,
   nbEcritures,
   nbOperations,
-  toggleStatut,
   type ReconciliationFilter,
 } from "@/lib/reconciliation";
 import { formatDateTime, saveFile } from "@/lib/statements";
 import { cancelMatch, exportLettrage, listHistory } from "@/services/reconciliation";
-import type { Correspondance, Historique, StatutDecision } from "@/types/reconciliation";
+import type { Correspondance, Historique } from "@/types/reconciliation";
 
-const STATUTS: { statut: StatutDecision; label: string }[] = [
-  { statut: "Validée", label: "Validées" },
-  { statut: "Rejetée", label: "Rejetées" },
-  { statut: "Annulée", label: "Annulées" },
-];
-
-// Couleur du statut d'une décision : mêmes familles que les badges de rapprochement
-const DECISION_STYLES: Record<StatutDecision, string> = {
-  Validée: "bg-simtis-success-bg text-simtis-success-fg",
-  Rejetée: "bg-simtis-danger-bg text-simtis-danger-fg",
-  Annulée: "bg-simtis-neutral-bg text-simtis-neutral-fg",
-};
+/** Filtres de l'historique (17/11/2026) : texte et montant (total des opérations). */
+type Recherche = { q: string; montant: string };
+const SANS_FILTRE: Recherche = { q: "", montant: "" };
 
 type HistoryTabProps = {
   companyId: number;
@@ -57,9 +46,10 @@ type HistoryTabProps = {
 };
 
 /**
- * Onglet « Historique » : toutes les décisions (validées, rejetées, annulées) de la période et du
- * compte choisis, les plus récentes d'abord, avec qui et quand ; annulation d'un rapprochement
- * validé (motif obligatoire). Remonté (key) quand la période ou le compte change.
+ * Onglet « Historique » : les rapprochements validés de la période et du compte choisis, les plus
+ * récents d'abord, avec qui et quand (rejets et annulations ne sont plus montrés, 17/11/2026) ;
+ * recherche (code, libellé, pièce, référence) et montant ; annulation d'un rapprochement validé
+ * (motif obligatoire). Remonté (key) quand la période ou le compte change.
  */
 export function HistoryTab({
   companyId,
@@ -68,7 +58,9 @@ export function HistoryTab({
   reloadKey,
   onChanged,
 }: HistoryTabProps) {
-  const [statut, setStatut] = useState("");
+  const [recherche, setRecherche] = useState<Recherche>(SANS_FILTRE);
+  const [saisie, setSaisie] = useState<Recherche>(SANS_FILTRE);
+  const [montantInvalide, setMontantInvalide] = useState(false);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<Historique | null>(null);
   const [state, setState] = useState<"loading" | "error" | "ready">("loading");
@@ -83,7 +75,9 @@ export function HistoryTab({
   useEffect(() => {
     let cancelled = false;
     listHistory(companyId, filter, {
-      statut: (statut || undefined) as StatutDecision | undefined,
+      statut: "Validée",
+      q: recherche.q || undefined,
+      montant: recherche.montant || undefined,
       page,
     }).then(
       (result) => {
@@ -98,7 +92,7 @@ export function HistoryTab({
     return () => {
       cancelled = true;
     };
-  }, [companyId, filter, statut, page, reloadKey, retryKey]);
+  }, [companyId, filter, recherche, page, reloadKey, retryKey]);
 
   async function exporter() {
     setExporting(true);
@@ -111,11 +105,28 @@ export function HistoryTab({
     }
   }
 
-  function changeStatut(next: string) {
+  function rechercher() {
+    const texte = saisie.montant.trim();
+    const montant = texte ? normalizeAmountInput(texte) : "";
+    if (montant === null) {
+      setMontantInvalide(true);
+      return;
+    }
+    setMontantInvalide(false);
     setState("loading");
     setPage(1);
-    setStatut(next);
+    setRecherche({ q: saisie.q.trim(), montant });
   }
+
+  function effacer() {
+    setSaisie(SANS_FILTRE);
+    setMontantInvalide(false);
+    setState("loading");
+    setPage(1);
+    setRecherche(SANS_FILTRE);
+  }
+
+  const filtre = recherche.q !== "" || recherche.montant !== "";
 
   async function confirmCancel() {
     if (!cancelling) return;
@@ -145,20 +156,6 @@ export function HistoryTab({
       ),
     },
     { key: "code", header: "Code", render: (row) => <CodeBadge code={row.code} /> },
-    {
-      key: "statut",
-      header: "Statut",
-      render: (row) => (
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap",
-            DECISION_STYLES[row.statut as StatutDecision],
-          )}
-        >
-          {row.statut}
-        </span>
-      ),
-    },
     {
       key: "operation",
       header: "Opération",
@@ -198,11 +195,6 @@ export function HistoryTab({
       render: (row) => <ScoreBadge score={row.score} forte={row.forte} />,
     },
     { key: "origine", header: "Origine" },
-    {
-      key: "commentaire",
-      header: "Commentaire",
-      render: (row) => <span className="block min-w-[140px]">{row.commentaire ?? "-"}</span>,
-    },
     ...(canValidate
       ? [
           {
@@ -246,21 +238,58 @@ export function HistoryTab({
           {exporting ? "Export en cours…" : "Exporter le lettrage"}
         </Button>
       </div>
-      <div
-        className="mb-4 grid grid-cols-3 gap-2 text-sm sm:max-w-xl"
-        role="group"
-        aria-label="Filtrer par décision"
+      <form
+        className="mb-4 flex flex-wrap items-end gap-3"
+        aria-label="Filtrer les rapprochements validés"
+        onSubmit={(event) => {
+          event.preventDefault();
+          rechercher();
+        }}
       >
-        {STATUTS.map(({ statut: value, label }) => (
-          <StatButton
-            key={value}
-            label={label}
-            value={data?.par_statut[value]}
-            active={statut === value}
-            onClick={() => changeStatut(toggleStatut(statut, value))}
-          />
-        ))}
-      </div>
+        <div className="w-full max-w-[280px]">
+          <Field label="Recherche" htmlFor="historique-recherche">
+            <TextInput
+              id="historique-recherche"
+              value={saisie.q}
+              maxLength={100}
+              placeholder="Code, libellé, pièce, référence"
+              onChange={(event) => setSaisie({ ...saisie, q: event.target.value })}
+            />
+          </Field>
+        </div>
+        <div className="w-full max-w-[180px]">
+          <Field
+            label="Montant"
+            htmlFor="historique-montant"
+            error={montantInvalide ? "Montant invalide, ex. 10 000,00" : undefined}
+          >
+            <TextInput
+              id="historique-montant"
+              inputMode="decimal"
+              value={saisie.montant}
+              placeholder="10 000,00"
+              invalid={montantInvalide}
+              onChange={(event) => setSaisie({ ...saisie, montant: event.target.value })}
+            />
+          </Field>
+        </div>
+        <Button type="submit" variant="secondary" icon={Search}>
+          Rechercher
+        </Button>
+        {filtre && (
+          <Button variant="ghost" icon={X} onClick={effacer}>
+            Effacer les filtres
+          </Button>
+        )}
+      </form>
+      {state === "ready" && data && (
+        <p className="mb-3 text-sm text-simtis-muted">
+          <span className="font-semibold text-simtis-text tabular-nums">
+            {formatNombre(data.total)}
+          </span>{" "}
+          {data.total > 1 ? "rapprochements validés" : "rapprochement validé"}
+        </p>
+      )}
 
       {state === "loading" && <LoadingState rows={5} />}
       {state === "error" && (
@@ -278,14 +307,18 @@ export function HistoryTab({
             columns={columns}
             rows={data.decisions}
             getRowKey={(row) => String(row.id)}
-            emptyMessage="Aucune décision sur cette période."
+            emptyMessage={
+              filtre
+                ? "Aucun rapprochement validé ne correspond à ces filtres."
+                : "Aucun rapprochement validé sur cette période."
+            }
           />
           <Pagination
             label="Pages de l'historique"
             page={data.page}
             pages={pages}
             total={data.total}
-            noun="décision"
+            noun="rapprochement"
             onPage={(next) => {
               setState("loading");
               setPage(next);

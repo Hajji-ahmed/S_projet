@@ -208,10 +208,13 @@ export function matchGroupe(
 export function listHistory(
   companyId: number,
   filter: ReconciliationFilter,
-  options: { statut?: StatutDecision; page: number },
+  options: { statut?: StatutDecision; page: number; q?: string; montant?: string },
 ) {
+  const { montant, ...reste } = options;
+  // Montant (17/11/2026) : total des opérations, déjà au format « 10000.00 »
+  const suite = montant ? `&montant=${encodeURIComponent(montant)}` : "";
   return apiFetch<Historique>(
-    `/reconciliation/history${reconciliationQuery(companyId, { ...filter, ...options })}`,
+    `/reconciliation/history${reconciliationQuery(companyId, { ...filter, ...reste })}${suite}`,
   );
 }
 

@@ -1,6 +1,7 @@
 """Rapprochement bancaire 1→1 (P11) : le moteur propose, un utilisateur autorisé décide."""
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -233,11 +234,19 @@ def list_history(
     bank_account_id: int | None = None,
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
+    q: Annotated[
+        str | None, Query(max_length=100, description="Code, libellé, référence ou pièce")
+    ] = None,
+    montant: Annotated[
+        Decimal | None,
+        Query(gt=0, max_digits=18, decimal_places=2, description="Total des opérations"),
+    ] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> HistoriqueOut:
-    """Historique des décisions (validées, rejetées, annulées), les plus récentes d'abord."""
+    """Historique des décisions (validées, rejetées, annulées), les plus récentes d'abord ;
+    recherche et montant depuis le 17/11/2026."""
     result = reconciliation_service.list_history(
         db,
         company_id,
@@ -245,6 +254,8 @@ def list_history(
         bank_account_id=bank_account_id,
         date_from=date_from,
         date_to=date_to,
+        q=q,
+        montant=montant,
         page=page,
     )
     return HistoriqueOut.from_page(result)

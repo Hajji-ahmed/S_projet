@@ -1650,15 +1650,23 @@ def list_history(
     bank_account_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    q: str | None = None,
+    montant: Decimal | None = None,
     page: int = 1,
 ) -> HistoryPage:
     """Historique des décisions (validées, rejetées, annulées), de la plus récente à la plus
-    ancienne, 50 par page ; le décompte par statut porte sur tout le filtre, hors statut."""
+    ancienne, 50 par page ; le décompte par statut porte sur tout le filtre, hors statut.
+    Recherche et montant (17/11/2026) : voir `repo.decisions_query`."""
     company = _company(db, company_id)
     _check_period(date_from, date_to)
     regles = grille(db)
     query = repo.decisions_query(
-        company.id, bank_account_id=bank_account_id, date_from=date_from, date_to=date_to
+        company.id,
+        bank_account_id=bank_account_id,
+        date_from=date_from,
+        date_to=date_to,
+        q=q,
+        montant=montant,
     )
     total, matches = repo.page_of_decisions(
         db, query, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE

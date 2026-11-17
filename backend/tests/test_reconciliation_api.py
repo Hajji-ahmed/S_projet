@@ -724,6 +724,65 @@ def test_history_never_mixes_companies_and_checks_rights(client, comptable, refe
     assert history(client, no_right, db).status_code == 403
 
 
+def test_history_searches_code_labels_and_piece(client, comptable, db):
+    """17/11/2026 : recherche du code, de l'opération (libellé, référence) et de l'écriture."""
+    compte = account(db)
+    operation(db, compte, montant="100", libelle="VIR ALPHA", jour=date(2026, 9, 10))
+    ecriture(
+        db,
+        compte,
+        montant="-100",
+        libelle="VIR ALPHA SAGE",
+        numero_piece="PZ100",
+        jour=date(2026, 9, 10),
+        tiers=None,
+    )
+    operation(db, compte, montant="200", libelle="VIR BETA", jour=date(2026, 9, 11))
+    ecriture(
+        db,
+        compte,
+        montant="-200",
+        libelle="VIR BETA",
+        numero_piece="PZ200",
+        jour=date(2026, 9, 11),
+        tiers=None,
+    )
+    run(client, comptable, db)
+    pending = {
+        p["operation"]["libelle"]: p["id"]
+        for p in proposals(client, comptable, db).json()["correspondances"]
+    }
+    alpha = _valider(client, comptable, pending["VIR ALPHA"])
+    _valider(client, comptable, pending["VIR BETA"])
+
+    def libelles(q):
+        body = history(client, comptable, db, statut="Validée", q=q).json()
+        return [d["operation"]["libelle"] for d in body["decisions"]]
+
+    assert sorted(libelles("vir")) == ["VIR ALPHA", "VIR BETA"]
+    assert libelles(alpha["code"].lower()) == ["VIR ALPHA"]
+    assert libelles("alpha sage") == ["VIR ALPHA"]
+    assert libelles("pz200") == ["VIR BETA"]
+    assert libelles("100%") == []
+
+
+def test_history_filters_on_the_total_of_the_operations(client, comptable, db):
+    """17/11/2026 : le montant est le total des opérations (celui d'un groupe), au signe près."""
+    _, (cheque, _, _), _ = _groupe(client, comptable, db)
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+    _valider(client, comptable, proposal["id"])
+
+    def total(montant):
+        return history(client, comptable, db, statut="Validée", montant=montant)
+
+    assert total("10055").json()["total"] == 1
+    assert total("10055.00").json()["decisions"][0]["operation"]["id"] == cheque.id
+    assert total("10000").json()["total"] == 0
+    assert total("-5").status_code == 422
+    assert total("1.234").status_code == 422
+    assert total("abc").status_code == 422
+
+
 def test_batch_validation_never_mixes_companies(client, comptable, db):
     simtis, tefil = account(db), account(db, "SOCX")
     for compte in (simtis, tefil):

@@ -661,9 +661,13 @@ def decisions_query(
     date_from: date | None,
     date_to: date | None,
     bank_id: int | None = None,
+    q: str | None = None,
+    montant: Decimal | None = None,
 ) -> Select:
     """Identifiants des correspondances décidées de la société dont l'opération est dans le filtre
-    (sans filtre de statut, ni ordre, ni pagination). `bank_id` : comptes de cette banque."""
+    (sans filtre de statut, ni ordre, ni pagination). `bank_id` : comptes de cette banque.
+    Historique (17/11/2026) : `q` cherche le code, le libellé ou la référence d'une opération, le
+    libellé ou la pièce d'une écriture ; `montant` = total des opérations, en valeur absolue."""
     query = (
         select(ReconciliationMatch.id)
         .join(ReconciliationMatchItem, ReconciliationMatchItem.match_id == ReconciliationMatch.id)
@@ -683,7 +687,52 @@ def decisions_query(
         query = query.where(BankTransaction.date_operation >= date_from)
     if date_to is not None:
         query = query.where(BankTransaction.date_operation <= date_to)
+    if q and q.strip():
+        query = query.where(_decision_matches_text(q.strip()))
+    if montant is not None:
+        query = query.where(ReconciliationMatch.id.in_(_matches_of_total(montant)))
     return query.distinct()
+
+
+def _decision_matches_text(q: str):
+    """Condition « recherche » de l'historique : code, opération (libellé, référence) ou écriture
+    (libellé, pièce) d'une des lignes de la correspondance."""
+    pattern = f"%{_escape_like(q)}%"
+    par_operation = (
+        select(ReconciliationMatchItem.match_id)
+        .join(BankTransaction, BankTransaction.id == ReconciliationMatchItem.bank_transaction_id)
+        .where(
+            or_(
+                BankTransaction.libelle.ilike(pattern, escape="\\"),
+                BankTransaction.reference.ilike(pattern, escape="\\"),
+            )
+        )
+    )
+    par_ecriture = (
+        select(ReconciliationMatchItem.match_id)
+        .join(AccountingEntry, AccountingEntry.id == ReconciliationMatchItem.accounting_entry_id)
+        .where(
+            or_(
+                AccountingEntry.libelle.ilike(pattern, escape="\\"),
+                AccountingEntry.numero_piece.ilike(pattern, escape="\\"),
+            )
+        )
+    )
+    return or_(
+        ReconciliationMatch.code.ilike(pattern, escape="\\"),
+        ReconciliationMatch.id.in_(par_operation),
+        ReconciliationMatch.id.in_(par_ecriture),
+    )
+
+
+def _matches_of_total(montant: Decimal):
+    """Correspondances dont le total des opérations bancaires vaut ce montant, au signe près."""
+    return (
+        select(ReconciliationMatchItem.match_id)
+        .join(BankTransaction, BankTransaction.id == ReconciliationMatchItem.bank_transaction_id)
+        .group_by(ReconciliationMatchItem.match_id)
+        .having(func.abs(func.sum(BankTransaction.montant)) == abs(montant))
+    )
 
 
 def count_decisions_by_status(db: Session, ids_query: Select) -> dict[str, int]:
