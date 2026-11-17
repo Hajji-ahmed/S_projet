@@ -42,8 +42,8 @@ type ProposalCardProps = {
 };
 
 /**
- * Une proposition en grand : transaction bancaire à gauche, écriture comptable à droite, score et
- * critères au centre. Une proposition dont les montants diffèrent ne se coche ni ne se valide :
+ * Une proposition en grand : écriture comptable à gauche, transaction bancaire à droite (17/11/2026),
+ * score et critères au centre. Une proposition dont les montants diffèrent ne se coche ni ne se valide :
  * elle ne peut qu'être rejetée.
  */
 export function ProposalCard({
@@ -89,48 +89,36 @@ export function ProposalCard({
           )}
         </div>
 
-        {groupe ? (
-          <Side title={`Groupe · ${lignes.length} opérations bancaires`}>
-            <Amount
-              value={montantBanque(item)}
-              sens={sensBanque(montantBanque(item))}
-              unite={devise}
-            />
-            <ul className="space-y-0.5 text-sm" aria-label="Opérations du groupe">
-              {lignes.map((ligne) => (
-                <li key={ligne.id} className="flex justify-between gap-3">
-                  <span className="min-w-0 truncate" title={ligne.libelle}>
-                    {formatDate(ligne.date_operation)} · {ligne.libelle}
-                  </span>
-                  <span className="shrink-0 tabular-nums">
-                    {formatAmount(ligne.montant, devise)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
-              <BankLabel code={item.operation.bank_code} logo={logo} />
-              <span>
-                Total {formatAmount(montantBanque(item), devise)} · écart{" "}
-                {formatAmount(absolute(ecart), devise)}
-              </span>
+        <Side title="Écriture comptable">
+          <Amount
+            value={montantSage(item)}
+            sens={sensSage(montantSage(item))}
+            unite={uniteEcriture(item.ecriture)}
+          />
+          {ecritures.length > 1 && (
+            <p className="text-xs font-semibold text-simtis-primary-dark">
+              {ecritures.length} écritures
             </p>
-          </Side>
-        ) : (
-          <Side title="Transaction bancaire">
-            <Amount
-              value={item.operation.montant}
-              sens={sensBanque(item.operation.montant)}
-              unite={devise}
-            />
-            <p className="font-medium">{item.operation.libelle}</p>
-            <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
-              <span>{formatDate(item.operation.date_operation)}</span>
-              <BankLabel code={item.operation.bank_code} logo={logo} />
-              {item.operation.reference && <span>Réf. {item.operation.reference}</span>}
-            </p>
-          </Side>
-        )}
+          )}
+          {ecritures.map((ecriture) => (
+            <div key={ecriture.id}>
+              <p className="font-medium">
+                {ecriture.libelle}
+                {ecritures.length > 1 && (
+                  <span className="ml-2 text-xs font-normal text-simtis-muted tabular-nums">
+                    {montantEcriture(ecriture)}
+                  </span>
+                )}
+              </p>
+              <p className="flex flex-wrap gap-x-2 text-xs text-simtis-muted">
+                <span>{datesEcriture(ecriture)}</span>
+                {ecriture.journal && <span>Journal {ecriture.journal}</span>}
+                {ecriture.numero_piece && <span>Pièce {ecriture.numero_piece}</span>}
+                {ecriture.tiers && <span>{ecriture.tiers}</span>}
+              </p>
+            </div>
+          ))}
+        </Side>
 
         <div className="flex flex-col items-center gap-2 text-center">
           <ArrowLeftRight className="hidden h-5 w-5 text-simtis-muted lg:block" aria-hidden />
@@ -190,36 +178,48 @@ export function ProposalCard({
           </ul>
         </div>
 
-        <Side title="Écriture comptable">
-          <Amount
-            value={montantSage(item)}
-            sens={sensSage(montantSage(item))}
-            unite={uniteEcriture(item.ecriture)}
-          />
-          {ecritures.length > 1 && (
-            <p className="text-xs font-semibold text-simtis-primary-dark">
-              {ecritures.length} écritures
-            </p>
-          )}
-          {ecritures.map((ecriture) => (
-            <div key={ecriture.id}>
-              <p className="font-medium">
-                {ecriture.libelle}
-                {ecritures.length > 1 && (
-                  <span className="ml-2 text-xs font-normal text-simtis-muted tabular-nums">
-                    {montantEcriture(ecriture)}
+        {groupe ? (
+          <Side title={`Groupe · ${lignes.length} opérations bancaires`}>
+            <Amount
+              value={montantBanque(item)}
+              sens={sensBanque(montantBanque(item))}
+              unite={devise}
+            />
+            <ul className="space-y-0.5 text-sm" aria-label="Opérations du groupe">
+              {lignes.map((ligne) => (
+                <li key={ligne.id} className="flex justify-between gap-3">
+                  <span className="min-w-0 truncate" title={ligne.libelle}>
+                    {formatDate(ligne.date_operation)} · {ligne.libelle}
                   </span>
-                )}
-              </p>
-              <p className="flex flex-wrap gap-x-2 text-xs text-simtis-muted">
-                <span>{datesEcriture(ecriture)}</span>
-                {ecriture.journal && <span>Journal {ecriture.journal}</span>}
-                {ecriture.numero_piece && <span>Pièce {ecriture.numero_piece}</span>}
-                {ecriture.tiers && <span>{ecriture.tiers}</span>}
-              </p>
-            </div>
-          ))}
-        </Side>
+                  <span className="shrink-0 tabular-nums">
+                    {formatAmount(ligne.montant, devise)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
+              <BankLabel code={item.operation.bank_code} logo={logo} />
+              <span>
+                Total {formatAmount(montantBanque(item), devise)} · écart{" "}
+                {formatAmount(absolute(ecart), devise)}
+              </span>
+            </p>
+          </Side>
+        ) : (
+          <Side title="Transaction bancaire">
+            <Amount
+              value={item.operation.montant}
+              sens={sensBanque(item.operation.montant)}
+              unite={devise}
+            />
+            <p className="font-medium">{item.operation.libelle}</p>
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-simtis-muted">
+              <span>{formatDate(item.operation.date_operation)}</span>
+              <BankLabel code={item.operation.bank_code} logo={logo} />
+              {item.operation.reference && <span>Réf. {item.operation.reference}</span>}
+            </p>
+          </Side>
+        )}
       </div>
 
       {item.explication && (
