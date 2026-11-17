@@ -719,22 +719,22 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     export = exporter(client, comptable, db, "commissions")
     assert export.status_code == 200, export.text
     rows = lignes_csv(export)
-    # Une pièce par opération, la charge (ou la TVA) au débit et la banque au crédit, toutes deux
-    # au libellé du relevé (13/11/2026)
+    # Une écriture par opération, la charge (ou la TVA) au débit et la banque au crédit, toutes deux
+    # au libellé du relevé (13/11/2026) ; une TVA reprend la pièce de sa commission (17/11/2026)
     tva = "TAXE SUR VALEUR AJOUTEE"
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows] == [
         ("61473000", "BP2604001", "COMMISSION", "D", "20,00"),
         ("55410003", "BP2604001", "COMMISSION", "C", "20,00"),
         ("61473000", "BP2604002", "COMMISSION", "D", "30,00"),
         ("55410003", "BP2604002", "COMMISSION", "C", "30,00"),
-        ("34552142", "BP2604003", tva, "D", "2,00"),
-        ("55410003", "BP2604003", tva, "C", "2,00"),
-        ("34552142", "BP2604004", tva, "D", "3,00"),
-        ("55410003", "BP2604004", tva, "C", "3,00"),
-        ("61473000", "BP2604005", COM_EFFET[:50], "D", "10,00"),
-        ("55410003", "BP2604005", COM_EFFET[:50], "C", "10,00"),
-        ("34552142", "BP2604006", TVA_EFFET[:50], "D", "1,00"),
-        ("55410003", "BP2604006", TVA_EFFET[:50], "C", "1,00"),
+        ("34552142", "BP2604001", tva, "D", "2,00"),
+        ("55410003", "BP2604001", tva, "C", "2,00"),
+        ("34552142", "BP2604002", tva, "D", "3,00"),
+        ("55410003", "BP2604002", tva, "C", "3,00"),
+        ("61473000", "BP2604003", COM_EFFET[:50], "D", "10,00"),
+        ("55410003", "BP2604003", COM_EFFET[:50], "C", "10,00"),
+        ("34552142", "BP2604003", TVA_EFFET[:50], "D", "1,00"),
+        ("55410003", "BP2604003", TVA_EFFET[:50], "C", "1,00"),
     ]
 
 
@@ -831,13 +831,21 @@ def test_one_export_file_holds_stamps_and_commissions(client, comptable, db):
     assert response.status_code == 200, response.text
     rows = lignes_csv(response)
     tva = "TAXE SUR VALEUR AJOUTEE"
-    # Une pièce par frais, ses deux lignes au libellé du relevé (13/11/2026)
+    # Une écriture par frais, ses deux lignes au libellé du relevé (13/11/2026) ; une TVA sur une
+    # ligne à part a la pièce de sa commission, la TVA d'un effet celle de sa commission effet
+    # (17/11/2026)
     assert [(r[1], r[5], r[7]) for r in rows] == [
         (f"BP2604{n:03d}", libelle, sens)
-        for n, libelle in enumerate(
-            (REMISE, VERSEMENT, VERSEMENT, "COMMISSION", "COMMISSION", tva, tva)
-            + (COM_EFFET[:50], TVA_EFFET[:50]),
-            start=1,
+        for n, libelle in (
+            (1, REMISE),
+            (2, VERSEMENT),
+            (3, VERSEMENT),
+            (4, "COMMISSION"),
+            (5, "COMMISSION"),
+            (4, tva),
+            (5, tva),
+            (6, COM_EFFET[:50]),
+            (6, TVA_EFFET[:50]),
         )
         for sens in ("D", "C")
     ]
@@ -1499,6 +1507,43 @@ def test_pieces_are_given_at_export_from_the_first_one_typed(client, comptable, 
     )
 
 
+def test_a_vat_takes_the_piece_of_its_commission_and_uses_no_new_number(client, comptable, db):
+    """17/11/2026 : la TVA sur une ligne à part reprend la pièce de sa commission (deux écritures,
+    une pièce) ; elle ne consomme pas de numéro."""
+    compte = bp(db)
+    operation(db, compte, "-20", JOUR, "COMMISSION")
+    operation(db, compte, "-2", JOUR, "TAXE SUR VALEUR AJOUTEE")
+    operation(db, compte, "-202", JOUR + timedelta(days=1), REMISE)
+    assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
+    assert valider(client, comptable, db, (compte, JOUR + timedelta(days=1))).status_code == 200
+
+    response = exporter(client, comptable, db, premiere="BP2604010")
+
+    assert response.status_code == 200, response.text
+    assert [(r[1], r[5]) for r in lignes_csv(response)] == [
+        ("BP2604010", "COMMISSION"),
+        ("BP2604010", "COMMISSION"),
+        ("BP2604010", "TAXE SUR VALEUR AJOUTEE"),
+        ("BP2604010", "TAXE SUR VALEUR AJOUTEE"),
+        ("BP2604011", REMISE),
+        ("BP2604011", REMISE),
+    ]
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "export_frais_sage"))
+    assert audit.nouvelle_valeur["nb_ecritures"] == 3
+    assert audit.nouvelle_valeur["nb_pieces"] == 2
+    assert audit.nouvelle_valeur["derniere_piece"] == "BP2604011"
+
+
+def test_a_vat_without_commission_keeps_its_own_piece(client, comptable, db):
+    compte = bp(db)
+    tva = operation(db, compte, "-2", JOUR, "TAXE SUR VALEUR AJOUTEE")
+    manuelle(client, comptable, db, [tva], libelle="TVA SEULE")
+    response = exporter(client, comptable, db, premiere="BP2604020")
+
+    assert response.status_code == 200, response.text
+    assert {r[1] for r in lignes_csv(response)} == {"BP2604020"}
+
+
 def a_exporter(client, headers, db):
     response = client.get(
         "/api/frais/a-exporter", params={"company_id": company(db).id}, headers=headers
@@ -2035,8 +2080,8 @@ def test_escompte_interests_and_their_vat_are_booked_automatically_whatever_the_
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in lignes_csv(export)] == [
         ("63117000", "BP2604001", INTERET_ESCOMPTE, "D", "4524,56"),
         ("55410003", "BP2604001", INTERET_ESCOMPTE, "C", "4524,56"),
-        ("34552142", "BP2604002", TVA, "D", "452,46"),
-        ("55410003", "BP2604002", TVA, "C", "452,46"),
+        ("34552142", "BP2604001", TVA, "D", "452,46"),
+        ("55410003", "BP2604001", TVA, "C", "452,46"),
     ]
 
 
@@ -2386,7 +2431,8 @@ def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commiss
     """12/11/2026 : commissions (virements, EBICS, carte) dans « COM », frais (Attijari Net,
     DocNet, certification, opération, relevé caution) dans « FRAIS », TVA 10 % comprise et sans
     seuil ; timbre LCN dans « DT D'ENREGISTREMENT » ; « COM & FRAIS » proposé ; agios trimestriels
-    et commission caution restent à la main."""
+    restent à la main. 17/11/2026 : commission caution (« COM »), redevances Infofax et Online et
+    NBR (« FRAIS »), TVA 10 % comprise, sans seuil, aussi automatiques."""
     compte = account(db, bank_code="AWB")
     for montant, libelle in (
         ("-17.60", "COMM VIR EMIS 67783838"),
@@ -2400,15 +2446,18 @@ def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commiss
         ("-33", "FRAIS OPERATION N 132593923"),
         ("-22", "FRAIS RELEVE CAUTION"),
         ("-40", "TIMBRE/REM LCN REF 1897734"),
+        ("-2187.40", "COMMISSION CAUTION"),
+        ("-179.30", "REDEVANCE INFOFAX"),
+        ("-187", "REDEVANCE ONLINE TR"),
+        ("-66", "NBR INTERVENANT"),
     ):
         operation(db, compte, montant, JOUR, libelle)
     agios = operation(db, compte, "-47917.73", JOUR, "FRAIS ET AGIOS TRIMESTRIELS T3 2026")
-    caution = operation(db, compte, "-2187.40", JOUR, "COMMISSION CAUTION")
 
     tableau = lire(client, comptable, db, None).json()
 
-    # Une écriture par frais (13/11/2026) : 11 écritures, additionnées ici par type
-    assert len(tableau["propositions"]) == 11
+    # Une écriture par frais (13/11/2026) : 15 écritures, additionnées ici par type
+    assert len(tableau["propositions"]) == 15
     assert {p["libelle"] for p in tableau["propositions"]} == {
         "DT D'ENREGISTREMENT",
         "COM",
@@ -2424,8 +2473,10 @@ def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commiss
         "commission_ebics_tva": (1, "60.00"),
         "commission_carte": (1, "10.00"),
         "commission_carte_tva": (1, "1.00"),
+        "commission_caution": (1, "1988.55"),
+        "commission_caution_tva": (1, "198.85"),
     }
-    assert total_de(tableau, "COM") == "936.10"
+    assert total_de(tableau, "COM") == "3123.50"
     assert details_de(tableau, "FRAIS") == {
         "frais_attijari_net": (1, "65.00"),
         "frais_attijari_net_tva": (1, "6.50"),
@@ -2437,10 +2488,37 @@ def test_awb_fees_are_automatic_with_vat_except_quarterly_agios_and_bond_commiss
         "frais_operation_tva": (1, "3.00"),
         "frais_releve_caution": (1, "20.00"),
         "frais_releve_caution_tva": (1, "2.00"),
+        "redevance_infofax": (1, "163.00"),
+        "redevance_infofax_tva": (1, "16.30"),
+        "redevance_online": (1, "170.00"),
+        "redevance_online_tva": (1, "17.00"),
+        "nbr": (1, "60.00"),
+        "nbr_tva": (1, "6.00"),
     }
     comptes = {g["compte"] for p in tableau["propositions"] for g in p["lignes"] if g["debit"]}
     assert comptes == {"61671000", "61473000", "34552142"}
-    assert {a["id"] for a in tableau["autres_frais"]} == {agios.id, caution.id}
+    assert {a["id"] for a in tableau["autres_frais"]} == {agios.id}
+
+
+def test_awb_redevances_nbr_and_caution_stay_manual_at_other_banks(client, comptable, db):
+    """17/11/2026 : ces libellés ne sont repris automatiquement que pour un compte AWB."""
+    compte = cih(db)
+    ids = {
+        operation(db, compte, montant, JOUR, libelle).id
+        for montant, libelle in (
+            ("-179.30", "REDEVANCE INFOFAX"),
+            ("-187", "REDEVANCE ONLINE TR"),
+            ("-66", "NBR INTERVENANT"),
+            ("-2119.66", "COMMISSION CAUTION"),
+        )
+    }
+
+    tableau = lire(client, comptable, db, None).json()
+
+    assert tableau["propositions"] == []
+    # La commission caution est listée à la main ; les redevances et NBR ne sont pas des frais
+    # connus pour ce tableau
+    assert max(ids) in {a["id"] for a in tableau["autres_frais"]}
 
 
 def awb(db):

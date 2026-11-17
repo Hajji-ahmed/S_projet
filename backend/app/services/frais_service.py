@@ -161,10 +161,21 @@ BANQUES_AGIOS_ESCOMPTE = frozenset({"CIH"})
 # Intérêts d'escompte LCN de BP (14/11/2026), sur le libellé sans ponctuation : écriture
 # « FRAIS D'ESCOMPTE », leur TVA de 10 % sur une ligne « TAXE SUR VALEUR AJOUTEE » à part
 _INTERET_ESCOMPTE = re.compile(r"^INTERET REMISE LCN A L ?ESCOMPTE\b")
+# AWB (17/11/2026), TVA de 10 % comprise, sans seuil, seulement pour un compte AWB (comme les agios
+# CIH) : redevances et NBR dans « FRAIS », commission de caution dans « COM » (début « COMMISSION »)
+BANQUES_FRAIS_AWB = frozenset({"AWB"})
+_FRAIS_AWB = (
+    ("redevance_infofax", re.compile(r"^REDEVANCE INFOFAX\b")),
+    ("redevance_online", re.compile(r"^REDEVANCE ONLINE\b")),
+    ("nbr", re.compile(r"^NBR\b")),
+)
+_COMMISSION_CAUTION = re.compile(r"^COMMISSION CAUTION\b")
 _FRAIS_TVA = (
     *_COMMISSIONS_TVA,
     ("commission_carte", _COMMISSION_CARTE),
+    ("commission_caution", _COMMISSION_CAUTION),
     *_FRAIS_RECUPERES,
+    *_FRAIS_AWB,
     ("agios_escompte", _AGIOS_ESCOMPTE),
 )
 TAUX_TVA_FRAIS = Decimal("10")
@@ -192,11 +203,15 @@ TYPES_FRAIS_SANS_SEUIL = frozenset(
         "frais_releve_caution",
         # CIH (12/11/2026)
         "agios_escompte",
+        # AWB (17/11/2026)
+        "redevance_infofax",
+        "redevance_online",
+        "nbr",
     }
 )
 # Commissions AWB à TVA comprise toujours automatiques, quel que soit le montant (12/11/2026)
 TYPES_COMMISSIONS_SANS_SEUIL = frozenset(
-    {"commission_virement", "commission_ebics", "commission_carte"}
+    {"commission_virement", "commission_ebics", "commission_carte", "commission_caution"}
 )
 # FRAIS RECUPERES PAR LA BANQUE de 77,50 : droit de timbre 50 + commission 25 + TVA 2,50
 FRAIS_RECUPERES_AVEC_TIMBRE = Decimal("77.50")
@@ -274,6 +289,11 @@ COMPTE_PAR_TYPE = {
     "frais_certification": COMPTE_FRAIS_BANCAIRES,
     "frais_operation": COMPTE_FRAIS_BANCAIRES,
     "frais_releve_caution": COMPTE_FRAIS_BANCAIRES,
+    # AWB (17/11/2026), même compte que les commissions AWB
+    "commission_caution": COMPTE_FRAIS_BANCAIRES,
+    "redevance_infofax": COMPTE_FRAIS_BANCAIRES,
+    "redevance_online": COMPTE_FRAIS_BANCAIRES,
+    "nbr": COMPTE_FRAIS_BANCAIRES,
     # CIH (12/11/2026) : AGIOS CIH
     "agios_escompte": COMPTES_AGIOS["CIH"],
     # BP (14/11/2026)
@@ -342,6 +362,15 @@ TYPES = {
     "frais_operation_tva": ("TVA frais opération", "compte_tva", "compte de TVA"),
     "frais_releve_caution": ("Frais relevé caution", "compte_commission", "compte de charge"),
     "frais_releve_caution_tva": ("TVA frais relevé caution", "compte_tva", "compte de TVA"),
+    # AWB (17/11/2026)
+    "commission_caution": ("Commission caution", "compte_commission", "compte de charge"),
+    "commission_caution_tva": ("TVA commission caution", "compte_tva", "compte de TVA"),
+    "redevance_infofax": ("Redevance Infofax", "compte_commission", "compte de charge"),
+    "redevance_infofax_tva": ("TVA redevance Infofax", "compte_tva", "compte de TVA"),
+    "redevance_online": ("Redevance Online", "compte_commission", "compte de charge"),
+    "redevance_online_tva": ("TVA redevance Online", "compte_tva", "compte de TVA"),
+    "nbr": ("NBR", "compte_commission", "compte de charge"),
+    "nbr_tva": ("TVA NBR", "compte_tva", "compte de TVA"),
     # CIH (12/11/2026)
     "agios_escompte": ("Agios escompte LCN", "compte_commission", "compte de charge"),
     "agios_escompte_tva": ("TVA agios escompte LCN", "compte_tva", "compte de TVA"),
@@ -392,6 +421,9 @@ def type_commission(libelle: str | None, banque: str | None = None) -> str | Non
     code = next((code for code, regle in _COMMISSIONS_TVA if regle.match(sans)), None)
     if code is None and _COMMISSION_CARTE.match(texte):
         return "commission_carte"
+    # « COMMISSION CAUTION 780191751… » seulement pour un compte AWB (17/11/2026)
+    if code is None and banque in BANQUES_FRAIS_AWB and _COMMISSION_CAUTION.match(sans):
+        return "commission_caution"
     return code
 
 
@@ -402,6 +434,11 @@ def type_frais_tva(libelle: str | None, banque: str | None = None) -> str | None
     texte = _sans_ponctuation(libelle)
     if banque in BANQUES_AGIOS_ESCOMPTE and _AGIOS_ESCOMPTE.match(texte):
         return "agios_escompte"
+    # Redevances et NBR d'AWB (17/11/2026)
+    if banque in BANQUES_FRAIS_AWB:
+        awb = next((code for code, regle in _FRAIS_AWB if regle.match(texte)), None)
+        if awb:
+            return awb
     # Seulement FRAIS RECUPERES PAR LA BANQUE : les commissions à TVA comprise vont dans « COM »
     return next((code for code, regle in _FRAIS_RECUPERES if regle.match(texte)), None)
 
@@ -614,8 +651,8 @@ def partenaire_tva(libelle: str | None) -> str | None:
     return None
 
 
-def associer_tva(operations: list[BankTransaction]) -> dict[int, str]:
-    """TVA sur une ligne à part rattachées à leur opération : {TVA : famille de l'opération}
+def tva_et_operation(operations: list[BankTransaction]) -> dict[int, tuple[str, int]]:
+    """TVA sur une ligne à part rattachées à leur opération : {TVA : (famille, id de l'opération)}
     (09/11/2026 ; abonnement et intérêts d'escompte depuis le 14/11/2026).
 
     Par compte et par jour, chaque TVA (dans l'ordre du relevé) prend la première opération encore
@@ -625,13 +662,13 @@ def associer_tva(operations: list[BankTransaction]) -> dict[int, str]:
     for tx in operations:
         if est_tva_separee(tx) or (tx.montant < 0 and partenaire_tva(tx.libelle)):
             par_jour.setdefault((tx.bank_account_id, tx.date_operation), []).append(tx)
-    associees: dict[int, str] = {}
+    associees: dict[int, tuple[str, int]] = {}
     for lignes in par_jour.values():
         lignes.sort(key=lambda tx: (tx.ordre or 0, tx.id))
-        libres: dict[Decimal, list[str]] = {}
+        libres: dict[Decimal, list[tuple[str, int]]] = {}
         for tx in lignes:
             if (famille_partenaire := partenaire_tva(tx.libelle)) is not None:
-                libres.setdefault(tva_attendue(-tx.montant), []).append(famille_partenaire)
+                libres.setdefault(tva_attendue(-tx.montant), []).append((famille_partenaire, tx.id))
         for tx in lignes:
             if not est_tva_separee(tx):
                 continue
@@ -639,6 +676,37 @@ def associer_tva(operations: list[BankTransaction]) -> dict[int, str]:
             if candidates:
                 associees[tx.id] = candidates.pop(0)
     return associees
+
+
+def tva_effet_et_operation(operations: list[BankTransaction]) -> dict[int, int]:
+    """{TVA d'une commission effet : id de la commission effet} (17/11/2026, pour le N° pièce
+    seulement) : par compte et par jour, la première commission effet encore libre dont la TVA de
+    10 % vaut exactement le montant de la TVA."""
+    par_jour: dict[tuple[int, date], list[BankTransaction]] = {}
+    for tx in operations:
+        if tx.montant < 0 and type_commission(tx.libelle) in (
+            "commission_effet",
+            "tva_commission_effet",
+        ):
+            par_jour.setdefault((tx.bank_account_id, tx.date_operation), []).append(tx)
+    associees: dict[int, int] = {}
+    for lignes in par_jour.values():
+        lignes.sort(key=lambda tx: (tx.ordre or 0, tx.id))
+        libres: dict[Decimal, list[int]] = {}
+        for tx in lignes:
+            if type_commission(tx.libelle) == "commission_effet":
+                libres.setdefault(tva_attendue(-tx.montant), []).append(tx.id)
+        for tx in lignes:
+            if type_commission(tx.libelle) == "tva_commission_effet" and (
+                candidates := libres.get(-tx.montant)
+            ):
+                associees[tx.id] = candidates.pop(0)
+    return associees
+
+
+def associer_tva(operations: list[BankTransaction]) -> dict[int, str]:
+    """{TVA : famille de l'opération qu'elle suit} (`tva_et_operation`)."""
+    return {tva: famille for tva, (famille, _) in tva_et_operation(operations).items()}
 
 
 def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
@@ -867,7 +935,7 @@ def sans_seuil(libelle: str | None, banque: str | None = None) -> bool:
     agios d'escompte LCN de CIH (12/11/2026), abonnement BP E-CORPORATE et intérêt d'escompte LCN
     de BP (14/11/2026) : le seuil de 200 DH ne s'applique pas."""
     return (
-        type_commission(libelle) in TYPES_SANS_SEUIL | TYPES_COMMISSIONS_SANS_SEUIL
+        type_commission(libelle, banque) in TYPES_SANS_SEUIL | TYPES_COMMISSIONS_SANS_SEUIL
         or type_frais_tva(libelle, banque) in TYPES_FRAIS_SANS_SEUIL
         or type_escompte(libelle) == "interet_escompte"
     )
@@ -1756,6 +1824,38 @@ def a_exporter(db: Session, company_id: int) -> list[AExporter]:
     ]
 
 
+def _ecritures_suivies_par_tva(
+    db: Session,
+    entries: list[AccountingEntry],
+    operations: dict[int, list[BankTransaction]],
+) -> dict[int, AccountingEntry]:
+    """{écriture d'une TVA sur une ligne à part : écriture de la commission, de l'abonnement ou de
+    l'intérêt d'escompte qu'elle suit} (17/11/2026), même si cette dernière est déjà exportée. Même
+    rattachement que `associer_tva` ; une TVA sans écriture de commission n'y figure pas."""
+    tva_de_ecriture: dict[int, BankTransaction] = {}
+    for entry in entries:
+        ops = operations.get(entry.id, [])
+        if len(ops) == 1 and (
+            est_tva_separee(ops[0]) or type_commission(ops[0].libelle) == "tva_commission_effet"
+        ):
+            tva_de_ecriture[entry.id] = ops[0]
+    if not tva_de_ecriture:
+        return {}
+    cles = {(tx.bank_account_id, tx.date_operation) for tx in tva_de_ecriture.values()}
+    du_jour = frais_repository.operations_debitees_des_jours(db, cles)
+    liens = {tva: operation for tva, (_, operation) in tva_et_operation(du_jour).items()}
+    liens.update(tva_effet_et_operation(du_jour))
+    operation_de = {
+        entry_id: liens[tx.id] for entry_id, tx in tva_de_ecriture.items() if tx.id in liens
+    }
+    ecritures = frais_repository.ecritures_simtis_des_operations(db, list(operation_de.values()))
+    return {
+        entry_id: ecritures[operation_id]
+        for entry_id, operation_id in operation_de.items()
+        if operation_id in ecritures and ecritures[operation_id].id != entry_id
+    }
+
+
 def exporter(
     db: Session,
     company_id: int,
@@ -1798,9 +1898,24 @@ def exporter(
     ]
     if not rows:
         raise ConflictError(f"Aucune écriture de frais {banque} à exporter en {mois:02d}/{annee}.")
-    rang = premiere_piece(premiere, banque, annee, mois, len(rows))
     rows.sort(key=lambda row: (row[0].date_ecriture, row[0].id))
     operations = frais_repository.operations_of_entries(db, [entry.id for entry, _, _ in rows])
+    # Une TVA sur une ligne à part reprend le N° pièce de sa commission (17/11/2026)
+    suivies = _ecritures_suivies_par_tva(db, [entry for entry, _, _ in rows], operations)
+    ids_export = {entry.id for entry, _, _ in rows}
+    suivies = {
+        tva_id: partenaire for tva_id, partenaire in suivies.items() if partenaire.id in ids_export
+    }
+    nb_pieces = len(rows) - len(suivies)
+    rang = premiere_piece(premiere, banque, annee, mois, nb_pieces)
+    pieces: dict[int, str] = {}
+    prochain = rang
+    for entry, _, _ in rows:
+        if entry.id not in suivies:
+            pieces[entry.id] = numero_piece(banque, debut, prochain)
+            prochain += 1
+    for tva_id, partenaire in suivies.items():
+        pieces[tva_id] = pieces[partenaire.id]
     saisies = frais_repository.lignes_saisies(db, [entry.id for entry, _, _ in rows])
     lignes = {}
     manquants: dict[str, set[str]] = {}
@@ -1843,8 +1958,8 @@ def exporter(
     buffer = StringIO()
     writer = csv.writer(buffer, delimiter=CSV_SEPARATEUR, lineterminator="\r\n")
     maintenant = datetime.now(UTC)
-    for index, (entry, _, _) in enumerate(rows):
-        piece = numero_piece(banque, debut, rang + index)
+    for entry, _, _ in rows:
+        piece = pieces[entry.id]
         for ligne in lignes[entry.id]:
             # Sage : un montant toujours positif et son sens ; Référence et les autres colonnes
             # facultatives restent vides (16/10/2026)
@@ -1879,8 +1994,9 @@ def exporter(
             "banque": banque,
             "mois": f"{mois:02d}/{annee}",
             "nb_ecritures": len(rows),
+            "nb_pieces": nb_pieces,
             "premiere_piece": numero_piece(banque, debut, rang),
-            "derniere_piece": numero_piece(banque, debut, rang + len(rows) - 1),
+            "derniere_piece": numero_piece(banque, debut, rang + max(nb_pieces, 1) - 1),
         },
         ip=ip,
     )

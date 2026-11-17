@@ -43,6 +43,8 @@ LIBELLE_FRAIS_SQL = (
     # AWB (12/11/2026)
     r"|ATTIJARI\W+NET\W+ENTREPRISE|MODULE\W+DOCNET|POUR\W+CERTIFICATION\W+CH|OPERATION\W+N\W"
     r"|RELEVE\W+CAUTION)"
+    # AWB (17/11/2026) : redevances et NBR ; la banque est vérifiée par `frais_service`
+    r"|REDEVANCE\W+(INFOFAX|ONLINE)|NBR(\W|$)"
     # CIH (12/11/2026) : la banque est vérifiée par `frais_service.type_frais_tva`
     r"|AGIOS\W+ESCOMPTE\W+LCN)"
 )
@@ -236,6 +238,46 @@ def operations_of_entries(db: Session, entry_ids: list[int]) -> dict[int, list[B
     for entry_id, tx in rows:
         result.setdefault(entry_id, []).append(tx)
     return result
+
+
+def operations_debitees_des_jours(
+    db: Session, cles: set[tuple[int, date]]
+) -> list[BankTransaction]:
+    """Opérations débitées des (compte, jour) demandés : pour rattacher une TVA sur une ligne à
+    part à sa commission, même si celle-ci est déjà exportée (17/11/2026)."""
+    if not cles:
+        return []
+    comptes = {cle[0] for cle in cles}
+    jours = {cle[1] for cle in cles}
+    rows = db.scalars(
+        select(BankTransaction).where(
+            BankTransaction.bank_account_id.in_(comptes),
+            BankTransaction.date_operation.in_(jours),
+            BankTransaction.montant < 0,
+        )
+    )
+    return [tx for tx in rows if (tx.bank_account_id, tx.date_operation) in cles]
+
+
+def ecritures_simtis_des_operations(
+    db: Session, transaction_ids: list[int]
+) -> dict[int, AccountingEntry]:
+    """Écriture SIMTIS de chaque opération demandée (correspondance active), si elle en a une."""
+    if not transaction_ids:
+        return {}
+    entry_item = aliased(ReconciliationMatchItem)
+    rows = db.execute(
+        select(ReconciliationMatchItem.bank_transaction_id, AccountingEntry)
+        .join(entry_item, entry_item.match_id == ReconciliationMatchItem.match_id)
+        .join(AccountingEntry, AccountingEntry.id == entry_item.accounting_entry_id)
+        .where(
+            ReconciliationMatchItem.bank_transaction_id.in_(transaction_ids),
+            ReconciliationMatchItem.actif.is_(True),
+            entry_item.actif.is_(True),
+            AccountingEntry.origine == "SIMTIS",
+        )
+    )
+    return {tx_id: entry for tx_id, entry in rows}
 
 
 def _libres_a_comptabiliser():
