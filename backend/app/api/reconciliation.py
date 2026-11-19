@@ -48,7 +48,9 @@ router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
 
 can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
 # Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur
-TypeOperation = Literal["Chèque", "Effet", "Espèces", "Virement", "Impayé", "Autre"]
+TypeOperation = Literal[
+    "Chèque", "Effet", "Espèces", "Virement", "Douane", "RTGS", "Impayé", "Autre"
+]
 # Lancer le moteur écrit des propositions : réservé à qui peut aussi les valider
 can_validate = require_permission(PermissionCode.RECONCILIATION_VALIDATE)
 

@@ -10,16 +10,19 @@ export type ReconciliationFilter = {
   bankAccountId?: number;
   from: string;
   to: string;
-  /** Type d'opération (14/10/2026) : Chèque, Effet, Espèces, Virement, Impayé ou Autre. */
+  /** Type d'opération (14/10/2026) : Chèque, Effet, Espèces, Virement, Douane, RTGS, Impayé ou Autre. */
   typeOperation?: string;
 };
 
-/** Filtre « Type » des volets et des propositions : mêmes règles que le moteur (14/10/2026). */
+/** Filtre « Type » des volets et des propositions : mêmes règles que le moteur (14/10/2026 ;
+ * Douane et RTGS le 19/11/2026). */
 export const TYPES_OPERATION = [
   "Chèque",
   "Effet",
   "Espèces",
   "Virement",
+  "Douane",
+  "RTGS",
   "Impayé",
   "Autre",
 ] as const;

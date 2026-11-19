@@ -268,6 +268,12 @@ TYPES_SAGE: tuple[tuple[str, str], ...] = (
     ("EAR", "Effet"),  # « EAR° … »
     ("LCN", "Effet"),  # « LCN … » (28/10/2026)
     ("ESP", "Espèces"),
+    # Douane et RTGS (19/11/2026), avant « VIR » : « VIR DOUANE … » va avec le paiement TGR de la
+    # banque, « VIR DEFAUT » / « VIR DE FAUT » / « VIREMENTS DE FONDS » avec un « VIR. RTGS … »
+    ("VIR DOUANE", "Douane"),
+    ("VIR DEFAUT", "RTGS"),
+    ("VIR DE FAUT", "RTGS"),
+    ("VIREMENTS DE FONDS", "RTGS"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre ; « VIREMENTS DE
     # FONDS » (11/11/2026)
     ("VIREMENTS", "Virement"),
@@ -294,11 +300,17 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
     ("VERSEMENT EFFECTUE", "Espèces"),
     ("VER ORD", "Espèces"),
     ("VERS ESP", "Espèces"),
+    # Douane (19/11/2026) : « EPAIEMENT FACT 180826 TGR 103935298563 SIMTIS », paiement à la TGR
+    # (« * » = la date, d'un à trois mots) ; « EPAIEMENT FACT … PORTNET AGENTS » reste « Autre »
+    ("EPAIEMENT FACT * TGR", "Douane"),
+    # RTGS (19/11/2026, « Virement » avant) : « VIR. RTGS RECU DE … », « VIR. RTGS EMIS VERS … »,
+    # face au « VIR DEFAUT » de Sage seulement ; « COMMISSION VIR. RTGS … » reste des frais
+    ("VIR RTGS", "RTGS"),
+    ("RTGS", "RTGS"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
     ("VIREMENT", "Virement"),
     ("VIRT", "Virement"),
     ("VIR", "Virement"),
-    ("RTGS", "Virement"),
 )
 # Libellés qui commencent comme un type mais restent « Autre » (17/11/2026) : un versement
 # ordonné par SIMTIS elle-même (« VER/ORD:S I M T I S ») est un apport de fonds, que Sage peut
@@ -309,8 +321,21 @@ EXCEPTIONS_BANQUE: tuple[str, ...] = ("VER ORD S I M T I S", "VER ORD SIMTIS")
 
 
 def _commence_par(texte: str, prefixe: str) -> bool:
-    """Le texte normalisé commence par le préfixe, en mot entier."""
+    """Le texte normalisé commence par le préfixe, en mot entier. Un « * » du préfixe remplace un
+    à trois mots quelconques (19/11/2026 : « EPAIEMENT FACT * TGR »)."""
+    if "*" in prefixe:
+        return _motif_prefixe(prefixe).match(texte) is not None
     return texte == prefixe or texte.startswith(prefixe + " ")
+
+
+# « * » d'un préfixe : un à trois mots (une date « 180826 » ou « 18 08 26 »)
+_MOTS_QUELCONQUES = r"[A-Z0-9]+(?: [A-Z0-9]+){0,2}"
+
+
+@lru_cache(maxsize=64)
+def _motif_prefixe(prefixe: str) -> re.Pattern[str]:
+    mots = [_MOTS_QUELCONQUES if mot == "*" else re.escape(mot) for mot in prefixe.split()]
+    return re.compile("^" + " ".join(mots) + "(?: |$)")
 
 
 # Type lu au début du libellé, préfixe en mot entier : « VIR SOCIETE » → Virement, mais
@@ -351,7 +376,8 @@ def type_ecriture(libelle: str | None) -> str | None:
 
 # Types sans points de référence (28/10/2026) : leur n° (code de versement, réf. de virement) n'est
 # presque jamais le même des deux côtés. None = autre (type non reconnu).
-TYPES_SANS_REFERENCE = frozenset({"Espèces", "Virement", None})
+# Douane et RTGS (19/11/2026) : le n° TGR ou la réf. FT de la banque ne sont pas dans Sage
+TYPES_SANS_REFERENCE = frozenset({"Espèces", "Virement", "Douane", "RTGS", None})
 # Recherche élargie de ces types : libellés semblables à 70 % au moins, faute de n° (28/10/2026)
 SEUIL_LIBELLE_ELARGIE = Decimal("0.70")
 
@@ -539,8 +565,9 @@ def _mots_prepares(operation: _Cote, ecriture: _Cote) -> Decimal:
 
 
 # Types comparés à leur échéance Sage (décision du 12/10/2026) : espèces et virements. Chèques et
-# effets sont comparés à la date de l'écriture (points dégressifs sur 3 jours).
-TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement"})
+# effets sont comparés à la date de l'écriture (points dégressifs sur 3 jours). Douane et RTGS
+# (19/11/2026) sont des virements.
+TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement", "Douane", "RTGS"})
 
 
 ESPECES = "Espèces"
@@ -1032,24 +1059,59 @@ def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int |
 
 # --- Filtre « Type d'opération » des écrans (14/10/2026) ------------------------------------------
 
-TYPES_OPERATION = ("Chèque", "Effet", "Espèces", "Virement", "Impayé")
+TYPES_OPERATION = ("Chèque", "Effet", "Espèces", "Virement", "Douane", "RTGS", "Impayé")
 AUTRE = "Autre"
 _SEPARATEUR = "[^A-Za-z0-9]"
+# « * » d'un préfixe en base : un à trois mots, comme `_MOTS_QUELCONQUES`
+_MOTS_QUELCONQUES_SQL = f"[A-Za-z0-9]+({_SEPARATEUR}+[A-Za-z0-9]+){{0,2}}"
 
 
 def regex_type(regles: tuple[tuple[str, str], ...], nom: str | None = None) -> str:
     """Expression régulière PostgreSQL (insensible à la casse, `~*`) qui reconnaît en base les
-    libellés d'un type, comme `type_operation` / `type_ecriture` : le libellé commence par l'un
-    des préfixes, mot entier (la ponctuation compte comme un espace). Sans `nom`, tous les types."""
+    libellés d'un type : le libellé commence par l'un des préfixes, mot entier (la ponctuation
+    compte comme un espace). Sans `nom`, tous les types. Ne tient pas compte de l'ordre des
+    règles : le filtre « Type » passe par `regex_type_ordonne`."""
     # Exemple : type Effet côté banque → ^[^A-Za-z0-9]*(ENCAISSEMENT[^A-Za-z0-9]+EFFET|REMISE…)…
-    # utilisé par le filtre « Type » des écrans, pour qu'il donne le même résultat que le moteur
     return regex_prefixes(prefixe for prefixe, type_ in regles if nom is None or type_ == nom)
+
+
+def regex_type_ordonne(
+    regles: tuple[tuple[str, str], ...], nom: str
+) -> list[tuple[str, str | None]]:
+    """Le filtre « Type » des écrans, avec le même résultat que le moteur (19/11/2026) : le premier
+    préfixe trouvé gagne. Pour chaque suite de règles du type `nom`, (regex à reconnaître, regex
+    des préfixes d'autres types placés avant, à exclure ou None). Exemple : Virement côté Sage =
+    commence par « VIR » mais pas par « VIR DOUANE » ni « VIR DEFAUT »."""
+    blocs: list[tuple[str, str | None]] = []
+    index = 0
+    while index < len(regles):
+        if regles[index][1] != nom:
+            index += 1
+            continue
+        fin = index
+        while fin < len(regles) and regles[fin][1] == nom:
+            fin += 1
+        avant = [prefixe for prefixe, type_ in regles[:index] if type_ != nom]
+        blocs.append(
+            (
+                regex_prefixes(prefixe for prefixe, _ in regles[index:fin]),
+                regex_prefixes(avant) if avant else None,
+            )
+        )
+        index = fin
+    return blocs
 
 
 def regex_prefixes(prefixes: Iterable[str]) -> str:
     """Expression régulière PostgreSQL (`~*`) : le libellé commence par l'un des préfixes, mot
-    entier, la ponctuation comptant comme un espace (« VER ORD » reconnaît « VER/ORD:… »)."""
-    motifs = [f"{_SEPARATEUR}+".join(prefixe.split()) for prefixe in prefixes]
+    entier, la ponctuation comptant comme un espace (« VER ORD » reconnaît « VER/ORD:… ») ; un
+    « * » remplace un à trois mots."""
+    motifs = [
+        f"{_SEPARATEUR}+".join(
+            _MOTS_QUELCONQUES_SQL if mot == "*" else mot for mot in prefixe.split()
+        )
+        for prefixe in prefixes
+    ]
     return f"^{_SEPARATEUR}*({'|'.join(motifs)})({_SEPARATEUR}|$)"
 
 

@@ -187,7 +187,8 @@ def test_virements_are_typed_and_compared_at_their_due_date():
     assert type_ecriture("Virement ATLAS TEXTILE") == "Virement"
     assert type_operation("VIR CLIENT ATLAS TEXTILE") == "Virement"
     assert type_operation("VIREMENT SALAIRES") == "Virement"
-    assert type_operation("RTGS EMIS VERS CIH") == "Virement"
+    # 19/11/2026 : un RTGS a son propre type, face au « VIR DEFAUT » de Sage
+    assert type_operation("RTGS EMIS VERS CIH") == "RTGS"
     virement = ec(libelle="Virement ATLAS", jour=date(2026, 8, 1), echeance=JOUR)
 
     # 28/10/2026 : un virement n'a pas de points de référence, 10 de plus par critère (date 40)
@@ -693,7 +694,8 @@ def test_new_labels_get_their_type():
     assert type_ecriture("CHQ 1234567 FOURNISSEUR A") == "Chèque"
     assert type_ecriture("CHQ° 7654321 CLIENT B") == "Chèque"
     assert type_ecriture("EAP1° CHQ 2223334 FOURNISSEUR C") == "Chèque"
-    assert type_ecriture("VIREMENTS DE FONDS") == "Virement"
+    # RTGS depuis le 19/11/2026 (Virement le 11/11/2026), toujours face aux « VIR. RTGS »
+    assert type_ecriture("VIREMENTS DE FONDS") == "RTGS"
     assert type_operation("CHEQUE N 2223334 REMIS PAR CAM EN FAVEUR DE FOURNISSEUR C") == "Chèque"
     # Le versement déplacé d'AWB est des espèces : il ne fait jamais face à un chèque
     assert type_operation("VERSEMENT ESPECE DEPLACE CLIENT F") == "Espèces"
@@ -769,6 +771,62 @@ def test_imp_lcn_is_never_proposed_against_an_ear_effet():
     assert comparable(
         debit, ec(montant="10000", libelle="IMP EAR° EA 2987576 HMAMOU"), GRILLE_PAR_DEFAUT
     )
+
+
+# --- Douane (TGR) et RTGS (19/11/2026) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("libelle", "attendu"),
+    [
+        ("EPAIEMENT FACT 180826 TGR 103935298563 SIMTIS", "Douane"),
+        ("EPAIEMENT FACT 2026/07/23 PORTNET AGENTS", None),  # PORTNET, pas la TGR
+        ("VIR. RTGS RECU DE SOCIETE D IMPRESSION EMIS PAR BMCE REF FT2", "RTGS"),
+        ("VIR. RTGS EMIS VERS BMCE EN FAVEUR DE SIMTIS REF FT26145XPJ5", "RTGS"),
+        ("RTGS EMIS VERS BMCE", "RTGS"),
+        ("COMMISSION VIR. RTGS EMIS VERS ATW EN FAVEUR DE SIMTIS REF", None),  # frais
+        ("VIR.RECU DE Y", "Virement"),
+    ],
+)
+def test_tgr_and_rtgs_bank_labels(libelle, attendu):
+    assert type_operation(libelle) == attendu
+
+
+@pytest.mark.parametrize(
+    ("libelle", "attendu"),
+    [
+        ("VIR DOUANE 123456", "Douane"),
+        ("VIR. DOUANE ADII", "Douane"),
+        ("VIR DEFAUT", "RTGS"),
+        ("VIR DE FAUT 12/09", "RTGS"),
+        ("VIR 037257108", "Virement"),
+        ("VIREMENTS DE FONDS", "RTGS"),  # 19/11/2026 : face aux RTGS, comme le 11/11/2026
+        ("VIREMENTS FOURNISSEURS", "Virement"),
+    ],
+)
+def test_douane_and_defaut_sage_labels(libelle, attendu):
+    assert type_ecriture(libelle) == attendu
+
+
+def test_a_tgr_payment_is_proposed_against_its_vir_douane_only():
+    tgr = op(id=1, montant="-800", libelle="EPAIEMENT FACT 100826 TGR 103915534735 SIMTIS")
+    douane = ec(id=1, montant="800", libelle="VIR DOUANE 100826", piece=None, echeance=JOUR)
+    resultat = proposer([tgr], [douane])
+    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
+    # Jamais face à un virement ordinaire, ni face à des espèces
+    assert not comparable(tgr, ec(montant="800", libelle="VIR 037257108"), GRILLE_PAR_DEFAUT)
+    assert not comparable(tgr, ec(montant="800", libelle="ESP TT26135Y36MW"), GRILLE_PAR_DEFAUT)
+
+
+def test_an_rtgs_is_proposed_against_its_vir_defaut_only():
+    rtgs = op(id=1, montant="500000", libelle="VIR. RTGS RECU DE SOCIETE D IMPRESSION EMIS")
+    defaut = ec(id=1, montant="-500000", libelle="VIR DEFAUT", piece=None, echeance=JOUR)
+    resultat = proposer([rtgs], [defaut])
+    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
+    assert not comparable(rtgs, ec(montant="-500000", libelle="VIR 037257108"), GRILLE_PAR_DEFAUT)
+    # Un virement ordinaire ne va pas non plus avec un VIR DEFAUT
+    virement = op(id=2, montant="500000", libelle="VIR.RECU DE Y")
+    assert not comparable(virement, defaut, GRILLE_PAR_DEFAUT)
 
 
 @pytest.mark.parametrize(

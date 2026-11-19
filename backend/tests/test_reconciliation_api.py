@@ -1469,7 +1469,10 @@ LIBELLES_BANQUE = {
     "VERSEMENT DEPLACE PAR UN TIERS": "Espèces",
     "VIREMENT RECU DE X": "Virement",
     "VIR.RECU DE Y": "Virement",
-    "RTGS EMIS VERS BMCE": "Virement",
+    "RTGS EMIS VERS BMCE": "RTGS",  # 19/11/2026 (Virement avant)
+    "VIR. RTGS RECU DE SOCIETE D IMPRESSION": "RTGS",
+    "EPAIEMENT FACT 180826 TGR 103935298563 SIMTIS": "Douane",
+    "EPAIEMENT FACT 2026/07/23 PORTNET AGENTS": "Autre",
     "IMPAYE SUR EFFET ESCOMPTE N 2600009 TIRE SUR X": "Impayé",
     "IMP LCN 1099850/18942568": "Impayé",  # au débit (MONTANTS_BANQUE)
     "IMP LCN 2987576/18942568": "Impayé",  # au crédit aussi (17/11/2026, plus un effet)
@@ -1489,6 +1492,11 @@ LIBELLES_SAGE = {
     "ESP N 45/OV": "Espèces",
     "Virement fournisseur": "Virement",
     "VIRT 12": "Virement",
+    "VIR 037257108": "Virement",
+    "VIR DOUANE 100826": "Douane",
+    "VIR DEFAUT": "RTGS",
+    "VIR. DE FAUT 12": "RTGS",
+    "VIREMENTS DE FONDS": "RTGS",
     "IMP EAR1° AXL 917714 AJETTAR": "Impayé",
     "IMP EAR° DA 9515404 EL MOUAFFAK": "Impayé",
     "COM": "Autre",
@@ -1506,7 +1514,7 @@ def test_the_type_filter_reads_labels_exactly_like_the_engine(client, comptable,
         ecriture(db, compte, libelle=libelle)
     base = {"company_id": str(company(db).id)}
 
-    for nom in ("Chèque", "Effet", "Espèces", "Virement", "Impayé", "Autre"):
+    for nom in ("Chèque", "Effet", "Espèces", "Virement", "Douane", "RTGS", "Impayé", "Autre"):
         ops = client.get(
             "/api/reconciliation/transactions",
             params={**base, "type_operation": nom},
@@ -2162,7 +2170,8 @@ def test_an_entry_after_the_end_date_is_never_proposed(client, comptable, db):
 def test_an_other_line_facing_a_virement_is_proposed_with_a_type_different_flag(
     client, comptable, db
 ):
-    """11/11/2026 : « VIR. RTGS RECU… » (virement) ↔ « VIREMENTS DE FONDS » devient un virement ;
+    """11/11/2026 : « VIR. RTGS RECU… » ↔ « VIREMENTS DE FONDS » (type RTGS des deux côtés depuis
+    le 19/11/2026) ;
     une ligne « Autre » face à un chèque au même n° est proposée avec « Type différent »."""
     compte = account(db)
     rtgs = operation(

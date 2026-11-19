@@ -3,7 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, and_, case, delete, func, or_, select, text, update
+from sqlalchemy import Select, and_, case, delete, false, func, or_, select, text, update
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.models import (
@@ -25,6 +25,7 @@ from app.services.reconciliation_scoring import (
     TYPES_SAGE,
     regex_prefixes,
     regex_type,
+    regex_type_ordonne,
 )
 
 # Statuts d'une correspondance qui retiennent ses éléments
@@ -363,7 +364,14 @@ def type_condition(column, regles: tuple[tuple[str, str], ...], type_operation: 
     « Autre » (aucun type), avec les mêmes règles que le moteur."""
     if type_operation == AUTRE:
         return or_(column.is_(None), column.op("!~*")(regex_type(regles)))
-    return column.op("~*")(regex_type(regles, type_operation))
+    # Le premier préfixe trouvé gagne (19/11/2026) : « VIR DOUANE » n'est pas un Virement
+    conditions = []
+    for reconnu, exclu in regex_type_ordonne(regles, type_operation):
+        condition = column.op("~*")(reconnu)
+        if exclu is not None:
+            condition = and_(condition, column.op("!~*")(exclu))
+        conditions.append(condition)
+    return or_(*conditions) if conditions else false()
 
 
 def type_condition_banque(type_operation: str):
