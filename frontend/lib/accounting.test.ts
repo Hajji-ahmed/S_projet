@@ -24,6 +24,15 @@ describe("entriesQuery", () => {
   });
 });
 
+describe("entriesQuery tri", () => {
+  it("envoie le tri par montant seulement quand il est choisi", () => {
+    expect(entriesQuery(1, { tri: "montant_desc", page: 1 })).toBe(
+      "?company_id=1&tri=montant_desc&page=1",
+    );
+    expect(entriesQuery(1, { tri: "", page: 1 })).toBe("?company_id=1&page=1");
+  });
+});
+
 describe("pageCount", () => {
   it("compte les pages de 50, au moins une", () => {
     expect(pageCount(0, 50)).toBe(1);

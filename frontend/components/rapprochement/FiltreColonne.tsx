@@ -252,37 +252,60 @@ const OPTIONS_TYPE = [
   ...TYPES_OPERATION.map((item) => ({ value: item, label: item })),
 ];
 
-/** Entonnoir des colonnes Débit et Crédit : un seul sens à la fois (filtre « Sens »). */
+/** Tri des volets par montant absolu (19/11/2026), le même dans les menus Débit et Crédit. */
+const OPTIONS_TRI = [
+  { value: "", label: "Par date" },
+  { value: "montant_asc", label: "Du plus petit au plus grand" },
+  { value: "montant_desc", label: "Du plus grand au plus petit" },
+] as const;
+
+/** Entonnoir des colonnes Débit et Crédit : un seul sens à la fois (filtre « Sens »), puis le tri
+ * par montant absolu (19/11/2026). */
 export function FiltreSens({
   colonne,
   actif,
   sens,
+  tri,
   onChanger,
 }: {
   colonne: "Débit" | "Crédit";
   actif: boolean;
   sens: string;
+  tri: string;
   onChanger: (modif: Partial<FiltresVolet>) => void;
 }) {
   return (
     <FiltreColonne colonne={colonne} actif={actif}>
       {(fermer) => (
-        <ChoixFiltre
-          titre="Sens"
-          options={[
-            { value: "", label: "Débits et crédits" },
-            {
-              value: colonne,
-              label: colonne === "Débit" ? "Seulement les débits" : "Seulement les crédits",
-            },
-          ]}
-          valeur={sens === colonne ? colonne : ""}
-          onChoisir={(valeur) => {
-            // « Débits et crédits » depuis l'autre colonne ne touche pas au sens choisi ailleurs
-            if (valeur || sens === colonne) onChanger({ sens: valeur });
-            fermer();
-          }}
-        />
+        <div className="space-y-3">
+          <ChoixFiltre
+            titre="Sens"
+            options={[
+              { value: "", label: "Débits et crédits" },
+              {
+                value: colonne,
+                label: colonne === "Débit" ? "Seulement les débits" : "Seulement les crédits",
+              },
+            ]}
+            valeur={sens === colonne ? colonne : ""}
+            onChoisir={(valeur) => {
+              // « Débits et crédits » depuis l'autre colonne ne touche pas au sens choisi ailleurs
+              if (valeur || sens === colonne) onChanger({ sens: valeur });
+              fermer();
+            }}
+          />
+          <div className="border-t border-simtis-border pt-2">
+            <ChoixFiltre
+              titre="Trier par montant"
+              options={OPTIONS_TRI}
+              valeur={tri}
+              onChoisir={(valeur) => {
+                onChanger({ tri: valeur });
+                fermer();
+              }}
+            />
+          </div>
+        </div>
       )}
     </FiltreColonne>
   );

@@ -84,6 +84,7 @@ export function EntriesPane({
     q: filtres.q || undefined,
     typeOperation: filtres.typeOperation || undefined,
     sens: filtres.sens || undefined,
+    tri: filtres.tri || undefined,
   };
   // Un filtre changé repart du haut
   const { etat, lu, affiche, suite, reste, chargerPlus } = useDefilement(
@@ -193,6 +194,7 @@ export function EntriesPane({
           colonne="Débit"
           actif={allumees.debit}
           sens={filtres.sens}
+          tri={filtres.tri}
           onChanger={changer}
         />
       ),
@@ -207,6 +209,7 @@ export function EntriesPane({
           colonne="Crédit"
           actif={allumees.credit}
           sens={filtres.sens}
+          tri={filtres.tri}
           onChanger={changer}
         />
       ),

@@ -87,6 +87,7 @@ export function TransactionsPane({
     q: filtres.q,
     typeOperation: filtres.typeOperation || undefined,
     sens: filtres.sens || undefined,
+    tri: filtres.tri || undefined,
   };
   // Un filtre changé (ici ou par les compteurs de la vue) repart du haut
   const { etat, lu, affiche, suite, reste, chargerPlus } = useDefilement(
@@ -181,6 +182,7 @@ export function TransactionsPane({
           colonne="Débit"
           actif={allumees.debit}
           sens={filtres.sens}
+          tri={filtres.tri}
           onChanger={changer}
         />
       ),
@@ -195,6 +197,7 @@ export function TransactionsPane({
           colonne="Crédit"
           actif={allumees.credit}
           sens={filtres.sens}
+          tri={filtres.tri}
           onChanger={changer}
         />
       ),

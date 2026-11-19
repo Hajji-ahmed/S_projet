@@ -24,6 +24,7 @@ from app.schemas.accounting import (
     MappingComptableIn,
     SoldeComptableOut,
 )
+from app.schemas.reconciliation import TriMontant
 from app.services import (
     acces_societe_service,
     accounting_import_service,
@@ -177,6 +178,10 @@ def list_entries(
         Literal["Débit", "Crédit"] | None,
         Query(description="Débit ou Crédit de l'écriture, comme dans Sage (19/10/2026)"),
     ] = None,
+    tri: Annotated[
+        TriMontant | None,
+        Query(description="Tri par montant de rapprochement absolu (19/11/2026), sinon par date"),
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_read),
 ) -> EcrituresPageOut:
@@ -193,6 +198,7 @@ def list_entries(
         type_operation=type_operation,
         operation_possible=operation_possible,
         sens=sens,
+        tri=tri,
     )
     return EcrituresPageOut.from_page(result)
 

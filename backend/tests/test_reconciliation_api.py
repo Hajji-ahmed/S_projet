@@ -1992,6 +1992,46 @@ def test_both_panes_filter_by_debit_or_credit(client, comptable, db):
     assert refus.status_code == 422
 
 
+def test_both_panes_sort_by_absolute_amount(client, comptable, db):
+    """19/11/2026 : tri des volets par montant absolu (débits et crédits mélangés), sur toutes les
+    pages ; à montant égal, la plus récente d'abord. Côté Sage, le montant de rapprochement : le
+    montant en devise quand il existe."""
+    compte = account(db)
+    hier = JOUR - timedelta(days=1)
+    petit = operation(db, compte, montant="-19475", libelle="CHQ 290")
+    moyen = operation(db, compte, montant="20000", libelle="VIR RECU")
+    grand = operation(db, compte, montant="-188100.56", libelle="LCN 2159")
+    egal_ancien = operation(db, compte, montant="20000", jour=hier, libelle="VIR ANCIEN")
+    # 100 000 MAD mais 9 000 en devise : triée sur 9 000
+    devise = ecriture(
+        db, compte, montant="100000", montant_devise=Decimal("9000"), numero_piece="D1"
+    )
+    ec_moyen = ecriture(db, compte, montant="-12000", numero_piece="M1")
+    ec_grand = ecriture(db, compte, montant="50000", numero_piece="G1")
+    base = {"company_id": str(company(db).id)}
+
+    def ids(url, cle, tri):
+        reponse = client.get(url, params={**base, "tri": tri}, headers=comptable)
+        assert reponse.status_code == 200, reponse.text
+        return [item["id"] for item in reponse.json()[cle]]
+
+    operations = "/api/reconciliation/transactions"
+    croissant = [petit.id, moyen.id, egal_ancien.id, grand.id]
+    assert ids(operations, "operations", "montant_asc") == croissant
+    assert ids(operations, "operations", "montant_desc") == [
+        grand.id,
+        moyen.id,
+        egal_ancien.id,
+        petit.id,
+    ]
+    ecritures = "/api/accounting/entries"
+    assert ids(ecritures, "ecritures", "montant_asc") == [devise.id, ec_moyen.id, ec_grand.id]
+    assert ids(ecritures, "ecritures", "montant_desc") == [ec_grand.id, ec_moyen.id, devise.id]
+    for url in (operations, ecritures):
+        refus = client.get(url, params={**base, "tri": "date"}, headers=comptable)
+        assert refus.status_code == 422
+
+
 def test_a_pending_operation_is_never_compared_nor_matched_by_hand(client, comptable, db):
     """20/10/2026 : une opération en cours (« (*) ») n'est jamais proposée ni rapprochée ; une
     opération remplacée n'est plus listée."""

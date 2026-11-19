@@ -38,6 +38,7 @@ from app.schemas.reconciliation import (
     StatutDecision,
     StatutRapprochement,
     TraitementLotOut,
+    TriMontant,
     ValidationLotIn,
     ValidationLotOut,
 )
@@ -134,10 +135,15 @@ def list_transactions(
         Literal["Débit", "Crédit"] | None,
         Query(description="Débit (argent sorti) ou Crédit (argent entré), 19/10/2026"),
     ] = None,
+    tri: Annotated[
+        TriMontant | None,
+        Query(description="Tri par montant absolu (19/11/2026), sinon par date"),
+    ] = None,
     db: Session = Depends(get_db),
     _user: CurrentUser = Depends(can_view),
 ) -> OperationsPageOut:
-    """Volet « Transactions bancaires » : opérations, des plus récentes aux plus anciennes."""
+    """Volet « Transactions bancaires » : opérations, des plus récentes aux plus anciennes (ou par
+    montant absolu avec `tri`)."""
     result = reconciliation_service.list_transactions(
         db,
         company_id,
@@ -151,6 +157,7 @@ def list_transactions(
         a_comptabiliser=a_comptabiliser,
         type_operation=type_operation,
         sens=sens,
+        tri=tri,
     )
     return OperationsPageOut.from_page(result)
 

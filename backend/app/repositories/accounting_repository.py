@@ -164,16 +164,23 @@ def entries_query(
 
 
 def page_of_entries(
-    db: Session, query: Select, *, offset: int, limit: int
+    db: Session, query: Select, *, offset: int, limit: int, tri: str | None = None
 ) -> list[tuple[AccountingEntry, str | None]]:
-    """Une page d'écritures, de la plus récente à la plus ancienne, avec le code de leur banque."""
+    """Une page d'écritures, de la plus récente à la plus ancienne, avec le code de leur banque.
+    Avec `tri` (19/11/2026), par montant de rapprochement absolu d'abord : le montant en devise
+    pour un compte EUR / USD, sinon le montant MAD (`montant_rapprochement`)."""
+    montant = func.coalesce(AccountingEntry.montant_devise, AccountingEntry.montant)
     filtered = query.subquery()
     rows = db.execute(
         select(AccountingEntry, Bank.code)
         .join(filtered, filtered.c.id == AccountingEntry.id)
         .outerjoin(BankAccount, BankAccount.id == AccountingEntry.bank_account_id)
         .outerjoin(Bank, Bank.id == BankAccount.bank_id)
-        .order_by(AccountingEntry.date_ecriture.desc(), AccountingEntry.id.desc())
+        .order_by(
+            *reconciliation_repository.ordre_montant(montant, tri),
+            AccountingEntry.date_ecriture.desc(),
+            AccountingEntry.id.desc(),
+        )
         .offset(offset)
         .limit(limit)
     )

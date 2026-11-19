@@ -603,10 +603,27 @@ def count_by_status(db: Session, query: Select) -> dict[str, int]:
     return {row[0]: row[1] for row in rows}
 
 
+def ordre_montant(montant, tri: str | None) -> list:
+    """Clé de tri des volets par montant absolu (19/11/2026) : « montant_asc » du plus petit au
+    plus grand, « montant_desc » l'inverse ; rien sans tri (l'ordre par date reste seul)."""
+    if tri == "montant_asc":
+        return [func.abs(montant).asc()]
+    if tri == "montant_desc":
+        return [func.abs(montant).desc()]
+    return []
+
+
 def page_of_transactions(
-    db: Session, query: Select, *, statut: str | None, offset: int, limit: int
+    db: Session,
+    query: Select,
+    *,
+    statut: str | None,
+    offset: int,
+    limit: int,
+    tri: str | None = None,
 ) -> tuple[int, list[tuple[BankTransaction, str]]]:
-    """Nombre d'opérations du filtre et une page, des plus récentes aux plus anciennes."""
+    """Nombre d'opérations du filtre et une page, des plus récentes aux plus anciennes ; avec
+    `tri`, par montant absolu d'abord (19/11/2026)."""
     if statut is not None:
         query = query.where(BankTransaction.statut.in_(statuts_du_filtre(statut)))
     filtered = query.subquery()
@@ -617,6 +634,7 @@ def page_of_transactions(
         .join(BankAccount, BankAccount.id == BankTransaction.bank_account_id)
         .join(Bank, Bank.id == BankAccount.bank_id)
         .order_by(
+            *ordre_montant(BankTransaction.montant, tri),
             BankTransaction.date_operation.desc(),
             BankTransaction.statement_id.desc(),
             BankTransaction.ordre.desc(),

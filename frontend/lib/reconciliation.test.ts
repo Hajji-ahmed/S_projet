@@ -272,6 +272,15 @@ describe("sensSage", () => {
   });
 });
 
+describe("reconciliationQuery tri", () => {
+  it("envoie le tri par montant seulement quand il est choisi", () => {
+    expect(reconciliationQuery(1, { sens: "Débit", tri: "montant_asc", page: 1 })).toBe(
+      "?company_id=1&sens=D%C3%A9bit&tri=montant_asc&page=1",
+    );
+    expect(reconciliationQuery(1, { tri: "" })).toBe("?company_id=1");
+  });
+});
+
 describe("reconciliationQuery sans À vérifier", () => {
   it("ajoute sans_a_verifier seulement quand il est demandé", () => {
     expect(reconciliationQuery(1, { sansAVerifier: true, page: 1 })).toBe(

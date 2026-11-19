@@ -1505,6 +1505,7 @@ def list_transactions(
     a_comptabiliser: bool = False,
     type_operation: str | None = None,
     sens: str | None = None,
+    tri: str | None = None,
 ) -> TransactionsPage:
     """Volet « Transactions bancaires » : 50 par page ; le décompte par statut porte sur tout le
     filtre, hors filtre de statut.
@@ -1535,7 +1536,7 @@ def list_transactions(
         listed = listed.where(BankTransaction.statut == "Non rapprochée", repo.frais_bancaire())
         statut = None
     total, rows = repo.page_of_transactions(
-        db, listed, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE
+        db, listed, statut=statut, offset=(page - 1) * PAGE_SIZE, limit=PAGE_SIZE, tri=tri
     )
     matches = repo.active_match_by_transaction(db, [tx.id for tx, _ in rows])
     return TransactionsPage(

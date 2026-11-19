@@ -31,6 +31,8 @@ export type TransactionsFilter = ReconciliationFilter & {
   statut?: string;
   /** « Débit » (argent sorti) ou « Crédit » (argent entré), 19/10/2026. */
   sens?: string;
+  /** Tri par montant absolu (19/11/2026) : « montant_asc » ou « montant_desc » ; vide = par date. */
+  tri?: string;
   /** Ne pas lister les opérations « À vérifier » : elles sont dans l'onglet Propositions. */
   sansAVerifier?: boolean;
   q?: string;
@@ -118,6 +120,7 @@ export function reconciliationQuery(
   if (filter.q?.trim()) params.set("q", filter.q.trim());
   if (filter.typeOperation) params.set("type_operation", filter.typeOperation);
   if (filter.sens) params.set("sens", filter.sens);
+  if (filter.tri) params.set("tri", filter.tri);
   if (filter.page !== undefined) params.set("page", String(filter.page));
   return `?${params}`;
 }
@@ -547,6 +550,8 @@ export type FiltresVolet = {
   statut: string;
   typeOperation: string;
   sens: string;
+  /** Tri par montant absolu (19/11/2026), choisi dans le menu Débit ou Crédit ; vide = par date. */
+  tri: string;
   du: string;
   au: string;
   q: string;
@@ -556,19 +561,21 @@ export const FILTRES_VIDES: FiltresVolet = {
   statut: "",
   typeOperation: "",
   sens: "",
+  tri: "",
   du: "",
   au: "",
   q: "",
 };
 
 /** Colonnes dont l'entonnoir est allumé : Date (Du / Au), Libellé (recherche et type), Débit ou
- * Crédit (sens), St. (statut). */
+ * Crédit (sens), St. (statut). Le tri par montant (19/11/2026) allume Débit et Crédit : il porte
+ * sur le montant absolu, les deux colonnes ensemble. */
 export function colonnesFiltrees(filtres: FiltresVolet) {
   return {
     date: !!(filtres.du || filtres.au),
     libelle: !!(filtres.q || filtres.typeOperation),
-    debit: filtres.sens === "Débit",
-    credit: filtres.sens === "Crédit",
+    debit: filtres.sens === "Débit" || !!filtres.tri,
+    credit: filtres.sens === "Crédit" || !!filtres.tri,
     statut: !!filtres.statut,
   };
 }

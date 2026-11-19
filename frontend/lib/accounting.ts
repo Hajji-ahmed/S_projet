@@ -12,6 +12,8 @@ export type EntriesFilter = {
   operationPossible?: boolean;
   /** « Débit » ou « Crédit » de l'écriture (19/10/2026). */
   sens?: string;
+  /** Tri par montant absolu (19/11/2026) : « montant_asc » ou « montant_desc » ; vide = par date. */
+  tri?: string;
   page: number;
 };
 
@@ -46,6 +48,7 @@ export function entriesQuery(companyId: number, filter: EntriesFilter): string {
     params.set("operation_possible", String(filter.operationPossible));
   }
   if (filter.sens) params.set("sens", filter.sens);
+  if (filter.tri) params.set("tri", filter.tri);
   params.set("page", String(filter.page));
   return `?${params}`;
 }

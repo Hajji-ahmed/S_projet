@@ -30,6 +30,12 @@ describe("colonnesFiltrees", () => {
     expect([credit.debit, credit.credit]).toEqual([false, true]);
   });
 
+  it("allume Débit et Crédit pour le tri par montant, effaçable comme un filtre", () => {
+    const tri = colonnesFiltrees({ ...FILTRES_VIDES, tri: "montant_desc" });
+    expect([tri.debit, tri.credit]).toEqual([true, true]);
+    expect(filtresActifs({ ...FILTRES_VIDES, tri: "montant_asc" })).toBe(true);
+  });
+
   it("compte le statut comme un filtre actif", () => {
     expect(filtresActifs({ ...FILTRES_VIDES, statut: "Rapprochée" })).toBe(true);
   });

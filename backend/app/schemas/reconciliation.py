@@ -24,6 +24,8 @@ from app.services.reconciliation_service import (
 
 StatutRapprochement = Literal["Non rapprochée", "À vérifier", "Rapprochée"]
 StatutCorrespondance = Literal["Proposée", "Validée", "Rejetée", "Annulée"]
+# Tri des volets par montant absolu (19/11/2026) : du plus petit ou du plus grand
+TriMontant = Literal["montant_asc", "montant_desc"]
 Commentaire = Annotated[str, Field(max_length=500)]
 
 
