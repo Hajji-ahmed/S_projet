@@ -8,6 +8,8 @@ Les PDF de `docs/` sont générés à partir des fichiers HTML de ce dossier :
 | `architecture-fonctionnelle.html` | `docs/Architecture_fonctionnelle_SIMTIS_V2.pdf` |
 | `architecture-technique.html` | `docs/Architecture_technique_SIMTIS_V2.pdf` |
 | `fonctionnement-technique.html` | `docs/Fonctionnement_technique_SIMTIS.pdf` |
+| `trouver-le-code.html` | `docs/Trouver_le_code_SIMTIS.pdf` (fiche d'une page + annexes : le rôle de chaque fichier backend et frontend ; styles intégrés) |
+| `guide-claude-code.html` | `docs/Guide_Claude_Code_SIMTIS.pdf` (travailler avec Claude Code sur le dépôt : plan, vérifications, git et production) |
 
 Le style commun est dans `simtis-doc.css` (palette du design system). Pour régénérer après une
 modification, depuis la racine du dépôt :

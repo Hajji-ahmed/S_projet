@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Guide Claude Code SIMTIS</title>
+<!-- Guide pratique : travailler avec Claude Code sur le dépôt SIMTIS.
+     Converti en PDF par generer-pdf.ps1 (docs/Guide_Claude_Code_SIMTIS.pdf). -->
+<link rel="stylesheet" href="simtis-doc.css">
+<style>
+@page { @bottom-left { content: "SIMTIS · Guide Claude Code"; } } @page :first { @bottom-left { content: none; } }
+kbd {
+  font-family: "Segoe UI", Arial, sans-serif; font-size: 8.4pt; font-weight: 600; white-space: nowrap;
+  background: #fff; border: 1px solid #b9c7cf; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px;
+}
+ol.steps { counter-reset: s; list-style: none; padding-left: 0; }
+ol.steps > li { counter-increment: s; position: relative; padding-left: 30px; margin-bottom: 7px; page-break-inside: avoid; }
+ol.steps > li::before {
+  content: counter(s); position: absolute; left: 0; top: 0; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--primary); color: #fff; font-size: 8.5pt; font-weight: 700; text-align: center; line-height: 20px;
+}
+.quote { font-style: italic; color: var(--primary-dark); }
+table.cmp td:first-child { width: 32%; color: var(--danger); }
+table.cmp td:last-child { color: var(--text); }
+table.cmd td:first-child { width: 30%; white-space: nowrap; }
+.phrases li { margin-bottom: 5px; }
+.phrases li b { color: var(--primary-dark); }
+.check li { list-style: none; position: relative; padding-left: 4px; }
+.check li::before { content: "☐"; position: absolute; left: -16px; color: var(--primary); }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-band"></div>
+  <div class="cover-body">
+    <div class="cover-logo"><img src="../../frontend/public/logo-simtis.png" alt="SIMTIS"></div>
+    <div class="cover-kicker">Guide pratique</div>
+    <h1>Travailler avec Claude Code sur SIMTIS</h1>
+    <div class="subtitle">Demander, valider le plan, vérifier, livrer : la méthode du projet pas à pas</div>
+  </div>
+  <div class="cover-meta">
+    <div><span>Date</span><strong>13/11/2026</strong></div>
+    <div><span>Outil</span><strong>Claude Code dans VS Code</strong></div>
+    <div><span>Public</span><strong>Équipe projet SIMTIS</strong></div>
+  </div>
+  <div class="cover-foot">Ce guide décrit la façon de travailler propre à ce dépôt : le fichier CLAUDE.md, les fiches de décisions, les skills simtis-plan et simtis-design, la CI et le déploiement automatique. Les commandes de Claude Code évoluent avec les versions : tapez « / » dans la zone de saisie pour voir la liste exacte.</div>
+</div>
+
+<section class="toc">
+  <h2>Sommaire</h2>
+  <ol>
+    <li>Claude Code en une page</li>
+    <li>Démarrer une session</li>
+    <li>Ce que Claude sait déjà du projet</li>
+    <li>Le cycle de travail : plan, accord, preuve</li>
+    <li>Bien formuler une demande</li>
+    <li>Garder le contrôle : permissions, interruption, retour arrière</li>
+    <li>Vérifier le résultat avant de l'accepter</li>
+    <li>Git, CI et production</li>
+    <li>Gérer le contexte et les sessions</li>
+    <li>Commandes et raccourcis</li>
+    <li>Pièges fréquents</li>
+    <li>Aide-mémoire</li>
+  </ol>
+</section>
+
+<!-- 1 -->
+<section class="chapter first">
+  <h2>1. Claude Code en une page</h2>
+  <p class="lead">Claude Code est un assistant de programmation qui travaille directement dans le dépôt SIMTIS : il lit les fichiers, cherche dans le code, lance des commandes (Docker, tests, git) et modifie le code. Chaque action est affichée, et les actions sensibles attendent votre autorisation.</p>
+
+  <div class="kpis">
+    <div class="kpi"><strong>1</strong><span>tâche = 1 session</span></div>
+    <div class="kpi"><strong>Plan</strong><span>avant tout code</span></div>
+    <div class="kpi"><strong>Preuve</strong><span>avant « c'est fait »</span></div>
+    <div class="kpi"><strong>Push</strong><span>= production</span></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h4>Ce que Claude fait bien</h4>
+      <ul>
+        <li>Retrouver où une règle ou un écran est codé, et l'expliquer.</li>
+        <li>Diagnostiquer un bug à partir d'un message d'erreur ou d'une capture.</li>
+        <li>Écrire le code et ses tests en suivant les couches du projet (<code>api/</code> → <code>services/</code> → <code>repositories/</code>).</li>
+        <li>Lancer les vérifications de la CI et corriger ce qui échoue.</li>
+        <li>Tenir à jour la documentation : fiches <code>docs/decisions/</code>, <code>CLAUDE.md</code>, PDF.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Ce qui reste à vous</h4>
+      <ul>
+        <li>Décider des règles métier (les termes non résolus comme Lettrage / Escompte se demandent au métier, ils ne se devinent pas).</li>
+        <li>Valider le plan avant que le code soit écrit.</li>
+        <li>Relire le diff et tester à l'écran.</li>
+        <li>Décider du commit et du push, qui partent en production.</li>
+        <li>Toute opération sur les données de production.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="box info"><strong>La règle d'or.</strong> Claude propose, vous décidez. C'est la même logique que le moteur de rapprochement de SIMTIS : rien n'est validé sans un humain qui a regardé.</div>
+</section>
+
+<!-- 2 -->
+<section class="chapter">
+  <h2>2. Démarrer une session</h2>
+  <ol class="steps">
+    <li><b>Démarrez Docker Desktop.</b> Les tests backend, la base et l'application tournent dans les conteneurs ; sans Docker, Claude ne peut rien vérifier.</li>
+    <li><b>Ouvrez le dossier racine <code>S_projet</code> dans VS Code.</b> C'est à la racine que se trouvent <code>CLAUDE.md</code> et <code>.claude/</code>, que Claude lit au démarrage. Ouvert sur un sous-dossier, il ne les voit pas.</li>
+    <li><b>Ouvrez Claude Code</b> : icône Claude dans la barre latérale ou en haut à droite de l'éditeur. Dans un terminal, tapez <code>claude</code> à la racine du dépôt.</li>
+    <li><b>Écrivez en français.</b> Claude répond en français et garde les termes métier (Rapprochement, Position disponible, LIGNE…).</li>
+  </ol>
+
+  <h3>Donner du contexte sans tout recopier</h3>
+  <table>
+    <thead><tr><th style="width:30%">Moyen</th><th>Usage</th></tr></thead>
+    <tbody>
+      <tr><td>Le fichier ouvert et la sélection</td><td>Le fichier ouvert dans l'éditeur et le texte sélectionné sont transmis à Claude. Sélectionnez une fonction, puis demandez « explique ce bloc ».</td></tr>
+      <tr><td><code>@</code> + chemin</td><td>Mentionne un fichier précis : <code>@backend/app/services/frais_service.py</code>. Évite que Claude cherche au mauvais endroit.</td></tr>
+      <tr><td>Capture d'écran</td><td>Collez ou glissez l'image d'un écran SIMTIS pour montrer un problème d'affichage.</td></tr>
+      <tr><td>Message d'erreur</td><td>Collez la sortie complète (pas seulement la dernière ligne) d'un test ou de la console du navigateur.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box warn"><strong>Ne collez jamais de secrets</strong> : contenu de <code>.env</code>, mots de passe, <code>JWT_SECRET</code>, jeton GitHub, clé SSH du serveur. Ce que vous écrivez dans la conversation sort de votre poste.</div>
+</section>
+
+<!-- 3 -->
+<section class="chapter">
+  <h2>3. Ce que Claude sait déjà du projet</h2>
+  <p>Claude ne garde aucun souvenir d'une conversation à l'autre, sauf ce qui est écrit dans des fichiers. Le projet est organisé pour qu'il retrouve l'essentiel à chaque session.</p>
+  <table>
+    <thead><tr><th style="width:34%">Fichier</th><th>Rôle pour Claude</th></tr></thead>
+    <tbody>
+      <tr><td><code>CLAUDE.md</code> (racine)</td><td>Lu automatiquement à chaque session : état du projet, règles qui traversent les modules, commandes, règles métier, environnement, production. <b>Ce qui y est écrit est appliqué.</b></td></tr>
+      <tr><td><code>docs/decisions/&lt;module&gt;.md</code></td><td>Une fiche par module, avec chaque décision datée. Claude doit lire la fiche avant de travailler sur un module et y écrire toute nouvelle décision.</td></tr>
+      <tr><td><code>.claude/skills/simtis-plan</code></td><td>Impose un plan et votre accord avant toute modification de code, configuration, migration, test, Docker ou CI.</td></tr>
+      <tr><td><code>.claude/skills/simtis-design</code></td><td>Palette teal, composants, pages et tableaux imposés (Banques, Devises, Prévisions). Chargé pour tout travail d'interface.</td></tr>
+      <tr><td><code>docs/specs/</code></td><td>Documents d'autorité : cahier des charges, architectures, tableaux imposés, plan des phases.</td></tr>
+      <tr><td>Mémoire personnelle</td><td>Vos préférences retenues d'une session à l'autre (par exemple : une liste de propositions à cocher avant chaque plan). Dites « retiens que… » ; <code>/memory</code> pour la consulter.</td></tr>
+      <tr><td><code>.claude/settings.json</code></td><td>Commandes déjà autorisées, qui ne redemandent pas la permission.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box"><strong>Ce que Claude ne sait pas.</strong> Ce qui a été dit dans une autre conversation, une décision prise en réunion et jamais écrite, l'état réel des données de production. Une décision métier qui doit durer va dans <code>docs/decisions/</code> ; une règle qui touche plusieurs modules va dans <code>CLAUDE.md</code>. Demandez-le explicitement : « écris cette décision dans la fiche du module ».</div>
+</section>
+
+<!-- 4 -->
+<section class="chapter">
+  <h2>4. Le cycle de travail : plan, accord, preuve</h2>
+  <div class="flow">
+    <div class="step"><b>Demande</b>vous</div><div class="arrow">→</div>
+    <div class="step"><b>Plan</b>Claude, sans rien écrire</div><div class="arrow">→</div>
+    <div class="step dark"><b>Accord</b>« vas-y » ou corrections</div><div class="arrow">→</div>
+    <div class="step"><b>Code + tests</b>Claude</div><div class="arrow">→</div>
+    <div class="step"><b>Vérifications</b>commandes de la CI</div><div class="arrow">→</div>
+    <div class="step dark"><b>Relecture</b>diff, écran, commit</div>
+  </div>
+
+  <h3>Le plan (skill simtis-plan)</h3>
+  <p>Pour toute tâche qui crée ou modifie un fichier de l'application, Claude présente d'abord un plan puis s'arrête. Avant votre accord, il peut seulement lire, chercher et lancer des commandes en lecture (tests, <code>git diff</code>). La documentation (<code>*.md</code>, skills) n'a pas besoin de plan.</p>
+  <table>
+    <thead><tr><th style="width:30%">Partie du plan</th><th>Ce qu'il faut regarder</th></tr></thead>
+    <tbody>
+      <tr><td>Objectif</td><td>Est-ce bien ce que vous voulez voir fonctionner, du point de vue de l'utilisateur ?</td></tr>
+      <tr><td>Hypothèses</td><td><b>À lire en premier.</b> Chaque hypothèse fausse devient un bug.</td></tr>
+      <tr><td>Fichiers et étapes</td><td>Le périmètre est-il raisonnable ? Un fichier inattendu mérite une question.</td></tr>
+      <tr><td>Données et règles</td><td>Tables, formules, permission, entrée d'audit, filtrage par société, devises.</td></tr>
+      <tr><td>Tests et vérification</td><td>Un test qui échouerait si la règle disparaissait ; un contrôle à l'écran avec un exemple chiffré.</td></tr>
+      <tr><td>Hors périmètre, questions</td><td>Répondez aux questions avant de donner votre accord.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Répondre au plan</h3>
+  <ul>
+    <li><span class="quote">« ok », « vas-y », « valide »</span> : Claude implémente le plan tel quel.</li>
+    <li><span class="quote">« change l'étape 3 : … »</span> : Claude refait le plan et attend à nouveau.</li>
+    <li><span class="quote">« seulement les étapes 1 à 3 »</span> : il fait ces étapes et s'arrête.</li>
+  </ul>
+  <p>Si Claude découvre en cours de route qu'il faut changer de fichier ou d'approche, il doit s'arrêter, expliquer l'écart et redemander votre accord.</p>
+
+  <div class="box info"><strong>Pour une idée encore floue</strong>, commencez par <code>/superpowers:brainstorming</code> : Claude propose une liste de choix à cocher, puis un plan construit sur vos choix. Pour un bug, <code>/superpowers:systematic-debugging</code> l'oblige à trouver la cause avant de proposer une correction.</div>
+</section>
+
+<!-- 5 -->
+<section class="chapter">
+  <h2>5. Bien formuler une demande</h2>
+  <p>Une bonne demande répond à cinq questions :</p>
+  <div class="flow">
+    <div class="step"><b>Où ?</b>écran, société, banque, compte</div>
+    <div class="step"><b>Quoi ?</b>ce qui se passe aujourd'hui</div>
+    <div class="step"><b>Attendu ?</b>ce qui devrait se passer</div>
+    <div class="step"><b>Exemple</b>une ligne, un montant, une date</div>
+    <div class="step"><b>Limites</b>ce qui ne doit pas changer</div>
+  </div>
+
+  <table class="cmp">
+    <thead><tr><th>À éviter</th><th>Mieux</th></tr></thead>
+    <tbody>
+      <tr><td>« Le rapprochement ne marche pas. »</td><td>« Sur /rapprochement, société Simtis, compte BMCE MAD : la ligne du 05/11 de −1 250,00 “FRAIS TENUE” n'est pas proposée avec l'écriture Sage de 1 250,00. Je m'attends à une proposition. Trouve la cause avant de corriger. »</td></tr>
+      <tr><td>« Ajoute une colonne. »</td><td>« Dans la carte des frais à comptabiliser, ajoute la date de valeur après la date d'opération. Visuel seulement : pas de changement d'API ni de calcul. »</td></tr>
+      <tr><td>« Optimise l'import. »</td><td>« L'import d'un relevé BP de 12 000 lignes prend 3 minutes. Mesure où passe le temps et propose avant de modifier. »</td></tr>
+      <tr><td>« Corrige les tests. »</td><td>« pytest échoue sur tests/test_frais_service.py (sortie collée ci-dessous). Trouve la cause ; ne modifie pas le test pour le faire passer. »</td></tr>
+      <tr><td>« Fais le module Prévisions. »</td><td>« Lis la fiche position-bancaire et la phase P14 du plan. Propose un plan pour la première étape seulement, avec tes questions sur les termes non résolus. »</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Conseils</h3>
+  <ul>
+    <li><b>Un sujet par demande.</b> Deux sujets mélangés donnent un plan flou et un diff difficile à relire.</li>
+    <li><b>Question ou modification ?</b> Pour une simple question, dites-le : <span class="quote">« réponds seulement, ne modifie rien »</span>.</li>
+    <li><b>Bug : le diagnostic d'abord.</b> <span class="quote">« Cherche la cause, ne corrige pas encore »</span> évite une correction posée sur la mauvaise cause.</li>
+    <li><b>Termes métier non résolus</b> (Lettrage, Escompte, « Exp DH convertible », lecture du bloc Prévisions) : Claude doit poser la question. S'il propose une définition, refusez tant que le métier n'a pas confirmé.</li>
+    <li><b>Les tableaux imposés</b> (Banques, Devises, Prévisions) ne se redessinent pas : colonnes, ordre et libellés viennent de <code>SIMTIS_tableaux_complets.xlsx</code>.</li>
+  </ul>
+</section>
+
+<!-- 6 -->
+<section class="chapter">
+  <h2>6. Garder le contrôle : permissions, interruption, retour arrière</h2>
+
+  <h3>Les modes de permission</h3>
+  <p>Le mode se choisit sous la zone de saisie dans VS Code, ou avec <kbd>Shift</kbd>+<kbd>Tab</kbd> dans le terminal.</p>
+  <table>
+    <thead><tr><th style="width:30%">Mode</th><th>Comportement</th><th style="width:30%">Quand l'utiliser</th></tr></thead>
+    <tbody>
+      <tr><td>Demander (par défaut)</td><td>Claude demande votre accord avant chaque modification de fichier et chaque commande non autorisée.</td><td>Calculs, rapprochement, migrations, sécurité.</td></tr>
+      <tr><td>Accepter les modifications</td><td>Les modifications de fichiers passent sans question ; les commandes restent contrôlées.</td><td>Un plan déjà validé, sur un sujet bien cadré.</td></tr>
+      <tr><td>Mode plan</td><td>Lecture seule : Claude explore et propose un plan, sans rien modifier.</td><td>Comprendre un module, préparer une phase.</td></tr>
+      <tr><td>Auto</td><td>Claude enchaîne les actions avec ses propres garde-fous.</td><td>Tâches répétitives à faible risque. À éviter près des données.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Autoriser une commande</h3>
+  <p>Quand Claude demande à lancer une commande, lisez-la. « Oui, et ne plus demander » l'ajoute aux commandes autorisées du projet. Ne l'accordez jamais pour une commande destructive :</p>
+  <div class="formula">docker compose down -v        # efface le volume de la base
+git push --force / git reset --hard
+rm -rf …  /  Remove-Item -Recurse -Force …
+psql … DELETE / UPDATE / DROP sur la vraie base
+python -m app.cli … --appliquer   # opération de reprise sur les données</div>
+
+  <h3>Interrompre et revenir en arrière</h3>
+  <ul>
+    <li><kbd>Échap</kbd> arrête l'action en cours. Donnez ensuite la nouvelle consigne : Claude reprend avec.</li>
+    <li><code>/rewind</code> (ou <kbd>Échap</kbd> deux fois dans le terminal) revient à un point antérieur de la conversation et peut restaurer les fichiers modifiés par Claude.</li>
+  </ul>
+  <div class="box danger"><strong>Le retour arrière ne défait pas les commandes.</strong> Une migration appliquée, un script lancé avec <code>--appliquer</code> ou un conteneur supprimé restent faits. Git et les sauvegardes restent le vrai filet de sécurité.</div>
+</section>
+
+<!-- 7 -->
+<section class="chapter">
+  <h2>7. Vérifier le résultat avant de l'accepter</h2>
+  <p>Selon <code>CLAUDE.md</code>, une tâche n'est terminée que si toutes les commandes de la CI passent. Claude doit montrer chaque commande lancée et son résultat réel. S'il écrit « c'est fait » sans sortie de test, demandez : <span class="quote">« montre-moi la commande et sa sortie »</span>.</p>
+  <div class="formula"># Backend
+docker compose run --rm backend ruff check .
+docker compose run --rm backend ruff format --check .
+docker compose run --rm backend pytest
+
+# Frontend (depuis frontend/)
+npm run lint &amp;&amp; npm run format:check &amp;&amp; npm run typecheck &amp;&amp; npm test &amp;&amp; npm run build</div>
+
+  <h3>Relire le diff</h3>
+  <p>Panneau Contrôle de code source de VS Code (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>), ou demandez « montre-moi le diff ». Points à vérifier sur SIMTIS :</p>
+  <ul class="check">
+    <li>Les montants restent en <code>Decimal</code> côté Python et en chaînes exactes côté frontend, jamais en <code>float</code>.</li>
+    <li>Chaque requête filtre par société ; aucune somme entre devises.</li>
+    <li>Un nouvel endpoint a sa permission (<code>require_permission</code>) et écrit son entrée d'audit.</li>
+    <li>Une migration générée a été relue (triggers et fonctions manquent à l'autogénération) ; chaque nouvelle contrainte a son test dans <code>test_constraints.py</code>.</li>
+    <li>Les tests échoueraient si la règle était retirée ; aucun test n'a été affaibli pour passer.</li>
+    <li>La décision est écrite dans la fiche <code>docs/decisions/</code> du module.</li>
+  </ul>
+
+  <h3>Tester à l'écran</h3>
+  <p><code>docker compose up -d --wait</code>, puis <code>http://localhost:3000</code> avec un compte de démonstration. Refaites l'exemple chiffré de votre demande.</p>
+
+  <h3>Faire relire par Claude</h3>
+  <table class="cmd">
+    <tbody>
+      <tr><td><code>/code-review</code></td><td>Cherche les bugs dans les changements en cours.</td></tr>
+      <tr><td><code>/simplify</code></td><td>Propose des simplifications et du code réutilisable.</td></tr>
+      <tr><td><code>/security-review</code></td><td>Revue de sécurité des changements de la branche, avant un push important.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 8 -->
+<section class="chapter">
+  <h2>8. Git, CI et production</h2>
+  <div class="box danger"><strong>Un push sur la branche hajji part en production.</strong> Le serveur (10.77.77.11) vérifie toutes les 5 minutes s'il y a un nouveau commit ; si toutes ses vérifications GitHub sont vertes, il fait une sauvegarde puis déploie. Avant de demander un push : CI locale verte, diff relu, test à l'écran.</div>
+
+  <h3>Commit et push</h3>
+  <ul>
+    <li>Claude ne fait de commit et de push que si vous le demandez : <span class="quote">« commit avec un message en français »</span>, puis <span class="quote">« pousse »</span> séparément.</li>
+    <li>Les messages suivent le style du dépôt : <code>Module : ce qui change</code>, par exemple « Frais : une ecriture par frais, toutes les lignes au libelle du releve ».</li>
+    <li>Un commit par sujet. Si le dossier contient des changements sans rapport, dites à Claude lesquels inclure.</li>
+  </ul>
+
+  <h3>Ce qui est interdit</h3>
+  <table>
+    <tbody>
+      <tr><td style="width:40%">Modifier du code sur le serveur</td><td>Le serveur fait <code>git reset --hard</code> à chaque déploiement : toute modification locale y est perdue.</td></tr>
+      <tr><td><code>docker compose down -v</code></td><td>Supprime le volume <code>db_data</code>, donc toutes les données.</td></tr>
+      <tr><td><code>git push --force</code>, réécriture d'historique</td><td>Casse le clone du serveur et l'historique partagé.</td></tr>
+      <tr><td>Contourner les hooks (<code>--no-verify</code>)</td><td>Masque une erreur au lieu de la corriger.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Opérations sur les données de production</h3>
+  <ol class="steps">
+    <li><b>Sauvegarde</b> de la base, avec son nom de fichier noté.</li>
+    <li><b>Simulation</b> : le script lancé sans <code>--appliquer</code>, résultat relu.</li>
+    <li><b>Application</b> : <code>--appliquer</code> avec un motif.</li>
+    <li><b>Trace</b> : l'opération et sa sauvegarde sont écrites dans la fiche du module.</li>
+  </ol>
+  <p>Claude prépare et explique ces étapes ; c'est vous qui lancez l'application sur le serveur.</p>
+</section>
+
+<!-- 9 -->
+<section class="chapter">
+  <h2>9. Gérer le contexte et les sessions</h2>
+  <p>Claude a une mémoire de travail limitée. Quand une conversation devient longue, elle est résumée automatiquement et des détails se perdent. Quelques habitudes évitent les problèmes :</p>
+  <table>
+    <thead><tr><th style="width:30%">Habitude</th><th>Comment</th></tr></thead>
+    <tbody>
+      <tr><td>Une session par tâche</td><td><code>/clear</code> entre deux sujets sans lien. La nouvelle session relit <code>CLAUDE.md</code> et repart propre.</td></tr>
+      <tr><td>Résumer volontairement</td><td><code>/compact</code> résume la conversation. Vous pouvez préciser quoi garder : « /compact garde les décisions et la liste des fichiers ».</td></tr>
+      <tr><td>Voir l'occupation</td><td><code>/context</code> montre la part de mémoire de travail utilisée.</td></tr>
+      <tr><td>Reprendre plus tard</td><td><code>/resume</code> rouvre une conversation passée ; dans le terminal, <code>claude --continue</code> reprend la dernière. VS Code garde aussi l'historique des conversations.</td></tr>
+      <tr><td>Écrire ce qui doit durer</td><td>Décision métier → <code>docs/decisions/</code>. Règle transverse → <code>CLAUDE.md</code>. Préférence personnelle → « retiens que… » (mémoire).</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Les agents en parallèle</h3>
+  <p>Pour une recherche large (« vérifie toutes les requêtes qui ne filtrent pas par société »), Claude peut confier le travail à des sous-agents qui lisent beaucoup de fichiers et lui rendent seulement la conclusion. C'est plus rapide pour les gros audits, mais cela consomme davantage. Pour une question précise, ce n'est pas nécessaire.</p>
+</section>
+
+<!-- 10 -->
+<section class="chapter">
+  <h2>10. Commandes et raccourcis</h2>
+  <h3>Commandes « / »</h3>
+  <table class="cmd">
+    <thead><tr><th>Commande</th><th>Effet</th></tr></thead>
+    <tbody>
+      <tr><td><code>/help</code></td><td>Aide et liste des commandes.</td></tr>
+      <tr><td><code>/clear</code></td><td>Nouvelle conversation, mémoire de travail vidée.</td></tr>
+      <tr><td><code>/compact</code></td><td>Résume la conversation pour libérer de la place.</td></tr>
+      <tr><td><code>/context</code></td><td>Montre la mémoire de travail utilisée.</td></tr>
+      <tr><td><code>/resume</code></td><td>Reprend une conversation passée.</td></tr>
+      <tr><td><code>/rewind</code></td><td>Revient à un point antérieur (conversation et fichiers).</td></tr>
+      <tr><td><code>/model</code></td><td>Change de modèle.</td></tr>
+      <tr><td><code>/memory</code></td><td>Ouvre la mémoire et les fichiers d'instructions.</td></tr>
+      <tr><td><code>/permissions</code></td><td>Commandes autorisées ou refusées.</td></tr>
+      <tr><td><code>/config</code></td><td>Réglages de Claude Code.</td></tr>
+      <tr><td><code>/simtis-plan</code></td><td>Force le plan SIMTIS avant toute modification.</td></tr>
+      <tr><td><code>/superpowers:brainstorming</code></td><td>Explorer une idée : propositions à cocher, puis plan.</td></tr>
+      <tr><td><code>/superpowers:systematic-debugging</code></td><td>Diagnostic méthodique d'un bug.</td></tr>
+      <tr><td><code>/code-review</code>, <code>/simplify</code>, <code>/security-review</code></td><td>Relectures du code en cours (chapitre 7).</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Raccourcis</h3>
+  <table class="cmd">
+    <tbody>
+      <tr><td><kbd>Échap</kbd></td><td>Interrompt l'action en cours.</td></tr>
+      <tr><td><kbd>Échap</kbd> <kbd>Échap</kbd></td><td>Retour arrière dans la conversation (terminal).</td></tr>
+      <tr><td><kbd>Shift</kbd>+<kbd>Tab</kbd></td><td>Change de mode de permission (terminal).</td></tr>
+      <tr><td><code>@</code></td><td>Mentionne un fichier ou un dossier.</td></tr>
+      <tr><td><code>/</code></td><td>Liste des commandes et des skills disponibles.</td></tr>
+      <tr><td><code>!</code> en début de ligne</td><td>Lance directement une commande shell (terminal).</td></tr>
+      <tr><td>Coller / glisser une image</td><td>Joint une capture d'écran à la demande.</td></tr>
+    </tbody>
+  </table>
+  <p class="small">Les commandes et raccourcis dépendent de la version de Claude Code et diffèrent un peu entre le terminal et VS Code. La liste exacte s'affiche en tapant « / ».</p>
+</section>
+
+<!-- 11 -->
+<section class="chapter">
+  <h2>11. Pièges fréquents</h2>
+  <table>
+    <thead><tr><th style="width:36%">Situation</th><th>Que faire</th></tr></thead>
+    <tbody>
+      <tr><td>Claude commence à coder sans plan.</td><td><kbd>Échap</kbd>, puis « plan d'abord (simtis-plan) ».</td></tr>
+      <tr><td>Il invente une règle ou un terme métier.</td><td>« Ne devine pas : pose la question. » Faites trancher le métier, puis écrivez la décision dans la fiche du module.</td></tr>
+      <tr><td>Il modifie un test pour le faire passer.</td><td>Refusez et demandez la cause de l'échec.</td></tr>
+      <tr><td>Les tests backend échouent tous d'un coup.</td><td>Docker Desktop est probablement arrêté. Démarrez-le et relancez.</td></tr>
+      <tr><td>Des 401 aléatoires dans les tests.</td><td>Décalage d'horloge de la machine virtuelle Docker ; relancer suffit en général (tolérance de 60 s déjà prévue).</td></tr>
+      <tr><td>Le frontend ne se met pas à jour après une modification.</td><td>Le serveur de dev tourne avec <code>--webpack</code> (Turbopack ne voit pas les changements sous Windows). Redémarrez le conteneur <code>frontend</code>.</td></tr>
+      <tr><td>Un test dépend de l'heure du Maroc.</td><td>À réécrire : le fuseau Africa/Casablanca de 2026 diffère selon les machines.</td></tr>
+      <tr><td>Claude oublie une consigne donnée plus tôt.</td><td>La conversation a été résumée. <code>/clear</code> et redonnez le contexte, ou écrivez la règle dans <code>CLAUDE.md</code>.</td></tr>
+      <tr><td>Il cherche au mauvais endroit.</td><td>Donnez le chemin avec <code>@</code>, ou le nom de la fonction (voir « Trouver le code SIMTIS »).</td></tr>
+      <tr><td>Il propose d'agir sur le serveur ou la base de production.</td><td>Stop. Seul le déploiement automatique touche le serveur ; les reprises de données suivent le chapitre 8.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 12 -->
+<section class="chapter">
+  <h2>12. Aide-mémoire</h2>
+  <div class="grid2">
+    <div class="card">
+      <h4>Avant</h4>
+      <ul class="check">
+        <li>Docker Desktop démarré, VS Code ouvert sur <code>S_projet</code>.</li>
+        <li>Une tâche, une session (<code>/clear</code> sinon).</li>
+        <li>Demande avec : où, quoi, attendu, exemple, limites.</li>
+      </ul>
+      <h4>Pendant</h4>
+      <ul class="check">
+        <li>Lire hypothèses et questions du plan avant « vas-y ».</li>
+        <li>Lire chaque commande avant de l'autoriser.</li>
+        <li><kbd>Échap</kbd> dès que Claude part dans la mauvaise direction.</li>
+      </ul>
+      <h4>Après</h4>
+      <ul class="check">
+        <li>Sortie réelle de chaque commande de la CI.</li>
+        <li>Diff relu, test à l'écran avec l'exemple chiffré.</li>
+        <li>Décision écrite dans <code>docs/decisions/</code>.</li>
+        <li>Commit, puis push en sachant qu'il part en production.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>Phrases utiles</h4>
+      <ul class="phrases">
+        <li><b>« Réponds seulement, ne modifie rien. »</b></li>
+        <li><b>« Cherche la cause avant de corriger. »</b></li>
+        <li><b>« Plan d'abord. »</b></li>
+        <li><b>« Seulement les étapes 1 à 3. »</b></li>
+        <li><b>« Visuel seulement : pas d'API ni de calcul. »</b></li>
+        <li><b>« Ne devine pas : pose la question. »</b></li>
+        <li><b>« Montre-moi la commande et sa sortie. »</b></li>
+        <li><b>« Ne modifie pas le test pour le faire passer. »</b></li>
+        <li><b>« Écris cette décision dans la fiche du module. »</b></li>
+        <li><b>« Retiens que… »</b> (mémoire personnelle)</li>
+        <li><b>« Commit avec un message en français, ne pousse pas. »</b></li>
+      </ul>
+    </div>
+  </div>
+  <div class="box info"><strong>À retenir.</strong> Claude propose, vous décidez ; rien n'est « fait » sans la sortie des tests ; un push sur hajji est une mise en production.</div>
+</section>
+
+</body>
+</html>

@@ -11,7 +11,9 @@ $documents = @(
     @{ Source = "cahier-des-charges.html"; Pdf = "Cahier_des_charges_SIMTIS_V4.pdf" },
     @{ Source = "architecture-fonctionnelle.html"; Pdf = "Architecture_fonctionnelle_SIMTIS_V2.pdf" },
     @{ Source = "architecture-technique.html"; Pdf = "Architecture_technique_SIMTIS_V2.pdf" },
-    @{ Source = "fonctionnement-technique.html"; Pdf = "Fonctionnement_technique_SIMTIS.pdf" }
+    @{ Source = "fonctionnement-technique.html"; Pdf = "Fonctionnement_technique_SIMTIS.pdf" },
+    @{ Source = "trouver-le-code.html"; Pdf = "Trouver_le_code_SIMTIS.pdf" },
+    @{ Source = "guide-claude-code.html"; Pdf = "Guide_Claude_Code_SIMTIS.pdf" }
 )
 
 foreach ($doc in $documents) {

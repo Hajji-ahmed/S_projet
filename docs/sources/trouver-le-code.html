@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Trouver le code SIMTIS</title>
+<!-- Fiche d'une page : comment retrouver un composant ou une fonction (frontend et backend).
+     Convertie en PDF par generer-pdf.ps1 (docs/Trouver_le_code_SIMTIS.pdf). -->
+<style>
+  :root {
+    --primary: #006b70; --primary-dark: #004f54; --secondary: #18b7c8; --light: #e6f7f7;
+    --surface: #f5f8fa; --text: #17324d; --muted: #64748b; --border: #d9e3e8;
+    --info-bg: #e0ecff; --info: #1d4ed8; --warning-bg: #fef3c7; --warning: #92600a;
+  }
+  @page { size: A4; margin: 9mm 11mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: var(--text); font-size: 8.8pt; line-height: 1.32; }
+  code, .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 8pt; }
+  code { background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; color: var(--primary-dark); }
+
+  header { display: flex; align-items: center; gap: 12px; background: var(--primary-dark); color: #fff;
+           border-radius: 10px; padding: 8px 12px; margin-bottom: 8px; }
+  header .logo { background: #fff; border-radius: 7px; padding: 4px 6px; display: flex; }
+  header img { height: 26px; }
+  header h1 { margin: 0; font-size: 14pt; letter-spacing: .2px; }
+  header p { margin: 1px 0 0; font-size: 9pt; color: #cdeff1; }
+
+  h2 { font-size: 10.5pt; color: var(--primary-dark); margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+  h2 .n { background: var(--primary); color: #fff; border-radius: 50%; width: 18px; height: 18px;
+          font-size: 8.5pt; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .card { border: 1px solid var(--border); border-radius: 9px; padding: 7px 10px; margin-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid .card { margin-bottom: 0; }
+  .row { margin-bottom: 8px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--light); color: var(--primary-dark); text-align: left; font-size: 8pt; padding: 2px 6px; }
+  td { padding: 2px 6px; border-top: 1px solid var(--border); vertical-align: top; }
+  kbd { font-family: "Segoe UI", Arial, sans-serif; font-size: 8pt; font-weight: 600; white-space: nowrap;
+        background: #fff; border: 1px solid #b9c7cf; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+
+  ol.steps { margin: 0; padding-left: 16px; }
+  ol.steps li { margin-bottom: 4px; }
+  ol.steps b { color: var(--primary-dark); }
+
+  .flow { display: grid; grid-template-columns: 1fr 26px 1fr; align-items: stretch; }
+  .side h3 { margin: 0 0 4px; font-size: 8.6pt; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  .layer { display: flex; justify-content: space-between; gap: 8px; border: 1px solid var(--border);
+           border-left: 4px solid var(--secondary); border-radius: 6px; padding: 2px 7px; margin-bottom: 3px; background: #fff; }
+  .layer.key { border-left-color: var(--primary); background: var(--light); }
+  .layer span:last-child { color: var(--muted); text-align: right; }
+  .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--primary); font-size: 7.5pt; text-align: center; }
+  .arrow .big { font-size: 15pt; line-height: 1; }
+
+  .tip { border-radius: 7px; padding: 6px 9px; font-size: 8.8pt; }
+  .tip.info { background: var(--info-bg); color: #173a7a; }
+  .tip.warn { background: var(--warning-bg); color: #5c3d06; margin-top: 7px; }
+
+  footer { margin-top: 6px; font-size: 7.8pt; color: var(--muted); display: flex; justify-content: space-between; }
+
+  /* Annexes : un fichier par ligne, deux colonnes par page. */
+  .annexe { break-before: page; }
+  .bandeau { background: var(--primary-dark); color: #fff; border-radius: 8px; padding: 6px 12px; margin-bottom: 7px; }
+  .bandeau h1 { margin: 0; font-size: 12pt; }
+  .bandeau p { margin: 1px 0 0; font-size: 8pt; color: #cdeff1; }
+  .cols { column-count: 2; column-gap: 10px; }
+  .bloc { break-inside: avoid; margin-bottom: 7px; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .bloc h3 { margin: 0; background: var(--light); color: var(--primary-dark); font-size: 8.4pt; padding: 3px 7px;
+             display: flex; justify-content: space-between; gap: 6px; }
+  .bloc h3 span { font-family: Consolas, monospace; font-weight: 400; font-size: 7.6pt; color: var(--primary); }
+  .bloc table { font-size: 7.5pt; line-height: 1.25; }
+  .bloc td { padding: 1.5px 7px; }
+  .bloc td:first-child { font-family: Consolas, "Cascadia Mono", monospace; font-size: 7.2pt; color: var(--primary-dark); width: 42%; word-break: normal; overflow-wrap: normal; }
+  .bloc tr:first-child td { border-top: 0; }
+  .note { font-size: 7.6pt; color: var(--muted); margin: 0 0 7px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><img src="../../frontend/public/logo-simtis.png" alt="SIMTIS"></div>
+  <div>
+    <h1>Trouver le code d'un écran ou d'une fonction</h1>
+    <p>Fiche pratique : retrouver un composant (frontend) ou une règle métier (backend) en moins d'une minute.</p>
+  </div>
+</header>
+
+<div class="grid row">
+  <section class="card">
+    <h2><span class="n">1</span>Les raccourcis VS Code</h2>
+    <table>
+      <tr><th style="width:30%">Raccourci</th><th>Usage</th></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd></td><td>Ouvrir un fichier par son nom : <code>FraisCard</code></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>Chercher un texte dans tout le projet</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>T</kbd></td><td>Trouver une fonction ou un composant : <code>somme_soldes</code></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Lister les fonctions du fichier ouvert</td></tr>
+      <tr><td><kbd>F12</kbd> / <kbd>Ctrl</kbd>+clic</td><td>Aller à la définition</td></tr>
+      <tr><td><kbd>Shift</kbd>+<kbd>F12</kbd></td><td>Voir tous les endroits qui l'utilisent</td></tr>
+      <tr><td><kbd>Alt</kbd>+<kbd>←</kbd></td><td>Revenir à l'endroit précédent</td></tr>
+    </table>
+    <div class="tip info" style="margin-top:6px">Dans la recherche globale, remplissez <b>« files to include »</b> avec
+      <code>frontend/**</code> ou <code>backend/app/**</code> pour ignorer <code>node_modules</code>.</div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">2</span>Partir de ce que vous voyez à l'écran</h2>
+    <ol class="steps">
+      <li><b>Un texte affiché</b> (titre, bouton, colonne) : copiez-le et cherchez-le avec
+        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>. Vous arrivez sur le composant qui l'affiche.</li>
+      <li><b>L'adresse de la page</b> : <code>/rapprochement</code> correspond à
+        <code>frontend/app/(app)/rapprochement/page.tsx</code>. Ses composants sont dans
+        <code>frontend/components/rapprochement/</code> (un dossier par écran).</li>
+      <li><b>Les données affichées</b> : dans le navigateur, ouvrez <kbd>F12</kbd> puis l'onglet
+        <b>Réseau</b> et relevez l'appel <code>/api/position/...</code>. Cherchez-le dans
+        <code>backend/app/api/</code> pour trouver la route.</li>
+      <li><b>Le nom du module</b> : le tableau de <code>CLAUDE.md</code> donne, pour chaque module, son fichier
+        <code>docs/decisions/*.md</code> et ses fichiers de code.</li>
+    </ol>
+  </section>
+</div>
+
+<section class="card">
+  <h2><span class="n">3</span>Le chemin d'une donnée, de l'écran à la base</h2>
+  <div class="flow">
+    <div class="side">
+      <h3>Frontend : <span class="mono">frontend/</span></h3>
+      <div class="layer"><span class="mono">app/(app)/&lt;page&gt;/page.tsx</span><span>la page (= l'URL)</span></div>
+      <div class="layer"><span class="mono">components/&lt;module&gt;/</span><span>les composants de l'écran</span></div>
+      <div class="layer"><span class="mono">services/*.ts</span><span>appels à l'API</span></div>
+      <div class="layer"><span class="mono">lib/*.ts</span><span>outils : api, format, accounts…</span></div>
+    </div>
+    <div class="arrow"><span class="big">→</span>HTTP<br>/api</div>
+    <div class="side">
+      <h3>Backend : <span class="mono">backend/app/</span></h3>
+      <div class="layer"><span class="mono">api/*.py</span><span>routes, sans règle métier</span></div>
+      <div class="layer key"><span class="mono"><b>services/*_service.py</b></span><span><b>règles métier et calculs</b></span></div>
+      <div class="layer"><span class="mono">repositories/*.py</span><span>requêtes à la base</span></div>
+      <div class="layer"><span class="mono">models/*.py · schemas/*.py</span><span>tables · format des données</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2><span class="n">4</span>Où chercher quoi</h2>
+  <table>
+    <tr><th style="width:31%">Je cherche…</th><th style="width:33%">Dossier</th><th>Exemple</th></tr>
+    <tr><td>Un calcul, une règle métier</td><td><code>backend/app/services/</code></td><td><code>position_service.py</code></td></tr>
+    <tr><td>Une route de l'API</td><td><code>backend/app/api/</code></td><td><code>router.py</code> (tous les modules)</td></tr>
+    <tr><td>Une requête en base</td><td><code>backend/app/repositories/</code></td><td><code>position_repository.py</code></td></tr>
+    <tr><td>Une table, une colonne</td><td><code>backend/app/models/</code></td><td>et <code>docs/modele-donnees.md</code></td></tr>
+    <tr><td>Un tableau, une carte, un bouton</td><td><code>frontend/components/&lt;module&gt;/</code></td><td><code>position/GridCell.tsx</code></td></tr>
+    <tr><td>Un composant commun (Card, Modal…)</td><td><code>frontend/components/ui/</code></td><td>page <code>/design-system</code></td></tr>
+    <tr><td>Le format d'un montant</td><td><code>frontend/lib/format.ts</code></td><td><code>formatAmount()</code>, <code>formatNombre()</code></td></tr>
+    <tr><td>Une permission, un rôle</td><td><code>backend/app/core/permissions.py</code></td><td>copie dans <code>lib/permissions.ts</code></td></tr>
+    <tr><td>Le pourquoi d'une décision</td><td><code>docs/decisions/</code></td><td>un fichier par module, daté</td></tr>
+  </table>
+  <div class="tip warn"><b>Le plus rapide :</b> décrivez à Claude ce que vous voyez (« où est calculée la colonne DEPASSEMENT ? »).
+    Il répond avec le fichier, la ligne exacte et un lien cliquable.</div>
+</section>
+
+<footer><span>SIMTIS Finance · Fiche développeur · Annexes A et B : le rôle de chaque fichier, pages suivantes</span><span>13/11/2026</span></footer>
+
+<!-- ============================ ANNEXE A : BACKEND ============================ -->
+<section class="annexe">
+  <div class="bandeau">
+    <h1>Annexe A · Backend : le rôle de chaque fichier</h1>
+    <p>Dossier <span class="mono">backend/app/</span> · FastAPI + SQLAlchemy · ordre d'un appel : api → services → repositories → models</p>
+  </div>
+  <div class="cols">
+
+    <div class="bloc"><h3>Racine et socle <span>app/ · core/</span></h3><table>
+      <tr><td>main.py</td><td>Crée l'application FastAPI ; transforme les erreurs métier en 404 / 409</td></tr>
+      <tr><td>cli.py</td><td>Commandes : create-user, recalculer-soldes, reprise-rapprochement, completer-echeances</td></tr>
+      <tr><td>core/<wbr>config.py</td><td>Paramètres lus dans l'environnement (<span class="mono">.env</span>)</td></tr>
+      <tr><td>core/<wbr>db.py</td><td>Ouvre la session de base de données d'une requête</td></tr>
+      <tr><td>core/<wbr>permissions.py</td><td>Liste unique des codes de permission</td></tr>
+      <tr><td>core/<wbr>security.py</td><td>Mots de passe, jetons d'accès (JWT) et de session</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Routes de l'API <span>api/</span></h3><table>
+      <tr><td>router.py</td><td>Assemble tous les routeurs (publics / protégés)</td></tr>
+      <tr><td>deps.py</td><td>Utilisateur connecté (401), permission (403), IP du client</td></tr>
+      <tr><td>auth.py</td><td>Connexion, rafraîchissement, déconnexion, « moi »</td></tr>
+      <tr><td>health.py</td><td>État de l'API et de la base</td></tr>
+      <tr><td>referentiel.py</td><td>Sociétés, devises, types de pointage</td></tr>
+      <tr><td>banks.py</td><td>Banques : liste, création, modification, statut</td></tr>
+      <tr><td>accounts.py</td><td>Comptes bancaires et leurs soldes du jour</td></tr>
+      <tr><td>statements.py</td><td>Relevés : import, opérations, suppression d'un import</td></tr>
+      <tr><td>accounting.py</td><td>Écritures Sage : import, liste, saisie, soldes comptables</td></tr>
+      <tr><td>reconciliation.py</td><td>Rapprochement : moteur, volets, propositions, décisions</td></tr>
+      <tr><td>frais.py</td><td>Frais bancaires : préparer, valider, exporter pour Sage</td></tr>
+      <tr><td>position.py</td><td>Tableaux Banques, Devises et Prévisions</td></tr>
+      <tr><td>dashboard.py</td><td>Vue d'ensemble d'une société et alertes</td></tr>
+      <tr><td>rapports.py</td><td>Exports Excel et PDF</td></tr>
+      <tr><td>admin.py</td><td>Utilisateurs, rôles, permissions</td></tr>
+      <tr><td>historique.py</td><td>Lecture du journal d'audit</td></tr>
+      <tr><td>parametres.py</td><td>Grille de rapprochement, modèles de mapping</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Règles métier <span>services/</span></h3><table>
+      <tr><td>errors.py</td><td>Erreurs métier : NotFoundError (404), ConflictError (409)</td></tr>
+      <tr><td>audit_<wbr>service.py</td><td>Écrit chaque action sensible dans <span class="mono">audit_logs</span></td></tr>
+      <tr><td>auth_<wbr>service.py</td><td>Connexion, verrouillage, sessions</td></tr>
+      <tr><td>health_<wbr>service.py</td><td>Vérifie que la base répond</td></tr>
+      <tr><td>bank_<wbr>service.py</td><td>Référentiel des banques (code immuable)</td></tr>
+      <tr><td>account_<wbr>service.py</td><td>Comptes : création, modification, taux en %</td></tr>
+      <tr><td>balance_<wbr>service.py</td><td>Soldes du jour et crédit utilisé saisis à la main</td></tr>
+      <tr><td>position_<wbr>service.py</td><td><b>Formules CDC</b> : crédit et position disponibles (Decimal)</td></tr>
+      <tr><td>position_<wbr>banques_<wbr>service.py</td><td>Construit les tableaux Banques et Devises</td></tr>
+      <tr><td>saisie_<wbr>service.py</td><td>Tableaux Devises et Prévisions saisis à la main</td></tr>
+      <tr><td>formule_<wbr>service.py</td><td>Calcule les formules « =1 200+350*2 » des Prévisions</td></tr>
+      <tr><td>import_<wbr>file.py</td><td>Lit un fichier importé (Excel, PDF de banque)</td></tr>
+      <tr><td>normalization_<wbr>service.py</td><td>Nettoie dates, montants, libellés ; clé de doublon</td></tr>
+      <tr><td>import_<wbr>service.py</td><td>Import des relevés : analyse puis confirmation</td></tr>
+      <tr><td>accounting_<wbr>import_<wbr>service.py</td><td>Import des écritures Sage : analyse puis confirmation</td></tr>
+      <tr><td>solde_<wbr>comptable_<wbr>service.py</td><td>Solde comptable Sage d'un compte à une date</td></tr>
+      <tr><td>echeance_<wbr>service.py</td><td>Complète l'échéance Sage d'écritures déjà importées</td></tr>
+      <tr><td>saisie_<wbr>manuelle_<wbr>service.py</td><td>Ajout / suppression manuelle d'une opération ou écriture</td></tr>
+      <tr><td>suppression_<wbr>import_<wbr>service.py</td><td>Supprime tout ce qu'un import a apporté (avec motif)</td></tr>
+      <tr><td>reprise_<wbr>service.py</td><td>Reprise d'un état de rapprochement tenu sous Excel</td></tr>
+      <tr><td>reconciliation_<wbr>scoring.py</td><td><b>Score</b> d'une paire 1 → 1 et choix des propositions</td></tr>
+      <tr><td>reconciliation_<wbr>groupes.py</td><td>Groupes N → 1 (plusieurs opérations, une écriture)</td></tr>
+      <tr><td>reconciliation_<wbr>annulations.py</td><td>Impayés Sage ↔ écriture qu'ils annulent</td></tr>
+      <tr><td>reconciliation_<wbr>service.py</td><td>Lance le moteur, enregistre les décisions, codes</td></tr>
+      <tr><td>frais_<wbr>service.py</td><td>Frais bancaires (timbres, commissions) comptabilisés</td></tr>
+      <tr><td>lettrage_<wbr>excel.py</td><td>Classeur Excel du lettrage, une feuille par compte</td></tr>
+      <tr><td>dashboard_<wbr>service.py</td><td>Chiffres, courbes et alertes du dashboard</td></tr>
+      <tr><td>rapports_<wbr>service.py</td><td>Rapports Excel / PDF (position, non rapprochés)</td></tr>
+      <tr><td>admin_<wbr>service.py</td><td>Utilisateurs, rôles, permissions personnelles</td></tr>
+      <tr><td>historique_<wbr>service.py</td><td>Journal d'audit présenté en français</td></tr>
+      <tr><td>parametres_<wbr>service.py</td><td>Grille de rapprochement, modèles de mapping</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Accès à la base <span>repositories/</span></h3><table>
+      <tr><td>health_<wbr>repository.py</td><td>Ping de la base</td></tr>
+      <tr><td>auth_<wbr>repository.py</td><td>Utilisateurs, rôles et permissions pour la connexion</td></tr>
+      <tr><td>audit_<wbr>repository.py</td><td>Ajout et recherche dans le journal d'audit</td></tr>
+      <tr><td>bank_<wbr>repository.py</td><td>Banques et nombre de comptes actifs</td></tr>
+      <tr><td>account_<wbr>repository.py</td><td>Sociétés, devises, comptes</td></tr>
+      <tr><td>balance_<wbr>repository.py</td><td>Soldes journaliers d'un compte</td></tr>
+      <tr><td>position_<wbr>repository.py</td><td>Lectures des tableaux Banques et Devises</td></tr>
+      <tr><td>saisie_<wbr>repository.py</td><td>Cellules saisies de Devises et Prévisions</td></tr>
+      <tr><td>import_<wbr>repository.py</td><td>Relevés, opérations, doublons, ordre chronologique</td></tr>
+      <tr><td>accounting_<wbr>repository.py</td><td>Écritures Sage importées</td></tr>
+      <tr><td>reconciliation_<wbr>repository.py</td><td>Lignes libres, rejets, rapprochements</td></tr>
+      <tr><td>frais_<wbr>repository.py</td><td>Frais à comptabiliser, écritures SIMTIS</td></tr>
+      <tr><td>reprise_<wbr>repository.py</td><td>Lignes non rapprochées à une date (reprise)</td></tr>
+      <tr><td>dashboard_<wbr>repository.py</td><td>Sommes et comptages du dashboard</td></tr>
+      <tr><td>rapports_<wbr>repository.py</td><td>Lignes non rapprochées d'une période</td></tr>
+      <tr><td>admin_<wbr>repository.py</td><td>Utilisateurs, rôles, permissions (administration)</td></tr>
+      <tr><td>parametres_<wbr>repository.py</td><td>Règles de la grille, modèles de mapping</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Tables <span>models/</span></h3><table>
+      <tr><td>base.py</td><td>Classe de base ORM, dates de création, aides CHECK</td></tr>
+      <tr><td>enums.py</td><td>Valeurs autorisées des listes fermées (statuts…)</td></tr>
+      <tr><td>referentiel.py</td><td>Sociétés, banques, devises, comptes, soldes, taux</td></tr>
+      <tr><td>imports.py</td><td>Imports, relevés, opérations, écritures Sage</td></tr>
+      <tr><td>rapprochement.py</td><td>Rapprochements, règles, compteurs de codes, frais</td></tr>
+      <tr><td>previsions.py</td><td>Prévisions de trésorerie</td></tr>
+      <tr><td>saisies.py</td><td>Cellules saisies des tableaux Devises et Prévisions</td></tr>
+      <tr><td>securite.py</td><td>Utilisateurs, sessions, rôles, permissions, audit</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Format des échanges JSON <span>schemas/</span></h3><table>
+      <tr><td>health.py<br>auth.py</td><td>État de l'API ; connexion et utilisateur courant</td></tr>
+      <tr><td>bank.py<br>account.py</td><td>Banques ; comptes et sociétés</td></tr>
+      <tr><td>balance.py</td><td>Soldes du jour et chiffres d'un compte</td></tr>
+      <tr><td>position.py<br>saisie.py</td><td>Tableaux calculés ; tableaux saisis</td></tr>
+      <tr><td>statement.py</td><td>Relevés : analyse, confirmation, consultation</td></tr>
+      <tr><td>accounting.py</td><td>Écritures Sage : analyse, lignes, totaux</td></tr>
+      <tr><td>reconciliation.py</td><td>Rapprochement : opérations, scores, décisions</td></tr>
+      <tr><td>frais.py</td><td>Propositions et écritures de frais</td></tr>
+      <tr><td>dashboard.py</td><td>KPI, flux, alertes, tâches</td></tr>
+      <tr><td>admin.py<br>historique.py</td><td>Administration ; journal d'audit</td></tr>
+      <tr><td>parametres.py</td><td>Grille de rapprochement, mappings</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Données de référence <span>seeds/</span></h3><table>
+      <tr><td>_<wbr>_<wbr>main_<wbr>_.py</td><td>Lance les seeds (<span class="mono">--demo</span> pour la démo)</td></tr>
+      <tr><td>common.py</td><td>Aides : créer seulement si absent</td></tr>
+      <tr><td>reference.py</td><td>Sociétés, banques, devises, rôles, permissions</td></tr>
+      <tr><td>pointages.py</td><td>Catégories de pointage du métier</td></tr>
+      <tr><td>demo.py</td><td>Données marquées DEMO (refusées en production)</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Hors de app/ <span>backend/</span></h3><table>
+      <tr><td>alembic/<wbr>versions/</td><td>Migrations de la base, une par changement (0001…)</td></tr>
+      <tr><td>tests/</td><td>Tests pytest (base <span class="mono">simtis_test</span>), un fichier par module</td></tr>
+      <tr><td>Dockerfile(.<wbr>prod)</td><td>Image du backend en développement / production</td></tr>
+    </table></div>
+
+  </div>
+</section>
+
+<!-- ============================ ANNEXE B : FRONTEND ============================ -->
+<section class="annexe">
+  <div class="bandeau">
+    <h1>Annexe B · Frontend : le rôle de chaque fichier</h1>
+    <p>Dossier <span class="mono">frontend/</span> · Next.js + TypeScript + Tailwind · ordre : page → composant → services → lib/api.ts</p>
+  </div>
+  <p class="note">Les fichiers <span class="mono">*.test.ts(x)</span> placés à côté d'un fichier en sont les tests (Vitest).</p>
+  <div class="cols">
+
+    <div class="bloc"><h3>Pages (une adresse = un dossier) <span>app/</span></h3><table>
+      <tr><td>layout.tsx</td><td>Page HTML racine, styles globaux</td></tr>
+      <tr><td>page.tsx</td><td>Accueil : redirige vers /dashboard</td></tr>
+      <tr><td>globals.<wbr>css</td><td>Couleurs (tokens teal) et styles globaux</td></tr>
+      <tr><td>login/<wbr>page.tsx</td><td>Écran de connexion</td></tr>
+      <tr><td>(app)/<wbr>layout.tsx</td><td>Cadre des pages connectées : menu, en-tête, société</td></tr>
+      <tr><td>(app)/<wbr>dashboard/</td><td>Dashboard → DashboardView</td></tr>
+      <tr><td>(app)/<wbr>banques/</td><td>Banques → BanksView ; <span class="mono">[id]/</span> → BankDetailView</td></tr>
+      <tr><td>(app)/<wbr>comptes/</td><td>Comptes → AccountsView</td></tr>
+      <tr><td>(app)/<wbr>position-bancaire/</td><td>Tableaux Banques, Devises, Prévisions → PositionView</td></tr>
+      <tr><td>(app)/<wbr>releves/</td><td>Relevés bancaires → RelevesView</td></tr>
+      <tr><td>(app)/<wbr>ecritures/</td><td>Écritures Sage → EcrituresView</td></tr>
+      <tr><td>(app)/<wbr>rapprochement/</td><td>Rapprochement → RapprochementView</td></tr>
+      <tr><td>(app)/<wbr>rapports/</td><td>Rapports → RapportsView</td></tr>
+      <tr><td>(app)/<wbr>historique/</td><td>Journal d'audit → HistoriqueView</td></tr>
+      <tr><td>(app)/<wbr>administration/</td><td>Utilisateurs, rôles, paramètres → AdministrationView</td></tr>
+      <tr><td>(app)/<wbr>design-system/</td><td>Vitrine des composants (+ InteractiveDemo)</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Composants communs <span>components/ui/</span></h3><table>
+      <tr><td>Button<br>Card<br>KpiCard</td><td>Bouton ; carte ; tuile chiffrée</td></tr>
+      <tr><td>DataTable<br>Pagination</td><td>Tableau de données ; pages Précédent / Suivant</td></tr>
+      <tr><td>Field</td><td>Champs de formulaire (texte, nombre, liste, date)</td></tr>
+      <tr><td>Modal<br>FormModal</td><td>Fenêtre ; fenêtre de formulaire</td></tr>
+      <tr><td>FilterBar<br>SearchBar</td><td>Barre de filtres ; recherche (non branchée)</td></tr>
+      <tr><td>StatusBadge</td><td>Pastille de statut</td></tr>
+      <tr><td>EmptyState<br>ErrorState<br>LoadingState</td><td>Vide ; erreur avec Réessayer ; chargement</td></tr>
+      <tr><td>PageHeader<br>Toast</td><td>Titre de page ; notifications</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Cadre, connexion, société <span>components/</span></h3><table>
+      <tr><td>layout/<wbr>AppShell</td><td>Assemble menu + en-tête + contenu</td></tr>
+      <tr><td>layout/<wbr>AppSidebar</td><td>Menu latéral filtré par permissions, réductible</td></tr>
+      <tr><td>layout/<wbr>AppHeader</td><td>En-tête : société, cloche, utilisateur</td></tr>
+      <tr><td>layout/<wbr>AlertBell</td><td>Cloche des alertes du mois</td></tr>
+      <tr><td>layout/<wbr>PlaceholderPage</td><td>Page vide en attente d'un module</td></tr>
+      <tr><td>auth/<wbr>AuthProvider</td><td>Session de l'utilisateur (<span class="mono">useAuth</span>)</td></tr>
+      <tr><td>auth/<wbr>LoginForm</td><td>Formulaire de connexion</td></tr>
+      <tr><td>auth/<wbr>RequireAuth</td><td>Bloque une page sans session ou sans permission</td></tr>
+      <tr><td>company/<wbr>CompanyProvider</td><td>Société active (<span class="mono">useCompany</span>)</td></tr>
+      <tr><td>company/<wbr>CompanySelector</td><td>Choix de la société dans l'en-tête</td></tr>
+      <tr><td>dev/<wbr>ApiStatus</td><td>Vérifie que l'API et la base répondent</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Banques et comptes <span>components/</span></h3><table>
+      <tr><td>banks/<wbr>BanksView</td><td>Écran Banques : cartes des banques</td></tr>
+      <tr><td>banks/<wbr>BankCard</td><td>Carte d'une banque : solde, LIGNE, position</td></tr>
+      <tr><td>banks/<wbr>BankDetailView</td><td>Détail d'une banque et de ses comptes</td></tr>
+      <tr><td>banks/<wbr>BankFormModal</td><td>Créer / modifier une banque</td></tr>
+      <tr><td>banks/<wbr>BankLabel</td><td>Logo + code d'une banque</td></tr>
+      <tr><td>banks/<wbr>BankPicker</td><td>Filtre « Banque » avec logos</td></tr>
+      <tr><td>banks/<wbr>AccountChipLabel</td><td>Libellé d'un compte : logo, banque · n°, devise</td></tr>
+      <tr><td>accounts/<wbr>AccountsView</td><td>Écran Comptes : tableau des comptes</td></tr>
+      <tr><td>accounts/<wbr>AccountFormModal</td><td>Créer / modifier un compte</td></tr>
+      <tr><td>balances/<wbr>BalanceFormModal</td><td>Saisir un solde du jour / crédit utilisé</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Position bancaire <span>components/position/</span></h3><table>
+      <tr><td>PositionView</td><td>Écran : les trois tableaux et le graphique</td></tr>
+      <tr><td>BanquesTable</td><td>Tableau Banques (facilité de caisse, DEPASSEMENT…)</td></tr>
+      <tr><td>DevisesTable</td><td>Tableau Devises (EUR / USD)</td></tr>
+      <tr><td>PrevisionsTable</td><td>Tableau Prévisions saisi à la main</td></tr>
+      <tr><td>PositionChart</td><td>Graphique « Évolution de la position »</td></tr>
+      <tr><td>GridCell</td><td>Style commun des cellules des trois tableaux</td></tr>
+      <tr><td>useSaisieGrid</td><td>Chargement, brouillon et enregistrement d'une grille</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Relevés bancaires <span>components/releves/</span></h3><table>
+      <tr><td>RelevesView</td><td>Écran Relevés : import et relevé par compte</td></tr>
+      <tr><td>ImportWizard<br>ImportSteps</td><td>Assistant d'import en deux étapes ; dépôt du fichier</td></tr>
+      <tr><td>EditablePreview</td><td>Aperçu modifiable des lignes avant confirmation</td></tr>
+      <tr><td>FilterTile<br>CheckAllButtons</td><td>Tuiles qui filtrent ; cocher un groupe de lignes</td></tr>
+      <tr><td>IgnoredLinesTable</td><td>Lignes du fichier non importées et pourquoi</td></tr>
+      <tr><td>AccountPicker</td><td>Choix du compte</td></tr>
+      <tr><td>AccountStatementCard</td><td>Relevé continu d'un compte</td></tr>
+      <tr><td>FiltresReleve</td><td>Filtres « comme Excel » dans les en-têtes</td></tr>
+      <tr><td>TransactionEditModal</td><td>Modifier pointage, lettrage, commentaire</td></tr>
+      <tr><td>ManualOperationModal</td><td>Saisir une opération absente du relevé</td></tr>
+      <tr><td>PointageBadge<br>EnCoursBadge</td><td>Pastille de pointage ; opération en cours « (*) »</td></tr>
+      <tr><td>imports/<wbr>DeleteImportModal</td><td>Supprimer un import (relevé ou Sage) avec motif</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Écritures Sage <span>components/ecritures/</span></h3><table>
+      <tr><td>EcrituresView</td><td>Écran Écritures : import et liste</td></tr>
+      <tr><td>AccountingImportWizard</td><td>Assistant d'import de l'export Sage</td></tr>
+      <tr><td>EntriesCard</td><td>Liste filtrable des écritures importées</td></tr>
+      <tr><td>EntryDetailModal</td><td>Détail d'une écriture (lecture seule)</td></tr>
+      <tr><td>ManualEntryModal</td><td>Saisir une écriture oubliée par Sage</td></tr>
+      <tr><td>SoldeComptableCard</td><td>Solde comptable Sage des comptes</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Rapprochement <span>components/rapprochement/</span></h3><table>
+      <tr><td>RapprochementView</td><td>Écran : compteurs, volets, onglets</td></tr>
+      <tr><td>TransactionsPane<br>EntriesPane</td><td>Volet des opérations ; volet des écritures</td></tr>
+      <tr><td>MatchPanel</td><td>Correspondance : score, Valider / Rejeter / Annuler</td></tr>
+      <tr><td>PanierPanel</td><td>Panier des rapprochements manuels N ↔ N</td></tr>
+      <tr><td>ProposalsTab<br>ProposalCard</td><td>Propositions du moteur, validation en lot</td></tr>
+      <tr><td>AmbiguousCard<br>EcritureAmbigueCard</td><td>Opération / écriture ambiguë à trancher</td></tr>
+      <tr><td>ImpayesOriginesCard</td><td>Impayés ↔ écritures d'origine</td></tr>
+      <tr><td>HistoryTab</td><td>Historique des décisions, annulation</td></tr>
+      <tr><td>FraisCard</td><td>Frais bancaires « À comptabiliser »</td></tr>
+      <tr><td>EditFraisModal<br>ManualFeeModal</td><td>Modifier une proposition de frais ; saisir des frais</td></tr>
+      <tr><td>ExportSageModal</td><td>Exporter les écritures de frais pour Sage</td></tr>
+      <tr><td>FiltreColonne</td><td>Filtres « comme Excel » des volets</td></tr>
+      <tr><td>Score<br>CodeBadge<br>PropositionBadge</td><td>Score / 100 ; code BANQUE-AA-N ; ligne en proposition</td></tr>
+      <tr><td>StatButton<br>PiedDefilement</td><td>Compteur cliquable ; « 300 / 8 487 opérations »</td></tr>
+      <tr><td>useDefilement</td><td>Chargement des volets au défilement</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Dashboard <span>components/dashboard/</span></h3><table>
+      <tr><td>DashboardView</td><td>Écran Dashboard</td></tr>
+      <tr><td>PeriodePicker<br>KpiTiles</td><td>Choix de la période ; tuiles KPI</td></tr>
+      <tr><td>Sparkline<br>EvolutionCard</td><td>Mini-courbe d'une tuile ; évolution des soldes</td></tr>
+      <tr><td>ComptesCard</td><td>Soldes des comptes</td></tr>
+      <tr><td>FraisRepartition<br>FraisParBanque</td><td>Frais par catégorie ; frais par banque</td></tr>
+      <tr><td>SyntheseCards</td><td>Rapprochement, écritures, alertes</td></tr>
+      <tr><td>SuiviCards</td><td>Tâches, banques, activité récente</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Autres écrans <span>components/</span></h3><table>
+      <tr><td>rapports/<wbr>RapportsView</td><td>Téléchargement des rapports Excel / PDF</td></tr>
+      <tr><td>historique/<wbr>HistoriqueView</td><td>Journal d'audit filtrable</td></tr>
+      <tr><td>administration/<wbr>AdministrationView</td><td>Écran à onglets de l'administration</td></tr>
+      <tr><td>administration/<wbr>UsersTab<br>UserFormModal</td><td>Liste des utilisateurs ; création / modification</td></tr>
+      <tr><td>administration/<wbr>UserPermissionsModal</td><td>Permissions propres à une personne</td></tr>
+      <tr><td>administration/<wbr>PasswordModal</td><td>Mot de passe provisoire affiché une fois</td></tr>
+      <tr><td>administration/<wbr>RolesTab<br>RoleFormModal</td><td>Matrice des rôles ; rôle personnalisé</td></tr>
+      <tr><td>administration/<wbr>ParametresTab</td><td>Grille de rapprochement, mappings</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Outils et règles d'affichage <span>lib/</span></h3><table>
+      <tr><td>api.ts</td><td><b>Appel unique à l'API</b> : jeton, 401, erreurs</td></tr>
+      <tr><td>format.ts</td><td>Format des montants et nombres (« 12 500,00 »)</td></tr>
+      <tr><td>permissions.ts</td><td>Copie des permissions ; page autorisée ou non</td></tr>
+      <tr><td>navigation.ts</td><td>Entrées du menu latéral</td></tr>
+      <tr><td>redirect.ts</td><td>Retour après connexion, sans redirection piégée</td></tr>
+      <tr><td>cn.ts</td><td>Assemble des classes Tailwind</td></tr>
+      <tr><td>sidebar.ts<br>repli.ts<br>pleinEcran.ts</td><td>Menu réduit ; carte repliée ; plein écran</td></tr>
+      <tr><td>banks.ts<br>accounts.ts</td><td>Formulaires banque et compte ; logos ; « …4521 »</td></tr>
+      <tr><td>balances.ts</td><td>Saisie du solde, date du jour au Maroc</td></tr>
+      <tr><td>position.ts</td><td>Affichage des tableaux Banques / Devises</td></tr>
+      <tr><td>saisies.ts<br>formule.ts</td><td>Grilles Devises / Prévisions ; formules « = »</td></tr>
+      <tr><td>statements.ts<br>statementLines.ts</td><td>Import des relevés ; aperçu modifiable</td></tr>
+      <tr><td>importLines.ts</td><td>Tuiles et cases de l'étape Validation</td></tr>
+      <tr><td>filtresReleve.ts</td><td>Filtres du relevé par compte</td></tr>
+      <tr><td>accounting.ts</td><td>Filtres et pages des écritures Sage</td></tr>
+      <tr><td>reconciliation.ts</td><td>Règles de l'écran Rapprochement</td></tr>
+      <tr><td>frais.ts<br>piece.ts</td><td>Propositions de frais ; N° pièce de l'export Sage</td></tr>
+      <tr><td>saisie.ts</td><td>Saisie manuelle d'une opération / écriture</td></tr>
+      <tr><td>dashboard.ts</td><td>Variations, tendances, pourcentages</td></tr>
+      <tr><td>admin.ts<br>parametres.ts<br>historique.ts</td><td>Matrice des rôles ; grille ; valeurs du journal</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Appels à l'API, un fichier par module <span>services/</span></h3><table>
+      <tr><td>auth.ts<br>health.ts</td><td>Connexion, session ; état de l'API</td></tr>
+      <tr><td>referentiel.ts</td><td>Sociétés, devises, pointages</td></tr>
+      <tr><td>banks.ts<br>accounts.ts<br>balances.ts</td><td>Banques ; comptes ; soldes du jour</td></tr>
+      <tr><td>position.ts<br>saisies.ts</td><td>Tableaux calculés ; tableaux saisis</td></tr>
+      <tr><td>statements.ts<br>accounting.ts</td><td>Relevés ; écritures Sage</td></tr>
+      <tr><td>reconciliation.ts<br>frais.ts</td><td>Rapprochement ; frais bancaires</td></tr>
+      <tr><td>dashboard.ts<br>rapports.ts</td><td>Dashboard ; téléchargements Excel / PDF</td></tr>
+      <tr><td>admin.ts<br>historique.ts<br>parametres.ts</td><td>Administration ; journal ; paramètres</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Types TypeScript <span>types/</span></h3><table>
+      <tr><td>un fichier par module</td><td>Forme des données reçues de l'API, copie des <span class="mono">schemas/</span> du backend (account, bank, statement, reconciliation…)</td></tr>
+      <tr><td>status.ts</td><td>Tous les statuts affichables en pastille</td></tr>
+    </table></div>
+
+    <div class="bloc"><h3>Configuration <span>frontend/</span></h3><table>
+      <tr><td>package.<wbr>json</td><td>Dépendances et scripts (lint, test, build)</td></tr>
+      <tr><td>next.<wbr>config.ts</td><td>Réglages Next.js (origines autorisées en dev)</td></tr>
+      <tr><td>tsconfig<br>eslint<br>prettier<br>vitest</td><td>TypeScript, lint, format, tests</td></tr>
+      <tr><td>public/</td><td>Logo SIMTIS et logos des banques</td></tr>
+      <tr><td>Dockerfile(.<wbr>prod)</td><td>Image du frontend en développement / production</td></tr>
+    </table></div>
+
+  </div>
+</section>
+
+</body>
+</html>
