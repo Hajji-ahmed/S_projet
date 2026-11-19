@@ -433,13 +433,22 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
             db, [entry.id for entry in remaining]
         ).items()
     }
+    # Ses lignes banque (19/11/2026 : hors taxe puis TVA pour un frais avec TVA), chacune revient
+    # une fois ; le total seul reste reconnu (écriture exportée avant, ligne unique)
+    parts = frais_service.montants_banque(db, company_id, remaining)
+    restantes = {entry.id: list(parts.get(entry.id, [entry.montant])) for entry in remaining}
     for line in candidates:
         for entry in remaining:
-            if (entry.bank_account_id, entry.date_ecriture, entry.montant) != (
+            if (entry.bank_account_id, entry.date_ecriture) != (
                 line.bank_account_id,
                 line.date_ecriture,
-                line.montant,
             ):
+                continue
+            a_retrouver = restantes[entry.id]
+            entiere = line.montant == entry.montant and len(a_retrouver) == len(
+                parts.get(entry.id, [entry.montant])
+            )
+            if not entiere and line.montant not in a_retrouver:
                 continue
             same_piece = bool(
                 line.numero_piece
@@ -465,7 +474,12 @@ def _mark_simtis_entries(db: Session, company_id: int, lines: list[EntryLine]) -
                     f"pièce {entry.numero_piece}" if entry.numero_piece else "pas encore exportée"
                 )
                 line.motifs = [f"Déjà comptabilisée par SIMTIS ({piece})."]
-                remaining.remove(entry)
+                if entiere:
+                    a_retrouver.clear()
+                else:
+                    a_retrouver.remove(line.montant)
+                if not a_retrouver:
+                    remaining.remove(entry)
                 break
 
 

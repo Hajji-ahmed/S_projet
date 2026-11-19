@@ -9,7 +9,7 @@ import {
   etatLignes,
   filtrerPropositions,
   libelleModifie,
-  ligneBanqueTotale,
+  lignesBanqueTotales,
   lignesSaisies,
   optionsFiltres,
   regrouperAvecTva,
@@ -185,15 +185,45 @@ describe("propositions modifiées (19/10/2026)", () => {
       debit: null,
       credit: "660.00",
     };
+    const autre = { ...banque, libelle: "COM.ADOBE", credit: "11.00" };
 
-    expect(ligneBanqueTotale([banque, { ...banque, credit: "11.00" }], "671.00", "COM")).toEqual({
-      ...banque,
-      libelle: "COM",
-      credit: "671.00",
-    });
-    expect(ligneBanqueTotale([banque, banque], "77.50", "FRAIS").libelle).toBe("COM");
-    // Une écriture d'un seul frais (13/11/2026) : le libellé du relevé reste
-    expect(ligneBanqueTotale([banque], "660.00", "FRAIS").libelle).toBe("COM ABONNEMENT EBICS");
+    expect(lignesBanqueTotales([banque, autre], "671.00", "COM")).toEqual([
+      { ...banque, libelle: "COM", credit: "671.00" },
+    ]);
+    expect(lignesBanqueTotales([banque, autre], "77.50", "FRAIS")[0].libelle).toBe("COM");
+    // Une écriture d'un seul frais (13/11/2026) : le libellé du relevé reste, même en deux lignes
+    expect(lignesBanqueTotales([banque], "660.00", "FRAIS")[0].libelle).toBe(
+      "COM ABONNEMENT EBICS",
+    );
+    expect(lignesBanqueTotales([banque, banque], "660.00", "FRAIS")[0].libelle).toBe(
+      "COM ABONNEMENT EBICS",
+    );
+  });
+
+  it("splits the bank line of a modified entry by its VAT lines", () => {
+    const banque: LigneGL = {
+      type: null,
+      type_libelle: "Banque",
+      libelle: "COMMISSION CAUTION",
+      compte: "55410010",
+      debit: null,
+      credit: "55.00",
+    };
+    const saisies = [
+      { compte: "61473000", libelle: "COM", montant: "50.00", sens: "Débit" as const },
+      { compte: "34552142", libelle: "TVA COM", montant: "5.00", sens: "Débit" as const },
+    ];
+
+    // 19/11/2026 : hors taxe puis TVA
+    expect(lignesBanqueTotales([banque], "55.00", "COM", saisies)).toEqual([
+      { ...banque, credit: "50.00" },
+      { ...banque, type_libelle: "TVA Banque", credit: "5.00" },
+    ]);
+    // Sans TVA saisie, ou une TVA qui fait tout le montant : une seule ligne
+    expect(lignesBanqueTotales([banque], "55.00", "COM", saisies.slice(0, 1))).toHaveLength(1);
+    expect(
+      lignesBanqueTotales([banque], "5.00", "COM", [{ ...saisies[1], montant: "5.00" }]),
+    ).toHaveLength(1);
   });
 
   it("keeps the statement label of a line when the entry label changes", () => {

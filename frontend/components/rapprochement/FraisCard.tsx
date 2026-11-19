@@ -31,7 +31,7 @@ import {
   cleJour,
   filtrerPropositions,
   libelleModifie,
-  ligneBanqueTotale,
+  lignesBanqueTotales,
   optionsFiltres,
   PAR_LOT,
   regrouperAvecTva,
@@ -901,7 +901,8 @@ function lignesAffichees(
   modif: ModificationFrais | undefined,
 ): LigneGL[] {
   if (modif?.lignes) {
-    // Les lignes saisies, puis une seule ligne banque avec le total, comme le serveur (12/11/2026)
+    // Les lignes saisies, puis la banque comme le serveur : le total (12/11/2026), ou hors taxe
+    // puis TVA s'il y a une ligne sur le compte de TVA (19/11/2026)
     return [
       ...modif.lignes.map((ligne) => ({
         type: "saisie",
@@ -911,7 +912,7 @@ function lignesAffichees(
         debit: ligne.sens === "Débit" ? ligne.montant : null,
         credit: ligne.sens === "Crédit" ? ligne.montant : null,
       })),
-      ligneBanqueTotale(item.lignes, item.total, modif.libelle ?? item.libelle),
+      ...lignesBanqueTotales(item.lignes, item.total, modif.libelle ?? item.libelle, modif.lignes),
     ];
   }
   const libelle = modif?.libelle;

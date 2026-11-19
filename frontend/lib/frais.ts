@@ -336,20 +336,43 @@ export function libelleModifie(ligne: LigneGL, libelleOrigine: string, libelle: 
   return ligne.libelle === libelleOrigine ? libelle : ligne.libelle;
 }
 
+/** Compte de la TVA récupérable (34552142), comme le serveur. */
+export const COMPTE_TVA = "34552142";
+
 /**
- * Ligne banque d'une écriture dont les lignes ont été saisies (« Modifier ») : une seule ligne
- * avec le total, comme le serveur la calcule (12/11/2026). Une écriture d'un seul frais garde le
- * libellé du relevé de sa ligne banque (13/11/2026) ; sinon le libellé de l'écriture, « COM »
- * pour une écriture « FRAIS ».
+ * Lignes banque d'une écriture dont les lignes ont été saisies (« Modifier »), comme le serveur
+ * les calcule : le total en une ligne (12/11/2026), ou deux lignes, hors taxe puis TVA, si des
+ * lignes sont saisies sur le compte de TVA (19/11/2026). Une écriture d'un seul frais (ses lignes
+ * banque au même libellé) garde le libellé du relevé (13/11/2026) ; sinon le libellé de
+ * l'écriture, « COM » pour une écriture « FRAIS ».
  */
-export function ligneBanqueTotale(lignes: LigneGL[], total: string, libelle: string): LigneGL {
+export function lignesBanqueTotales(
+  lignes: LigneGL[],
+  total: string,
+  libelle: string,
+  saisies: LigneSaisie[] = [],
+): LigneGL[] {
   const banques = lignes.filter((ligne) => ligne.type === null);
-  return {
+  const unFrais = banques.length > 0 && banques.every((l) => l.libelle === banques[0].libelle);
+  const banque: LigneGL = {
     type: null,
     type_libelle: "Banque",
-    libelle: banques.length === 1 ? banques[0].libelle : libelle === "FRAIS" ? "COM" : libelle,
+    libelle: unFrais ? banques[0].libelle : libelle === "FRAIS" ? "COM" : libelle,
     compte: banques[0]?.compte ?? null,
     debit: null,
     credit: total,
   };
+  const tva = saisies
+    .filter((ligne) => ligne.compte.trim() === COMPTE_TVA)
+    .reduce(
+      (somme, ligne) =>
+        somme + (ligne.sens === "Débit" ? BigInt(1) : BigInt(-1)) * toCents(ligne.montant),
+      BigInt(0),
+    );
+  const centimes = toCents(total);
+  if (tva <= BigInt(0) || tva >= centimes) return [banque];
+  return [
+    { ...banque, credit: fromCents(centimes - tva) },
+    { ...banque, type_libelle: "TVA Banque", credit: fromCents(tva) },
+  ];
 }

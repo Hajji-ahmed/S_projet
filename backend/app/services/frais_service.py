@@ -1481,6 +1481,32 @@ def ecritures(
     return result
 
 
+def montants_banque(
+    db: Session, company_id: int, entries: list[AccountingEntry]
+) -> dict[int, list[Decimal]]:
+    """Montant (crédit − débit) de chaque ligne banque des écritures SIMTIS demandées, dans leur
+    ordre : deux lignes, hors taxe puis TVA, pour un frais avec TVA (19/11/2026)."""
+    if not entries:
+        return {}
+    accounts = {a.id: a for a in _accounts(db, company_id, None)}
+    ids = [entry.id for entry in entries]
+    operations = frais_repository.operations_of_entries(db, ids)
+    saisies = frais_repository.lignes_saisies(db, ids)
+    result: dict[int, list[Decimal]] = {}
+    for entry in entries:
+        account = accounts.get(entry.bank_account_id)
+        if account is None:
+            result[entry.id] = [entry.montant]
+            continue
+        lignes = lignes_ecriture(
+            famille_de(entry), account, entry, operations.get(entry.id, []), saisies.get(entry.id)
+        )
+        result[entry.id] = [
+            (ligne.credit or ZERO) - (ligne.debit or ZERO) for ligne in lignes if ligne.banque
+        ]
+    return result
+
+
 def supprimer(
     db: Session, entry_id: int, *, motif: str | None, acteur_id: int, ip: str | None
 ) -> None:
@@ -1669,6 +1695,19 @@ def ligne_banque(compte: str | None, montant: Decimal) -> LigneGL:
     )
 
 
+def lignes_banque_tva(compte: str | None, montant: Decimal, tva: Decimal) -> list[LigneGL]:
+    """Contrepartie banque d'une écriture qui contient une TVA (19/11/2026) : une ligne « Banque »
+    pour le frais hors taxe (montant − TVA) puis une ligne « TVA Banque » pour la TVA, même signe
+    que le montant ; une seule ligne si la TVA est nulle ou fait tout le montant."""
+    tva = abs(tva) if montant > 0 else -abs(tva)
+    if not tva or abs(tva) >= abs(montant):
+        return [ligne_banque(compte, montant)]
+    return [
+        ligne_banque(compte, montant - tva),
+        replace(ligne_banque(compte, tva), type_libelle="TVA Banque"),
+    ]
+
+
 def lignes_banque(
     compte: str | None, operations: list[BankTransaction], total: Decimal
 ) -> list[LigneGL]:
@@ -1695,7 +1734,10 @@ def lignes_gl(
     une ligne par opération depuis le 12/11/2026 (`lignes_banque`), le total sans opérations.
 
     Une écriture d'une seule opération (une écriture par frais, 13/11/2026) porte sur TOUTES ses
-    lignes, débit comme crédit, le libellé de l'opération du relevé (`libelle_releve`)."""
+    lignes, débit comme crédit, le libellé de l'opération du relevé (`libelle_releve`), et sa
+    banque passe en deux lignes, hors taxe puis TVA, si elle contient une TVA (19/11/2026)."""
+    une_operation = bool(operations) and len(operations) == 1 and -operations[0].montant == total
+    tva = sum((detail.total for detail in details if est_ligne_tva(detail.type)), ZERO)
     lignes = [
         *(
             LigneGL(
@@ -1707,9 +1749,13 @@ def lignes_gl(
             )
             for detail in details
         ),
-        *lignes_banque(account.compte_comptable, operations or [], total),
+        *(
+            lignes_banque_tva(account.compte_comptable, total, tva)
+            if une_operation
+            else lignes_banque(account.compte_comptable, operations or [], total)
+        ),
     ]
-    if operations and len(operations) == 1 and -operations[0].montant == total:
+    if une_operation:
         texte = libelle_releve(operations[0])
         lignes = [replace(ligne, libelle=texte) for ligne in lignes]
     return lignes
@@ -1761,7 +1807,7 @@ def lignes_manuelle(
             )
             for code, nom, part in parts
         ),
-        ligne_banque(compte, montant),
+        *lignes_banque_tva(compte, montant, montant_tva or ZERO),
     ]
 
 
@@ -1774,14 +1820,24 @@ def lignes_ecriture(
 ) -> list[LigneGL]:
     if saisies:
         # Lignes saisies avant la validation (19/10/2026) : telles quelles, puis la banque, au
-        # libellé du relevé pour une écriture automatique d'un seul frais (13/11/2026)
-        banque = ligne_banque(account.compte_comptable, entry.montant)
+        # libellé du relevé pour une écriture automatique d'un seul frais (13/11/2026), en deux
+        # lignes (hors taxe, TVA) si des lignes sont saisies sur le compte de TVA (19/11/2026)
+        tva = sum(
+            (
+                ligne.montant if ligne.sens == SENS_DEBIT else -ligne.montant
+                for ligne in saisies
+                if ligne.compte == COMPTE_TVA
+            ),
+            ZERO,
+        )
+        banques = lignes_banque_tva(account.compte_comptable, entry.montant, tva)
         if (
             famille is not MANUELLE
             and len(operations) == 1
             and -operations[0].montant == entry.montant
         ):
-            banque = replace(banque, libelle=libelle_releve(operations[0]))
+            texte = libelle_releve(operations[0])
+            banques = [replace(banque, libelle=texte) for banque in banques]
         return [
             *(
                 LigneGL(
@@ -1794,7 +1850,7 @@ def lignes_ecriture(
                 )
                 for ligne in saisies
             ),
-            banque,
+            *banques,
         ]
     if famille is MANUELLE:
         return lignes_manuelle(
