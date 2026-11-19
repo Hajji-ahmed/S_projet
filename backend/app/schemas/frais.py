@@ -103,6 +103,8 @@ class PropositionTimbresOut(BaseModel):
     # Format du grand livre : journal des frais du compte et lignes de l'écriture à passer
     journal: str | None
     lignes: list[LigneGLOut]
+    # TVA sur une ligne à part (19/11/2026) : `transaction_id` de la proposition qu'elle suit
+    suit_transaction_id: int | None = None
 
     @classmethod
     def of(cls, item: Proposition) -> "PropositionTimbresOut":
@@ -129,6 +131,7 @@ class PropositionTimbresOut(BaseModel):
                 )
             ],
             operations=[TimbreOut.of(tx) for tx in item.jour.operations],
+            suit_transaction_id=item.suit_transaction_id,
         )
 
 
@@ -153,6 +156,8 @@ class EcritureFraisOut(BaseModel):
     lignes: list[LigneGLOut]
     # Libellé, date ou lignes changés avant la validation (19/10/2026)
     modifiee: bool = False
+    # TVA sur une ligne à part (19/11/2026) : `id` de l'écriture de la commission qu'elle suit
+    suit_ecriture_id: int | None = None
 
     @classmethod
     def of(cls, item: EcritureSimtis) -> "EcritureFraisOut":
@@ -173,6 +178,7 @@ class EcritureFraisOut(BaseModel):
             exportee_le=entry.exportee_le,
             lignes=[LigneGLOut.of(ligne, entry.libelle) for ligne in item.lignes],
             modifiee=item.modifiee,
+            suit_ecriture_id=item.suit_ecriture_id,
         )
 
 

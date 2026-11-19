@@ -50,6 +50,9 @@ export type PropositionTimbres = {
   /** Journal Sage des frais du compte (null : à renseigner). */
   journal: string | null;
   lignes: LigneGL[];
+  /** TVA sur une ligne à part (19/11/2026) : `transaction_id` de la proposition de la commission
+   * qu'elle suit, affichée dans la même case ; null sinon. */
+  suit_transaction_id?: number | null;
 };
 
 /** Écriture comptabilisée par SIMTIS et rapprochée de ses timbres. */
@@ -73,6 +76,9 @@ export type EcritureFrais = {
   lignes: LigneGL[];
   /** Libellé, date ou lignes changés avant la validation (19/10/2026). */
   modifiee: boolean;
+  /** TVA sur une ligne à part (19/11/2026) : `id` de l'écriture de la commission qu'elle suit,
+   * affichée dans la même case (même N° pièce à l'export) ; null sinon. */
+  suit_ecriture_id?: number | null;
 };
 
 /** Ligne saisie d'une proposition (19/10/2026) : montant positif et son sens. */

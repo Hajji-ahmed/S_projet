@@ -34,6 +34,7 @@ import {
   ligneBanqueTotale,
   optionsFiltres,
   PAR_LOT,
+  regrouperAvecTva,
   selectionTimbres,
   sommeMontants,
   totalGrandLivre,
@@ -160,8 +161,15 @@ export function FraisCard({
   const ecritures = data?.ecritures ?? [];
   const choisis = selectionTimbres(propositions, selection);
   const filtrees = filtrerPropositions(propositions, filtre);
-  const affichees = filtrees.slice(0, nbAffichees);
-  const reste = filtrees.length - affichees.length;
+  // Une TVA sur une ligne à part est dans la case de sa commission (19/11/2026) : on compte et on
+  // charge des cases
+  const casesFiltrees = regrouperAvecTva(
+    filtrees,
+    (item) => item.transaction_id,
+    (item) => item.suit_transaction_id,
+  );
+  const casesAffichees = casesFiltrees.slice(0, nbAffichees);
+  const reste = casesFiltrees.length - casesAffichees.length;
   const options = optionsFiltres(propositions, filtre);
   const clesFiltrees = new Set(filtrees.map(cleJour));
   // Écritures cochées que les filtres cachent : validées quand même
@@ -170,7 +178,12 @@ export function FraisCard({
   ).length;
   const autres = data?.autres_frais ?? [];
   const autresAffiches = autres.slice(0, nbAutres);
-  const ecrituresAffichees = ecritures.slice(0, nbEcritures);
+  const casesEcritures = regrouperAvecTva(
+    ecritures,
+    (item) => item.id,
+    (item) => item.suit_ecriture_id,
+  );
+  const casesEcrituresAffichees = casesEcritures.slice(0, nbEcritures);
 
   function filtrer(changement: Partial<FiltreFrais>) {
     setFiltre((actuel) => ({ ...actuel, ...changement }));
@@ -211,25 +224,33 @@ export function FraisCard({
     }
   }
 
+  // Écritures d'une case (19/11/2026) : la proposition et la TVA qui la suit
+  function caseDe(item: PropositionTimbres): PropositionTimbres[] {
+    return casesFiltrees.find((groupe) => groupe[0] === item) ?? [item];
+  }
+
   async function confirmerEcartement() {
     if (!ecartement) return;
     setBusy(true);
     setModalError(null);
+    const groupe = caseDe(ecartement);
     try {
       await ecarterFrais(
         companyId,
-        [
-          {
-            famille: ecartement.famille,
-            bank_account_id: ecartement.bank_account_id,
-            date: ecartement.date,
-            transaction_id: ecartement.transaction_id,
-          },
-        ],
+        groupe.map((item) => ({
+          famille: item.famille,
+          bank_account_id: item.bank_account_id,
+          date: item.date,
+          transaction_id: item.transaction_id,
+        })),
         motif,
       );
       setEcartement(null);
-      onChanged("Frais écarté : il est à passer à la main.");
+      onChanged(
+        groupe.length > 1
+          ? "Frais et sa TVA écartés : ils sont à passer à la main."
+          : "Frais écarté : il est à passer à la main.",
+      );
     } catch (error) {
       setModalError(error instanceof ApiError ? error.message : "L'écartement a échoué.");
     } finally {
@@ -373,84 +394,105 @@ export function FraisCard({
                 reste={reste}
                 onSuite={() => setNbAffichees((n) => n + PAR_LOT)}
               >
-                {affichees.map((item) => {
-                  const cle = cleJour(item);
-                  const label = `${libelleProposition(item)} du ${formatDate(item.date)} ${item.bank_code}`;
-                  const open = ouverts.has(cle);
-                  const Chevron = open ? ChevronDown : ChevronRight;
-                  const modif = modifs.get(cle);
-                  return (
-                    <Ecriture
-                      key={cle}
-                      famille={modif?.lignes ? "manuelle" : item.famille}
-                      journal={item.journal}
-                      date={modif?.date_ecriture ?? item.date}
-                      piece={null}
-                      lignes={lignesAffichees(item, modif)}
-                      nbOperations={item.nb_operations}
-                      case={
-                        canPrepare ? (
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 accent-simtis-primary"
-                            checked={selection.has(cle)}
-                            onChange={() => setSelection((set) => basculer(set, cle))}
-                            aria-label={`Comptabiliser ${label}`}
-                          />
-                        ) : undefined
-                      }
-                      fin={[
-                        <button
-                          key="detail"
-                          type="button"
-                          onClick={() => setOuverts((set) => basculer(set, cle))}
-                          aria-expanded={open}
-                          className="inline-flex items-center gap-1 text-simtis-primary hover:underline"
-                        >
-                          <Chevron className="h-4 w-4" aria-hidden />
-                          {item.nb_operations}
-                        </button>,
-                        ...(canPrepare
-                          ? [
-                              <span key="actions" className="flex flex-wrap items-center gap-1">
-                                {modif && (
-                                  <span className="rounded-full bg-simtis-info-bg px-2 py-0.5 text-xs font-medium text-simtis-info-fg">
-                                    modifiée
-                                  </span>
-                                )}
-                                <Button
-                                  variant="ghost"
-                                  icon={Pencil}
-                                  disabled={busy}
-                                  aria-label={`Modifier ${label}`}
-                                  onClick={() => setEdition(item)}
-                                >
-                                  Modifier
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  icon={Ban}
-                                  disabled={busy}
-                                  aria-label={`Écarter ${label}`}
-                                  onClick={() => {
-                                    setMotif("");
-                                    setModalError(null);
-                                    setEcartement(item);
-                                  }}
-                                >
-                                  Écarter
-                                </Button>
-                              </span>,
-                            ]
-                          : []),
-                      ]}
-                      detail={open ? <Operations operations={item.operations} /> : null}
-                    />
-                  );
-                })}
+                {casesAffichees.flatMap((groupe) =>
+                  groupe.map((item, rang) => {
+                    const cle = cleJour(item);
+                    const tva = rang > 0;
+                    const cles = groupe.map(cleJour);
+                    const label = `${libelleProposition(item)} du ${formatDate(item.date)} ${item.bank_code}`;
+                    const open = ouverts.has(cle);
+                    const Chevron = open ? ChevronDown : ChevronRight;
+                    const modif = modifs.get(cle);
+                    return (
+                      <Ecriture
+                        key={cle}
+                        famille={modif?.lignes ? "manuelle" : item.famille}
+                        journal={item.journal}
+                        date={modif?.date_ecriture ?? item.date}
+                        piece={null}
+                        lignes={lignesAffichees(item, modif)}
+                        nbOperations={item.nb_operations}
+                        suite={tva}
+                        case={
+                          !canPrepare ? undefined : tva ? (
+                            <span className="sr-only">Cochée avec la commission</span>
+                          ) : (
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-simtis-primary"
+                              checked={selection.has(cle)}
+                              // La commission et sa TVA se cochent ensemble (19/11/2026)
+                              onChange={() =>
+                                setSelection((set) => {
+                                  const next = new Set(set);
+                                  const cocher = !set.has(cle);
+                                  for (const c of cles) {
+                                    if (cocher) next.add(c);
+                                    else next.delete(c);
+                                  }
+                                  return next;
+                                })
+                              }
+                              aria-label={`Comptabiliser ${label}${groupe.length > 1 ? " et sa TVA" : ""}`}
+                            />
+                          )
+                        }
+                        fin={[
+                          <button
+                            key="detail"
+                            type="button"
+                            onClick={() => setOuverts((set) => basculer(set, cle))}
+                            aria-expanded={open}
+                            className="inline-flex items-center gap-1 text-simtis-primary hover:underline"
+                          >
+                            <Chevron className="h-4 w-4" aria-hidden />
+                            {item.nb_operations}
+                          </button>,
+                          ...(canPrepare
+                            ? [
+                                <span key="actions" className="flex flex-wrap items-center gap-1">
+                                  {modif && (
+                                    <span className="rounded-full bg-simtis-info-bg px-2 py-0.5 text-xs font-medium text-simtis-info-fg">
+                                      modifiée
+                                    </span>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    icon={Pencil}
+                                    disabled={busy}
+                                    aria-label={`Modifier ${label}`}
+                                    onClick={() => setEdition(item)}
+                                  >
+                                    Modifier
+                                  </Button>
+                                  {/* La TVA s'écarte avec sa commission (19/11/2026) */}
+                                  {!tva && (
+                                    <Button
+                                      variant="ghost"
+                                      icon={Ban}
+                                      disabled={busy}
+                                      aria-label={`Écarter ${label}${groupe.length > 1 ? " et sa TVA" : ""}`}
+                                      onClick={() => {
+                                        setMotif("");
+                                        setModalError(null);
+                                        setEcartement(item);
+                                      }}
+                                    >
+                                      Écarter
+                                    </Button>
+                                  )}
+                                </span>,
+                              ]
+                            : []),
+                        ]}
+                        detail={open ? <Operations operations={item.operations} /> : null}
+                      />
+                    );
+                  }),
+                )}
               </GrandLivre>
             )}
-            <PiedCadre affichees={affichees.length} total={filtrees.length} />
+            <PiedCadre affichees={casesAffichees.length} total={casesFiltrees.length} />
           </section>
 
           {(data.ecartes ?? []).length > 0 && (
@@ -687,51 +729,54 @@ export function FraisCard({
             ) : (
               <TableauSage
                 fin={canPrepare ? ["Export Sage", "Actions"] : ["Export Sage"]}
-                reste={ecritures.length - ecrituresAffichees.length}
+                reste={casesEcritures.length - casesEcrituresAffichees.length}
                 onSuite={() => setNbEcritures((n) => n + PAR_LOT)}
               >
-                {ecrituresAffichees.map((item) => (
-                  <EcritureSage
-                    key={item.id}
-                    journal={item.journal}
-                    date={item.date}
-                    piece={item.numero_piece}
-                    lignes={item.lignes}
-                    fin={[
-                      item.exportee_le ? (
-                        <span key="export" className="text-simtis-success-fg">
-                          Exportée le {formatDateTime(item.exportee_le)}
-                        </span>
-                      ) : (
-                        <span key="export" className="text-simtis-warning-fg">
-                          À exporter
-                        </span>
-                      ),
-                      ...(canPrepare
-                        ? [
-                            !item.exportee_le ? (
-                              <Button
-                                key="supprimer"
-                                variant="ghost"
-                                icon={Trash2}
-                                aria-label={`Supprimer l'écriture ${item.libelle} du ${formatDate(item.date)}`}
-                                onClick={() => {
-                                  setMotif("");
-                                  setModalError(null);
-                                  setSuppression(item);
-                                }}
-                              >
-                                Supprimer
-                              </Button>
-                            ) : null,
-                          ]
-                        : []),
-                    ]}
-                  />
-                ))}
+                {casesEcrituresAffichees.flatMap((groupe) =>
+                  groupe.map((item, rang) => (
+                    <EcritureSage
+                      key={item.id}
+                      suite={rang > 0}
+                      journal={item.journal}
+                      date={item.date}
+                      piece={item.numero_piece}
+                      lignes={item.lignes}
+                      fin={[
+                        item.exportee_le ? (
+                          <span key="export" className="text-simtis-success-fg">
+                            Exportée le {formatDateTime(item.exportee_le)}
+                          </span>
+                        ) : (
+                          <span key="export" className="text-simtis-warning-fg">
+                            À exporter
+                          </span>
+                        ),
+                        ...(canPrepare
+                          ? [
+                              !item.exportee_le ? (
+                                <Button
+                                  key="supprimer"
+                                  variant="ghost"
+                                  icon={Trash2}
+                                  aria-label={`Supprimer l'écriture ${item.libelle} du ${formatDate(item.date)}`}
+                                  onClick={() => {
+                                    setMotif("");
+                                    setModalError(null);
+                                    setSuppression(item);
+                                  }}
+                                >
+                                  Supprimer
+                                </Button>
+                              ) : null,
+                            ]
+                          : []),
+                      ]}
+                    />
+                  )),
+                )}
               </TableauSage>
             )}
-            <PiedCadre affichees={ecrituresAffichees.length} total={ecritures.length} />
+            <PiedCadre affichees={casesEcrituresAffichees.length} total={casesEcritures.length} />
           </section>
         </div>
       )}
@@ -778,7 +823,7 @@ export function FraisCard({
         )}
         <p className="mb-4 text-simtis-muted">
           {ecartement &&
-            `${libelleProposition(ecartement)} du ${formatDate(ecartement.date)} (${ecartement.bank_code}) : `}
+            `${libelleProposition(ecartement)} du ${formatDate(ecartement.date)} (${ecartement.bank_code})${caseDe(ecartement).length > 1 ? " et sa TVA" : ""} : `}
           ce frais ne sera plus proposé et passera dans « Autres frais à passer à la main ». «
           Reproposer » l&apos;annule.
         </p>
@@ -1046,6 +1091,7 @@ function Ecriture({
   piece,
   lignes,
   nbOperations,
+  suite = false,
   case: caseACocher,
   fin,
   detail,
@@ -1056,6 +1102,8 @@ function Ecriture({
   piece: ReactNode;
   lignes: LigneGL[];
   nbOperations: number;
+  /** TVA dans la case de sa commission (19/11/2026) : pas de trait au-dessus. */
+  suite?: boolean;
   case?: ReactNode;
   fin: ReactNode[];
   detail?: ReactNode;
@@ -1063,7 +1111,7 @@ function Ecriture({
   const span = lignes.length;
   const colonnes = (caseACocher !== undefined ? 1 : 0) + 7 + fin.length;
   return (
-    <tbody className="border-t border-simtis-border first:border-t-0">
+    <tbody className={suite ? undefined : "border-t border-simtis-border first:border-t-0"}>
       {lignes.map((ligne, index) => (
         <tr key={`${ligne.type ?? "banque"}-${index}`}>
           {index === 0 && caseACocher !== undefined && (
@@ -1147,15 +1195,18 @@ function EcritureSage({
   piece,
   lignes,
   fin,
+  suite = false,
 }: {
   journal: string | null;
   date: string;
   piece: string | null;
+  /** TVA dans la case de sa commission, même N° pièce (19/11/2026) : pas de trait au-dessus. */
+  suite?: boolean;
   lignes: LigneGL[];
   fin: ReactNode[];
 }) {
   return (
-    <tbody className="border-t border-simtis-border first:border-t-0">
+    <tbody className={suite ? undefined : "border-t border-simtis-border first:border-t-0"}>
       {lignes.map((ligne, index) => {
         const debit = Boolean(ligne.debit && Number(ligne.debit) !== 0);
         return (

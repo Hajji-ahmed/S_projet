@@ -839,6 +839,9 @@ class Proposition:
     account: BankAccount
     bank_code: str
     famille: Famille = field(default_factory=lambda: TIMBRES)
+    # TVA sur une ligne à part (19/11/2026) : l'opération de la proposition de la commission, de
+    # l'abonnement ou de l'intérêt d'escompte qu'elle suit, affichée dans la même case
+    suit_transaction_id: int | None = None
 
 
 def _periode(date_from: date | None, date_to: date | None) -> tuple[date, date]:
@@ -1100,7 +1103,25 @@ def propositions(
         )
 
     items.sort(key=cle)
+    _rattacher_tva(db, items)
     return list(reversed(items))
+
+
+def _rattacher_tva(db: Session, items: list[Proposition]) -> None:
+    """Chaque proposition d'une TVA sur une ligne à part reçoit l'opération de la proposition
+    qu'elle suit (19/11/2026), quand celle-ci est aussi à valider : l'écran les montre dans la
+    même case. Les deux restent deux écritures (13/11/2026)."""
+    tvas = [
+        item.jour.operations[0]
+        for item in items
+        if item.jour.transaction_id is not None and len(item.jour.operations) == 1
+    ]
+    liens = operations_suivies_par_tva(db, tvas)
+    a_valider = {item.jour.transaction_id for item in items}
+    for item in items:
+        suivie = liens.get(item.jour.transaction_id) if item.jour.transaction_id else None
+        if suivie is not None and suivie in a_valider and suivie != item.jour.transaction_id:
+            item.suit_transaction_id = suivie
 
 
 # --- Valider --------------------------------------------------------------------------------------
@@ -1410,6 +1431,9 @@ class EcritureSimtis:
     famille: Famille = field(default_factory=lambda: TIMBRES)
     # Lignes saisies par l'utilisateur (19/10/2026) plutôt que calculées
     modifiee: bool = False
+    # TVA sur une ligne à part (19/11/2026) : l'écriture de la commission qu'elle suit, affichée
+    # dans la même case (même n° de pièce à l'export, 17/11/2026)
+    suit_ecriture_id: int | None = None
 
 
 def famille_de(entry: AccountingEntry) -> Famille:
@@ -1448,6 +1472,12 @@ def ecritures(
         )
         modifiee = entry.id in saisies or (regle is not MANUELLE and entry.libelle != regle.libelle)
         result.append(EcritureSimtis(entry, account.bank.code, code, nb, lignes, regle, modifiee))
+    listees = {item.entry.id for item in result}
+    suivies = _ecritures_suivies_par_tva(db, [item.entry for item in result], operations)
+    for item in result:
+        suivie = suivies.get(item.entry.id)
+        if suivie is not None and suivie.id in listees:
+            item.suit_ecriture_id = suivie.id
     return result
 
 
@@ -1831,6 +1861,28 @@ def a_exporter(db: Session, company_id: int) -> list[AExporter]:
     ]
 
 
+def est_tva_a_part(tx: BankTransaction) -> bool:
+    """Opération du relevé qui n'est qu'une TVA sur une ligne à part (17/11/2026) : « TAXE SUR
+    VALEUR AJOUTEE », TVA d'un abonnement ou d'un intérêt d'escompte, « TVA COM EFFET … »."""
+    return est_tva_separee(tx) or type_commission(tx.libelle) == "tva_commission_effet"
+
+
+def operations_suivies_par_tva(db: Session, tvas: list[BankTransaction]) -> dict[int, int]:
+    """{id d'une TVA sur une ligne à part : id de l'opération (commission, abonnement, intérêt
+    d'escompte, commission effet) qu'elle suit} (17/11/2026), lu sur toutes les opérations
+    débitées de son compte et de son jour, comme `associer_tva`. Une TVA sans opération n'y
+    figure pas."""
+    tvas = [tx for tx in tvas if est_tva_a_part(tx)]
+    if not tvas:
+        return {}
+    cles = {(tx.bank_account_id, tx.date_operation) for tx in tvas}
+    du_jour = frais_repository.operations_debitees_des_jours(db, cles)
+    liens = {tva: operation for tva, (_, operation) in tva_et_operation(du_jour).items()}
+    liens.update(tva_effet_et_operation(du_jour))
+    voulues = {tx.id for tx in tvas}
+    return {tva: operation for tva, operation in liens.items() if tva in voulues}
+
+
 def _ecritures_suivies_par_tva(
     db: Session,
     entries: list[AccountingEntry],
@@ -1842,19 +1894,14 @@ def _ecritures_suivies_par_tva(
     tva_de_ecriture: dict[int, BankTransaction] = {}
     for entry in entries:
         ops = operations.get(entry.id, [])
-        if len(ops) == 1 and (
-            est_tva_separee(ops[0]) or type_commission(ops[0].libelle) == "tva_commission_effet"
-        ):
+        if len(ops) == 1 and est_tva_a_part(ops[0]):
             tva_de_ecriture[entry.id] = ops[0]
-    if not tva_de_ecriture:
-        return {}
-    cles = {(tx.bank_account_id, tx.date_operation) for tx in tva_de_ecriture.values()}
-    du_jour = frais_repository.operations_debitees_des_jours(db, cles)
-    liens = {tva: operation for tva, (_, operation) in tva_et_operation(du_jour).items()}
-    liens.update(tva_effet_et_operation(du_jour))
+    liens = operations_suivies_par_tva(db, list(tva_de_ecriture.values()))
     operation_de = {
         entry_id: liens[tx.id] for entry_id, tx in tva_de_ecriture.items() if tx.id in liens
     }
+    if not operation_de:
+        return {}
     ecritures = frais_repository.ecritures_simtis_des_operations(db, list(operation_de.values()))
     return {
         entry_id: ecritures[operation_id]

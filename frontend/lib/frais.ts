@@ -83,6 +83,34 @@ export function optionsFiltres(
   };
 }
 
+/**
+ * Cases du tableau (19/11/2026) : chaque TVA sur une ligne à part rejoint la case de l'écriture
+ * qu'elle suit (`suit` donne l'identifiant de celle-ci), juste après elle ; les autres écritures
+ * gardent leur ordre, une par case. Une TVA dont l'écriture n'est pas dans la liste reste seule.
+ */
+export function regrouperAvecTva<T>(
+  items: T[],
+  id: (item: T) => number | null,
+  suit: (item: T) => number | null | undefined,
+): T[][] {
+  const presents = new Set(items.map(id).filter((value): value is number => value !== null));
+  const suivantes = new Map<number, T[]>();
+  for (const item of items) {
+    const cible = suit(item);
+    if (cible != null && cible !== id(item) && presents.has(cible)) {
+      suivantes.set(cible, [...(suivantes.get(cible) ?? []), item]);
+    }
+  }
+  const cases: T[][] = [];
+  for (const item of items) {
+    const cible = suit(item);
+    if (cible != null && cible !== id(item) && presents.has(cible)) continue;
+    const cle = id(item);
+    cases.push([item, ...(cle === null ? [] : (suivantes.get(cle) ?? []))]);
+  }
+  return cases;
+}
+
 /** Libellés proposés pour une écriture saisie à la main (saisie libre). */
 export const LIBELLES_SUGGERES = [
   "AGIOS",

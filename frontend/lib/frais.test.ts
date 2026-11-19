@@ -12,6 +12,7 @@ import {
   ligneBanqueTotale,
   lignesSaisies,
   optionsFiltres,
+  regrouperAvecTva,
   selectionTimbres,
   sommeMontants,
   suggestionsLibelles,
@@ -368,5 +369,30 @@ describe("filtres du tableau « À valider » (14/11/2026)", () => {
       { value: "2026-11-12", nb: 1 },
       { value: "2026-11-11", nb: 1 },
     ]);
+  });
+});
+
+describe("regrouperAvecTva (19/11/2026)", () => {
+  type E = { id: number | null; suit?: number | null };
+  const grouper = (items: E[]) =>
+    regrouperAvecTva(
+      items,
+      (item) => item.id,
+      (item) => item.suit,
+    ).map((groupe) => groupe.map((item) => item.id));
+
+  it("met la TVA dans la case de sa commission, juste après elle", () => {
+    // TVA listée avant sa commission (ordre du relevé inversé)
+    expect(
+      grouper([{ id: 1 }, { id: 4, suit: 3 }, { id: 2 }, { id: 3 }, { id: 5, suit: 2 }]),
+    ).toEqual([[1], [2, 5], [3, 4]]);
+  });
+
+  it("laisse seule une TVA dont la commission n'est pas dans la liste", () => {
+    expect(grouper([{ id: 1 }, { id: 2, suit: 9 }])).toEqual([[1], [2]]);
+  });
+
+  it("garde les écritures sans identifiant", () => {
+    expect(grouper([{ id: null }, { id: null, suit: null }])).toEqual([[null], [null]]);
   });
 });

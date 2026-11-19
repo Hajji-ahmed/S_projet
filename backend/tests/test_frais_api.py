@@ -1563,6 +1563,36 @@ def test_a_vat_without_commission_keeps_its_own_piece(client, comptable, db):
     assert {r[1] for r in lignes_csv(response)} == {"BP2604020"}
 
 
+def test_a_vat_on_its_own_line_is_shown_with_the_entry_it_follows(client, comptable, db):
+    """19/11/2026 : la TVA sur une ligne à part reste une écriture (13/11/2026) mais l'écran la
+    montre dans la case de sa commission ou de son abonnement, à valider puis validée."""
+    compte = bp(db)
+    commission = operation(db, compte, "-25", JOUR, "COMMISSION")
+    tva = operation(db, compte, "-2.50", JOUR, "TAXE SUR VALEUR AJOUTEE")
+    abonnement = operation(db, compte, "-150", JOUR, "ABONNEMENT BP E-CORPORATE")
+    tva_abonnement = operation(db, compte, "-15", JOUR, "TVA COM ABONNEMENT BP E-CORPORATE")
+    seule = operation(db, compte, "-3", JOUR + timedelta(days=1), "TAXE SUR VALEUR AJOUTEE")
+
+    data = lire(client, comptable, db, famille=None).json()
+    suit = {p["transaction_id"]: p["suit_transaction_id"] for p in data["propositions"]}
+    assert suit[tva.id] == commission.id
+    assert suit[tva_abonnement.id] == abonnement.id
+    assert suit[commission.id] is None
+    assert suit[abonnement.id] is None
+    # Une TVA sans commission reste à la main : pas de proposition
+    assert seule.id not in suit
+
+    for famille in {p["famille"] for p in data["propositions"]}:
+        assert valider(client, comptable, db, (compte, JOUR), famille=famille).status_code == 200
+    ecritures = lire(client, comptable, db, famille=None).json()["ecritures"]
+    par_libelle = {e["lignes"][0]["libelle"]: e for e in ecritures}
+    commission_e = par_libelle["COMMISSION"]
+    tva_e = par_libelle["TAXE SUR VALEUR AJOUTEE"]
+    assert tva_e["suit_ecriture_id"] == commission_e["id"]
+    assert commission_e["suit_ecriture_id"] is None
+    assert par_libelle[TVA_ABONNEMENT]["suit_ecriture_id"] == par_libelle[ABONNEMENT]["id"]
+
+
 def a_exporter(client, headers, db):
     response = client.get(
         "/api/frais/a-exporter", params={"company_id": company(db).id}, headers=headers
