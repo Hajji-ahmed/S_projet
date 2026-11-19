@@ -1190,6 +1190,40 @@ def test_personal_permissions_are_deleted_with_the_user(db):
     assert db.scalar(select(UserPermission).filter_by(user_id=user.id)) is None
 
 
+# --- Sociétés accessibles par personne (migration 0057) -------------------------------------------
+
+
+def test_one_line_per_user_and_company(db, world):
+    from app.models import UserCompany
+
+    save(db, UserCompany(user_id=world.user.id, company_id=world.company.id))
+
+    sql = (
+        "INSERT INTO user_companies (user_id, company_id) "
+        f"VALUES ({world.user.id}, {world.company.id})"
+    )
+    assert_rejected(db, "pk_user_companies", sql=sql)
+
+
+def test_company_access_lines_are_deleted_with_the_user_or_the_company(db, world):
+    from app.models import UserCompany
+
+    autre = save(db, build_company())
+    save(
+        db,
+        UserCompany(user_id=world.user.id, company_id=world.company.id),
+        UserCompany(user_id=world.user.id, company_id=autre.id),
+    )
+
+    db.execute(text(f"DELETE FROM companies WHERE id = {autre.id}"))
+    assert db.scalars(select(UserCompany.company_id).filter_by(user_id=world.user.id)).all() == [
+        world.company.id
+    ]
+
+    db.execute(text(f"DELETE FROM users WHERE id = {world.user.id}"))
+    assert db.scalar(select(UserCompany).filter_by(user_id=world.user.id)) is None
+
+
 # --- Solde comptable d'ouverture (migration 0039) -------------------------------------------------
 
 

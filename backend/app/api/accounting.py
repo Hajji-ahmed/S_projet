@@ -25,6 +25,7 @@ from app.schemas.accounting import (
     SoldeComptableOut,
 )
 from app.services import (
+    acces_societe_service,
     accounting_import_service,
     import_file,
     saisie_manuelle_service,
@@ -79,9 +80,10 @@ def analyse_entries(
     mapping: MappingForm = None,
     feuille: FeuilleForm = None,
     db: Session = Depends(get_db),
-    _user: CurrentUser = Depends(can_import),
+    user: CurrentUser = Depends(can_import),
 ) -> AnalyseComptableOut:
     """Analyse un export Sage et renvoie son aperçu. Rien n'est enregistré."""
+    acces_societe_service.verifier(user, company_id)
     analysis = accounting_import_service.analyse_entries(
         db,
         company_id=company_id,
@@ -116,9 +118,12 @@ def confirm_entries(
     user: CurrentUser = Depends(can_import),
 ) -> ConfirmationComptableOut:
     """Enregistre l'export (même fichier, même correspondance que l'aperçu validé)."""
+    acces_societe_service.verifier(user, company_id)
     kept = _json_field(LignesGardeesIn, "garder_doublons", garder_doublons)
     chosen = _json_field(LignesGardeesIn, "lignes_choisies", lignes_choisies)
     supprimees = _json_field(EcrituresSupprimeesIn, "ecritures_supprimees", ecritures_supprimees)
+    if supprimees is not None:
+        acces_societe_service.verifier_ecritures(db, user, supprimees.root)
     if chosen is not None and (kept is not None or ecarter_erreurs):
         raise RequestValidationError(
             [
@@ -220,6 +225,7 @@ def ajouter_ecriture(
     user: CurrentUser = Depends(can_import),
 ) -> EcritureDetailOut:
     """Ajoute à la main une écriture oubliée par Sage (24/10/2026), avec un motif."""
+    acces_societe_service.verifier_comptes(db, user, [body.bank_account_id])
     saisie = saisie_manuelle_service.EcritureSaisie(**body.model_dump(exclude={"motif"}))
     entry = saisie_manuelle_service.ajouter_ecriture(
         db, saisie, motif=body.motif, acteur_id=user.id, ip=client_ip(request)

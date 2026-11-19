@@ -26,6 +26,8 @@ class UserOut(BaseModel):
     # Permissions ajoutées / retirées pour la personne, en plus de ses rôles (23/10/2026)
     nb_ajouts: int = 0
     nb_retraits: int = 0
+    # Sociétés accessibles (19/11/2026) ; vide = toutes
+    company_ids: list[int] = []
 
     @classmethod
     def of(cls, user: User, *, now: datetime) -> "UserOut":
@@ -43,6 +45,7 @@ class UserOut(BaseModel):
             created_at=user.created_at,
             nb_ajouts=sum(1 for p in user.permissions_perso if p.accordee),
             nb_retraits=sum(1 for p in user.permissions_perso if not p.accordee),
+            company_ids=sorted(lien.company_id for lien in user.societes),
         )
 
 
@@ -82,6 +85,8 @@ class UserIn(BaseModel):
     nom: str = Field(max_length=120)
     email: str = Field(max_length=255)
     role_ids: list[int]
+    # Sociétés accessibles (19/11/2026) : vide = toutes ; absent = inchangées (modification)
+    company_ids: list[int] | None = Field(default=None, max_length=50)
 
 
 class UserStatusIn(BaseModel):

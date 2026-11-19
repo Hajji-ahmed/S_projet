@@ -3,7 +3,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Permission, Role, User, UserRole
+from app.models import Company, Permission, Role, User, UserRole
 
 ROLE_ADMIN = "ADMIN"
 
@@ -12,7 +12,11 @@ def list_users(db: Session) -> list[User]:
     return list(
         db.scalars(
             select(User)
-            .options(selectinload(User.roles), selectinload(User.permissions_perso))
+            .options(
+                selectinload(User.roles),
+                selectinload(User.permissions_perso),
+                selectinload(User.societes),
+            )
             .order_by(func.lower(User.nom))
         )
     )
@@ -20,6 +24,10 @@ def list_users(db: Session) -> list[User]:
 
 def get_user(db: Session, user_id: int) -> User | None:
     return db.scalar(select(User).options(selectinload(User.roles)).where(User.id == user_id))
+
+
+def get_companies(db: Session, ids: list[int]) -> list[Company]:
+    return list(db.scalars(select(Company).where(Company.id.in_(ids))))
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:

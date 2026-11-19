@@ -6,6 +6,8 @@ export type CurrentUser = {
   roles: string[];
   /** Codes de permission effectifs, ex. « banks.manage ». */
   permissions: string[];
+  /** Sociétés accessibles (19/11/2026) ; null = toutes. */
+  societes?: number[] | null;
 };
 
 export type TokenResponse = {

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.permissions import PermissionCode
 from app.core.security import InvalidTokenError, decode_access_token
-from app.services import auth_service
+from app.services import acces_societe_service, auth_service
 from app.services.auth_service import CurrentUser
 
 _bearer = HTTPBearer(auto_error=False)
@@ -41,6 +41,22 @@ def get_current_user(
     if user is None:
         raise _unauthorized(auth_service.SESSION_EXPIRED_MESSAGE)
     return user
+
+
+def verifier_societe(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Dépendance de `protected_router` (19/11/2026) : refuse (403) toute route dont un paramètre
+    de chemin ou de requête (company_id, account_id, transaction_id...) appartient à une société que
+    la personne n'a pas le droit de voir. Les corps JSON et formulaires sont vérifiés par la route."""
+    parametres: dict[str, list[str]] = {
+        nom: [str(valeur)] for nom, valeur in request.path_params.items()
+    }
+    for nom in request.query_params:
+        parametres.setdefault(nom, []).extend(request.query_params.getlist(nom))
+    acces_societe_service.verifier_parametres(db, user, parametres)
 
 
 def require_permission(code: PermissionCode) -> Callable[..., CurrentUser]:

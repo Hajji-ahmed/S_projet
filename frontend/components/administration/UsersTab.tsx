@@ -7,6 +7,7 @@ import { PasswordModal } from "@/components/administration/PasswordModal";
 import { UserFormModal } from "@/components/administration/UserFormModal";
 import { UserPermissionsModal } from "@/components/administration/UserPermissionsModal";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { useCompany } from "@/components/company/CompanyProvider";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -15,7 +16,7 @@ import { LoadingState } from "@/components/ui/LoadingState";
 import { Modal } from "@/components/ui/Modal";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
-import { couleurAvatar, initiales } from "@/lib/admin";
+import { couleurAvatar, initiales, societesUtilisateur } from "@/lib/admin";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDateTime } from "@/lib/statements";
@@ -27,6 +28,7 @@ type Ligne = AdminUser & Record<string, unknown>;
 /** Utilisateurs : créer, modifier les rôles, activer / désactiver, réinitialiser le mot de passe. */
 export function UsersTab() {
   const { user: moi } = useAuth();
+  const { companies } = useCompany();
   const { toast } = useToast();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [roles, setRoles] = useState<AdminRole[]>([]);
@@ -132,6 +134,13 @@ export function UsersTab() {
             </span>
           )}
         </span>
+      ),
+    },
+    {
+      key: "societes",
+      header: "Sociétés",
+      render: (u) => (
+        <span className="text-sm text-simtis-text">{societesUtilisateur(u, companies)}</span>
       ),
     },
     {

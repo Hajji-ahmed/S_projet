@@ -4,9 +4,10 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import get_settings
-from app.services.errors import ConflictError, DomainError, NotFoundError
+from app.services.errors import ConflictError, DomainError, ForbiddenError, NotFoundError
 
 ERROR_STATUS: dict[type[DomainError], int] = {
+    ForbiddenError: status.HTTP_403_FORBIDDEN,
     NotFoundError: status.HTTP_404_NOT_FOUND,
     ConflictError: status.HTTP_409_CONFLICT,
 }

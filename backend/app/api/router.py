@@ -17,7 +17,7 @@ from app.api import (
     referentiel,
     statements,
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, verifier_societe
 
 # Routes accessibles sans être connecté. Toute nouvelle route publique doit aussi être ajoutée à
 # PUBLIC_ROUTES dans tests/test_permissions.py, sinon le test de protection par défaut échoue.
@@ -27,8 +27,9 @@ public_router.include_router(auth.public_router)
 
 # Toutes les autres routes : un utilisateur connecté est OBLIGATOIRE (401 sinon). Chaque endpoint
 # sensible ajoute en plus sa permission : `Depends(require_permission(PermissionCode.X))` (403 sinon).
-# Ajouter ici le routeur de chaque nouveau module.
-protected_router = APIRouter(dependencies=[Depends(get_current_user)])
+# `verifier_societe` refuse (403) un paramètre company_id, account_id, transaction_id... d'une société
+# non autorisée (19/11/2026). Ajouter ici le routeur de chaque nouveau module.
+protected_router = APIRouter(dependencies=[Depends(get_current_user), Depends(verifier_societe)])
 protected_router.include_router(auth.protected_router)
 protected_router.include_router(banks.router)
 protected_router.include_router(accounts.router)

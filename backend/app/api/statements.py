@@ -23,6 +23,7 @@ from app.schemas.statement import (
     TransactionUpdateIn,
 )
 from app.services import (
+    acces_societe_service,
     import_file,
     import_service,
     saisie_manuelle_service,
@@ -108,6 +109,7 @@ def supprimer_en_cours(
     user: CurrentUser = Depends(can_import),
 ) -> SuppressionEnCoursOut:
     """Supprime des opérations en cours (toutes ou aucune), avant le relevé suivant (21/10/2026)."""
+    acces_societe_service.verifier_operations(db, user, body.ids)
     nb = import_service.supprimer_en_cours(db, body.ids, acteur_id=user.id, ip=client_ip(request))
     return SuppressionEnCoursOut(nb=nb)
 
@@ -357,12 +359,13 @@ def analyse_statement(
     periode_debut: PeriodeDebutForm = None,
     periode_fin: PeriodeFinForm = None,
     db: Session = Depends(get_db),
-    _user: CurrentUser = Depends(can_import),
+    user: CurrentUser = Depends(can_import),
 ) -> AnalyseOut:
     """Analyse un relevé et renvoie son aperçu (colonnes, correspondance, lignes contrôlées).
 
     Rien n'est enregistré : l'import se confirme ensuite avec `/import/confirm`.
     """
+    acces_societe_service.verifier_comptes(db, user, [bank_account_id])
     analysis = import_service.analyse_statement(
         db,
         account_id=bank_account_id,
@@ -410,6 +413,7 @@ def confirm_statement(
     Le fichier est analysé à nouveau. Avec `lignes`, ce sont les lignes de l'aperçu, corrigées et
     revérifiées, qui sont enregistrées ; sinon, le fichier tel qu'il est analysé.
     """
+    acces_societe_service.verifier_comptes(db, user, [bank_account_id])
     kept = _json_field(LignesGardeesIn, "garder_doublons", garder_doublons)
     submitted = _json_field(LignesSoumisesIn, "lignes", _lines_text(lignes))
     if submitted is not None and (kept is not None or ecarter_erreurs):

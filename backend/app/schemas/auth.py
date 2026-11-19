@@ -16,6 +16,8 @@ class CurrentUserOut(BaseModel):
     email: str
     roles: list[str]
     permissions: list[str]
+    # Sociétés accessibles ; null = toutes (19/11/2026)
+    societes: list[int] | None = None
 
     @classmethod
     def from_user(cls, user: CurrentUser) -> "CurrentUserOut":
@@ -25,6 +27,7 @@ class CurrentUserOut(BaseModel):
             email=user.email,
             roles=list(user.roles),
             permissions=sorted(user.permissions),
+            societes=None if user.societes is None else sorted(user.societes),
         )
 
 

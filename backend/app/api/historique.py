@@ -28,7 +28,7 @@ def lire(
     date_from: Annotated[date | None, Query(alias="from")] = None,
     date_to: Annotated[date | None, Query(alias="to")] = None,
     db: Session = Depends(get_db),
-    _user: CurrentUser = Depends(can_view),
+    user: CurrentUser = Depends(can_view),
 ) -> PageOut:
     """Du plus récent au plus ancien, 50 par page ; dates en jours du Maroc."""
     return PageOut.of(
@@ -41,19 +41,20 @@ def lire(
             entite_id=entite_id,
             date_from=date_from,
             date_to=date_to,
+            societes=user.societes,
         )
     )
 
 
 @router.get("/filtres", response_model=FiltresOut)
 def lire_filtres(
-    db: Session = Depends(get_db), _user: CurrentUser = Depends(can_view)
+    db: Session = Depends(get_db), user: CurrentUser = Depends(can_view)
 ) -> FiltresOut:
-    return FiltresOut.of(historique_service.filtres(db))
+    return FiltresOut.of(historique_service.filtres(db, user.societes))
 
 
 @router.get("/{audit_id}", response_model=DetailOut)
 def lire_detail(
-    audit_id: int, db: Session = Depends(get_db), _user: CurrentUser = Depends(can_view)
+    audit_id: int, db: Session = Depends(get_db), user: CurrentUser = Depends(can_view)
 ) -> DetailOut:
-    return DetailOut.of(historique_service.detail(db, audit_id))
+    return DetailOut.of(historique_service.detail(db, audit_id, user.societes))

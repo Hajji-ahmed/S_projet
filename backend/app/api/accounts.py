@@ -9,7 +9,7 @@ from app.core.permissions import PermissionCode
 from app.models import BankAccount
 from app.schemas.account import AccountCreate, AccountOut, AccountStatusUpdate, AccountUpdate
 from app.schemas.balance import BalanceIn, BalanceOut
-from app.services import account_service, balance_service
+from app.services import acces_societe_service, account_service, balance_service
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -65,6 +65,7 @@ def create_account(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_manage),
 ) -> AccountOut:
+    acces_societe_service.verifier(user, body.company_id)
     account = account_service.create_account(
         db,
         **body.model_dump(),

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.core.permissions import PERMISSION_DESCRIPTIONS, PermissionCode
-from app.models import Permission, Role, User, UserPermission
+from app.models import Permission, Role, User, UserCompany, UserPermission
 from app.repositories import admin_repository, auth_repository
 from app.repositories.admin_repository import ROLE_ADMIN
 from app.services import audit_service
@@ -61,6 +61,8 @@ def _user_state(user: User) -> dict:
         "email": user.email,
         "actif": user.actif,
         "roles": sorted(role.code for role in user.roles),
+        # Sociétés accessibles (19/11/2026) ; vide = toutes
+        "societes": sorted(lien.company_id for lien in user.societes),
     }
 
 
@@ -87,6 +89,32 @@ def _roles(db: Session, role_ids: list[int]) -> list[Role]:
     if len(roles) != len(set(role_ids)):
         raise NotFoundError("Rôle introuvable.")
     return roles
+
+
+def _societes(db: Session, user: User | None, company_ids: list[int]) -> list[int]:
+    """Sociétés cochées (19/11/2026) : aucune = toutes. Une société désactivée ne peut pas être
+    ajoutée (elle peut rester cochée si elle l'était déjà)."""
+    ids = sorted(set(company_ids))
+    if not ids:
+        return []
+    companies = admin_repository.get_companies(db, ids)
+    if len(companies) != len(ids):
+        raise NotFoundError("Société introuvable.")
+    deja = set() if user is None else {lien.company_id for lien in user.societes}
+    for company in companies:
+        if not company.actif and company.id not in deja:
+            raise ConflictError(f"La société {company.nom} est désactivée.")
+    return ids
+
+
+def _appliquer_societes(user: User, ids: list[int]) -> None:
+    """Garde les lignes déjà présentes, ajoute les nouvelles, retire les autres."""
+    voulues = set(ids)
+    user.societes = [lien for lien in user.societes if lien.company_id in voulues] + [
+        UserCompany(company_id=company_id)
+        for company_id in ids
+        if company_id not in {lien.company_id for lien in user.societes}
+    ]
 
 
 def _email(email: str) -> str:
@@ -230,6 +258,7 @@ def create_user(
     nom: str,
     email: str,
     role_ids: list[int],
+    company_ids: list[int] | None = None,
     acteur_id: int,
     ip: str | None,
 ) -> MotDePasse:
@@ -238,6 +267,7 @@ def create_user(
     if admin_repository.get_user_by_email(db, email) is not None:
         raise ConflictError(f"Un compte existe déjà pour {email}.")
     roles = _roles(db, role_ids)
+    societes = _societes(db, None, company_ids or [])
     mot_de_passe = generate_password()
     user = admin_repository.add(
         db,
@@ -246,6 +276,7 @@ def create_user(
             email=email,
             mot_de_passe_hash=security.hash_password(mot_de_passe),
             roles=roles,
+            societes=[UserCompany(company_id=company_id) for company_id in societes],
         ),
     )
     audit_service.log(
@@ -268,9 +299,11 @@ def update_user(
     nom: str,
     email: str,
     role_ids: list[int],
+    company_ids: list[int] | None = None,
     acteur_id: int,
     ip: str | None,
 ) -> User:
+    """`company_ids` None : sociétés inchangées ; [] : toutes."""
     admin_repository.lock_admin_role(db)
     user = _user(db, user_id)
     avant = _user_state(user)
@@ -285,9 +318,13 @@ def update_user(
     if ROLE_ADMIN not in {role.code for role in roles}:
         _check_admins_left(db, user)
 
+    societes = None if company_ids is None else _societes(db, user, company_ids)
+
     user.nom = _nom(nom)
     user.email = email
     user.roles = roles
+    if societes is not None:
+        _appliquer_societes(user, societes)
     apres = _user_state(user)
     if apres != avant:
         audit_service.log(

@@ -5,7 +5,7 @@ utilisateur connecté). La gestion des sociétés (création, renommage, activat
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import client_ip, require_permission
+from app.api.deps import client_ip, get_current_user, require_permission
 from app.core.db import get_db
 from app.core.permissions import PermissionCode
 from app.models import Company
@@ -30,10 +30,14 @@ def _admin_out(company: Company) -> CompanyAdminOut:
 
 
 @router.get("/companies", response_model=list[CompanyOut])
-def list_companies(db: Session = Depends(get_db)) -> list[CompanyOut]:
+def list_companies(
+    db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)
+) -> list[CompanyOut]:
+    """Sociétés actives que la personne peut voir (sélecteur du header, 19/11/2026)."""
     return [
         CompanyOut(id=company.id, code=company.code, nom=company.nom)
         for company in account_service.list_companies(db)
+        if user.peut_voir(company.id)
     ]
 
 

@@ -9,6 +9,7 @@ import {
   matriceDe,
   parModule,
   rolesModifies,
+  societesUtilisateur,
 } from "@/lib/admin";
 import type { AdminRole, PermissionPersonne } from "@/types/admin";
 
@@ -97,5 +98,30 @@ describe("avatars", () => {
   it("donne toujours la même couleur au même utilisateur", () => {
     expect(couleurAvatar(7)).toBe(couleurAvatar(7));
     expect(couleurAvatar(1)).not.toBe(couleurAvatar(2));
+  });
+});
+
+describe("societesUtilisateur", () => {
+  const companies = [
+    { id: 1, nom: "Simtis" },
+    { id: 2, nom: "Tefil" },
+  ];
+  const comptable = [{ id: 3, code: "COMPTABLE", nom: "Comptable" }];
+
+  it("dit « Toutes » sans case cochée ou pour l'Administrateur", () => {
+    expect(societesUtilisateur({ roles: comptable, company_ids: [] }, companies)).toBe("Toutes");
+    expect(
+      societesUtilisateur(
+        { roles: [{ id: 1, code: "ADMIN", nom: "Administrateur" }], company_ids: [2] },
+        companies,
+      ),
+    ).toBe("Toutes");
+  });
+
+  it("liste les sociétés cochées, avec le numéro d'une société inconnue", () => {
+    expect(societesUtilisateur({ roles: comptable, company_ids: [2] }, companies)).toBe("Tefil");
+    expect(societesUtilisateur({ roles: comptable, company_ids: [1, 9] }, companies)).toBe(
+      "Simtis, Société n° 9",
+    );
   });
 });

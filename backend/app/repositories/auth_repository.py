@@ -3,7 +3,19 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.models import Permission, Role, RolePermission, User, UserPermission, UserRole, UserSession
+from app.models import (
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserCompany,
+    UserPermission,
+    UserRole,
+    UserSession,
+)
+
+# Code du rôle qui voit toujours toutes les sociétés (seed `reference.py`)
+ROLE_ADMIN = "ADMIN"
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -22,6 +34,28 @@ def get_role_names(db: Session, user_id: int) -> list[str]:
         .order_by(Role.nom)
     )
     return list(db.scalars(query))
+
+
+def get_company_ids(db: Session, user_id: int) -> set[int]:
+    """Sociétés cochées pour la personne (19/11/2026) ; vide = aucune restriction."""
+    return set(db.scalars(select(UserCompany.company_id).where(UserCompany.user_id == user_id)))
+
+
+def has_role(db: Session, user_id: int, code: str) -> bool:
+    query = (
+        select(Role.id)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == user_id, Role.code == code)
+    )
+    return db.scalar(query) is not None
+
+
+def get_societes_accessibles(db: Session, user_id: int) -> frozenset[int] | None:
+    """None = toutes les sociétés : rôle Administrateur, ou aucune société cochée."""
+    if has_role(db, user_id, ROLE_ADMIN):
+        return None
+    ids = get_company_ids(db, user_id)
+    return frozenset(ids) if ids else None
 
 
 def get_role_permission_codes(db: Session, user_id: int) -> set[str]:

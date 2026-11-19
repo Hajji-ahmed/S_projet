@@ -41,7 +41,7 @@ from app.schemas.reconciliation import (
     ValidationLotIn,
     ValidationLotOut,
 )
-from app.services import reconciliation_service
+from app.services import acces_societe_service, reconciliation_service
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
@@ -55,6 +55,11 @@ TypeOperation = Literal[
 can_validate = require_permission(PermissionCode.RECONCILIATION_VALIDATE)
 
 
+def _verifier_run(db: Session, user: CurrentUser, body: RunIn) -> None:
+    acces_societe_service.verifier(user, body.company_id)
+    acces_societe_service.verifier_comptes(db, user, [body.bank_account_id])
+
+
 @router.post("/run", response_model=RunOut)
 def run(
     body: RunIn,
@@ -63,6 +68,7 @@ def run(
     user: CurrentUser = Depends(can_validate),
 ) -> RunOut:
     """Propose des correspondances 1→1 pour les opérations de la période (aucune n'est validée)."""
+    _verifier_run(db, user, body)
     result = reconciliation_service.run(
         db,
         company_id=body.company_id,
@@ -93,6 +99,7 @@ def run_elargie(
 ) -> RunElargiOut:
     """Recherche élargie (20/10/2026) : lignes encore libres, même n° et montant exactement
     opposé, jusqu'à la « fenêtre élargie » des Paramètres (365 jours par défaut)."""
+    _verifier_run(db, user, body)
     result = reconciliation_service.run_elargi(
         db,
         company_id=body.company_id,
@@ -366,6 +373,7 @@ def validate_batch(
     user: CurrentUser = Depends(can_validate),
 ) -> ValidationLotOut:
     """Valide en lot les propositions choisies (toutes ou aucune ; montants égaux exigés)."""
+    acces_societe_service.verifier_correspondances(db, user, body.ids)
     matches = reconciliation_service.validate_batch(
         db, body.ids, acteur_id=user.id, ip=client_ip(request)
     )
@@ -380,6 +388,7 @@ def reject_batch(
     user: CurrentUser = Depends(can_validate),
 ) -> TraitementLotOut:
     """Rejette en lot les propositions choisies (toutes ou aucune)."""
+    acces_societe_service.verifier_correspondances(db, user, body.ids)
     nb = reconciliation_service.reject_batch(
         db, body.ids, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
     )
@@ -394,6 +403,7 @@ def aucune_ecriture_lot(
     user: CurrentUser = Depends(can_validate),
 ) -> TraitementLotOut:
     """Opérations ambiguës choisies : leurs écritures candidates sont toutes écartées."""
+    acces_societe_service.verifier_operations(db, user, body.ids)
     nb = reconciliation_service.rejeter_ambiguites(
         db, body.ids, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
     )
@@ -408,6 +418,7 @@ def aucune_operation_lot(
     user: CurrentUser = Depends(can_validate),
 ) -> TraitementLotOut:
     """Écritures ambiguës choisies : leurs opérations candidates sont toutes écartées."""
+    acces_societe_service.verifier_ecritures(db, user, body.ids)
     nb = reconciliation_service.rejeter_ambiguites_ecritures(
         db, body.ids, commentaire=body.commentaire, acteur_id=user.id, ip=client_ip(request)
     )
@@ -454,6 +465,8 @@ def match_manually(
 ) -> CorrespondanceOut:
     """Rapprochement manuel 1→1, 1→N, N→1 ou N→N, validé d'emblée (totaux égaux, sens
     opposé, un seul compte)."""
+    acces_societe_service.verifier_operations(db, user, body.operations())
+    acces_societe_service.verifier_ecritures(db, user, body.ecritures())
     match = reconciliation_service.match_manually(
         db,
         transaction_ids=body.operations(),

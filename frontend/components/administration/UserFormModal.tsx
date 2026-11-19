@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { useCompany } from "@/components/company/CompanyProvider";
 import { Field, TextInput } from "@/components/ui/Field";
 import { FormModal } from "@/components/ui/FormModal";
 import { ApiError } from "@/lib/api";
@@ -9,7 +10,7 @@ import { cn } from "@/lib/cn";
 import { createUser, updateUser } from "@/services/admin";
 import type { AdminRole, AdminUser, PasswordResult } from "@/types/admin";
 
-/** Création ou modification d'un utilisateur : nom, email et rôles. */
+/** Création ou modification d'un utilisateur : nom, email, rôles et sociétés accessibles. */
 export function UserFormModal({
   user,
   roles,
@@ -27,11 +28,18 @@ export function UserFormModal({
   const [nom, setNom] = useState(user?.nom ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [roleIds, setRoleIds] = useState<number[]>(user?.roles.map((role) => role.id) ?? []);
+  const { companies } = useCompany();
+  const [companyIds, setCompanyIds] = useState<number[]>(user?.company_ids ?? []);
+  const estAdmin = roles.some((role) => role.code === "ADMIN" && roleIds.includes(role.id));
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
   function basculer(id: number) {
     setRoleIds((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
+  }
+
+  function basculerSociete(id: number) {
+    setCompanyIds((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   }
 
   async function enregistrer() {
@@ -45,7 +53,7 @@ export function UserFormModal({
     }
     setEnvoi(true);
     setErreur(null);
-    const data = { nom, email, role_ids: roleIds };
+    const data = { nom, email, role_ids: roleIds, company_ids: companyIds };
     try {
       if (user) {
         await updateUser(user.id, data);
@@ -123,6 +131,38 @@ export function UserFormModal({
                       {!role.systeme && " · personnalisé"}
                     </span>
                   </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend className="mb-1.5 text-sm font-medium text-simtis-text">Sociétés</legend>
+          <p className="mb-2 text-xs text-simtis-muted">
+            {estAdmin
+              ? "Le rôle Administrateur donne accès à toutes les sociétés."
+              : "Aucune case cochée : accès à toutes les sociétés."}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {companies.map((company) => {
+              const coche = companyIds.includes(company.id);
+              return (
+                <label
+                  key={company.id}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2.5 transition-colors duration-150",
+                    coche
+                      ? "border-simtis-primary bg-simtis-light"
+                      : "border-simtis-border hover:bg-simtis-surface",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={coche}
+                    onChange={() => basculerSociete(company.id)}
+                    className="h-4 w-4 accent-simtis-primary"
+                  />
+                  <span className="text-sm font-medium text-simtis-text">{company.nom}</span>
                 </label>
               );
             })}

@@ -19,8 +19,9 @@ from app.schemas.admin import (
     UserOut,
     UserStatusIn,
 )
-from app.services import admin_service
+from app.services import acces_societe_service, admin_service
 from app.services.auth_service import CurrentUser
+from app.services.errors import ForbiddenError
 
 router = APIRouter(prefix="/admin", tags=["administration"])
 
@@ -28,6 +29,17 @@ can_users = require_permission(PermissionCode.ADMIN_USERS)
 can_roles = require_permission(PermissionCode.ADMIN_ROLES)
 # Le formulaire d'un utilisateur liste les rôles ; la matrice les modifie
 can_read_roles = require_any_permission(PermissionCode.ADMIN_USERS, PermissionCode.ADMIN_ROLES)
+
+
+def _verifier_societes(user: CurrentUser, company_ids: list[int] | None) -> None:
+    """On ne donne accès qu'à une société que l'on voit soi-même (19/11/2026) ; une personne
+    limitée ne peut pas non plus donner « toutes » (liste vide)."""
+    if company_ids is None or user.societes is None:
+        return
+    if not company_ids:
+        raise ForbiddenError("Vous ne pouvez pas donner l'accès à toutes les sociétés.")
+    for company_id in company_ids:
+        acces_societe_service.verifier(user, company_id)
 
 
 def _out(user) -> UserOut:
@@ -47,11 +59,13 @@ def create_user(
     user: CurrentUser = Depends(can_users),
 ) -> PasswordOut:
     """Crée le compte avec un mot de passe provisoire, renvoyé une seule fois."""
+    _verifier_societes(user, body.company_ids)
     result = admin_service.create_user(
         db,
         nom=body.nom,
         email=body.email,
         role_ids=body.role_ids,
+        company_ids=body.company_ids,
         acteur_id=user.id,
         ip=client_ip(request),
     )
@@ -66,6 +80,7 @@ def update_user(
     db: Session = Depends(get_db),
     user: CurrentUser = Depends(can_users),
 ) -> UserOut:
+    _verifier_societes(user, body.company_ids)
     return _out(
         admin_service.update_user(
             db,
@@ -73,6 +88,7 @@ def update_user(
             nom=body.nom,
             email=body.email,
             role_ids=body.role_ids,
+            company_ids=body.company_ids,
             acteur_id=user.id,
             ip=client_ip(request),
         )

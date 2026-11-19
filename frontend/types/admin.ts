@@ -15,9 +15,12 @@ export type AdminUser = {
   /** Permissions ajoutées / retirées pour la personne, en plus de ses rôles (23/10/2026). */
   nb_ajouts: number;
   nb_retraits: number;
+  /** Sociétés accessibles (19/11/2026) ; vide = toutes. */
+  company_ids: number[];
 };
 
-export type UserInput = { nom: string; email: string; role_ids: number[] };
+/** `company_ids` vide = toutes les sociétés. */
+export type UserInput = { nom: string; email: string; role_ids: number[]; company_ids: number[] };
 
 /** Mot de passe provisoire : affiché une seule fois, jamais relu. */
 export type PasswordResult = { user: AdminUser; mot_de_passe: string };

@@ -3,6 +3,7 @@
 Préparer (calculé), valider (écriture créée et rapprochée d'emblée), exporter pour Sage.
 """
 
+from collections.abc import Iterable
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -30,13 +31,28 @@ from app.schemas.frais import (
     ValidationTimbresIn,
     ValidationTimbresOut,
 )
-from app.services import frais_service
+from app.services import acces_societe_service, frais_service
 from app.services.auth_service import CurrentUser
 
 router = APIRouter(prefix="/frais", tags=["frais"])
 
 can_view = require_permission(PermissionCode.RECONCILIATION_VIEW)
 can_prepare = require_permission(PermissionCode.ACCOUNTING_PREPARE)
+
+
+def _verifier_acces(
+    db: Session,
+    user: CurrentUser,
+    company_id: int,
+    comptes: Iterable[int] = (),
+    operations: Iterable[int | None] = (),
+) -> None:
+    """Société, comptes et opérations d'un corps de requête : tous autorisés (19/11/2026)."""
+    acces_societe_service.verifier(user, company_id)
+    acces_societe_service.verifier_comptes(db, user, comptes)
+    acces_societe_service.verifier_operations(db, user, operations)
+
+
 CSV = "text/csv; charset=windows-1252"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -182,6 +198,13 @@ def valider(
 ) -> ValidationTimbresOut:
     """Comptabilise les jours choisis, toutes familles (tous ou aucun) : écritures créées et
     rapprochées d'emblée."""
+    _verifier_acces(
+        db,
+        user,
+        body.company_id,
+        [jour.bank_account_id for jour in body.jours],
+        [jour.transaction_id for jour in body.jours],
+    )
     entries = frais_service.valider(
         db,
         body.company_id,
@@ -232,6 +255,13 @@ def ecarter(
 ) -> NombreOut:
     """Écarte des frais proposés (13/11/2026) ou des journées, tous ou aucun : ils passent à
     la main."""
+    _verifier_acces(
+        db,
+        user,
+        body.company_id,
+        [jour.bank_account_id for jour in body.jours],
+        [jour.transaction_id for jour in body.jours],
+    )
     nb = frais_service.ecarter(
         db,
         body.company_id,
@@ -254,6 +284,13 @@ def reproposer(
     user: CurrentUser = Depends(can_prepare),
 ) -> NombreOut:
     """Annule l'écartement de journées : SIMTIS les propose de nouveau."""
+    _verifier_acces(
+        db,
+        user,
+        body.company_id,
+        [jour.bank_account_id for jour in body.jours],
+        [jour.transaction_id for jour in body.jours],
+    )
     nb = frais_service.reproposer(
         db,
         body.company_id,
@@ -276,6 +313,7 @@ def comptabiliser_manuellement(
 ) -> ValidationTimbresOut:
     """Écriture saisie à la main pour des frais d'un même compte, TVA séparée ou non : créée et
     rapprochée d'emblée."""
+    _verifier_acces(db, user, body.company_id, operations=body.transaction_ids)
     entry = frais_service.comptabiliser_manuellement(
         db,
         body.company_id,

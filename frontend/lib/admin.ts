@@ -2,9 +2,11 @@
 import type {
   AdminPermission,
   AdminRole,
+  AdminUser,
   ChangementsPersonne,
   PermissionPersonne,
 } from "@/types/admin";
+import type { Company } from "@/types/company";
 
 /** Permissions groupées par module, dans l'ordre reçu de l'API. */
 export function parModule<T extends AdminPermission>(permissions: T[]): [string, T[]][] {
@@ -90,4 +92,18 @@ const COULEURS_AVATAR = [
 /** Couleur stable d'un utilisateur, d'après son id : la même à chaque affichage. */
 export function couleurAvatar(id: number): string {
   return COULEURS_AVATAR[Math.abs(id) % COULEURS_AVATAR.length];
+}
+
+/** Sociétés accessibles d'un utilisateur (19/11/2026) : « Toutes » pour l'Administrateur ou sans
+ * case cochée, sinon leurs noms (une société désactivée garde son numéro). */
+export function societesUtilisateur(
+  user: Pick<AdminUser, "roles" | "company_ids">,
+  companies: Pick<Company, "id" | "nom">[],
+): string {
+  if (user.company_ids.length === 0 || user.roles.some((role) => role.code === "ADMIN")) {
+    return "Toutes";
+  }
+  return user.company_ids
+    .map((id) => companies.find((company) => company.id === id)?.nom ?? `Société n° ${id}`)
+    .join(", ");
 }

@@ -1,7 +1,7 @@
 """Erreurs métier levées par les services.
 
 Les services ne connaissent pas HTTP : ils lèvent ces erreurs, et `app/main.py` les convertit en
-réponses (404, 409) avec le message tel quel dans `detail`. Le message est destiné à l'utilisateur :
+réponses (403, 404, 409) avec le message tel quel dans `detail`. Le message est destiné à l'utilisateur :
 il doit être en français et dire quoi faire.
 """
 
@@ -20,3 +20,7 @@ class NotFoundError(DomainError):
 
 class ConflictError(DomainError):
     """L'action contredit l'état actuel des données : doublon, règle métier non respectée (409)."""
+
+
+class ForbiddenError(DomainError):
+    """La personne n'a pas accès à cette donnée : société non autorisée (403, 19/11/2026)."""

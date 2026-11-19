@@ -43,6 +43,11 @@ class User(TimestampMixin, Base):
     permissions_perso: Mapped[list["UserPermission"]] = relationship(
         cascade="all, delete-orphan", passive_deletes=True
     )
+    # Sociétés que la personne peut voir (19/11/2026, migration 0057). Aucune ligne = toutes ;
+    # le rôle Administrateur voit toujours tout (`auth_service.CurrentUser.societes`).
+    societes: Mapped[list["UserCompany"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class UserSession(Base):
@@ -121,6 +126,20 @@ class UserPermission(Base):
     accordee: Mapped[bool] = mapped_column(Boolean)
 
     permission: Mapped["Permission"] = relationship()
+
+
+class UserCompany(Base):
+    """Société accessible à une personne (19/11/2026). Aucune ligne pour une personne = toutes les
+    sociétés ; une ou plusieurs lignes = seulement celles-là (hors rôle Administrateur)."""
+
+    __tablename__ = "user_companies"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    company_id: Mapped[int] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class RolePermission(Base):

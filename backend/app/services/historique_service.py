@@ -217,7 +217,10 @@ def journal(
     entite_id: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    societes: frozenset[int] | None = None,
 ) -> Page:
+    """`societes` : sociétés accessibles (None = toutes, 19/11/2026) ; une personne limitée ne
+    voit que les actions rattachées à ses sociétés."""
     debut, fin = _bornes(date_from, date_to)
     page = max(page, 1)
     entries, total = audit_repository.search(
@@ -230,6 +233,7 @@ def journal(
         entite_id=entite_id,
         debut=debut,
         fin=fin,
+        societes=societes,
     )
     noms = audit_repository.user_names(db, {e.user_id for e in entries if e.user_id is not None})
     return Page(
@@ -240,8 +244,8 @@ def journal(
     )
 
 
-def detail(db: Session, audit_id: int) -> Ligne:
-    entry = audit_repository.get(db, audit_id)
+def detail(db: Session, audit_id: int, societes: frozenset[int] | None = None) -> Ligne:
+    entry = audit_repository.get(db, audit_id, societes)
     if entry is None:
         raise NotFoundError("Entrée d'historique introuvable.")
     noms = audit_repository.user_names(db, {entry.user_id} if entry.user_id else set())
@@ -255,13 +259,16 @@ class Filtres:
     utilisateurs: list[tuple[int, str]]
 
 
-def filtres(db: Session) -> Filtres:
-    """Valeurs proposées par les listes de filtres : celles présentes dans le journal."""
-    actions = [(code, libelle_action(code), nb) for code, nb in audit_repository.actions(db)]
+def filtres(db: Session, societes: frozenset[int] | None = None) -> Filtres:
+    """Valeurs proposées par les listes de filtres : celles présentes dans le journal (dans les
+    sociétés accessibles)."""
+    actions = [
+        (code, libelle_action(code), nb) for code, nb in audit_repository.actions(db, societes)
+    ]
     return Filtres(
         actions=sorted(actions, key=lambda a: a[1].lower()),
         entites=sorted(
-            ((code, libelle_entite(code)) for code in audit_repository.entites(db)),
+            ((code, libelle_entite(code)) for code in audit_repository.entites(db, societes)),
             key=lambda e: e[1].lower(),
         ),
         utilisateurs=sorted(audit_repository.user_names(db).items(), key=lambda u: u[1].lower()),

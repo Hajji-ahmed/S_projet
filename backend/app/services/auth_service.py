@@ -37,9 +37,14 @@ class CurrentUser:
     email: str
     roles: tuple[str, ...]
     permissions: frozenset[str]
+    # Sociétés accessibles (19/11/2026) : None = toutes (rôle Administrateur, ou aucune case cochée)
+    societes: frozenset[int] | None = None
 
     def has_permission(self, code: str) -> bool:
         return code in self.permissions
+
+    def peut_voir(self, company_id: int) -> bool:
+        return self.societes is None or company_id in self.societes
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,7 @@ def _current_user(db: Session, user: User, session_id: int) -> CurrentUser:
         email=user.email,
         roles=tuple(auth_repository.get_role_names(db, user.id)),
         permissions=frozenset(auth_repository.get_permission_codes(db, user.id)),
+        societes=auth_repository.get_societes_accessibles(db, user.id),
     )
 
 
