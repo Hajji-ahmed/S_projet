@@ -1,11 +1,22 @@
 "use client";
 
-import { BookText, ChevronLeft, ChevronRight, Eye, Plus, Search, Trash2, X } from "lucide-react";
+import {
+  BookText,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CodeBadge } from "@/components/rapprochement/CodeBadge";
+import { EditEntryModal } from "@/components/ecritures/EditEntryModal";
 import { EntryDetailModal } from "@/components/ecritures/EntryDetailModal";
 import { ManualEntryModal } from "@/components/ecritures/ManualEntryModal";
 import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
@@ -34,7 +45,7 @@ type EntriesCardProps = {
   logos: Map<string, string | null>;
   /** Incrémenté après un import : la liste est rechargée. */
   reloadKey: number;
-  /** Permission « Import Sage » : saisie et suppression d'une écriture (24/10/2026). */
+  /** Permission « Import Sage » : saisie, correction (19/11/2026) et suppression d'une écriture. */
   canEdit?: boolean;
 };
 
@@ -52,6 +63,7 @@ export function EntriesCard({
   const { toast } = useToast();
   const [ajout, setAjout] = useState(false);
   const [aSupprimer, setASupprimer] = useState<Ecriture | null>(null);
+  const [aModifier, setAModifier] = useState<Ecriture | null>(null);
   const [filter, setFilter] = useState<EntriesFilter>({ page: 1 });
   const [search, setSearch] = useState("");
   const [data, setData] = useState<EcrituresPage | null>(null);
@@ -178,6 +190,17 @@ export function EntriesCard({
           {canEdit && row.origine !== "SIMTIS" && (
             <button
               type="button"
+              onClick={() => setAModifier(row)}
+              aria-label={`Modifier l'écriture du ${formatDate(row.date_ecriture)} ${row.libelle}`}
+              title="Modifier cette écriture (avec un motif)"
+              className="rounded-lg p-2 text-simtis-muted transition-colors hover:bg-simtis-light hover:text-simtis-primary"
+            >
+              <Pencil className="h-4 w-4" aria-hidden />
+            </button>
+          )}
+          {canEdit && row.origine !== "SIMTIS" && (
+            <button
+              type="button"
               onClick={() => setASupprimer(row)}
               disabled={row.statut === "Rapprochée"}
               aria-label={`Supprimer l'écriture du ${formatDate(row.date_ecriture)} ${row.libelle}`}
@@ -213,6 +236,17 @@ export function EntriesCard({
           onSaved={() => {
             setAjout(false);
             toast("Écriture ajoutée.");
+            setRetryKey((key) => key + 1);
+          }}
+        />
+      )}
+      {aModifier && (
+        <EditEntryModal
+          ecriture={aModifier}
+          onClose={() => setAModifier(null)}
+          onSaved={() => {
+            setAModifier(null);
+            toast("Écriture modifiée.");
             setRetryKey((key) => key + 1);
           }}
         />

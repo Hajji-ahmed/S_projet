@@ -3,6 +3,7 @@ import {
   accountingForm,
   entriesQuery,
   type AccountingOptions,
+  type ChampsCorriges,
   type EntriesFilter,
 } from "@/lib/accounting";
 import type {
@@ -76,6 +77,16 @@ export function ajouterEcriture(ecriture: EcritureManuelle) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(ecriture),
+  });
+}
+
+/** Corrige une écriture du grand livre avec un motif (19/11/2026) : seuls les champs envoyés
+ * changent. */
+export function modifierEcriture(entryId: number, champs: ChampsCorriges, motif: string) {
+  return apiFetch<EcritureDetail>(`/accounting/entries/${entryId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...champs, motif }),
   });
 }
 

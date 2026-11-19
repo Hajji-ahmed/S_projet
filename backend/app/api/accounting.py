@@ -244,6 +244,39 @@ def ajouter_ecriture(
     )
 
 
+class EcritureModifieeIn(BaseModel):
+    """Correction d'une écriture (19/11/2026) : seuls les champs envoyés changent ; débit et
+    crédit vont ensemble (un seul des deux non nul). Montants en texte exact."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    libelle: str | None = Field(default=None, max_length=500)
+    reference: str | None = Field(default=None, max_length=60)
+    numero_piece: str | None = Field(default=None, max_length=60)
+    debit: Decimal | None = None
+    credit: Decimal | None = None
+    montant_devise: Decimal | None = None
+    date_ecriture: date | None = None
+    echeance: date | None = None
+    motif: str = Field(max_length=500)
+
+
+@router.patch("/entries/{entry_id}", response_model=EcritureDetailOut)
+def modifier_ecriture(
+    entry_id: int,
+    body: EcritureModifieeIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> EcritureDetailOut:
+    """Corrige une écriture du grand livre avec un motif (19/11/2026)."""
+    changements = body.model_dump(include=body.model_fields_set - {"motif"})
+    saisie_manuelle_service.modifier_ecriture(
+        db, entry_id, changements, motif=body.motif, acteur_id=user.id, ip=client_ip(request)
+    )
+    return get_entry(entry_id, db, user)
+
+
 class MotifIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

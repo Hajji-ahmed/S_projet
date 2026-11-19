@@ -1,5 +1,7 @@
 /** Import Sage et lecture des écritures (P10) : règles pures. Montants en texte exact. */
 
+import type { Ecriture } from "@/types/accounting";
+
 export type EntriesFilter = {
   bankAccountId?: number;
   from?: string;
@@ -107,4 +109,77 @@ export function accountingForm(
     );
   }
   return form;
+}
+
+/** Correction d'une écriture (19/11/2026) : valeurs du formulaire, montants déjà normalisés. */
+export type EcritureCorrigee = {
+  libelle: string;
+  reference: string;
+  numero_piece: string;
+  date_ecriture: string;
+  echeance: string;
+  debit: string | null;
+  credit: string | null;
+  /** Montant en devise, sans signe ; null hors compte EUR / USD. */
+  montant_devise: string | null;
+};
+
+export type ChampsCorriges = Partial<{
+  libelle: string;
+  reference: string | null;
+  numero_piece: string | null;
+  date_ecriture: string;
+  echeance: string | null;
+  debit: string | null;
+  credit: string | null;
+  montant_devise: string | null;
+}>;
+
+/** « 38500 », « 38500.0 », « -38500.00 » → « 38500.00 » (sans passer par un float). */
+function centimes(valeur: string | null | undefined): string {
+  const [entier, decimales = ""] = (valeur ?? "0").replace("-", "").split(".");
+  return `${entier.replace(/^0+(?=\d)/, "")}.${decimales.padEnd(2, "0")}`;
+}
+
+/** Seuls les champs qui changent. Débit et crédit partent ensemble ; sur un compte en devise, le
+ * montant en devise accompagne toujours un changement de montant (le serveur l'exige). */
+export function champsModifies(
+  ecriture: Pick<
+    Ecriture,
+    | "libelle"
+    | "reference"
+    | "numero_piece"
+    | "date_ecriture"
+    | "echeance"
+    | "debit"
+    | "credit"
+    | "montant_devise"
+  >,
+  saisie: EcritureCorrigee,
+): ChampsCorriges {
+  const champs: ChampsCorriges = {};
+  const libelle = saisie.libelle.trim();
+  if (libelle !== ecriture.libelle) champs.libelle = libelle;
+  for (const cle of ["reference", "numero_piece"] as const) {
+    const valeur = saisie[cle].trim() || null;
+    if (valeur !== (ecriture[cle] ?? null)) champs[cle] = valeur;
+  }
+  if (saisie.date_ecriture !== ecriture.date_ecriture) champs.date_ecriture = saisie.date_ecriture;
+  if ((saisie.echeance || null) !== (ecriture.echeance ?? null)) {
+    champs.echeance = saisie.echeance || null;
+  }
+  const montantChange =
+    centimes(saisie.debit) !== centimes(ecriture.debit) ||
+    centimes(saisie.credit) !== centimes(ecriture.credit);
+  if (montantChange) {
+    champs.debit = saisie.debit;
+    champs.credit = saisie.credit;
+  }
+  if (
+    saisie.montant_devise !== null &&
+    (montantChange || centimes(saisie.montant_devise) !== centimes(ecriture.montant_devise))
+  ) {
+    champs.montant_devise = saisie.montant_devise;
+  }
+  return champs;
 }

@@ -329,6 +329,114 @@ def _etat_ecriture(entry: AccountingEntry) -> dict:
     }
 
 
+# --- Modification d'une écriture (19/11/2026) ----------------------------------------------------
+
+# Toujours modifiables, même rapprochée : le texte ne change pas l'équilibre d'un rapprochement
+CHAMPS_TEXTE = ("libelle", "reference", "numero_piece")
+CHAMPS_MODIFIABLES = (
+    *CHAMPS_TEXTE,
+    "debit",
+    "credit",
+    "montant_devise",
+    "date_ecriture",
+    "echeance",
+)
+
+
+def _nouvelles_valeurs(entry: AccountingEntry, changements: dict) -> dict:
+    """Valeurs demandées, contrôlées ; seuls les champs envoyés y figurent (plus `montant`)."""
+    inconnus = sorted(set(changements) - set(CHAMPS_MODIFIABLES))
+    if inconnus:
+        raise ConflictError(f"Champ non modifiable : {', '.join(inconnus)}.")
+    valeurs: dict = {}
+    if "libelle" in changements:
+        libelle = _texte(changements["libelle"], LIBELLE_MAX)
+        if not libelle:
+            raise ConflictError("Indiquez le libellé de l'écriture.")
+        valeurs["libelle"] = libelle
+    for champ in ("reference", "numero_piece"):
+        if champ in changements:
+            valeurs[champ] = _texte(changements[champ], 60)
+    if "date_ecriture" in changements:
+        if changements["date_ecriture"] is None:
+            raise ConflictError("Indiquez la date de l'écriture.")
+        valeurs["date_ecriture"] = _jour(changements["date_ecriture"], "La date de l'écriture")
+    if "echeance" in changements:
+        valeurs["echeance"] = changements["echeance"]
+    if "debit" in changements or "credit" in changements:
+        debit, credit = _montants(changements.get("debit"), changements.get("credit"))
+        valeurs.update(debit=debit, credit=credit, montant=credit - debit)
+
+    montant = valeurs.get("montant", entry.montant)
+    devise = entry.bank_account.devise if entry.bank_account else "MAD"
+    if devise == "MAD":
+        if changements.get("montant_devise") not in (None, 0):
+            raise ConflictError("Le montant en devise ne concerne qu'un compte EUR ou USD.")
+    elif "montant_devise" in changements or montant != entry.montant:
+        saisi = changements.get("montant_devise")
+        if saisi is None or saisi == 0:
+            raise ConflictError(f"Indiquez le montant en {devise} de l'écriture.")
+        # Même sens que le montant en MAD (contrainte `devise_meme_sens`)
+        valeurs["montant_devise"] = abs(saisi).quantize(CENTIME) * (1 if montant > 0 else -1)
+    return valeurs
+
+
+def modifier_ecriture(
+    db: Session,
+    entry_id: int,
+    changements: dict,
+    *,
+    motif: str,
+    acteur_id: int,
+    ip: str | None,
+) -> AccountingEntry:
+    """Corrige une écriture du grand livre (importée ou manuelle) avec un motif (19/11/2026).
+
+    Montant, sens, date et échéance seulement si l'écriture est « Non rapprochée » ; libellé,
+    référence et N° pièce toujours. L'empreinte (`hash_ligne`) ne change pas : la ligne Sage
+    d'origine reste un doublon au prochain import du grand livre."""
+    entry = db.get(AccountingEntry, entry_id)
+    if entry is None:
+        raise NotFoundError("Écriture introuvable.")
+    if entry.origine == "SIMTIS":
+        raise ConflictError(
+            "Une écriture de frais préparée par SIMTIS se gère depuis la carte « Frais "
+            "bancaires » du rapprochement."
+        )
+    motif = _motif(motif)
+    reconciliation_repository.lock_company(db, entry.company_id)
+    db.refresh(entry)  # statut relu après le verrou : un rapprochement a pu passer entre-temps
+
+    valeurs = _nouvelles_valeurs(entry, changements)
+    modifies = {champ: v for champ, v in valeurs.items() if getattr(entry, champ) != v}
+    if not modifies:
+        raise ConflictError("Aucune modification : les valeurs saisies sont celles de l'écriture.")
+    bloques = set(modifies) - set(CHAMPS_TEXTE)
+    if entry.statut != "Non rapprochée" and bloques:
+        raise ConflictError(
+            f"Cette écriture est « {entry.statut} » : seuls le libellé, la référence et le "
+            "N° pièce se modifient. Pour changer le montant, le sens ou la date, annulez d'abord "
+            "son rapprochement (ou rejetez sa proposition)."
+        )
+
+    avant = {champ: getattr(entry, champ) for champ in modifies}
+    for champ, valeur in modifies.items():
+        setattr(entry, champ, valeur)
+    code = reconciliation_repository.codes_of_entries(db, [entry.id]).get(entry.id)
+    audit_service.log(
+        db,
+        user_id=acteur_id,
+        action="modification_ecriture",
+        entite="accounting_entry",
+        entite_id=entry.id,
+        avant=avant,
+        apres={**modifies, "motif": motif, "code_rapprochement": code},
+        ip=ip,
+    )
+    db.commit()
+    return entry
+
+
 def supprimer_ecriture(
     db: Session, entry_id: int, *, motif: str, acteur_id: int, ip: str | None
 ) -> None:

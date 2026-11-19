@@ -861,6 +861,179 @@ def test_a_manual_entry_takes_one_of_the_accounting_accounts(client, comptable, 
     assert db.get(AccountingEntry, choisi.json()["id"]).compte == "5142"
 
 
+# --- Modification d'une écriture (19/11/2026) ----------------------------------------------------
+
+
+def _modifier(client, headers, entry_id, **body):
+    body.setdefault("motif", "Montant corrigé dans Sage")
+    return client.patch(f"/api/accounting/entries/{entry_id}", json=body, headers=headers)
+
+
+def _importee(client, headers, db) -> AccountingEntry:
+    confirm(client, headers, db, xlsx(EXPORT))
+    return db.scalar(select(AccountingEntry).filter_by(numero_piece="P001"))
+
+
+def test_an_entry_amount_is_corrected_with_a_motif(client, comptable, db, journals):
+    confirm(client, comptable, db, xlsx(EXPORT))
+    ligne = [date(2025, 9, 5), "BQ1", "5141", "CHQ1", "CHQ 0163571", None, 163571.80, None, None]
+    confirm(client, comptable, db, xlsx([*EXPORT, ligne]), lignes_choisies="[7]")
+    entry = db.scalar(select(AccountingEntry).filter_by(numero_piece="CHQ1"))
+    empreinte = entry.hash_ligne
+
+    response = _modifier(client, comptable, entry.id, debit=None, credit="163571.20")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["credit"] == "163571.20"
+    db.refresh(entry)
+    assert (entry.credit, entry.debit, entry.montant, entry.statut) == (
+        Decimal("163571.20"),
+        Decimal("0.00"),
+        Decimal("163571.20"),
+        "Non rapprochée",
+    )
+    assert entry.hash_ligne == empreinte
+    [log] = db.scalars(select(AuditLog).filter_by(action="modification_ecriture")).all()
+    assert log.ancienne_valeur == {"credit": "163571.80", "montant": "163571.80"}
+    assert log.nouvelle_valeur["motif"] == "Montant corrigé dans Sage"
+    assert log.nouvelle_valeur["credit"] == "163571.20"
+    # La ligne Sage d'origine reste un doublon : elle ne revient pas au réimport
+    body = analyse(client, comptable, db, xlsx([*EXPORT, ligne])).json()
+    assert [line["statut"] for line in body["lignes"]] == ["Doublon"] * 3
+    assert body["ecritures_absentes"] == []
+
+
+def test_an_entry_moves_from_credit_to_debit(client, comptable, db, journals):
+    entry = _importee(client, comptable, db)  # P001 : débit 38 500
+
+    response = _modifier(client, comptable, entry.id, debit=None, credit="38500.00")
+
+    assert response.status_code == 200, response.text
+    db.refresh(entry)
+    assert (entry.debit, entry.credit, entry.montant) == (
+        Decimal("0.00"),
+        Decimal("38500.00"),
+        Decimal("38500.00"),
+    )
+
+
+def test_texts_date_and_due_date_are_corrected(client, comptable, db, journals):
+    entry = _importee(client, comptable, db)
+
+    response = _modifier(
+        client,
+        comptable,
+        entry.id,
+        libelle="  CHQ 80460892 REG ATLAS ",
+        reference="80460892",
+        numero_piece="P001B",
+        date_ecriture="2025-09-04",
+        echeance="2025-10-04",
+    )
+
+    assert response.status_code == 200, response.text
+    db.refresh(entry)
+    assert (entry.libelle, entry.reference, entry.numero_piece) == (
+        "CHQ 80460892 REG ATLAS",
+        "80460892",
+        "P001B",
+    )
+    assert (entry.date_ecriture, entry.echeance) == (date(2025, 9, 4), date(2025, 10, 4))
+    effacee = _modifier(client, comptable, entry.id, echeance=None)
+    assert effacee.status_code == 200
+    db.refresh(entry)
+    assert entry.echeance is None
+
+
+@pytest.mark.parametrize("statut", ["Rapprochée", "À vérifier"])
+def test_a_reconciled_entry_only_takes_text_changes(client, comptable, db, journals, statut):
+    entry = _importee(client, comptable, db)
+    entry.statut = statut
+    db.flush()
+
+    montant = _modifier(client, comptable, entry.id, debit="38500.60")
+    jour = _modifier(client, comptable, entry.id, date_ecriture="2025-09-04")
+    texte = _modifier(client, comptable, entry.id, libelle="REG CLIENT ATLAS CHQ 12")
+
+    assert montant.status_code == 409
+    assert "annulez d'abord son rapprochement" in montant.json()["detail"]
+    assert jour.status_code == 409
+    assert texte.status_code == 200, texte.text
+    db.refresh(entry)
+    assert (entry.debit, entry.libelle) == (Decimal("38500.00"), "REG CLIENT ATLAS CHQ 12")
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"libelle": "REG CLIENT ATLAS"}, "Aucune modification"),
+        ({"libelle": "   "}, "libellé"),
+        ({"debit": "10", "credit": "10"}, "un seul des deux"),
+        ({"debit": "-10"}, "négatif"),
+        ({"date_ecriture": "2099-01-01"}, "aujourd'hui"),
+        ({"date_ecriture": None}, "date"),
+        ({"montant_devise": "10"}, "EUR ou USD"),
+        ({"libelle": "X", "motif": "  "}, "motif"),
+    ],
+)
+def test_invalid_corrections_are_refused(client, comptable, db, journals, body, message):
+    entry = _importee(client, comptable, db)
+
+    response = _modifier(client, comptable, entry.id, **body)
+
+    assert response.status_code == 409
+    assert message.lower() in response.json()["detail"].lower()
+    assert not db.scalars(select(AuditLog).filter_by(action="modification_ecriture")).all()
+
+
+def test_unknown_fields_and_missing_motif_give_422(client, comptable, db, journals):
+    entry = _importee(client, comptable, db)
+
+    inconnu = _modifier(client, comptable, entry.id, journal="BQ2")
+    sans_motif = client.patch(
+        f"/api/accounting/entries/{entry.id}", json={"libelle": "X"}, headers=comptable
+    )
+
+    assert (inconnu.status_code, sans_motif.status_code) == (422, 422)
+
+
+def test_a_simtis_fee_entry_is_not_corrected_here(client, comptable, db, journals):
+    entry = _importee(client, comptable, db)
+    entry.origine, entry.famille_frais = "SIMTIS", "timbres"
+    db.flush()
+
+    response = _modifier(client, comptable, entry.id, libelle="FRAIS")
+
+    assert response.status_code == 409
+    assert "Frais bancaires" in response.json()["detail"]
+
+
+def test_a_currency_entry_needs_its_currency_amount_when_its_amount_changes(
+    client, comptable, db, reference
+):
+    usd = account(db, "AWB", journal="BQU", devise="USD")
+    created = _ecriture(client, comptable, usd.id, journal="BQU", montant_devise="3500.00")
+    entry_id = created.json()["id"]
+
+    sans = _modifier(client, comptable, entry_id, debit=None, credit="38500.00")
+    avec = _modifier(
+        client, comptable, entry_id, debit=None, credit="38500.00", montant_devise="3500.00"
+    )
+
+    assert sans.status_code == 409
+    assert "USD" in sans.json()["detail"]
+    assert avec.status_code == 200, avec.text
+    assert db.get(AccountingEntry, entry_id).montant_devise == Decimal("3500.00")
+
+
+def test_correcting_an_entry_needs_the_sage_permission(client, direction, db, journals):
+    assert _modifier(client, direction, 1, libelle="X").status_code == 403
+
+
+def test_unknown_entry_gives_404_on_correction(client, comptable, db, journals):
+    assert _modifier(client, comptable, 999999, libelle="X").status_code == 404
+
+
 def test_a_sage_export_in_pdf_is_refused(client, comptable, db, journals):
     """27/10/2026 : seuls les relevés bancaires peuvent être des PDF."""
     from tests.helpers import pdf

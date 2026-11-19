@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   OPERATION_POSSIBLE,
   accountingForm,
+  champsModifies,
   entriesQuery,
   pageCount,
   statutEcritures,
@@ -106,5 +107,61 @@ describe("accountingForm, écritures absentes à supprimer (05/11/2026)", () => 
     expect(
       accountingForm(file, 3, { ecrituresSupprimees: [] }).get("ecritures_supprimees"),
     ).toBeNull();
+  });
+});
+
+describe("champsModifies (19/11/2026)", () => {
+  const ecriture = {
+    libelle: "CHQ 0163571",
+    reference: null,
+    numero_piece: "CHQ1",
+    date_ecriture: "2026-10-26",
+    echeance: null,
+    debit: "0.00",
+    credit: "163571.80",
+    montant_devise: null,
+  };
+  const saisie = {
+    libelle: "CHQ 0163571",
+    reference: "",
+    numero_piece: "CHQ1",
+    date_ecriture: "2026-10-26",
+    echeance: "",
+    debit: null,
+    credit: "163571.80",
+    montant_devise: null,
+  };
+
+  it("n'envoie rien quand rien ne change", () => {
+    expect(champsModifies(ecriture, saisie)).toEqual({});
+    expect(champsModifies(ecriture, { ...saisie, credit: "163571.8" })).toEqual({});
+  });
+
+  it("envoie débit et crédit ensemble quand le montant ou le sens change", () => {
+    expect(champsModifies(ecriture, { ...saisie, credit: "163571.20" })).toEqual({
+      debit: null,
+      credit: "163571.20",
+    });
+    expect(champsModifies(ecriture, { ...saisie, debit: "163571.80", credit: null })).toEqual({
+      debit: "163571.80",
+      credit: null,
+    });
+  });
+
+  it("envoie les textes nettoyés, et null pour un champ vidé", () => {
+    expect(
+      champsModifies(ecriture, { ...saisie, libelle: " CHQ 80460892 ", numero_piece: " " }),
+    ).toEqual({ libelle: "CHQ 80460892", numero_piece: null });
+    expect(champsModifies({ ...ecriture, echeance: "2026-11-30" }, saisie)).toEqual({
+      echeance: null,
+    });
+  });
+
+  it("joint le montant en devise à un changement de montant", () => {
+    const usd = { ...ecriture, montant_devise: "16357.18" };
+    expect(
+      champsModifies(usd, { ...saisie, credit: "163571.20", montant_devise: "16357.18" }),
+    ).toEqual({ debit: null, credit: "163571.20", montant_devise: "16357.18" });
+    expect(champsModifies(usd, { ...saisie, montant_devise: "16357.18" })).toEqual({});
   });
 });
