@@ -37,6 +37,17 @@ describe("N° de la première pièce à l'export (09/11/2026)", () => {
     });
   });
 
+  it.each([
+    ["CIH", "CI"],
+    ["BMCE", "BM"],
+  ])("écrit %s en %s (19/11/2026)", (banque, prefixe) => {
+    expect(prefixePiece(banque, "2026-10")).toBe(`${prefixe}2610`);
+    expect(erreurPiece(`${prefixe}2610001`, banque, "2026-10", 1)).toBeNull();
+    expect(erreurPiece(`${banque}2610001`, banque, "2026-10", 1)).toBe(
+      `Le N° s'écrit ${prefixe}2610 suivi de 3 chiffres (ex. ${prefixe}2610001).`,
+    );
+  });
+
   it("refuse une série qui dépasse la pièce 999", () => {
     expect(erreurPiece("BP2610998", "BP", "2026-10", 2)).toBeNull();
     expect(erreurPiece("BP2610999", "BP", "2026-10", 2)).toBe(

@@ -1216,3 +1216,74 @@ def test_migration_0056_renames_the_awb_fee_pieces_to_aw(empty_database):
             text("SELECT numero_piece FROM accounting_entries WHERE id = 1")
         ).scalar()
     assert piece == "AWB2610098"
+
+
+def test_migration_0058_moves_the_cih_escompte_agios_lines_to_63117000(empty_database):
+    """Décision du 19/11/2026 : les agios d'escompte CIH vont sur 63117000 (63116300 avant). Les
+    lignes saisies des écritures automatiques « frais » CIH changent, exportées ou non (audit) ;
+    un AGIOS CIH passé à la main et une autre banque ne bougent pas."""
+    config, engine = empty_database
+    command.upgrade(config, "0057")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 'CIH', 'CIH'), (2, 'BP', 'BP');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'CIH', 'N1', 'MAD'),
+                    (2, 1, 2, 'BP', 'N2', 'MAD');
+                INSERT INTO accounting_entries (id, company_id, bank_account_id, date_ecriture,
+                    libelle, debit, credit, montant, hash_ligne, origine, famille_frais,
+                    numero_piece, exportee_le) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '2026-10-02', 'FRAIS', 0, 11, 11, 'e1', 'SIMTIS', 'frais',
+                        NULL, NULL),
+                    (2, 1, 1, '2026-10-01', 'FRAIS', 0, 11, 11, 'e2', 'SIMTIS', 'frais',
+                        'CIH2610001', '2026-10-05 10:00+00'),
+                    (3, 1, 1, '2026-10-01', 'AGIOS', 0, 9, 9, 'e3', 'SIMTIS', 'manuelle',
+                        NULL, NULL),
+                    (4, 1, 2, '2026-10-01', 'FRAIS', 0, 9, 9, 'e4', 'SIMTIS', 'frais',
+                        NULL, NULL);
+                INSERT INTO frais_lignes (id, accounting_entry_id, ordre, compte, libelle,
+                    montant, sens) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '63116300', 'AGIOS ESCOMPTE', 10, 'Débit'),
+                    (2, 1, 2, '34552142', 'AGIOS ESCOMPTE', 1, 'Débit'),
+                    (3, 2, 1, '63116300', 'AGIOS ESCOMPTE', 10, 'Débit'),
+                    (4, 3, 1, '63116300', 'AGIOS', 9, 'Débit'),
+                    (5, 4, 1, '63116300', 'FRAIS', 9, 'Débit');
+                """
+            )
+        )
+
+    command.upgrade(config, "0058")
+
+    with engine.connect() as connection:
+        comptes = dict(connection.execute(text("SELECT id, compte FROM frais_lignes")).all())
+        audits = connection.execute(
+            text(
+                "SELECT entite_id FROM audit_logs WHERE action = 'compte_agios_escompte' "
+                "ORDER BY entite_id"
+            )
+        ).all()
+    assert comptes == {
+        1: "63117000",
+        2: "34552142",
+        3: "63117000",
+        4: "63116300",
+        5: "63116300",
+    }
+    assert audits == [("1",), ("3",)]
+
+    command.downgrade(config, "0057")
+
+    with engine.connect() as connection:
+        comptes = dict(connection.execute(text("SELECT id, compte FROM frais_lignes")).all())
+    assert comptes == {
+        1: "63116300",
+        2: "34552142",
+        3: "63116300",
+        4: "63116300",
+        5: "63116300",
+    }

@@ -1468,17 +1468,22 @@ def test_a_piece_number_is_bank_year_month_and_three_digits():
     assert numero_piece("BP", date(2026, 10, 3), 123) == "BP2610123"
     # « AW » pour AWB, sans le B (19/11/2026)
     assert numero_piece("AWB", date(2027, 1, 31), 1) == "AW2701001"
+    # « CI » pour CIH, « BM » pour BMCE (19/11/2026)
+    assert numero_piece("CIH", date(2026, 10, 3), 7) == "CI2610007"
+    assert numero_piece("BMCE", date(2026, 10, 3), 7) == "BM2610007"
     with pytest.raises(ConflictError, match="épuisé"):
         numero_piece("BP", date(2026, 10, 3), 1000)
 
 
-def test_the_first_awb_piece_starts_with_aw():
-    """19/11/2026 : la première pièce AWB se tape « AW2610001 » ; « AWB2610001 » est refusé."""
-    assert prefixe_piece("AWB") == "AW"
-    assert prefixe_piece("BMCE") == "BMCE"
-    assert premiere_piece("AW2610005", "AWB", 2026, 10, 2) == 5
-    with pytest.raises(ConflictError, match="AW2610 suivi de 3 chiffres"):
-        premiere_piece("AWB2610005", "AWB", 2026, 10, 2)
+@pytest.mark.parametrize(("banque", "prefixe"), [("AWB", "AW"), ("CIH", "CI"), ("BMCE", "BM")])
+def test_the_first_awb_piece_starts_with_aw(banque, prefixe):
+    """19/11/2026 : la première pièce AWB se tape « AW2610001 » ; « AWB2610001 » est refusé. Même
+    jour : « CI » pour CIH, « BM » pour BMCE."""
+    assert prefixe_piece(banque) == prefixe
+    assert prefixe_piece("BP") == "BP"
+    assert premiere_piece(f"{prefixe}2610005", banque, 2026, 10, 2) == 5
+    with pytest.raises(ConflictError, match=f"{prefixe}2610 suivi de 3 chiffres"):
+        premiere_piece(f"{banque}2610005", banque, 2026, 10, 2)
 
 
 def test_csv_amounts_use_a_decimal_point():
@@ -2423,11 +2428,11 @@ def cih(db):
     return compte
 
 
-def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
+def test_cih_escompte_agios_are_automatic_with_vat_on_the_escompte_account(
     client, comptable, direction, db
 ):
     """12/11/2026 : chez CIH, « AGIOS ESCOMPTE LCN N … » entre dans l'écriture « FRAIS », hors taxe
-    sur 63116300 (AGIOS CIH) et TVA de 10 % comprise sur 34552142, quel que soit le montant ; un
+    sur 63117000 (FRAIS D'ESCOMPTE depuis le 19/11/2026, AGIOS CIH 63116300 avant) et TVA de 10 % comprise sur 34552142, quel que soit le montant ; un
     remboursement reste à la main ; chez AWB, le même libellé reste à la main."""
     compte = cih(db)
     petit = operation(db, compte, "-4.18", JOUR, "AGIOS ESCOMPTE LCN N 2600114")
@@ -2447,13 +2452,13 @@ def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
         for p in tableau["propositions"]
     ] == [
         [
-            ("63116300", "3.80", None),
+            ("63117000", "3.80", None),
             ("34552142", "0.38", None),
             ("55410005", None, "3.80"),
             ("55410005", None, "0.38"),
         ],
         [
-            ("63116300", "19950.00", None),
+            ("63117000", "19950.00", None),
             ("34552142", "1995.00", None),
             ("55410005", None, "19950.00"),
             ("55410005", None, "1995.00"),
@@ -2474,14 +2479,14 @@ def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
     # Une pièce par agio, toutes ses lignes au libellé du relevé (13/11/2026)
     petit_l, grand_l = petit.libelle, grand.libelle
     assert lignes_csv(response) == [
-        ("23/04/2026", "CIH2604001", "5545", "63116300", "", petit_l, "3.80", "D") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "34552142", "", petit_l, "0.38", "D") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit_l, "3.80", "C") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit_l, "0.38", "C") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "63116300", "", grand_l, "19950.00", "D") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "34552142", "", grand_l, "1995.00", "D") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "55410005", "", grand_l, "19950.00", "C") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "55410005", "", grand_l, "1995.00", "C") + vides,
+        ("23/04/2026", "CI2604001", "5545", "63117000", "", petit_l, "3.80", "D") + vides,
+        ("23/04/2026", "CI2604001", "5545", "34552142", "", petit_l, "0.38", "D") + vides,
+        ("23/04/2026", "CI2604001", "5545", "55410005", "", petit_l, "3.80", "C") + vides,
+        ("23/04/2026", "CI2604001", "5545", "55410005", "", petit_l, "0.38", "C") + vides,
+        ("23/04/2026", "CI2604002", "5545", "63117000", "", grand_l, "19950.00", "D") + vides,
+        ("23/04/2026", "CI2604002", "5545", "34552142", "", grand_l, "1995.00", "D") + vides,
+        ("23/04/2026", "CI2604002", "5545", "55410005", "", grand_l, "19950.00", "C") + vides,
+        ("23/04/2026", "CI2604002", "5545", "55410005", "", grand_l, "1995.00", "C") + vides,
     ]
 
 

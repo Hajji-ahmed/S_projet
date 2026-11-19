@@ -85,8 +85,9 @@ SENS_DEBIT = "Débit"
 # N° pièce d'une écriture de frais (16/10/2026) : BANQUE AA MM NNN (« BP2610123 »), un compteur
 # par société, banque et mois
 PIECE_MAX = 999
-# Préfixe de la pièce quand il diffère du code de la banque (19/11/2026) : « AW2610098 » pour AWB
-PREFIXES_PIECE = {"AWB": "AW"}
+# Préfixe de la pièce quand il diffère du code de la banque (19/11/2026) : « AW2610098 » pour AWB,
+# « CI2610001 » pour CIH, « BM2610001 » pour BMCE
+PREFIXES_PIECE = {"AWB": "AW", "CIH": "CI", "BMCE": "BM"}
 # Longueur du libellé d'écriture dans Sage 100 (12/11/2026)
 LIBELLE_SAGE = 50
 SENS_CREDIT = "Crédit"
@@ -296,8 +297,9 @@ COMPTE_PAR_TYPE = {
     "redevance_infofax": COMPTE_FRAIS_BANCAIRES,
     "redevance_online": COMPTE_FRAIS_BANCAIRES,
     "nbr": COMPTE_FRAIS_BANCAIRES,
-    # CIH (12/11/2026) : AGIOS CIH
-    "agios_escompte": COMPTES_AGIOS["CIH"],
+    # CIH : FRAIS D'ESCOMPTE depuis le 19/11/2026 (AGIOS CIH 63116300 le 12/11/2026 ; migration
+    # 0058 pour les lignes saisies)
+    "agios_escompte": COMPTE_ESCOMPTE,
     # BP (14/11/2026)
     "abonnement": COMPTE_FRAIS_BANCAIRES,
     "interet_escompte": COMPTE_ESCOMPTE,

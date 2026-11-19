@@ -5,10 +5,15 @@
 
 export const PIECE_MAX = 999;
 
-/** Début de la pièce quand il diffère du code de la banque (19/11/2026) : « AW » pour AWB. */
-export const PREFIXES_PIECE: Readonly<Record<string, string>> = { AWB: "AW" };
+/** Début de la pièce quand il diffère du code de la banque (19/11/2026) : « AW » pour AWB, « CI »
+ * pour CIH, « BM » pour BMCE. */
+export const PREFIXES_PIECE: Readonly<Record<string, string>> = {
+  AWB: "AW",
+  CIH: "CI",
+  BMCE: "BM",
+};
 
-/** « BP2610 » : code de la banque (« AW » pour AWB), année sur 2 chiffres et mois (« 2026-10 »). */
+/** « BP2610 » : code de la banque (« AW », « CI », « BM » pour AWB, CIH, BMCE), année sur 2 chiffres et mois (« 2026-10 »). */
 export function prefixePiece(banque: string, mois: string): string {
   return `${PREFIXES_PIECE[banque] ?? banque}${mois.slice(2, 4)}${mois.slice(5, 7)}`;
 }
