@@ -4,6 +4,8 @@ export type Kpi = {
   valeur: string | null;
   /** Variation en % par rapport à la période précédente de même durée (« 2.5 », « -10.0 »). */
   variation: string | null;
+  /** Encaissements / décaissements (16/11/2026) : virements internes retirés de `valeur`. */
+  internes?: string | null;
 };
 
 export type CompteDashboard = {

@@ -3,13 +3,14 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
     AccountingEntry,
     BankAccount,
     BankTransaction,
+    PointageType,
     ReconciliationMatch,
     ReconciliationMatchItem,
 )
@@ -17,38 +18,66 @@ from app.repositories import reconciliation_repository
 from app.repositories.import_repository import ORDRE_CHRONOLOGIQUE
 
 STATUTS_A_RAPPROCHER = ("Non rapprochée", "À vérifier")
+# Virements entre comptes de la société (16/11/2026) : hors des encaissements et décaissements du
+# dashboard (un virement interne est un crédit sur un compte et un débit sur l'autre). Codes de la
+# liste de pointage du 16/11/2026 ; une opération sans pointage reste comptée.
+POINTAGES_INTERNES = (
+    "REAL_TIME_GROSS_SETTLEMENT_RTGS_COMPTE_A_COMPTE",
+    "CHEQUE_INTERNE_COMPTE_A_COMPTE",
+)
+ZERO = Decimal("0.00")
+
+
+def _interne():
+    """Vrai pour une opération pointée virement interne ; faux sans pointage (jamais NULL)."""
+    internes = select(PointageType.id).where(PointageType.code.in_(POINTAGES_INTERNES))
+    return func.coalesce(BankTransaction.pointage_type_id.in_(internes), False)
+
+
+def _centimes(valeur) -> Decimal:
+    """Somme au centime : un CASE sans ligne retenue donne l'entier 0, affiché « 0.00 »."""
+    return Decimal(valeur).quantize(ZERO)
+
+
+def _somme(colonne, interne: bool):
+    condition = _interne() if interne else ~_interne()
+    return func.coalesce(func.sum(case((condition, colonne), else_=0)), 0)
 
 
 def mouvements(
     db: Session, account_ids: list[int], date_from: date, date_to: date
-) -> tuple[Decimal, Decimal]:
-    """(encaissements, décaissements) : sommes des crédits et des débits du relevé."""
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    """(encaissements, décaissements, encaissements internes, décaissements internes) : sommes des
+    crédits et des débits du relevé, les virements internes à part (16/11/2026)."""
     if not account_ids:
-        return Decimal("0.00"), Decimal("0.00")
+        return ZERO, ZERO, ZERO, ZERO
     row = db.execute(
         select(
-            func.coalesce(func.sum(BankTransaction.credit), 0),
-            func.coalesce(func.sum(BankTransaction.debit), 0),
+            _somme(BankTransaction.credit, False),
+            _somme(BankTransaction.debit, False),
+            _somme(BankTransaction.credit, True),
+            _somme(BankTransaction.debit, True),
         ).where(
             BankTransaction.bank_account_id.in_(account_ids),
             BankTransaction.remplacee_par_id.is_(None),
             BankTransaction.date_operation.between(date_from, date_to),
         )
     ).one()
-    return Decimal(row[0]), Decimal(row[1])
+    return _centimes(row[0]), _centimes(row[1]), _centimes(row[2]), _centimes(row[3])
 
 
 def flux_par_jour(
     db: Session, account_ids: list[int], date_from: date, date_to: date
 ) -> dict[date, tuple[Decimal, Decimal]]:
-    """{jour: (encaissements, décaissements)} des jours de la période qui ont un mouvement."""
+    """{jour: (encaissements, décaissements)} des jours de la période qui ont un mouvement, hors
+    virements internes (16/11/2026)."""
     if not account_ids:
         return {}
     rows = db.execute(
         select(
             BankTransaction.date_operation,
-            func.coalesce(func.sum(BankTransaction.credit), 0),
-            func.coalesce(func.sum(BankTransaction.debit), 0),
+            _somme(BankTransaction.credit, False),
+            _somme(BankTransaction.debit, False),
         )
         .where(
             BankTransaction.bank_account_id.in_(account_ids),
@@ -57,7 +86,7 @@ def flux_par_jour(
         )
         .group_by(BankTransaction.date_operation)
     )
-    return {row[0]: (Decimal(row[1]), Decimal(row[2])) for row in rows}
+    return {row[0]: (_centimes(row[1]), _centimes(row[2])) for row in rows}
 
 
 def statuts(db: Session, account_ids: list[int], date_from: date, date_to: date) -> dict[str, int]:

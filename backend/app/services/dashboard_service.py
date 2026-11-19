@@ -233,10 +233,13 @@ class Dashboard:
     # Somme des LIGNES des comptes courants MAD ; disponible = solde total + LIGNE totale
     ligne_totale: Decimal
     disponible: Decimal | None
+    # Hors virements internes (16/11/2026), retirés et montrés à part
     encaissements: Decimal
     encaissements_variation: Decimal | None
+    encaissements_internes: Decimal
     decaissements: Decimal
     decaissements_variation: Decimal | None
+    decaissements_internes: Decimal
     rapprochees: int
     a_rapprocher: int
     total_operations: int
@@ -309,8 +312,10 @@ def dashboard(
         return sum(valeurs, ZERO) if valeurs else None
 
     solde_total = total_mad(date_to)
-    encaissements, decaissements = dashboard_repository.mouvements(db, mad, date_from, date_to)
-    enc_prec, dec_prec = dashboard_repository.mouvements(db, mad, prec_from, prec_to)
+    encaissements, decaissements, enc_internes, dec_internes = dashboard_repository.mouvements(
+        db, mad, date_from, date_to
+    )
+    enc_prec, dec_prec, _, _ = dashboard_repository.mouvements(db, mad, prec_from, prec_to)
 
     par_statut = dashboard_repository.statuts(db, tous, date_from, date_to)
     a_rapprocher = sum(
@@ -398,8 +403,10 @@ def dashboard(
         disponible=None if solde_total is None else solde_total + ligne_totale,
         encaissements=encaissements,
         encaissements_variation=variation(encaissements, enc_prec),
+        encaissements_internes=enc_internes,
         decaissements=decaissements,
         decaissements_variation=variation(decaissements, dec_prec),
+        decaissements_internes=dec_internes,
         rapprochees=par_statut.get("Rapprochée", 0),
         a_rapprocher=a_rapprocher,
         total_operations=sum(par_statut.values()),

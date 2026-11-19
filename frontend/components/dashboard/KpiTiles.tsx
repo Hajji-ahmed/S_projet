@@ -13,7 +13,7 @@ import type { ReactNode } from "react";
 
 import { Sparkline } from "@/components/dashboard/Sparkline";
 import { cn } from "@/lib/cn";
-import { formatVariation, tendance } from "@/lib/dashboard";
+import { formatVariation, libelleInternes, tendance } from "@/lib/dashboard";
 import { formatAmount } from "@/lib/format";
 import type { Dashboard, Kpi } from "@/types/dashboard";
 
@@ -49,6 +49,7 @@ export function KpiTiles({ data }: { data: Dashboard }) {
           />
         }
       >
+        <Internes kpi={data.encaissements} />
         <Variation kpi={data.encaissements} />
       </Tuile>
       <Tuile
@@ -63,6 +64,7 @@ export function KpiTiles({ data }: { data: Dashboard }) {
           />
         }
       >
+        <Internes kpi={data.decaissements} />
         {/* Une hausse des décaissements n'est pas une bonne nouvelle : couleur inversée */}
         <Variation kpi={data.decaissements} inverse />
       </Tuile>
@@ -121,6 +123,13 @@ function Tuile({
       </div>
     </section>
   );
+}
+
+/** Montant des virements internes retirés de la tuile (16/11/2026), rien s'il n'y en a pas. */
+function Internes({ kpi }: { kpi: Kpi }) {
+  const texte = libelleInternes(kpi.internes);
+  if (!texte) return null;
+  return <p className="mb-1 text-xs text-simtis-muted tabular-nums">{texte}</p>;
 }
 
 function Variation({ kpi, inverse = false }: { kpi: Kpi; inverse?: boolean }) {

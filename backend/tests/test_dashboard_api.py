@@ -292,3 +292,66 @@ def test_pending_operations_are_left_out_of_the_bank_rates_like_the_ring(client,
 
     assert vue["total_operations"] == 1
     assert [(b["code"], b["a_rapprocher"], b["total"]) for b in vue["banques"]] == [("AWB", 1, 1)]
+
+
+def test_internal_transfers_are_left_out_of_receipts_and_payments(client, comptable, db):
+    """16/11/2026 : RTGS et chèque interne compte à compte ne comptent ni dans les encaissements ni
+    dans les décaissements (montant, courbe, variation) ; ils sont donnés à part. Une opération sans
+    pointage ou pointée autrement reste comptée."""
+    from app.models import PointageType
+
+    def pointage(code: str) -> int:
+        return db.scalar(select(PointageType.id).filter_by(code=code))
+
+    awb = account(db)
+    bmce = account(db, bank_code="BMCE")
+    rtgs = pointage("REAL_TIME_GROSS_SETTLEMENT_RTGS_COMPTE_A_COMPTE")
+    cheque = pointage("CHEQUE_INTERNE_COMPTE_A_COMPTE")
+    jour = date(2026, 9, 8)
+    operation(
+        db, awb, montant="-100000", jour=jour, libelle="RTGS VERS BMCE", pointage_type_id=rtgs
+    )
+    operation(db, bmce, montant="100000", jour=jour, libelle="RTGS DE AWB", pointage_type_id=rtgs)
+    operation(db, bmce, montant="2500", jour=jour, libelle="CHQ INTERNE", pointage_type_id=cheque)
+    operation(
+        db,
+        awb,
+        montant="700",
+        jour=jour,
+        libelle="VIR CLIENT",
+        pointage_type_id=pointage("VIREMENT_CLIENT_ENCAISSE"),
+    )
+    operation(db, awb, montant="-40", jour=jour, libelle="CHEQUE 12")  # sans pointage
+    # Période précédente : un virement interne n'entre pas non plus dans la comparaison
+    operation(
+        db, bmce, montant="50000", jour=date(2026, 8, 8), libelle="RTGS", pointage_type_id=rtgs
+    )
+    operation(db, awb, montant="350", jour=date(2026, 8, 9), libelle="VIR CLIENT ANCIEN")
+
+    body = lire(client, comptable, db).json()
+
+    assert body["encaissements"] == {
+        "valeur": "700.00",
+        "variation": "100.0",
+        "internes": "102500.00",
+    }
+    assert body["decaissements"]["valeur"] == "40.00"
+    assert body["decaissements"]["internes"] == "100000.00"
+    assert body["flux"][7] == {
+        "date": "2026-09-08",
+        "encaissements": "700.00",
+        "decaissements": "40.00",
+    }
+    assert "internes" not in body["solde_total"]
+
+
+def test_receipts_have_zero_internal_transfers_without_any(client, comptable, db):
+    awb = account(db)
+    operation(db, awb, montant="500", jour=date(2026, 9, 5), libelle="VIR B")
+
+    body = lire(client, comptable, db).json()
+
+    assert (body["encaissements"]["valeur"], body["encaissements"]["internes"]) == (
+        "500.00",
+        "0.00",
+    )

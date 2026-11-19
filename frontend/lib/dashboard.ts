@@ -1,4 +1,5 @@
 /** Dashboard (P15) : règles d'affichage pures. Aucun calcul métier : tout vient de l'API. */
+import { formatAmount } from "@/lib/format";
 import { toCents } from "@/lib/statementLines";
 
 /** Période proposée : du 1er du mois à aujourd'hui (« AAAA-MM-JJ »). */
@@ -112,4 +113,11 @@ export function regrouperActivite<
     }
   }
   return groupes;
+}
+
+/** « Hors virements internes : 1 200 000,00 DH » sous les tuiles Encaissements et Décaissements
+ * (16/11/2026) ; null quand rien n'a été retiré. */
+export function libelleInternes(internes: string | null | undefined): string | null {
+  if (!internes || toCents(internes) === BigInt(0)) return null;
+  return `Hors virements internes : ${formatAmount(internes, "DH")}`;
 }

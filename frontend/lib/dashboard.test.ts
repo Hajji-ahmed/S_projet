@@ -5,6 +5,7 @@ import {
   heureRelative,
   formatVariation,
   jourCourt,
+  libelleInternes,
   libellePeriode,
   moisEnCours,
   partFrais,
@@ -12,6 +13,7 @@ import {
   regrouperActivite,
   tendance,
 } from "@/lib/dashboard";
+import { formatAmount } from "@/lib/format";
 
 describe("dashboard", () => {
   it("propose le mois en cours", () => {
@@ -98,5 +100,16 @@ describe("regrouperActivite", () => {
     const lignes = Array.from({ length: 8 }, (_, i) => l(i, `action-${i}`, 1, 59 - i));
     expect(regrouperActivite(lignes)).toHaveLength(5);
     expect(regrouperActivite([])).toEqual([]);
+  });
+});
+
+describe("libelleInternes", () => {
+  it("affiche le montant des virements internes retirés, rien quand il est nul", () => {
+    expect(libelleInternes("1200000.00")).toBe(
+      `Hors virements internes : ${formatAmount("1200000.00", "DH")}`,
+    );
+    expect(libelleInternes("0.00")).toBeNull();
+    expect(libelleInternes(null)).toBeNull();
+    expect(libelleInternes(undefined)).toBeNull();
   });
 });

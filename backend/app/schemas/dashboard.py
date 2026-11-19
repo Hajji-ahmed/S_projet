@@ -14,6 +14,12 @@ class KpiOut(BaseModel):
     variation: Decimal | None
 
 
+class MouvementsOut(KpiOut):
+    """Encaissements / décaissements (16/11/2026) : virements internes retirés de `valeur`."""
+
+    internes: Decimal
+
+
 class PointOut(BaseModel):
     date: date
     solde: Decimal | None
@@ -132,8 +138,8 @@ class DashboardOut(BaseModel):
     solde_total: KpiOut
     ligne_totale: Decimal
     disponible: Decimal | None
-    encaissements: KpiOut
-    decaissements: KpiOut
+    encaissements: MouvementsOut
+    decaissements: MouvementsOut
     rapprochees: int
     a_rapprocher: int
     total_operations: int
@@ -170,8 +176,16 @@ class DashboardOut(BaseModel):
             solde_total=KpiOut(valeur=vue.solde_total, variation=vue.solde_total_variation),
             ligne_totale=vue.ligne_totale,
             disponible=vue.disponible,
-            encaissements=KpiOut(valeur=vue.encaissements, variation=vue.encaissements_variation),
-            decaissements=KpiOut(valeur=vue.decaissements, variation=vue.decaissements_variation),
+            encaissements=MouvementsOut(
+                valeur=vue.encaissements,
+                variation=vue.encaissements_variation,
+                internes=vue.encaissements_internes,
+            ),
+            decaissements=MouvementsOut(
+                valeur=vue.decaissements,
+                variation=vue.decaissements_variation,
+                internes=vue.decaissements_internes,
+            ),
             rapprochees=vue.rapprochees,
             a_rapprocher=vue.a_rapprocher,
             total_operations=vue.total_operations,
