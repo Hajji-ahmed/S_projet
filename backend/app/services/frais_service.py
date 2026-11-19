@@ -85,6 +85,8 @@ SENS_DEBIT = "Débit"
 # N° pièce d'une écriture de frais (16/10/2026) : BANQUE AA MM NNN (« BP2610123 »), un compteur
 # par société, banque et mois
 PIECE_MAX = 999
+# Préfixe de la pièce quand il diffère du code de la banque (19/11/2026) : « AW2610098 » pour AWB
+PREFIXES_PIECE = {"AWB": "AW"}
 # Longueur du libellé d'écriture dans Sage 100 (12/11/2026)
 LIBELLE_SAGE = 50
 SENS_CREDIT = "Crédit"
@@ -1539,15 +1541,20 @@ def libelle_ligne(libelle_ecriture: str, type_ligne: str | None) -> str:
     return f"TVA {libelle_ecriture}" if est_ligne_tva(type_ligne) else libelle_ecriture
 
 
+def prefixe_piece(banque: str) -> str:
+    """Début du N° pièce d'une banque : son code, sauf « AW » pour AWB (19/11/2026)."""
+    return PREFIXES_PIECE.get(banque, banque)
+
+
 def numero_piece(banque: str, jour: date, numero: int) -> str:
-    """« BP2610123 » (16/10/2026) : code de la banque, année et mois de la date d'écriture, puis
-    le n° d'ordre du mois pour cette banque sur 3 chiffres."""
+    """« BP2610123 » (16/10/2026) : code de la banque (« AW » pour AWB, 19/11/2026), année et mois
+    de la date d'écriture, puis le n° d'ordre du mois pour cette banque sur 3 chiffres."""
     if not 1 <= numero <= PIECE_MAX:
         raise ConflictError(
             f"Plus de {PIECE_MAX} écritures de frais {banque} en {jour:%m/%Y} : le n° de pièce "
             "sur 3 chiffres est épuisé."
         )
-    return f"{banque}{jour:%y%m}{numero:03d}"
+    return f"{prefixe_piece(banque)}{jour:%y%m}{numero:03d}"
 
 
 def premiere_piece(texte: str, banque: str, annee: int, mois: int, nb: int) -> int:
@@ -1555,7 +1562,7 @@ def premiere_piece(texte: str, banque: str, annee: int, mois: int, nb: int) -> i
     pour BP en octobre 2026 ; 409 si la banque, le mois ou les 3 chiffres ne vont pas, ou si les
     `nb` écritures dépassent la pièce 999 du mois."""
     numero = "".join((texte or "").split()).upper()
-    prefixe = f"{banque}{annee % 100:02d}{mois:02d}"
+    prefixe = f"{prefixe_piece(banque)}{annee % 100:02d}{mois:02d}"
     rang = numero[len(prefixe) :]
     if not numero.startswith(prefixe) or not re.fullmatch(r"\d{3}", rang) or int(rang) == 0:
         raise ConflictError(
@@ -2016,8 +2023,8 @@ def codes_rapprochement(db: Session, entries: list[AccountingEntry]) -> list[str
 
 
 def montant_csv(montant: Decimal) -> str:
-    """« 1234,50 » : virgule décimale, sans séparateur de milliers (CSV français de Sage)."""
-    return f"{montant:.2f}".replace(".", ",")
+    """« 1234.50 » : point décimal, sans séparateur de milliers (19/11/2026, virgule avant)."""
+    return f"{montant:.2f}"
 
 
 # --- Comptabilisation manuelle (13/10/2026) -------------------------------------------------------

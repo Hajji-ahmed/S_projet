@@ -23,7 +23,10 @@ from app.services.accounting_import_service import EntryLine, _mark_simtis_entri
 from app.services.errors import ConflictError
 from app.services.frais_service import (
     est_timbre,
+    montant_csv,
     numero_piece,
+    prefixe_piece,
+    premiere_piece,
     regrouper_timbres,
     type_commission,
     type_frais_tva,
@@ -120,7 +123,7 @@ def exporter(client, headers, db, famille=None, *, banque="BP", mois="2026-04", 
         "company_id": str(company(db).id),
         "bank_id": str(db.scalar(select(Bank.id).filter_by(code=banque))),
         "mois": mois,
-        "premiere_piece": premiere or f"{banque}{mois[2:4]}{mois[5:7]}001",
+        "premiere_piece": premiere or f"{prefixe_piece(banque)}{mois[2:4]}{mois[5:7]}001",
     }
     return client.get("/api/frais/export", params=params, headers=headers)
 
@@ -356,12 +359,12 @@ def test_export_writes_a_balanced_csv_entry_and_marks_the_entry(client, comptabl
     vides = ("",) * 7
     # Une pièce par frais, toutes ses lignes au libellé de l'opération du relevé (13/11/2026)
     assert rows == [
-        ("23/04/2026", code, "5543", "61671000", "", REMISE, "200,00", "D") + vides,
-        ("23/04/2026", code, "5543", "55410003", "", REMISE, "200,00", "C") + vides,
-        ("23/04/2026", "BP2604046", "5543", "61671000", "", VERSEMENT, "1,00", "D") + vides,
-        ("23/04/2026", "BP2604046", "5543", "55410003", "", VERSEMENT, "1,00", "C") + vides,
-        ("23/04/2026", "BP2604047", "5543", "61671000", "", VERSEMENT, "1,00", "D") + vides,
-        ("23/04/2026", "BP2604047", "5543", "55410003", "", VERSEMENT, "1,00", "C") + vides,
+        ("23/04/2026", code, "5543", "61671000", "", REMISE, "200.00", "D") + vides,
+        ("23/04/2026", code, "5543", "55410003", "", REMISE, "200.00", "C") + vides,
+        ("23/04/2026", "BP2604046", "5543", "61671000", "", VERSEMENT, "1.00", "D") + vides,
+        ("23/04/2026", "BP2604046", "5543", "55410003", "", VERSEMENT, "1.00", "C") + vides,
+        ("23/04/2026", "BP2604047", "5543", "61671000", "", VERSEMENT, "1.00", "D") + vides,
+        ("23/04/2026", "BP2604047", "5543", "55410003", "", VERSEMENT, "1.00", "C") + vides,
     ]
     entries = list(
         db.scalars(select(AccountingEntry).filter_by(origine="SIMTIS").order_by(AccountingEntry.id))
@@ -723,18 +726,18 @@ def test_validating_commissions_matches_them_and_export_is_balanced(client, comp
     # au libellé du relevé (13/11/2026) ; une TVA reprend la pièce de sa commission (17/11/2026)
     tva = "TAXE SUR VALEUR AJOUTEE"
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in rows] == [
-        ("61473000", "BP2604001", "COMMISSION", "D", "20,00"),
-        ("55410003", "BP2604001", "COMMISSION", "C", "20,00"),
-        ("61473000", "BP2604002", "COMMISSION", "D", "30,00"),
-        ("55410003", "BP2604002", "COMMISSION", "C", "30,00"),
-        ("34552142", "BP2604001", tva, "D", "2,00"),
-        ("55410003", "BP2604001", tva, "C", "2,00"),
-        ("34552142", "BP2604002", tva, "D", "3,00"),
-        ("55410003", "BP2604002", tva, "C", "3,00"),
-        ("61473000", "BP2604003", COM_EFFET[:50], "D", "10,00"),
-        ("55410003", "BP2604003", COM_EFFET[:50], "C", "10,00"),
-        ("34552142", "BP2604003", TVA_EFFET[:50], "D", "1,00"),
-        ("55410003", "BP2604003", TVA_EFFET[:50], "C", "1,00"),
+        ("61473000", "BP2604001", "COMMISSION", "D", "20.00"),
+        ("55410003", "BP2604001", "COMMISSION", "C", "20.00"),
+        ("61473000", "BP2604002", "COMMISSION", "D", "30.00"),
+        ("55410003", "BP2604002", "COMMISSION", "C", "30.00"),
+        ("34552142", "BP2604001", tva, "D", "2.00"),
+        ("55410003", "BP2604001", tva, "C", "2.00"),
+        ("34552142", "BP2604002", tva, "D", "3.00"),
+        ("55410003", "BP2604002", tva, "C", "3.00"),
+        ("61473000", "BP2604003", COM_EFFET[:50], "D", "10.00"),
+        ("55410003", "BP2604003", COM_EFFET[:50], "C", "10.00"),
+        ("34552142", "BP2604003", TVA_EFFET[:50], "D", "1.00"),
+        ("55410003", "BP2604003", TVA_EFFET[:50], "C", "1.00"),
     ]
 
 
@@ -954,9 +957,9 @@ def test_a_manual_entry_with_vat_is_matched_and_exported_on_two_lines(client, co
 
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[1], r[3], r[5], r[7], r[6]) for r in rows] == [
-        (code, "61473000", "COM RTGS", "D", "150,00"),
-        (code, "34552142", "TVA COM RTGS", "D", "15,00"),
-        (code, "55410003", "COM RTGS", "C", "165,00"),
+        (code, "61473000", "COM RTGS", "D", "150.00"),
+        (code, "34552142", "TVA COM RTGS", "D", "15.00"),
+        (code, "55410003", "COM RTGS", "C", "165.00"),
     ]
 
 
@@ -985,8 +988,8 @@ def test_a_manual_entry_without_vat_has_one_line_and_a_refund_goes_to_the_debit(
     # débit (11/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[3], r[5], r[6], r[7]) for r in rows] == [
-        ("63112000", "AGIOS REMBOURSES", "151110,79", "C"),
-        ("55410003", "AGIOS REMBOURSES", "151110,79", "D"),
+        ("63112000", "AGIOS REMBOURSES", "151110.79", "C"),
+        ("55410003", "AGIOS REMBOURSES", "151110.79", "D"),
     ]
 
 
@@ -1134,9 +1137,9 @@ def test_a_manual_entry_takes_the_account_chosen_in_the_list(client, comptable, 
     ]
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows] == [
-        (code, "63119400", "INTERETS", "150,00", "D"),
-        (code, "34552142", "TVA INTERETS", "15,00", "D"),
-        (code, "55410003", "INTERETS", "165,00", "C"),
+        (code, "63119400", "INTERETS", "150.00", "D"),
+        (code, "34552142", "TVA INTERETS", "15.00", "D"),
+        (code, "55410003", "INTERETS", "165.00", "C"),
     ]
     # Lignes saisies sans la banque, au débit (11/11/2026)
     saisies = db.scalars(select(FraisLigne).order_by(FraisLigne.ordre)).all()
@@ -1420,16 +1423,16 @@ def test_commissions_go_to_com_and_frais_recuperes_to_frais_with_computed_vat(
     # les lignes au libellé du relevé (13/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[1], r[3], r[5], r[6], r[7]) for r in rows] == [
-        ("BP2604001", "61473000", libelle_rtgs, "150,00", "D"),
-        ("BP2604001", "34552142", libelle_rtgs, "15,00", "D"),
-        ("BP2604001", "55410003", libelle_rtgs, "165,00", "C"),
-        ("BP2604002", "61473000", libelle_prelevement, "10,00", "D"),
-        ("BP2604002", "34552142", libelle_prelevement, "1,00", "D"),
-        ("BP2604002", "55410003", libelle_prelevement, "11,00", "C"),
-        ("BP2604003", "61473000", libelle_recuperes, "25,00", "D"),
-        ("BP2604003", "34552142", libelle_recuperes, "2,50", "D"),
-        ("BP2604003", "61671000", libelle_recuperes, "50,00", "D"),
-        ("BP2604003", "55410003", libelle_recuperes, "77,50", "C"),
+        ("BP2604001", "61473000", libelle_rtgs, "150.00", "D"),
+        ("BP2604001", "34552142", libelle_rtgs, "15.00", "D"),
+        ("BP2604001", "55410003", libelle_rtgs, "165.00", "C"),
+        ("BP2604002", "61473000", libelle_prelevement, "10.00", "D"),
+        ("BP2604002", "34552142", libelle_prelevement, "1.00", "D"),
+        ("BP2604002", "55410003", libelle_prelevement, "11.00", "C"),
+        ("BP2604003", "61473000", libelle_recuperes, "25.00", "D"),
+        ("BP2604003", "34552142", libelle_recuperes, "2.50", "D"),
+        ("BP2604003", "61671000", libelle_recuperes, "50.00", "D"),
+        ("BP2604003", "55410003", libelle_recuperes, "77.50", "C"),
     ]
     # Même libellé à l'écran
     assert {ligne["libelle"] for ligne in ecriture_frais["lignes"]} == {libelle_recuperes}
@@ -1450,9 +1453,25 @@ def test_a_day_with_a_sage_frais_entry_is_not_proposed(client, comptable, db):
 
 def test_a_piece_number_is_bank_year_month_and_three_digits():
     assert numero_piece("BP", date(2026, 10, 3), 123) == "BP2610123"
-    assert numero_piece("AWB", date(2027, 1, 31), 1) == "AWB2701001"
+    # « AW » pour AWB, sans le B (19/11/2026)
+    assert numero_piece("AWB", date(2027, 1, 31), 1) == "AW2701001"
     with pytest.raises(ConflictError, match="épuisé"):
         numero_piece("BP", date(2026, 10, 3), 1000)
+
+
+def test_the_first_awb_piece_starts_with_aw():
+    """19/11/2026 : la première pièce AWB se tape « AW2610001 » ; « AWB2610001 » est refusé."""
+    assert prefixe_piece("AWB") == "AW"
+    assert prefixe_piece("BMCE") == "BMCE"
+    assert premiere_piece("AW2610005", "AWB", 2026, 10, 2) == 5
+    with pytest.raises(ConflictError, match="AW2610 suivi de 3 chiffres"):
+        premiere_piece("AWB2610005", "AWB", 2026, 10, 2)
+
+
+def test_csv_amounts_use_a_decimal_point():
+    """19/11/2026 : « 1234.50 » dans le fichier pour Sage (virgule avant), sans milliers."""
+    assert montant_csv(Decimal("1234.5")) == "1234.50"
+    assert montant_csv(Decimal("151110.79")) == "151110.79"
 
 
 def test_pieces_are_given_at_export_from_the_first_one_typed(client, comptable, db):
@@ -1556,6 +1575,7 @@ def a_exporter(client, headers, db):
     ("premiere", "message"),
     [
         ("AWB2604001", "BP2604 suivi de 3 chiffres"),
+        ("AW2604001", "BP2604 suivi de 3 chiffres"),
         ("BP2605001", "BP2604 suivi de 3 chiffres"),
         ("BP260401", "BP2604 suivi de 3 chiffres"),
         ("BP2604000", "BP2604 suivi de 3 chiffres"),
@@ -1632,9 +1652,9 @@ def test_a_proposal_is_validated_with_its_label_date_and_lines_changed(client, c
     # La ligne banque est ajoutée aux lignes saisies (11/11/2026)
     rows = lignes_csv(exporter(client, comptable, db))
     assert [(r[0], r[3], r[5], r[6], r[7]) for r in rows] == [
-        ("25/04/2026", "61671", "DT VERSEMENTS", "2,00", "D"),
-        ("25/04/2026", "61473000", "DT REMISE LCN", "200,00", "D"),
-        ("25/04/2026", "55410003", REMISE, "202,00", "C"),
+        ("25/04/2026", "61671", "DT VERSEMENTS", "2.00", "D"),
+        ("25/04/2026", "61473000", "DT REMISE LCN", "200.00", "D"),
+        ("25/04/2026", "55410003", REMISE, "202.00", "C"),
     ]
     audit = db.scalar(select(AuditLog).where(AuditLog.action == "comptabilisation_timbres"))
     assert audit.nouvelle_valeur["modifiee"] is True
@@ -2078,10 +2098,10 @@ def test_escompte_interests_and_their_vat_are_booked_automatically_whatever_the_
     export = exporter(client, comptable, db)
     assert export.status_code == 200, export.text
     assert [(r[3], r[1], r[5], r[7], r[6]) for r in lignes_csv(export)] == [
-        ("63117000", "BP2604001", INTERET_ESCOMPTE, "D", "4524,56"),
-        ("55410003", "BP2604001", INTERET_ESCOMPTE, "C", "4524,56"),
-        ("34552142", "BP2604001", TVA, "D", "452,46"),
-        ("55410003", "BP2604001", TVA, "C", "452,46"),
+        ("63117000", "BP2604001", INTERET_ESCOMPTE, "D", "4524.56"),
+        ("55410003", "BP2604001", INTERET_ESCOMPTE, "C", "4524.56"),
+        ("34552142", "BP2604001", TVA, "D", "452.46"),
+        ("55410003", "BP2604001", TVA, "C", "452.46"),
     ]
 
 
@@ -2404,12 +2424,12 @@ def test_cih_escompte_agios_are_automatic_with_vat_on_the_cih_agios_account(
     # Une pièce par agio, toutes ses lignes au libellé du relevé (13/11/2026)
     petit_l, grand_l = petit.libelle, grand.libelle
     assert lignes_csv(response) == [
-        ("23/04/2026", "CIH2604001", "5545", "63116300", "", petit_l, "3,80", "D") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "34552142", "", petit_l, "0,38", "D") + vides,
-        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit_l, "4,18", "C") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "63116300", "", grand_l, "19950,00", "D") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "34552142", "", grand_l, "1995,00", "D") + vides,
-        ("23/04/2026", "CIH2604002", "5545", "55410005", "", grand_l, "21945,00", "C") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "63116300", "", petit_l, "3.80", "D") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "34552142", "", petit_l, "0.38", "D") + vides,
+        ("23/04/2026", "CIH2604001", "5545", "55410005", "", petit_l, "4.18", "C") + vides,
+        ("23/04/2026", "CIH2604002", "5545", "63116300", "", grand_l, "19950.00", "D") + vides,
+        ("23/04/2026", "CIH2604002", "5545", "34552142", "", grand_l, "1995.00", "D") + vides,
+        ("23/04/2026", "CIH2604002", "5545", "55410005", "", grand_l, "21945.00", "C") + vides,
     ]
 
 
@@ -2564,6 +2584,8 @@ def test_every_line_of_an_entry_carries_the_statement_label(client, comptable, d
     assert sorted({g["libelle"] for e in validees for g in e["lignes"]}) == sorted(libelles)
     rows = lignes_csv(exporter(client, comptable, db, banque="AWB"))
     assert [row[5] for row in rows] == [libelle for libelle in libelles for _ in range(3)]
+    # Pièce « AW », sans le B (19/11/2026)
+    assert {row[1] for row in rows} == {"AW2604001", "AW2604002", "AW2604003"}
 
 
 def test_a_modified_entry_keeps_one_bank_line_with_the_total(client, comptable, db):

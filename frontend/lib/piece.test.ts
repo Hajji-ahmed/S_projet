@@ -5,7 +5,7 @@ import { erreurPiece, libelleMois, prefixePiece, seriePieces } from "@/lib/piece
 describe("N° de la première pièce à l'export (09/11/2026)", () => {
   it("se construit avec la banque, l'année et le mois", () => {
     expect(prefixePiece("BP", "2026-10")).toBe("BP2610");
-    expect(prefixePiece("AWB", "2027-01")).toBe("AWB2701");
+    expect(prefixePiece("AWB", "2027-01")).toBe("AW2701");
   });
 
   it("accepte le N° complet, même en minuscules ou avec des espaces", () => {
@@ -24,6 +24,17 @@ describe("N° de la première pièce à l'export (09/11/2026)", () => {
     expect(erreurPiece(texte, "BP", "2026-10", 1)).toBe(
       "Le N° s'écrit BP2610 suivi de 3 chiffres (ex. BP2610001).",
     );
+  });
+
+  it("écrit AW pour AWB, sans le B (19/11/2026)", () => {
+    expect(erreurPiece("AW2610098", "AWB", "2026-10", 1)).toBeNull();
+    expect(erreurPiece("AWB2610098", "AWB", "2026-10", 1)).toBe(
+      "Le N° s'écrit AW2610 suivi de 3 chiffres (ex. AW2610001).",
+    );
+    expect(seriePieces("AW2610098", "AWB", "2026-10", 2)).toEqual({
+      premiere: "AW2610098",
+      derniere: "AW2610099",
+    });
   });
 
   it("refuse une série qui dépasse la pièce 999", () => {

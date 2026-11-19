@@ -1163,3 +1163,56 @@ def test_migration_0055_switches_to_the_new_pointage_list(empty_database):
         )
     assert actifs_apres == anciens
     assert regles == 0
+
+
+def test_migration_0056_renames_the_awb_fee_pieces_to_aw(empty_database):
+    """Décision du 19/11/2026 : les pièces SIMTIS « AWB2610001 » deviennent « AW2610001 » (audit) ;
+    une pièce BP et une écriture venue de Sage ne bougent pas ; le downgrade remet le B."""
+    config, engine = empty_database
+    command.upgrade(config, "0055")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                INSERT INTO companies (id, code, nom) OVERRIDING SYSTEM VALUE VALUES (1, 'C', 'S');
+                INSERT INTO banks (id, code, nom) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 'AWB', 'AWB'), (2, 'BP', 'BP');
+                INSERT INTO currencies (code, libelle) VALUES ('MAD', 'Dirham');
+                INSERT INTO bank_accounts (id, company_id, bank_id, libelle, numero, devise)
+                    OVERRIDING SYSTEM VALUE VALUES (1, 1, 1, 'AWB', 'N1', 'MAD'),
+                    (2, 1, 2, 'BP', 'N2', 'MAD');
+                INSERT INTO accounting_entries (id, company_id, bank_account_id, date_ecriture,
+                    libelle, debit, credit, montant, hash_ligne, origine, famille_frais,
+                    numero_piece, exportee_le) OVERRIDING SYSTEM VALUE VALUES
+                    (1, 1, 1, '2026-10-02', 'COM', 0, 5, 5, 'e1', 'SIMTIS', 'commissions',
+                        'AWB2610098', '2026-10-05 10:00+00'),
+                    (2, 1, 2, '2026-10-02', 'COM', 0, 6, 6, 'e2', 'SIMTIS', 'commissions',
+                        'BP2610001', '2026-10-05 10:00+00'),
+                    (3, 1, 1, '2026-10-02', 'COM', 0, 7, 7, 'e3', 'Sage', NULL,
+                        'AWB2610099', NULL);
+                """
+            )
+        )
+
+    command.upgrade(config, "0056")
+
+    with engine.connect() as connection:
+        pieces = dict(
+            connection.execute(text("SELECT id, numero_piece FROM accounting_entries")).all()
+        )
+        audits = connection.execute(
+            text(
+                "SELECT entite_id, ancienne_valeur ->> 'numero_piece', "
+                "nouvelle_valeur ->> 'numero_piece' FROM audit_logs "
+                "WHERE action = 'renumerotation_piece'"
+            )
+        ).all()
+    assert pieces == {1: "AW2610098", 2: "BP2610001", 3: "AWB2610099"}
+    assert audits == [("1", "AWB2610098", "AW2610098")]
+
+    command.downgrade(config, "0055")
+    with engine.connect() as connection:
+        piece = connection.execute(
+            text("SELECT numero_piece FROM accounting_entries WHERE id = 1")
+        ).scalar()
+    assert piece == "AWB2610098"
