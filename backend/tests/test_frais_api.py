@@ -2780,3 +2780,108 @@ def test_the_fees_journal_is_the_account_journal_starting_with_55(client, compta
     assert response.status_code == 200, response.text
     entry = db.scalar(select(AccountingEntry).filter_by(origine="SIMTIS"))
     assert entry.journal == "5541"
+
+
+# --- BMCE : frais de dossiers et service BBO (20/11/2026) -----------------------------------------
+
+DOSSIERS = "PRELEVEMENT DES FRAIS DE DOSSIERS"
+TVA_ENSEMBLE = "PRELEVEMENT DE LA TVA SUR L'ENSEMBLE DES FRAIS & COMMISSIONS"
+BBO = "PRELEVEMENT FRAIS SERVICE BBO"
+TVA_BBO = "PRELEVEMENT FRAIS TVA SERVICE BBO"
+
+
+def bmce(db, bank_code="BMCE"):
+    compte = account(db, bank_code=bank_code)
+    compte.compte_comptable, compte.journal_sage = "55410001", "5541"
+    db.flush()
+    return compte
+
+
+@pytest.mark.parametrize(
+    ("libelle", "attendu"),
+    [(DOSSIERS, "commission"), (TVA_ENSEMBLE, "tva"), (BBO, "commission"), (TVA_BBO, "tva")],
+)
+def test_bmce_file_and_bbo_fees_are_commissions_at_bmce_only(libelle, attendu):
+    """20/11/2026 : frais de dossiers et service BBO, et leur TVA sur une ligne à part, comme une
+    « COMMISSION » et sa « TAXE SUR VALEUR AJOUTEE », seulement pour un compte BMCE."""
+    assert type_commission(libelle, "BMCE") == attendu
+    assert frais_service.sans_seuil(libelle, "BMCE") is True
+    for banque in ("BMCI", "AWB", "BP", "CIH", None):
+        assert type_commission(libelle, banque) is None
+
+
+def test_bmce_file_and_bbo_fees_and_their_vat_are_booked_in_com_whatever_the_amount(
+    client, comptable, direction, db
+):
+    """Relevés BMCE : 500,00 de frais de dossiers + 50,00 de TVA « sur l'ensemble des frais &
+    commissions », 200,00 de service BBO + 20,00 de TVA. Une écriture COM chacun, le frais sur
+    61473000, la TVA sur 34552142 dans la case de son frais, une pièce pour les deux. Une TVA
+    générique sans frais de dix fois son montant reste à la main."""
+    compte = bmce(db)
+    tva_bbo = operation(db, compte, "-20", JOUR, TVA_BBO)
+    bbo = operation(db, compte, "-200", JOUR, BBO)
+    tva = operation(db, compte, "-50", JOUR, TVA_ENSEMBLE)
+    dossiers = operation(db, compte, "-500", JOUR, DOSSIERS)
+    seule = operation(db, compte, "-50", JOUR + timedelta(days=1), TVA_ENSEMBLE)
+
+    data = lire(client, comptable, db, famille=None).json()
+
+    propositions = {p["transaction_id"]: p for p in data["propositions"]}
+    assert set(propositions) == {tva_bbo.id, bbo.id, tva.id, dossiers.id}
+    assert {p["famille"] for p in propositions.values()} == {"commissions"}
+    assert [
+        (g["compte"], g["libelle"], g["debit"], g["credit"])
+        for g in propositions[dossiers.id]["lignes"]
+    ] == [("61473000", DOSSIERS, "500.00", None), ("55410001", DOSSIERS, None, "500.00")]
+    assert [(g["compte"], g["debit"], g["credit"]) for g in propositions[tva.id]["lignes"]] == [
+        ("34552142", "50.00", None),
+        ("55410001", None, "50.00"),
+    ]
+    assert propositions[tva.id]["suit_transaction_id"] == dossiers.id
+    assert propositions[tva_bbo.id]["suit_transaction_id"] == bbo.id
+    assert [a["id"] for a in data["autres_frais"]] == [seule.id]
+    # Sans seuil : le frais de 500 n'est pas à justifier auprès de la banque
+    params = {"company_id": str(company(db).id), "from": "2026-04-01", "to": "2026-04-30"}
+    justificatif = client.get("/api/frais/justificatif", params=params, headers=direction)
+    assert justificatif.status_code == 409
+
+    assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
+    assert statuses(db, tva_bbo, bbo, tva, dossiers, seule) == ["Rapprochée"] * 4 + [
+        "Non rapprochée"
+    ]
+    response = exporter(client, comptable, db, banque="BMCE")
+    assert response.status_code == 200, response.text
+    pieces = {(r[5], r[1]) for r in lignes_csv(response)}
+    assert pieces == {
+        (BBO, "BM2604001"),
+        (TVA_BBO, "BM2604001"),
+        (DOSSIERS, "BM2604002"),
+        (TVA_ENSEMBLE[:50], "BM2604002"),
+    }
+
+
+def test_bmce_file_fees_stay_manual_at_another_bank(client, comptable, db):
+    compte = bmce(db, bank_code="BMCI")
+    ids = {
+        operation(db, compte, montant, JOUR, libelle).id
+        for montant, libelle in (("-500", DOSSIERS), ("-50", TVA_ENSEMBLE), ("-200", BBO))
+    }
+
+    data = lire(client, comptable, db, famille=None).json()
+
+    assert data["propositions"] == []
+    assert ids <= {a["id"] for a in data["autres_frais"]}
+
+
+def test_a_bmce_file_fee_already_in_sage_is_not_proposed(client, comptable, db):
+    """Une écriture Sage « COM » de 500 couvre le frais de dossiers du même jour ; le service BBO
+    reste proposé."""
+    compte = bmce(db)
+    dossiers = operation(db, compte, "-500", JOUR, DOSSIERS)
+    bbo = operation(db, compte, "-200", JOUR, BBO)
+    ecriture(db, compte, "500", JOUR, "COM")
+
+    data = lire(client, comptable, db, famille=None).json()
+
+    assert [p["transaction_id"] for p in data["propositions"]] == [bbo.id]
+    assert dossiers.id not in {a["id"] for a in data["autres_frais"]}

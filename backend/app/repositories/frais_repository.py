@@ -29,7 +29,11 @@ LIBELLE_COMMISSION_SQL = (
     # AWB : « COMM VIR EMIS / SRBM », « COM ABONNEMENT EBICS », commission carte « COM.ADOBE »
     r"|COM\W+FRAIS|COMM\s+VIR|COM\s+ABONNEMENT\s+EBICS|COM\.\S"
     # BP (14/11/2026) : « ABONNEMENT BP E-CORPORATE », TVA sur une ligne à part
-    r"|ABONNEMENT\W+BP\W+E\W*CORPORATE)"
+    r"|ABONNEMENT\W+BP\W+E\W*CORPORATE"
+    # BMCE (20/11/2026) : frais de dossiers, service BBO et leur TVA ; la banque est vérifiée par
+    # `frais_service.type_commission`
+    r"|PRELEVEMENT\W+(DES\W+FRAIS\W+DE\W+DOSSIER|FRAIS\W+(TVA\W+)?SERVICE\W+BBO"
+    r"|DE\W+LA\W+TVA\W+SUR\W+L\W*ENSEMBLE))"
 )
 # Écriture Sage d'un jour : « DT D'ENREGISTREMENT » (apostrophe droite ou non), « COM »
 ECRITURE_TIMBRE_SQL = r"^\s*DT\s+D.?\s*ENREGISTREMENT"

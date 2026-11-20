@@ -58,6 +58,12 @@ FAMILLES_FRAIS: tuple[tuple[str, str], ...] = (
     ("TRANSFERT EMIS COMMISSION", "commission"),
     ("COMMISSION", "commission"),
     ("COM ", "commission"),
+    # BMCE (20/11/2026), avant « FRAIS » : frais de dossiers, service BBO et leur TVA, pour
+    # qu'une écriture Sage « COM » déjà passée les couvre
+    ("PRELEVEMENT DES FRAIS DE DOSSIER", "commission"),
+    ("PRELEVEMENT FRAIS SERVICE BBO", "commission"),
+    ("PRELEVEMENT FRAIS TVA SERVICE BBO", "tva"),
+    ("PRELEVEMENT DE LA TVA SUR L ENSEMBLE", "tva"),
     ("TAXE SUR VALEUR AJOUTEE", "tva"),
     ("TVA", "tva"),
     ("INTERET", "interet"),

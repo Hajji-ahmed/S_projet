@@ -173,6 +173,18 @@ _FRAIS_AWB = (
     ("nbr", re.compile(r"^NBR\b")),
 )
 _COMMISSION_CAUTION = re.compile(r"^COMMISSION CAUTION\b")
+# BMCE (20/11/2026), seulement pour un compte BMCE, sur le libellé sans ponctuation : frais de
+# dossiers et service BBO, leur TVA de 10 % sur une ligne à part, comme une « COMMISSION » et sa
+# « TAXE SUR VALEUR AJOUTEE » (écriture « COM », 61473000, sans seuil). La TVA générique « … SUR
+# L'ENSEMBLE DES FRAIS & COMMISSIONS » n'entre en automatique que rattachée à un frais de dix fois
+# son montant (`associer_tva`), sinon elle reste à la main
+BANQUES_FRAIS_BMCE = frozenset({"BMCE"})
+_COMMISSIONS_BMCE = (
+    ("commission", re.compile(r"^PRELEVEMENT DES FRAIS DE DOSSIERS?$")),
+    ("commission", re.compile(r"^PRELEVEMENT FRAIS SERVICE BBO$")),
+    ("tva", re.compile(r"^PRELEVEMENT DE LA TVA SUR L ?ENSEMBLE DES FRAIS (ET )?COMMISSIONS$")),
+    ("tva", re.compile(r"^PRELEVEMENT FRAIS TVA SERVICE BBO$")),
+)
 _FRAIS_TVA = (
     *_COMMISSIONS_TVA,
     ("commission_carte", _COMMISSION_CARTE),
@@ -415,7 +427,7 @@ def est_timbre(libelle: str | None) -> bool:
 
 def type_commission(libelle: str | None, banque: str | None = None) -> str | None:
     """Type d'une commission reprise par SIMTIS, ou None (à passer à la main). La banque ne
-    compte pas."""
+    compte que pour la commission caution d'AWB et les frais de dossiers / BBO de BMCE."""
     texte = _plain(libelle)
     exacte = next((code for code, regle in _COMMISSIONS if regle.match(texte)), None)
     if exacte:
@@ -425,6 +437,9 @@ def type_commission(libelle: str | None, banque: str | None = None) -> str | Non
     code = next((code for code, regle in _COMMISSIONS_TVA if regle.match(sans)), None)
     if code is None and _COMMISSION_CARTE.match(texte):
         return "commission_carte"
+    # Frais de dossiers et service BBO, et leur TVA, seulement pour un compte BMCE (20/11/2026)
+    if code is None and banque in BANQUES_FRAIS_BMCE:
+        code = next((code for code, regle in _COMMISSIONS_BMCE if regle.match(sans)), None)
     # « COMMISSION CAUTION 780191751… » seulement pour un compte AWB (17/11/2026)
     if code is None and banque in BANQUES_FRAIS_AWB and _COMMISSION_CAUTION.match(sans):
         return "commission_caution"
@@ -641,14 +656,14 @@ def tva_attendue(commission: Decimal) -> Decimal:
 
 def est_tva_separee(tx: BankTransaction) -> bool:
     """TVA débitée sur une ligne à part (« TAXE SUR VALEUR AJOUTEE »…)."""
-    return tx.montant < 0 and type_commission(tx.libelle) == "tva"
+    return tx.montant < 0 and type_commission(tx.libelle, banque_de(tx)) == "tva"
 
 
-def partenaire_tva(libelle: str | None) -> str | None:
+def partenaire_tva(libelle: str | None, banque: str | None = None) -> str | None:
     """Famille d'une opération qu'une TVA sur une ligne à part peut suivre : une « COMMISSION » ou
     l'abonnement BP E-CORPORATE (« commissions »), un intérêt d'escompte (« escompte »,
     14/11/2026) ; None sinon."""
-    if type_commission(libelle) in ("commission", "abonnement"):
+    if type_commission(libelle, banque) in ("commission", "abonnement"):
         return COMMISSIONS.code
     if type_escompte(libelle) == "interet_escompte":
         return ESCOMPTE.code
@@ -664,14 +679,14 @@ def tva_et_operation(operations: list[BankTransaction]) -> dict[int, tuple[str, 
     montant ; une opération ne prend qu'une TVA. Une TVA sans opération n'est pas rattachée."""
     par_jour: dict[tuple[int, date], list[BankTransaction]] = {}
     for tx in operations:
-        if est_tva_separee(tx) or (tx.montant < 0 and partenaire_tva(tx.libelle)):
+        if est_tva_separee(tx) or (tx.montant < 0 and partenaire_tva(tx.libelle, banque_de(tx))):
             par_jour.setdefault((tx.bank_account_id, tx.date_operation), []).append(tx)
     associees: dict[int, tuple[str, int]] = {}
     for lignes in par_jour.values():
         lignes.sort(key=lambda tx: (tx.ordre or 0, tx.id))
         libres: dict[Decimal, list[tuple[str, int]]] = {}
         for tx in lignes:
-            if (famille_partenaire := partenaire_tva(tx.libelle)) is not None:
+            if (famille_partenaire := partenaire_tva(tx.libelle, banque_de(tx))) is not None:
                 libres.setdefault(tva_attendue(-tx.montant), []).append((famille_partenaire, tx.id))
         for tx in lignes:
             if not est_tva_separee(tx):
