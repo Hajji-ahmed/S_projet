@@ -152,6 +152,9 @@ export type Timbres = {
   ecritures: EcritureFrais[];
   /** Journées écartées de la comptabilisation automatique (19/10/2026). */
   ecartes?: JourEcarte[];
+  /** Commission et TVA d'un transfert émis (20/11/2026) : dans le « VIR DI » de Sage, elles se
+   * rapprochent avec le transfert et ne se comptabilisent jamais dans SIMTIS. */
+  frais_transfert?: AutreFrais[];
 };
 
 /** Compte de charge des frais bancaires (05/11/2026) ; `banque` : réservé à cette banque. */

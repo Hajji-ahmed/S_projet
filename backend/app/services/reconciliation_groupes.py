@@ -247,6 +247,56 @@ def tva_de_la_commission(commission: Decimal, tva: Decimal) -> bool:
     return abs(abs(tva) - attendue) <= TOLERANCE_TVA
 
 
+def meme_reference(principale: Operation, *frais: Operation) -> bool:
+    """Chaque frais porte un n° de la principale (20/11/2026) : « TRANSFERT EMIS, COMMISSION DE
+    TRANSFERT TRF26J139379 » et « TVA 10% SUR COMMISSION TRF26J139379 » suivent « DEBIT CTRV MNT
+    TRF EMIS TRF26J139379/INV/… »."""
+    nums = numeros(principale.libelle, principale.reference)
+    return bool(nums) and all(nums & numeros(op.libelle, op.reference) for op in frais)
+
+
+def paires_de_la_principale(
+    principale: Operation, paires: list[tuple[Operation, ...]]
+) -> list[tuple[Operation, ...]]:
+    """Paires (commission, TVA) d'un groupe (20/11/2026) : celles qui portent le n° de la
+    principale s'il y en a, sinon toutes. Trois transferts émis le même jour, chacun avec sa
+    commission de 50,00 et sa TVA de 5,00, ne se disputent plus les mêmes frais."""
+    siennes = [paire for paire in paires if meme_reference(principale, *paire)]
+    return siennes or paires
+
+
+# Transfert émis (20/11/2026) : sa commission et sa TVA, de même référence, sont dans le « VIR DI »
+# de Sage ; SIMTIS ne les comptabilise jamais
+TRANSFERT = "Transfert"
+FAMILLES_FRAIS_TRANSFERT = frozenset({"commission", "tva"})
+Jour = tuple[int | None, date]
+
+
+def numeros_des_transferts(operations: Iterable) -> dict[Jour, list[frozenset[str]]]:
+    """N° de chaque transfert émis (« DEBIT CTRV MNT TRF EMIS TRF26J139379/… »), par compte et
+    par jour. `operations` : opérations du moteur ou du relevé (libellé, référence, montant,
+    compte, date)."""
+    transferts: dict[Jour, list[frozenset[str]]] = {}
+    for op in operations:
+        if type_operation(op.libelle, op.montant) != TRANSFERT:
+            continue
+        nums = frozenset(numeros(op.libelle, op.reference))
+        if nums:
+            transferts.setdefault((op.bank_account_id, op.date_operation), []).append(nums)
+    return transferts
+
+
+def frais_d_un_transfert(operation, transferts: dict[Jour, list[frozenset[str]]]) -> bool:
+    """Commission ou TVA d'un transfert émis (20/11/2026) : même compte et même jour, et un n° du
+    transfert dans son libellé ou sa référence (« TRANSFERT EMIS, COMMISSION DE TRANSFERT
+    TRF26J139379 », « TVA 10% SUR COMMISSION TRF26J139379 »)."""
+    du_jour = transferts.get((operation.bank_account_id, operation.date_operation))
+    if not du_jour or famille_frais(operation.libelle) not in FAMILLES_FRAIS_TRANSFERT:
+        return False
+    nums = numeros(operation.libelle, operation.reference)
+    return any(nums & transfert for transfert in du_jour)
+
+
 def _groupes_possibles(
     ecriture: Ecriture,
     candidats: list[Operation],
@@ -273,7 +323,9 @@ def _groupes_possibles(
         # `types_compatibles` sans appel par opération : le même type (autre avec autre)
         if frais or principale.id in frais_ids or type_op != type_sage:
             continue
-        for commission, tva in paires.get(cible - principale.montant, ()):
+        for commission, tva in paires_de_la_principale(
+            principale, paires.get(cible - principale.montant, [])
+        ):
             ops = (principale, commission, tva)
             if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
                 continue
@@ -459,7 +511,7 @@ def operations_couvertes(
                     type_op = _principale_possible(principale.libelle, principale.montant > 0)[1]
                     if type_op != type_sage:
                         continue
-                    for commission, tva in paires:
+                    for commission, tva in paires_de_la_principale(principale, paires):
                         ops = (principale, commission, tva)
                         if max(ecart_jours(op, ecriture) for op in ops) > fenetre:
                             continue

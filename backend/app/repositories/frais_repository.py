@@ -319,6 +319,27 @@ def autres_frais(
     return [(row[0], row[1]) for row in rows]
 
 
+def transferts_emis(
+    db: Session, account_ids: list[int], date_from: date, date_to: date
+) -> list[BankTransaction]:
+    """Transferts émis de la période (« DEBIT CTRV MNT TRF EMIS … », 20/11/2026), rapprochés ou
+    non : leur commission et leur TVA ne se comptabilisent jamais dans SIMTIS."""
+    if not account_ids:
+        return []
+    return list(
+        db.scalars(
+            select(BankTransaction)
+            .where(
+                BankTransaction.bank_account_id.in_(account_ids),
+                BankTransaction.date_operation.between(date_from, date_to),
+                BankTransaction.remplacee_par_id.is_(None),
+                reconciliation_repository.type_condition_banque("Transfert"),
+            )
+            .order_by(BankTransaction.id)
+        )
+    )
+
+
 def frais_libres_par_ids(
     db: Session, account_ids: list[int], ids: list[int]
 ) -> list[BankTransaction]:

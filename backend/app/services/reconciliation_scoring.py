@@ -274,6 +274,9 @@ TYPES_SAGE: tuple[tuple[str, str], ...] = (
     ("VIR DEFAUT", "RTGS"),
     ("VIR DE FAUT", "RTGS"),
     ("VIREMENTS DE FONDS", "RTGS"),
+    # Transfert émis à l'étranger (20/11/2026), avant « VIR » : « VIR DI 8015 GUANGZHOU … » va avec
+    # le « DEBIT CTRV MNT TRF EMIS … » de la banque (et sa commission + TVA de même référence)
+    ("VIR DI", "Transfert"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre ; « VIREMENTS DE
     # FONDS » (11/11/2026)
     ("VIREMENTS", "Virement"),
@@ -307,6 +310,9 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
     # face au « VIR DEFAUT » de Sage seulement ; « COMMISSION VIR. RTGS … » reste des frais
     ("VIR RTGS", "RTGS"),
     ("RTGS", "RTGS"),
+    # Transfert émis (20/11/2026) : « DEBIT CTRV MNT TRF EMIS TRF26J139379/INV/… » (BMCE, BMCI),
+    # face au « VIR DI … » de Sage seulement
+    ("DEBIT CTRV MNT TRF EMIS", "Transfert"),
     # Virements (12/10/2026) : « Virement … » d'un côté, « VIR … » de l'autre
     ("VIREMENT", "Virement"),
     ("VIRT", "Virement"),
@@ -376,8 +382,9 @@ def type_ecriture(libelle: str | None) -> str | None:
 
 # Types sans points de référence (28/10/2026) : leur n° (code de versement, réf. de virement) n'est
 # presque jamais le même des deux côtés. None = autre (type non reconnu).
-# Douane et RTGS (19/11/2026) : le n° TGR ou la réf. FT de la banque ne sont pas dans Sage
-TYPES_SANS_REFERENCE = frozenset({"Espèces", "Virement", "Douane", "RTGS", None})
+# Douane et RTGS (19/11/2026) : le n° TGR ou la réf. FT de la banque ne sont pas dans Sage ;
+# Transfert (20/11/2026) : le n° TRF de la banque n'est pas dans le « VIR DI » de Sage
+TYPES_SANS_REFERENCE = frozenset({"Espèces", "Virement", "Douane", "RTGS", "Transfert", None})
 # Recherche élargie de ces types : libellés semblables à 70 % au moins, faute de n° (28/10/2026)
 SEUIL_LIBELLE_ELARGIE = Decimal("0.70")
 
@@ -567,7 +574,7 @@ def _mots_prepares(operation: _Cote, ecriture: _Cote) -> Decimal:
 # Types comparés à leur échéance Sage (décision du 12/10/2026) : espèces et virements. Chèques et
 # effets sont comparés à la date de l'écriture (points dégressifs sur 3 jours). Douane et RTGS
 # (19/11/2026) sont des virements.
-TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement", "Douane", "RTGS"})
+TYPES_PAR_ECHEANCE = frozenset({"Espèces", "Virement", "Douane", "RTGS", "Transfert"})
 
 
 ESPECES = "Espèces"
@@ -1059,7 +1066,16 @@ def _meilleur_net(candidats: list[tuple[Decimal, int]], grille: Grille) -> int |
 
 # --- Filtre « Type d'opération » des écrans (14/10/2026) ------------------------------------------
 
-TYPES_OPERATION = ("Chèque", "Effet", "Espèces", "Virement", "Douane", "RTGS", "Impayé")
+TYPES_OPERATION = (
+    "Chèque",
+    "Effet",
+    "Espèces",
+    "Virement",
+    "Douane",
+    "RTGS",
+    "Transfert",
+    "Impayé",
+)
 AUTRE = "Autre"
 _SEPARATEUR = "[^A-Za-z0-9]"
 # « * » d'un préfixe en base : un à trois mots, comme `_MOTS_QUELCONQUES`

@@ -829,6 +829,33 @@ def test_an_rtgs_is_proposed_against_its_vir_defaut_only():
     assert not comparable(virement, defaut, GRILLE_PAR_DEFAUT)
 
 
+# --- Transfert émis (20/11/2026) -----------------------------------------------------------------
+
+
+def test_transfert_labels():
+    assert (
+        type_operation("DEBIT CTRV MNT TRF EMIS TRF26J139379/INV/SIM280926 GUANGZHOU M S A")
+        == "Transfert"
+    )
+    assert type_ecriture("VIR DI 8015 GUANGZHOU M.S.A FRERES CO.,LTD") == "Transfert"
+    # Sa commission et sa TVA restent des frais (« Autre »), un « VIR » ordinaire un virement
+    assert type_operation("TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J139379") is None
+    assert type_ecriture("VIR 037257108") == "Virement"
+    assert type_ecriture("VIR DIVERS") == "Virement"  # « DI » en mot entier seulement
+
+
+def test_a_transfert_only_faces_a_vir_di():
+    transfert = op(id=1, montant="-4373.81", libelle="DEBIT CTRV MNT TRF EMIS TRF26J139379/INV")
+    vir_di = ec(id=1, montant="4373.81", libelle="VIR DI 8015 GUANGZHOU", piece=None, echeance=JOUR)
+    resultat = proposer([transfert], [vir_di])
+    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
+    assert not comparable(
+        transfert, ec(montant="4373.81", libelle="VIR 037257108"), GRILLE_PAR_DEFAUT
+    )
+    virement = op(id=2, montant="-4373.81", libelle="VIREMENT EMIS VERS X")
+    assert not comparable(virement, vir_di, GRILLE_PAR_DEFAUT)
+
+
 @pytest.mark.parametrize(
     ("a", "b", "attendu"),
     [

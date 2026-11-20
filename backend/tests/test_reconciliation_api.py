@@ -1473,6 +1473,7 @@ LIBELLES_BANQUE = {
     "VIR. RTGS RECU DE SOCIETE D IMPRESSION": "RTGS",
     "EPAIEMENT FACT 180826 TGR 103935298563 SIMTIS": "Douane",
     "EPAIEMENT FACT 2026/07/23 PORTNET AGENTS": "Autre",
+    "DEBIT CTRV MNT TRF EMIS TRF26J139379/INV/SIM280926": "Transfert",  # 20/11/2026
     "IMPAYE SUR EFFET ESCOMPTE N 2600009 TIRE SUR X": "Impayé",
     "IMP LCN 1099850/18942568": "Impayé",  # au débit (MONTANTS_BANQUE)
     "IMP LCN 2987576/18942568": "Impayé",  # au crédit aussi (17/11/2026, plus un effet)
@@ -1497,6 +1498,7 @@ LIBELLES_SAGE = {
     "VIR DEFAUT": "RTGS",
     "VIR. DE FAUT 12": "RTGS",
     "VIREMENTS DE FONDS": "RTGS",
+    "VIR DI 8015 GUANGZHOU": "Transfert",
     "IMP EAR1° AXL 917714 AJETTAR": "Impayé",
     "IMP EAR° DA 9515404 EL MOUAFFAK": "Impayé",
     "COM": "Autre",
@@ -1514,7 +1516,17 @@ def test_the_type_filter_reads_labels_exactly_like_the_engine(client, comptable,
         ecriture(db, compte, libelle=libelle)
     base = {"company_id": str(company(db).id)}
 
-    for nom in ("Chèque", "Effet", "Espèces", "Virement", "Douane", "RTGS", "Impayé", "Autre"):
+    for nom in (
+        "Chèque",
+        "Effet",
+        "Espèces",
+        "Virement",
+        "Douane",
+        "RTGS",
+        "Transfert",
+        "Impayé",
+        "Autre",
+    ):
         ops = client.get(
             "/api/reconciliation/transactions",
             params={**base, "type_operation": nom},
@@ -2233,3 +2245,63 @@ def test_an_other_line_facing_a_virement_is_proposed_with_a_type_different_flag(
     assert proposees[autre.id]["ecriture"]["id"] == cheque.id
     assert proposees[autre.id]["type_different"] == "Autre / Chèque"
     assert statuses(db, autre, cheque) == ["À vérifier", "À vérifier"]
+
+
+# --- Transfert émis (20/11/2026) ----------------------------------------------------------------
+
+
+def _transferts_bmce(db):
+    """Trois transferts émis du même jour, chacun avec sa commission de 50 et sa TVA de 5 de même
+    référence (BMCE, 02/10/2026), et le « VIR DI » de Sage du premier."""
+    compte = account(db, bank_code="BMCE")
+    lignes = {}
+    for ref, montant in (("139379", "-4373.81"), ("139406", "-2711.87"), ("139419", "-2568.30")):
+        lignes[ref] = [
+            operation(
+                db,
+                compte,
+                montant,
+                libelle=f"DEBIT CTRV MNT TRF EMIS TRF26J{ref}/INV/X",
+                reference=f"26J{ref}",
+            ),
+            operation(
+                db,
+                compte,
+                "-50",
+                libelle=f"TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J{ref}",
+                reference=f"26J{ref}",
+            ),
+            operation(
+                db,
+                compte,
+                "-5",
+                libelle=f"TVA 10% SUR COMMISSION TRF26J{ref}",
+                reference=f"26J{ref}",
+            ),
+        ]
+    vir_di = ecriture(
+        db,
+        compte,
+        "4428.81",
+        libelle="VIR DI 8015 GUANGZHOU M.S.A FRERES CO.,LTD",
+        tiers=None,
+        echeance=JOUR,
+    )
+    return compte, lignes, vir_di
+
+
+def test_a_transfert_is_proposed_with_the_commission_and_vat_of_its_reference(
+    client, comptable, db
+):
+    _compte, lignes, vir_di = _transferts_bmce(db)
+
+    body = run(client, comptable, db).json()
+    [proposal] = proposals(client, comptable, db).json()["correspondances"]
+
+    assert body["nb_groupes"] == 1
+    assert proposal["type"] == "N-1"
+    assert proposal["ecriture"]["id"] == vir_di.id
+    assert sorted(o["id"] for o in proposal["operations"]) == sorted(o.id for o in lignes["139379"])
+    assert (proposal["total_operations"], proposal["ecart"]) == ("-4428.81", "0.00")
+    # Les frais des deux autres transferts ne sont pas pris
+    assert statuses(db, *lignes["139406"][1:], *lignes["139419"][1:]) == ["Non rapprochée"] * 4

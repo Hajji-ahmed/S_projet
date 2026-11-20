@@ -2272,6 +2272,8 @@ def test_the_e_corporate_subscription_and_its_vat_go_to_com_whatever_the_amount(
         ("COM.ADOBE", False, "commission_carte", None),
         ("COMM VIR SRBM: AWBVCA0510261805", False, "commission_virement", None),
         ("TIMBRE/REM LCN REF 1897734", True, None, None),
+        # BMCE (20/11/2026), toutes banques
+        ("FRAIS TIMBRE RELATIF AUX VERSEMENTS", True, None, None),
         # Restent à la main
         ("COMMISSION CAUTION", False, None, None),
         ("FRAIS ET AGIOS TRIMESTRIELS T3 2026", False, None, None),
@@ -2885,3 +2887,72 @@ def test_a_bmce_file_fee_already_in_sage_is_not_proposed(client, comptable, db):
 
     assert [p["transaction_id"] for p in data["propositions"]] == [bbo.id]
     assert dossiers.id not in {a["id"] for a in data["autres_frais"]}
+
+
+# --- Transfert émis : commission et TVA dans le « VIR DI » de Sage (20/11/2026) ------------------
+
+
+def test_the_commission_and_vat_of_a_transfert_are_never_booked(client, comptable, db):
+    compte = account(db, bank_code="BMCE")
+    ref = "26J139379"
+    transfert = operation(
+        db, compte, "-4373.81", JOUR, f"DEBIT CTRV MNT TRF EMIS TRF{ref}/INV/X", reference=ref
+    )
+    commission = operation(
+        db, compte, "-50", JOUR, f"TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF{ref}", reference=ref
+    )
+    tva = operation(db, compte, "-5", JOUR, f"TVA 10% SUR COMMISSION TRF{ref}", reference=ref)
+    # Commission d'un transfert absent du relevé : SIMTIS la comptabilise comme avant
+    seule = operation(db, compte, "-50", JOUR, "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J9")
+
+    body = lire(client, comptable, db, None).json()
+
+    assert [(p["libelle"], p["total"]) for p in body["propositions"]] == [("COM", "50.00")]
+    assert [p["transaction_id"] for p in body["propositions"]] == [seule.id]
+    assert body["autres_frais"] == []
+    assert [f["id"] for f in body["frais_transfert"]] == [tva.id, commission.id]
+    assert transfert.id not in {f["id"] for f in body["frais_transfert"]}
+
+    # Ni par la validation (recalculée), ni à la main
+    valide = valider(client, comptable, db, (compte, JOUR, commission.id), famille="commissions")
+    assert valide.status_code == 409
+    assert "plus à comptabiliser" in valide.json()["detail"]
+    main = manuelle(client, comptable, db, [commission])
+    assert main.status_code == 409
+    assert "transfert émis" in main.json()["detail"]
+
+
+# --- Timbre mensuel des versements (20/11/2026) ---------------------------------------------------
+
+TIMBRE_VERSEMENTS = "FRAIS TIMBRE RELATIF AUX VERSEMENTS"
+
+
+def test_the_monthly_stamp_on_deposits_is_a_stamp_duty(client, comptable, db):
+    """BMCE, fin de mois : « FRAIS TIMBRE RELATIF AUX VERSEMENTS » (35,00) est un droit de timbre
+    sans TVA, écriture « DT D'ENREGISTREMENT » sur 61671000, quelle que soit la banque."""
+    compte = bmce(db)
+    timbre = operation(db, compte, "-35", JOUR, TIMBRE_VERSEMENTS)
+
+    data = lire(client, comptable, db, famille=None).json()
+
+    assert [(p["famille"], p["transaction_id"]) for p in data["propositions"]] == [
+        ("timbres", timbre.id)
+    ]
+    assert [
+        (g["compte"], g["libelle"], g["debit"], g["credit"])
+        for g in data["propositions"][0]["lignes"]
+    ] == [
+        ("61671000", TIMBRE_VERSEMENTS, "35.00", None),
+        ("55410001", TIMBRE_VERSEMENTS, None, "35.00"),
+    ]
+    assert data["autres_frais"] == []
+    assert valider(client, comptable, db, (compte, JOUR)).status_code == 200
+    assert statuses(db, timbre) == ["Rapprochée"]
+
+
+def test_a_monthly_stamp_on_deposits_already_in_sage_is_not_proposed(client, comptable, db):
+    compte = bmce(db, bank_code="BMCI")
+    operation(db, compte, "-35", JOUR, TIMBRE_VERSEMENTS)
+    ecriture(db, compte, "35", JOUR, "DT D'ENREGISTREMENT")
+
+    assert lire(client, comptable, db, famille=None).json()["propositions"] == []

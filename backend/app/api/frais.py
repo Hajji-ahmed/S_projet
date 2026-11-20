@@ -186,6 +186,7 @@ def lire(
         autres_frais=[AutreFraisOut.of(item) for item in vue.autres],
         frais_inclus=[FraisInclusOut.of(item) for item in vue.inclus],
         ecartes=[JourEcarteOut.of(item) for item in vue.ecartes],
+        frais_transfert=[AutreFraisOut.of(item) for item in vue.transferts],
     )
 
 

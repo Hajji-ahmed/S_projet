@@ -51,7 +51,11 @@ from app.services.account_service import compte_principal, journal_des_frais
 from app.services.errors import ConflictError, NotFoundError
 from app.services.normalization_service import line_hash
 from app.services.position_service import business_today
-from app.services.reconciliation_groupes import operations_couvertes
+from app.services.reconciliation_groupes import (
+    frais_d_un_transfert,
+    numeros_des_transferts,
+    operations_couvertes,
+)
 from app.services.reconciliation_scoring import _plain as reconciliation_scoring_plain
 
 LIBELLE_TIMBRE = "DT D'ENREGISTREMENT"
@@ -105,7 +109,9 @@ ZERO = Decimal("0.00")
 _TIMBRE = re.compile(
     r"^(DROITS? DE TIMBRE\b|FRAIS DE TIMBRE ?/? ?DOMICILIATION\b|FRAIS TIMBRE DU MOIS\b"
     # AWB (12/11/2026) : « TIMBRE/REM LCN REF 1897734 »
-    r"|TIMBRE ?/ ?REM LCN\b)"
+    r"|TIMBRE ?/ ?REM LCN\b"
+    # BMCE (20/11/2026), toutes banques : timbre mensuel des versements, sans TVA
+    r"|FRAIS TIMBRE RELATIF AUX VERSEMENTS\b)"
 )
 _COMMISSIONS = (
     ("commission", re.compile(r"^COMMISSION$")),
@@ -878,6 +884,17 @@ def _accounts(db: Session, company_id: int, bank_account_id: int | None) -> list
     return accounts
 
 
+Transferts = dict[tuple[int | None, date], list[frozenset[str]]]
+
+
+def _transferts(db: Session, account_ids: list[int], date_from: date, date_to: date) -> Transferts:
+    """N° des transferts émis de la période, par compte et par jour (20/11/2026) : leur commission
+    et leur TVA de même référence sont dans le « VIR DI » de Sage, jamais comptabilisées ici."""
+    return numeros_des_transferts(
+        frais_repository.transferts_emis(db, account_ids, date_from, date_to)
+    )
+
+
 def _jours(
     db: Session,
     famille: Famille,
@@ -886,11 +903,15 @@ def _jours(
     date_from: date,
     date_to: date,
     inclus: "dict[int, AccountingEntry] | None" = None,
+    transferts: "Transferts | None" = None,
 ) -> list[JourFrais]:
     """Écritures à comptabiliser (une par frais, 13/11/2026), sans les frais déjà inclus dans une
-    écriture Sage libre, déjà passés dans Sage, ni écartés par l'utilisateur (19/10/2026)."""
+    écriture Sage libre, déjà passés dans Sage, ni écartés par l'utilisateur (19/10/2026), ni la
+    commission et la TVA d'un transfert émis (20/11/2026)."""
     if inclus is None:
         inclus = frais_inclus(db, company_id, account_ids, date_from, date_to)
+    if transferts is None:
+        transferts = _transferts(db, account_ids, date_from, date_to)
     libres = frais_repository.frais_libres(db, account_ids, date_from, date_to, famille.libelle_sql)
     hors_famille = None
     if famille in FAMILLES_AVEC_TVA:
@@ -904,7 +925,7 @@ def _jours(
         )
     return regrouper(
         famille,
-        [tx for tx in libres if tx.id not in inclus],
+        [tx for tx in libres if tx.id not in inclus and not frais_d_un_transfert(tx, transferts)],
         frais_repository.montants_dans_sage(
             db, company_id, account_ids, date_from, date_to, famille.ecriture_sql
         ),
@@ -1089,6 +1110,7 @@ def propositions(
     date_from: date | None = None,
     date_to: date | None = None,
     inclus: dict[int, AccountingEntry] | None = None,
+    transferts: Transferts | None = None,
 ) -> list[Proposition]:
     """Écritures à passer, calculées (rien n'est écrit), de la plus récente à la plus ancienne ;
     toutes les familles sans `famille` (un seul tableau, 13/10/2026), timbres puis commissions
@@ -1098,13 +1120,17 @@ def propositions(
     familles = [famille] if famille else list(FAMILLES.values())
     if inclus is None:
         inclus = frais_inclus(db, company_id, list(accounts), date_from, date_to)
+    if transferts is None:
+        transferts = _transferts(db, list(accounts), date_from, date_to)
     rang = {code: index for index, code in enumerate(FAMILLES)}
     items = [
         Proposition(
             jour, accounts[jour.bank_account_id], accounts[jour.bank_account_id].bank.code, regle
         )
         for regle in familles
-        for jour in _jours(db, regle, company_id, list(accounts), date_from, date_to, inclus)
+        for jour in _jours(
+            db, regle, company_id, list(accounts), date_from, date_to, inclus, transferts
+        )
     ]
 
     # Une écriture par frais (13/11/2026) : pour un même jour, compte et famille, dans l'ordre du
@@ -2179,6 +2205,7 @@ def autres_frais(
     date_from: date | None = None,
     date_to: date | None = None,
     inclus: dict[int, AccountingEntry] | None = None,
+    transferts: Transferts | None = None,
 ) -> list[AutreFrais]:
     """Frais de « À comptabiliser » que SIMTIS ne comptabilise pas en automatique : à passer à la
     main, du plus récent au plus ancien. Un droit de timbre ou une commission d'une famille
@@ -2188,6 +2215,8 @@ def autres_frais(
     accounts = {a.id: a for a in _accounts(db, company_id, bank_account_id)}
     if inclus is None:
         inclus = frais_inclus(db, company_id, list(accounts), date_from, date_to)
+    if transferts is None:
+        transferts = _transferts(db, list(accounts), date_from, date_to)
     ecartes = _ecartes(db, list(accounts), date_from, date_to)
     tva_main = _tva_a_la_main(db, company_id, list(accounts), date_from, date_to)
     return [
@@ -2198,7 +2227,9 @@ def autres_frais(
             pointage,
         )
         for tx, pointage in frais_repository.autres_frais(db, list(accounts), date_from, date_to)
-        if a_la_main(tx, ecartes, tva_main) and tx.id not in inclus
+        if a_la_main(tx, ecartes, tva_main)
+        and tx.id not in inclus
+        and not frais_d_un_transfert(tx, transferts)
     ]
 
 
@@ -2230,6 +2261,8 @@ class TableauFrais:
     autres: list[AutreFrais]
     inclus: list[FraisInclus]
     ecartes: list[JourEcarte] = field(default_factory=list)
+    # Commission et TVA d'un transfert émis, dans le « VIR DI » de Sage (20/11/2026)
+    transferts: list[AutreFrais] = field(default_factory=list)
 
 
 def tableau(
@@ -2245,11 +2278,26 @@ def tableau(
     date_from, date_to = _periode(date_from, date_to)
     accounts = {a.id: a for a in _accounts(db, company_id, bank_account_id)}
     inclus = frais_inclus(db, company_id, list(accounts), date_from, date_to)
+    transferts = _transferts(db, list(accounts), date_from, date_to)
     filtre = {"bank_account_id": bank_account_id, "date_from": date_from, "date_to": date_to}
+    a_comptabiliser = frais_repository.autres_frais(db, list(accounts), date_from, date_to)
+    de_transferts = [
+        (tx, pointage) for tx, pointage in a_comptabiliser if frais_d_un_transfert(tx, transferts)
+    ]
+    ids_transferts = {tx.id for tx, _ in de_transferts}
     return TableauFrais(
-        propositions=propositions(db, company_id, inclus=inclus, **filtre),
+        propositions=propositions(db, company_id, inclus=inclus, transferts=transferts, **filtre),
         ecritures=ecritures(db, company_id, **filtre),
-        autres=autres_frais(db, company_id, inclus=inclus, **filtre),
+        autres=autres_frais(db, company_id, inclus=inclus, transferts=transferts, **filtre),
+        transferts=[
+            AutreFrais(
+                tx,
+                accounts[tx.bank_account_id].bank.code,
+                accounts[tx.bank_account_id].bank.logo,
+                pointage,
+            )
+            for tx, pointage in de_transferts
+        ],
         inclus=[
             FraisInclus(
                 tx,
@@ -2257,8 +2305,8 @@ def tableau(
                 accounts[tx.bank_account_id].bank.logo,
                 inclus[tx.id],
             )
-            for tx, _ in frais_repository.autres_frais(db, list(accounts), date_from, date_to)
-            if tx.id in inclus
+            for tx, _ in a_comptabiliser
+            if tx.id in inclus and tx.id not in ids_transferts
         ],
         ecartes=[
             JourEcarte(
@@ -2273,6 +2321,12 @@ def tableau(
             )
         ],
     )
+
+
+MESSAGE_TRANSFERT = (
+    "« {libelle} » est un frais d'un transfert émis, inclus dans l'écriture Sage « VIR DI » du "
+    "transfert : il se rapproche avec le transfert, il ne se comptabilise pas dans SIMTIS."
+)
 
 
 def _message_inclus(tx: BankTransaction, entry: AccountingEntry) -> str:
@@ -2346,6 +2400,10 @@ def comptabiliser_manuellement(
     for tx in operations:
         if tx.id in inclus:
             raise ConflictError(_message_inclus(tx, inclus[tx.id]))
+    transferts = _transferts(db, sorted({tx.bank_account_id for tx in operations}), debut, fin)
+    for tx in operations:
+        if frais_d_un_transfert(tx, transferts):
+            raise ConflictError(MESSAGE_TRANSFERT.format(libelle=tx.libelle))
     comptes_operations = sorted({tx.bank_account_id for tx in operations})
     ecartes = _ecartes(db, comptes_operations, debut, fin)
     tva_main = _tva_a_la_main(db, company_id, comptes_operations, debut, fin)

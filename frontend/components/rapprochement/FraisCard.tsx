@@ -190,6 +190,7 @@ export function FraisCard({
     setNbAffichees(PAR_LOT);
   }
   const inclus = data?.frais_inclus ?? [];
+  const deTransferts = data?.frais_transfert ?? [];
   const autresCoches = autres.filter((tx) => manuels.has(tx.id));
   const unSeulCompte = new Set(autresCoches.map((tx) => tx.bank_account_id)).size <= 1;
 
@@ -712,6 +713,46 @@ export function FraisCard({
                           </span>
                         </td>
                         <Montant value={tx.ecriture.montant} />
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
+          {deTransferts.length > 0 && (
+            <details className="rounded-[12px] border border-simtis-border bg-simtis-surface">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-simtis-text">
+                Frais d&apos;un transfert émis, inclus dans le VIR DI de Sage ·{" "}
+                {plural(deTransferts.length, "opération")}
+              </summary>
+              <p className="px-3 pb-2 text-sm text-simtis-muted">
+                Commission et TVA de même référence qu&apos;un « DEBIT CTRV MNT TRF EMIS » : elles
+                se rapprochent avec le transfert, en un groupe face au « VIR DI » de Sage, et ne se
+                comptabilisent pas dans SIMTIS.
+              </p>
+              <div className="overflow-x-auto border-t border-simtis-border bg-simtis-card">
+                <table className="w-full text-sm">
+                  <thead className="bg-simtis-light text-left text-xs text-simtis-primary-dark">
+                    <tr>
+                      <th className={TH}>Date</th>
+                      <th className={TH}>Banque</th>
+                      <th className={TH}>Frais</th>
+                      <th className={cn(TH, "text-right")}>Montant</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-simtis-border">
+                    {deTransferts.map((tx) => (
+                      <tr key={tx.id}>
+                        <td className="px-3 py-1.5 whitespace-nowrap tabular-nums">
+                          {formatDate(tx.date_operation)}
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <BankLabel code={tx.bank_code} logo={tx.bank_logo} />
+                        </td>
+                        <td className="px-3 py-1.5">{tx.libelle}</td>
+                        <Montant value={tx.montant} />
                       </tr>
                     ))}
                   </tbody>

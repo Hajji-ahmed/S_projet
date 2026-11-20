@@ -296,6 +296,9 @@ class TimbresOut(BaseModel):
     frais_inclus: list[FraisInclusOut] = []
     # Journées écartées de la comptabilisation automatique (19/10/2026)
     ecartes: list[JourEcarteOut] = []
+    # Commission et TVA d'un transfert émis, dans le « VIR DI » de Sage : à rapprocher avec le
+    # transfert, jamais à comptabiliser (20/11/2026)
+    frais_transfert: list[AutreFraisOut] = []
 
 
 class LigneIn(BaseModel):

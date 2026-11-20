@@ -168,9 +168,21 @@ def list_entries(
     page: Annotated[int, Query(ge=1)] = 1,
     # Filtre « Type d'opération » (14/10/2026), mêmes règles que le moteur
     type_operation: Annotated[
-        Literal["Chèque", "Effet", "Espèces", "Virement", "Douane", "RTGS", "Impayé", "Autre"]
+        Literal[
+            "Chèque",
+            "Effet",
+            "Espèces",
+            "Virement",
+            "Douane",
+            "RTGS",
+            "Transfert",
+            "Impayé",
+            "Autre",
+        ]
         | None,
-        Query(description="Chèque, Effet, Espèces, Virement, Douane, RTGS, Impayé ou Autre"),
+        Query(
+            description="Chèque, Effet, Espèces, Virement, Douane, RTGS, Transfert, Impayé ou Autre"
+        ),
     ] = None,
     # 19/10/2026 : false = écritures sans opération bancaire possible, true = avec
     operation_possible: bool | None = None,

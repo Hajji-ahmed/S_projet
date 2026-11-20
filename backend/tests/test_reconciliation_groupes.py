@@ -8,7 +8,9 @@ import pytest
 from app.services.reconciliation_groupes import (
     est_ecriture_de_frais,
     famille_frais,
+    frais_d_un_transfert,
     grouper,
+    numeros_des_transferts,
     operations_couvertes,
     tva_de_la_commission,
 )
@@ -267,3 +269,64 @@ def test_only_the_fees_to_check_are_covered_alone():
 
     assert operations_couvertes([virement, agios], [entree], GRILLE_PAR_DEFAUT) == {2: 10}
     assert operations_couvertes([agios], [entree], GRILLE_PAR_DEFAUT, cibles=set()) == {}
+
+
+# --- Transfert émis : principale + commission + TVA de même référence (20/11/2026) --------------
+
+
+def transferts_du_jour():
+    """Trois transferts émis BMCE du 02/10/2026, chacun avec sa commission de 50 et sa TVA de 5."""
+    lignes = []
+    for rang, (ref, montant) in enumerate(
+        [("139379", "-4373.81"), ("139406", "-2711.87"), ("139419", "-2568.30")]
+    ):
+        base = 10 * (rang + 1)
+        lignes += [
+            op(base, montant, f"DEBIT CTRV MNT TRF EMIS TRF26J{ref}/INV/SIM280926 FOURNISSEUR"),
+            op(base + 1, "-50", f"TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J{ref}"),
+            op(base + 2, "-5", f"TVA 10% SUR COMMISSION TRF26J{ref}"),
+        ]
+    return lignes
+
+
+def test_each_transfert_takes_the_commission_and_vat_of_its_reference():
+    vir_di = [
+        ec(100, "4428.81", "VIR DI 8015 GUANGZHOU M.S.A FRERES CO.,LTD", echeance=JOUR),
+        ec(101, "2766.87", "VIR DI 8016 JINAN KELUNTE", echeance=JOUR),
+        ec(102, "2623.30", "VIR DI 8017 YOUIL PLAZA", echeance=JOUR),
+    ]
+
+    resultat = groupes(transferts_du_jour(), vir_di)
+
+    assert resultat.ecritures_ambigues == set()
+    assert sorted((g.ecriture_id, g.operation_ids) for g in resultat.groupes) == [
+        (100, (10, 11, 12)),
+        (101, (20, 21, 22)),
+        (102, (30, 31, 32)),
+    ]
+
+
+def test_without_a_shared_number_the_pairs_of_the_day_stay_ambiguous():
+    """Sans n° commun (libellés sans référence), trois paires identiques : ambiguïté, comme avant."""
+    lignes = [
+        op(1, "-4373.81", "DEBIT CTRV MNT TRF EMIS"),
+        *(op(2 + i, "-50", f"COMMISSION {chr(65 + i)}") for i in range(3)),
+        *(op(5 + i, "-5", f"TVA SUR COMMISSION {chr(65 + i)}") for i in range(3)),
+    ]
+    resultat = groupes(lignes, [ec(100, "4428.81", "VIR DI 8015", echeance=JOUR)])
+    assert resultat.groupes == [] and resultat.ecritures_ambigues == {100}
+
+
+def test_fees_of_a_transfert_are_recognised_by_account_day_and_number():
+    lignes = transferts_du_jour()
+    transferts = numeros_des_transferts(lignes)
+    commission_ailleurs = op(
+        40, "-50", "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J139379", compte=2
+    )
+    autre_jour = op(41, "-5", "TVA 10% SUR COMMISSION TRF26J139379", jour=date(2026, 4, 22))
+    sans_transfert = op(42, "-50", "TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J999999")
+    frais_swift = op(43, "-120", "FRAIS SWIFT TRF26J139379")  # ni commission, ni TVA
+
+    assert {o.id for o in lignes if frais_d_un_transfert(o, transferts)} == {11, 12, 21, 22, 31, 32}
+    for autre in (commission_ailleurs, autre_jour, sans_transfert, frais_swift):
+        assert not frais_d_un_transfert(autre, transferts)
