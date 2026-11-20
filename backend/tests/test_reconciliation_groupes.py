@@ -61,6 +61,13 @@ def test_fee_families_are_read_from_the_label():
     assert famille_frais("TRANSFERT EMIS, COMMISSION DE TRANSFERT TRF26J1") == "commission"
     assert famille_frais("TVA 10% SUR COMMISSION TRF26J1") == "tva"
     assert famille_frais("FRAIS SWIFT CREDOC IMPORT") == "frais"
+    # Credoc import et caution de BMCE (20/11/2026)
+    assert famille_frais("CREDOC IMPORT COMMISSION OUVERTURE ILC26A001638") == "commission"
+    assert (
+        famille_frais("OUVERTURE CREDOC IMPORT COMMISSION IRREVOCABILITE ILC26A1") == "commission"
+    )
+    assert famille_frais("FRAIS TVA780191751000000061") == "tva"
+    assert famille_frais("REGLEMENT ORDRE ACHAT DEBIT COMPTE CLIENT ILC26A001245") is None
 
 
 def test_cheque_plus_commission_plus_tva_is_one_entry():

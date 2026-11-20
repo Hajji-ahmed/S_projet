@@ -36,6 +36,7 @@ import {
   PAR_LOT,
   regrouperAvecTva,
   selectionTimbres,
+  suiteDeCase,
   sommeMontants,
   totalGrandLivre,
   type FiltreFrais,
@@ -248,9 +249,11 @@ export function FraisCard({
       );
       setEcartement(null);
       onChanged(
-        groupe.length > 1
-          ? "Frais et sa TVA écartés : ils sont à passer à la main."
-          : "Frais écarté : il est à passer à la main.",
+        groupe.length > 2
+          ? "Frais de même référence et leur TVA écartés : ils sont à passer à la main."
+          : groupe.length > 1
+            ? "Frais et sa TVA écartés : ils sont à passer à la main."
+            : "Frais écarté : il est à passer à la main.",
       );
     } catch (error) {
       setModalError(error instanceof ApiError ? error.message : "L'écartement a échoué.");
@@ -434,7 +437,7 @@ export function FraisCard({
                                   return next;
                                 })
                               }
-                              aria-label={`Comptabiliser ${label}${groupe.length > 1 ? " et sa TVA" : ""}`}
+                              aria-label={`Comptabiliser ${label}${suiteDeCase(groupe.length)}`}
                             />
                           )
                         }
@@ -472,7 +475,7 @@ export function FraisCard({
                                       variant="ghost"
                                       icon={Ban}
                                       disabled={busy}
-                                      aria-label={`Écarter ${label}${groupe.length > 1 ? " et sa TVA" : ""}`}
+                                      aria-label={`Écarter ${label}${suiteDeCase(groupe.length)}`}
                                       onClick={() => {
                                         setMotif("");
                                         setModalError(null);
@@ -864,7 +867,7 @@ export function FraisCard({
         )}
         <p className="mb-4 text-simtis-muted">
           {ecartement &&
-            `${libelleProposition(ecartement)} du ${formatDate(ecartement.date)} (${ecartement.bank_code})${caseDe(ecartement).length > 1 ? " et sa TVA" : ""} : `}
+            `${libelleProposition(ecartement)} du ${formatDate(ecartement.date)} (${ecartement.bank_code})${suiteDeCase(caseDe(ecartement).length)} : `}
           ce frais ne sera plus proposé et passera dans « Autres frais à passer à la main ». «
           Reproposer » l&apos;annule.
         </p>

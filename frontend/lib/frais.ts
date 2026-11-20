@@ -111,6 +111,15 @@ export function regrouperAvecTva<T>(
   return cases;
 }
 
+/**
+ * Fin du libellé d'une case de `nb` écritures (20/11/2026) : « et sa TVA » pour un frais et sa
+ * TVA, les autres écritures d'un groupe credoc BMCE de même référence au-delà.
+ */
+export function suiteDeCase(nb: number): string {
+  if (nb <= 1) return "";
+  return nb === 2 ? " et sa TVA" : ` et les ${nb - 1} autres écritures de même référence`;
+}
+
 /** Libellés proposés pour une écriture saisie à la main (saisie libre). */
 export const LIBELLES_SUGGERES = [
   "AGIOS",

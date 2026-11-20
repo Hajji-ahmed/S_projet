@@ -15,6 +15,7 @@ import {
   regrouperAvecTva,
   selectionTimbres,
   sommeMontants,
+  suiteDeCase,
   suggestionsLibelles,
   totalGrandLivre,
   tvaSurPartie,
@@ -416,6 +417,15 @@ describe("regrouperAvecTva (19/11/2026)", () => {
     expect(
       grouper([{ id: 1 }, { id: 4, suit: 3 }, { id: 2 }, { id: 3 }, { id: 5, suit: 2 }]),
     ).toEqual([[1], [2, 5], [3, 4]]);
+  });
+
+  it("met tout un groupe credoc BMCE dans la case de son premier frais (20/11/2026)", () => {
+    expect(
+      grouper([{ id: 1 }, { id: 2, suit: 1 }, { id: 3, suit: 1 }, { id: 4, suit: 1 }, { id: 5 }]),
+    ).toEqual([[1, 2, 3, 4], [5]]);
+    expect(suiteDeCase(1)).toBe("");
+    expect(suiteDeCase(2)).toBe(" et sa TVA");
+    expect(suiteDeCase(4)).toBe(" et les 3 autres écritures de même référence");
   });
 
   it("laisse seule une TVA dont la commission n'est pas dans la liste", () => {

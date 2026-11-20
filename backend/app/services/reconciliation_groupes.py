@@ -64,6 +64,10 @@ FAMILLES_FRAIS: tuple[tuple[str, str], ...] = (
     ("PRELEVEMENT FRAIS SERVICE BBO", "commission"),
     ("PRELEVEMENT FRAIS TVA SERVICE BBO", "tva"),
     ("PRELEVEMENT DE LA TVA SUR L ENSEMBLE", "tva"),
+    # BMCE (20/11/2026), avant « FRAIS » : credoc import et TVA de caution
+    ("CREDOC IMPORT COMMISSION", "commission"),
+    ("OUVERTURE CREDOC", "commission"),
+    ("FRAIS TVA", "tva"),
     ("TAXE SUR VALEUR AJOUTEE", "tva"),
     ("TVA", "tva"),
     ("INTERET", "interet"),

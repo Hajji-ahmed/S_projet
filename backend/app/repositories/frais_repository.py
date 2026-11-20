@@ -33,7 +33,12 @@ LIBELLE_COMMISSION_SQL = (
     # BMCE (20/11/2026) : frais de dossiers, service BBO et leur TVA ; la banque est vérifiée par
     # `frais_service.type_commission`
     r"|PRELEVEMENT\W+(DES\W+FRAIS\W+DE\W+DOSSIER|FRAIS\W+(TVA\W+)?SERVICE\W+BBO"
-    r"|DE\W+LA\W+TVA\W+SUR\W+L\W*ENSEMBLE))"
+    r"|DE\W+LA\W+TVA\W+SUR\W+L\W*ENSEMBLE)"
+    # BMCE (20/11/2026) : credoc import (« FRAIS SWIFT ILC… », « FRAIS PDL ILC… », « CREDOC
+    # IMPORT COMMISSION OUVERTURE… », « OUVERTURE CREDOC IMPORT… ») et TVA de caution
+    # (« FRAIS TVA780191… ») ; la banque et la référence sont vérifiées par
+    # `frais_service.reference_bmce`
+    r"|FRAIS\W+(SWIFT|PDL|TVA)|CREDOC\W+IMPORT|OUVERTURE\W+CREDOC)"
 )
 # Écriture Sage d'un jour : « DT D'ENREGISTREMENT » (apostrophe droite ou non), « COM »
 ECRITURE_TIMBRE_SQL = r"^\s*DT\s+D.?\s*ENREGISTREMENT"

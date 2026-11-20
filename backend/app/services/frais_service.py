@@ -191,6 +191,26 @@ _COMMISSIONS_BMCE = (
     ("tva", re.compile(r"^PRELEVEMENT DE LA TVA SUR L ?ENSEMBLE DES FRAIS (ET )?COMMISSIONS$")),
     ("tva", re.compile(r"^PRELEVEMENT FRAIS TVA SERVICE BBO$")),
 )
+# BMCE (20/11/2026), seulement pour un compte BMCE, sur le libellé sans ponctuation : frais d'un
+# credoc import de même référence « ILC… » le même jour (COMMISSION ACCEPTATION / LEVEE DOC /
+# PAIEMENT CREDOC / MODIFICATION CREDOC, CREDOC IMPORT COMMISSION OUVERTURE, OUVERTURE CREDOC
+# IMPORT COMMISSION IRREVOCABILITE, FRAIS SWIFT, FRAIS PDL…) et leur TVA unique (« TVA ILC… »,
+# « TVA 10% SUR COMMISSION REF ILC… ») ; « COMMISSION CAUTION<réf> » et « FRAIS TVA<même réf> ».
+# Le groupe (compte, jour, référence) n'entre en automatique que si sa TVA vaut exactement la
+# somme des TVA de 10 % de ses frais, arrondies frais par frais comme la banque
+# (`groupes_reference`) ; sinon tout le groupe reste à la main. « REGLEMENT ORDRE ACHAT DEBIT
+# COMPTE CLIENT ILC… » (le paiement) n'en fait jamais partie.
+_REFERENCES_BMCE = (
+    ("tva_credoc", re.compile(r"^TVA\b.*\b(ILC[0-9A-Z]+)$")),
+    ("tva_caution_bmce", re.compile(r"^FRAIS TVA ?(\d{6,})$")),
+    ("commission_caution_bmce", re.compile(r"^COMMISSION CAUTION ?(\d{6,})$")),
+    (
+        "commission_credoc",
+        re.compile(r"^(?!FRAIS TVA\b)(?:COMMISSION|FRAIS|CREDOC|OUVERTURE)\b.*\b(ILC[0-9A-Z]+)$"),
+    ),
+)
+FRAIS_REFERENCE = frozenset({"commission_credoc", "commission_caution_bmce"})
+TVA_REFERENCE = frozenset({"tva_credoc", "tva_caution_bmce"})
 _FRAIS_TVA = (
     *_COMMISSIONS_TVA,
     ("commission_carte", _COMMISSION_CARTE),
@@ -210,6 +230,9 @@ SEUIL_MANUEL = Decimal("200")
 # Abonnement BP E-CORPORATE et sa TVA aussi (14/11/2026)
 TYPES_SANS_SEUIL = frozenset(
     {"commission", "tva", "commission_effet", "tva_commission_effet", "abonnement"}
+    # Credoc et caution BMCE, groupés par référence (20/11/2026)
+    | FRAIS_REFERENCE
+    | TVA_REFERENCE
 )
 # Frais CIH à TVA comprise toujours automatiques, quel que soit le montant (11/11/2026)
 TYPES_FRAIS_SANS_SEUIL = frozenset(
@@ -321,6 +344,9 @@ COMPTE_PAR_TYPE = {
     # BP (14/11/2026)
     "abonnement": COMPTE_FRAIS_BANCAIRES,
     "interet_escompte": COMPTE_ESCOMPTE,
+    # BMCE (20/11/2026) : credoc import et caution, TVA à part sur 34552142
+    "commission_credoc": COMPTE_FRAIS_BANCAIRES,
+    "commission_caution_bmce": COMPTE_FRAIS_BANCAIRES,
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
 TYPES = {
@@ -404,6 +430,11 @@ TYPES = {
         "compte de charge",
     ),
     "tva_escompte": ("TVA de l'intérêt d'escompte", "compte_tva", "compte de TVA récupérable"),
+    # BMCE (20/11/2026)
+    "commission_credoc": ("Commission credoc import", "compte_commission", "compte de charge"),
+    "tva_credoc": ("TVA commissions credoc import", "compte_tva", "compte de TVA"),
+    "commission_caution_bmce": ("Commission caution", "compte_commission", "compte de charge"),
+    "tva_caution_bmce": ("TVA commission caution", "compte_tva", "compte de TVA"),
 }
 
 
@@ -431,9 +462,24 @@ def est_timbre(libelle: str | None) -> bool:
     return type_timbre(libelle) is not None
 
 
+def reference_bmce(libelle: str | None, banque: str | None) -> tuple[str, str] | None:
+    """(type, référence) d'un frais credoc import ou caution de BMCE, ou de sa TVA (20/11/2026),
+    None sinon ou pour une autre banque."""
+    if banque not in BANQUES_FRAIS_BMCE:
+        return None
+    sans = _sans_ponctuation(libelle)
+    for code, regle in _REFERENCES_BMCE:
+        if found := regle.match(sans):
+            return code, found.group(1)
+    return None
+
+
 def type_commission(libelle: str | None, banque: str | None = None) -> str | None:
     """Type d'une commission reprise par SIMTIS, ou None (à passer à la main). La banque ne
     compte que pour la commission caution d'AWB et les frais de dossiers / BBO de BMCE."""
+    # Credoc import et caution de BMCE, groupés par référence (20/11/2026), avant les autres règles
+    if (reference := reference_bmce(libelle, banque)) is not None:
+        return reference[0]
     texte = _plain(libelle)
     exacte = next((code for code, regle in _COMMISSIONS if regle.match(texte)), None)
     if exacte:
@@ -456,6 +502,10 @@ def type_frais_tva(libelle: str | None, banque: str | None = None) -> str | None
     """Frais à TVA comprise comptabilisés en automatique dans l'écriture « FRAIS » (14/10/2026),
     ou None. La ponctuation et les accents ne comptent pas (« COMMISSION VIR. RTGS »).
     « AGIOS ESCOMPTE LCN » seulement pour un compte CIH (12/11/2026) : sans banque, None."""
+    # Chez BMCE, « FRAIS SWIFT CREDOC IMPORT … ILC… » n'est pas à TVA comprise : il entre dans le
+    # groupe de sa référence avec sa TVA à part (« COM », 20/11/2026)
+    if reference_bmce(libelle, banque) is not None:
+        return None
     texte = _sans_ponctuation(libelle)
     if banque in BANQUES_AGIOS_ESCOMPTE and _AGIOS_ESCOMPTE.match(texte):
         return "agios_escompte"
@@ -729,6 +779,54 @@ def tva_effet_et_operation(operations: list[BankTransaction]) -> dict[int, int]:
     return associees
 
 
+@dataclass(frozen=True)
+class GroupesReference:
+    """Groupes credoc / caution de BMCE (20/11/2026) : `suit` donne, pour chaque autre opération
+    d'un groupe juste (frais suivants et TVA), le premier frais du groupe, qui porte la case et le
+    N° pièce ; `a_la_main` les opérations des groupes faux ; `groupe` toutes les opérations du
+    groupe de chaque opération."""
+
+    suit: dict[int, int]
+    a_la_main: frozenset[int]
+    groupe: dict[int, frozenset[int]]
+
+    def etendre(self, ids: set[int]) -> set[int]:
+        """Les opérations des groupes qui touchent `ids`."""
+        return {autre for tx_id in ids for autre in self.groupe.get(tx_id, {tx_id})}
+
+
+def groupes_reference(operations: list[BankTransaction]) -> GroupesReference:
+    """Par compte, jour et référence, les frais credoc ou caution de BMCE et leur TVA. Un groupe
+    est juste quand il a au moins un frais et une seule TVA, égale à la somme des TVA de 10 % de
+    ses frais arrondies frais par frais (ex. 2 066,26 + 300 + 1 034,78 → 206,63 + 30 + 103,48 =
+    340,11) ; sinon toutes ses opérations se passent à la main."""
+    par_groupe: dict[tuple[int, date, str], list[tuple[BankTransaction, str]]] = {}
+    for tx in operations:
+        if tx.montant >= 0 or (reference := reference_bmce(tx.libelle, banque_de(tx))) is None:
+            continue
+        code, ref = reference
+        par_groupe.setdefault((tx.bank_account_id, tx.date_operation, ref), []).append((tx, code))
+    suit: dict[int, int] = {}
+    a_la_main: set[int] = set()
+    groupe: dict[int, frozenset[int]] = {}
+    for lignes in par_groupe.values():
+        lignes.sort(key=lambda item: (item[0].ordre or 0, item[0].id))
+        ids = frozenset(tx.id for tx, _ in lignes)
+        groupe.update(dict.fromkeys(ids, ids))
+        frais = [tx for tx, code in lignes if code in FRAIS_REFERENCE]
+        tvas = [tx for tx, code in lignes if code in TVA_REFERENCE]
+        juste = (
+            frais
+            and len(tvas) == 1
+            and -tvas[0].montant == sum((tva_attendue(-tx.montant) for tx in frais), ZERO)
+        )
+        if not juste:
+            a_la_main |= ids
+            continue
+        suit.update({tx.id: frais[0].id for tx, _ in lignes if tx.id != frais[0].id})
+    return GroupesReference(suit, frozenset(a_la_main), groupe)
+
+
 def associer_tva(operations: list[BankTransaction]) -> dict[int, str]:
     """{TVA : famille de l'opération qu'elle suit} (`tva_et_operation`)."""
     return {tva: famille for tva, (famille, _) in tva_et_operation(operations).items()}
@@ -739,7 +837,10 @@ def tva_a_la_main(operations: list[BankTransaction]) -> set[int]:
     commission, abonnement ni intérêt d'escompte ne prend (`associer_tva`). Une commission de plus
     de `SEUIL_MANUEL` passe avec sa TVA depuis le 11/11/2026."""
     associees = associer_tva(operations)
-    return {tx.id for tx in operations if est_tva_separee(tx) and tx.id not in associees}
+    # Et les groupes credoc / caution de BMCE dont la TVA ne tombe pas juste (20/11/2026)
+    return {
+        tx.id for tx in operations if est_tva_separee(tx) and tx.id not in associees
+    } | groupes_reference(operations).a_la_main
 
 
 def tva_hors_famille(famille: "Famille", operations: list[BankTransaction]) -> set[int]:
@@ -749,7 +850,7 @@ def tva_hors_famille(famille: "Famille", operations: list[BankTransaction]) -> s
     associees = associer_tva(operations)
     return {
         tx.id for tx in operations if est_tva_separee(tx) and associees.get(tx.id) != famille.code
-    }
+    } | groupes_reference(operations).a_la_main
 
 
 MontantsSage = dict[tuple[int, date], list[Decimal]]
@@ -837,6 +938,10 @@ def regrouper(
     bloques = bloques_par_sage(
         famille, operations, montants_sage, hors_famille if famille is ESCOMPTE else None
     )
+    if famille is COMMISSIONS:
+        # Un groupe credoc / caution de BMCE dont une opération est déjà dans Sage sort en entier
+        # (20/11/2026) : ses autres opérations se passent à la main (`_tva_a_la_main`)
+        bloques = groupes_reference(operations).etendre(bloques)
     ecartes = ecartes or Ecartes()
     par_jour = _eligibles(famille, operations, hors_famille)
     return [
@@ -958,7 +1063,8 @@ def _tva_a_la_main(
             ),
             tva_hors_famille(famille, libres) if famille is ESCOMPTE else None,
         )
-    return tva_a_la_main(libres) - dans_sage
+    # Les autres opérations d'un groupe credoc / caution de BMCE en partie dans Sage (20/11/2026)
+    return (tva_a_la_main(libres) | groupes_reference(libres).etendre(dans_sage)) - dans_sage
 
 
 def _ecartes(db: Session, account_ids: list[int], date_from: date, date_to: date) -> Ecartes:
@@ -1966,18 +2072,26 @@ def est_tva_a_part(tx: BankTransaction) -> bool:
     return est_tva_separee(tx) or type_commission(tx.libelle) == "tva_commission_effet"
 
 
+def suit_une_operation(tx: BankTransaction) -> bool:
+    """Opération qui peut suivre une autre dans sa case : une TVA sur une ligne à part, ou un frais
+    ou la TVA d'un groupe credoc / caution de BMCE (20/11/2026)."""
+    return est_tva_a_part(tx) or reference_bmce(tx.libelle, banque_de(tx)) is not None
+
+
 def operations_suivies_par_tva(db: Session, tvas: list[BankTransaction]) -> dict[int, int]:
     """{id d'une TVA sur une ligne à part : id de l'opération (commission, abonnement, intérêt
     d'escompte, commission effet) qu'elle suit} (17/11/2026), lu sur toutes les opérations
     débitées de son compte et de son jour, comme `associer_tva`. Une TVA sans opération n'y
     figure pas."""
-    tvas = [tx for tx in tvas if est_tva_a_part(tx)]
+    tvas = [tx for tx in tvas if suit_une_operation(tx)]
     if not tvas:
         return {}
     cles = {(tx.bank_account_id, tx.date_operation) for tx in tvas}
     du_jour = frais_repository.operations_debitees_des_jours(db, cles)
     liens = {tva: operation for tva, (_, operation) in tva_et_operation(du_jour).items()}
     liens.update(tva_effet_et_operation(du_jour))
+    # Groupe credoc / caution de BMCE (20/11/2026) : les autres frais et la TVA suivent le premier
+    liens.update(groupes_reference(du_jour).suit)
     voulues = {tx.id for tx in tvas}
     return {tva: operation for tva, operation in liens.items() if tva in voulues}
 
@@ -1993,7 +2107,7 @@ def _ecritures_suivies_par_tva(
     tva_de_ecriture: dict[int, BankTransaction] = {}
     for entry in entries:
         ops = operations.get(entry.id, [])
-        if len(ops) == 1 and est_tva_a_part(ops[0]):
+        if len(ops) == 1 and suit_une_operation(ops[0]):
             tva_de_ecriture[entry.id] = ops[0]
     liens = operations_suivies_par_tva(db, list(tva_de_ecriture.values()))
     operation_de = {
