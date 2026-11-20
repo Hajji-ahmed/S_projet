@@ -289,6 +289,9 @@ TYPES_BANQUE: tuple[tuple[str, str], ...] = (
     ("IMPAYE", "Impayé"),
     ("IMP", "Impayé"),
     ("ENCAISSEMENT CHEQUE", "Chèque"),
+    # Chèque impayé (20/11/2026), avant « CHEQUE N » : « CHEQUE AWB IMPAYE N.0023808 » face à
+    # l'« IMP EAR1° AXJ 023808 … » de Sage (« * » = la banque, d'un à trois mots)
+    ("CHEQUE * IMPAYE", "Impayé"),
     # Chèque payé (11/11/2026) : « CHEQUE N 2223334 REMIS PAR … »
     ("CHEQUE N", "Chèque"),
     ("ENCAISSEMENT EFFET", "Effet"),
@@ -390,9 +393,55 @@ SEUIL_LIBELLE_ELARGIE = Decimal("0.70")
 
 
 def sans_reference(operation: Operation, ecriture: Ecriture) -> bool:
-    """Les deux lignes sont du même type, sans référence (espèces, virement ou autre)."""
+    """Les deux lignes sont du même type, sans référence (espèces, virement ou autre). Des espèces
+    au même n° de versement des deux côtés (20/11/2026) ont une référence : grille normale."""
     type_ = type_de(operation)
-    return type_ in TYPES_SANS_REFERENCE and type_ == type_ecriture(ecriture.libelle)
+    if type_ not in TYPES_SANS_REFERENCE or type_ != type_ecriture(ecriture.libelle):
+        return False
+    return not (type_ == "Espèces" and meme_numero_especes(operation, ecriture))
+
+
+# N° d'un versement d'espèces (20/11/2026), lu dans le libellé seulement (ni la pièce Sage
+# « SRC420613855 », ni les chiffres d'une CIN de « VER/ORD:… ») : Sage « ESP 1869948739 » /
+# « ESP N 1869948739 », banque AWB « VERSEMENT ESPECE N 1869652335 » / « VERS ESP REF … »
+_NUMERO_ESPECES_SAGE = re.compile(r"^ESP (?:N )?(\d{5,})(?: |$)")
+_NUMERO_ESPECES_BANQUE = re.compile(r"^(?:VERSEMENT ESPECE N|VERS ESP REF) (\d{5,})(?: |$)")
+
+
+@lru_cache(maxsize=_CACHE)
+def numero_especes_sage(libelle: str | None) -> str | None:
+    """N° de versement d'une écriture « ESP … », sans les zéros en tête ; None sans n°."""
+    trouve = _NUMERO_ESPECES_SAGE.match(_plain(libelle))
+    return trouve.group(1).lstrip("0") or "0" if trouve else None
+
+
+@lru_cache(maxsize=_CACHE)
+def numero_especes_banque(libelle: str | None) -> str | None:
+    """N° d'un versement d'espèces de la banque, sans les zéros en tête ; None sans n°."""
+    trouve = _NUMERO_ESPECES_BANQUE.match(_plain(libelle))
+    return trouve.group(1).lstrip("0") or "0" if trouve else None
+
+
+def _numeros_especes(operation: Operation, ecriture: Ecriture) -> tuple[str, str] | None:
+    """Les deux n° de versement quand la paire est des espèces et que chaque côté en a un."""
+    if type_de(operation) != ESPECES or type_ecriture(ecriture.libelle) != ESPECES:
+        return None
+    banque, sage = numero_especes_banque(operation.libelle), numero_especes_sage(ecriture.libelle)
+    return (banque, sage) if banque and sage else None
+
+
+def meme_numero_especes(operation: Operation, ecriture: Ecriture) -> bool:
+    """Espèces au même n° de versement des deux côtés (n° entier, pas de n° partiel)."""
+    paire = _numeros_especes(operation, ecriture)
+    return paire is not None and paire[0] == paire[1]
+
+
+def especes_compatibles(operation: Operation, ecriture: Ecriture) -> bool:
+    """Faux pour des espèces dont les deux côtés ont un n° de versement différent (20/11/2026) :
+    « ESP 1869948739 » ne va jamais avec « VERSEMENT ESPECE N 1869652335 ». Sans n° d'un côté
+    (« VERSEMENT ESPECE DEPLACE », BMCE, BP), rien ne change."""
+    paire = _numeros_especes(operation, ecriture)
+    return paire is None or paire[0] == paire[1]
 
 
 # Grille des espèces / virements / autres. Avec un bonus de 10 : référence 0, montant 60 → 70,
@@ -704,6 +753,9 @@ def _ecart_si_comparable(operation: Operation, ecriture: Ecriture, grille: Grill
     # Types connus différents (chèque ↔ effet…) ou espèces ↔ autre : jamais comparés (28/10/2026) ;
     # « Autre » face à un type connu l'est depuis le 11/11/2026 (`types_proposables`)
     if not types_proposables(operation, ecriture):
+        return None
+    # Espèces aux n° de versement différents : jamais comparées (20/11/2026)
+    if not especes_compatibles(operation, ecriture):
         return None
     ecart = ecart_jours(operation, ecriture)
     if ecart <= grille.fenetre_jours:
@@ -1173,6 +1225,8 @@ def proposer_elargi(
             if (operation.id, ecriture.id) in paires_rejetees:
                 continue
             if not types_proposables(operation, ecriture):
+                continue
+            if not especes_compatibles(operation, ecriture):
                 continue
             # « Autre » face à un type connu (11/11/2026) : seulement avec un n° commun
             if par_libelle and not type_different(operation, ecriture):

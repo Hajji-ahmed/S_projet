@@ -3,8 +3,9 @@
 Plusieurs opérations bancaires pour une seule écriture Sage, quand leur somme vaut exactement
 l'opposé du montant de l'écriture (un crédit banque est un débit Sage). Depuis le 15/10/2026, un
 seul cas : une opération principale + une commission + sa TVA (10 %) du même jour
-(12 450 − 175 − 17,50 = 12 257,50). Les autres frais se comptabilisent dans SIMTIS ; tout autre
-regroupement se fait à la main.
+(12 450 − 175 − 17,50 = 12 257,50). Depuis le 20/11/2026, aussi une opération principale + 1 à 4
+frais du même jour portant chacun son n°. Les autres frais se comptabilisent dans SIMTIS ; tout
+autre regroupement se fait à la main.
 
 Le moteur ne fait que proposer : un humain valide chaque groupe. Prudence : aucun groupe pour une
 écriture qui a deux groupes différents possibles (sauf lignes indiscernables, mêmes libellés et
@@ -31,6 +32,7 @@ from app.services.reconciliation_scoring import (
     _points,
     date_comparee,
     ecart_jours,
+    especes_compatibles,
     est_especes,
     grille_de_la_paire,
     numeros,
@@ -191,6 +193,7 @@ class _SommesDuJour:
         self._cache: dict[tuple[int | None, date], dict[Decimal, list[tuple[Operation, ...]]]] = {}
         self._frais: dict[tuple[int | None, date], list[Operation]] = {}
         self._trios: dict[tuple[int | None, date], dict[Decimal, list[tuple[Operation, ...]]]] = {}
+        self._par_reference: dict[int, list[tuple[Operation, ...]]] = {}
 
     def frais(self, cle: tuple[int | None, date]) -> list[Operation]:
         if cle not in self._frais:
@@ -215,6 +218,17 @@ class _SommesDuJour:
                         )
             self._trios[cle] = table
         return self._trios[cle]
+
+    def par_reference(
+        self, cle: tuple[int | None, date], principale: Operation
+    ) -> list[tuple[Operation, ...]]:
+        """Groupes « principale + 1 à 4 frais de même n° » du jour (20/11/2026), calculés une
+        fois par principale."""
+        if principale.id not in self._par_reference:
+            self._par_reference[principale.id] = combinaisons_par_reference(
+                principale, self.frais(cle)
+            )
+        return self._par_reference[principale.id]
 
     def sommes(self, cle: tuple[int | None, date]) -> dict[Decimal, list[tuple[Operation, ...]]]:
         if cle not in self._cache:
@@ -301,6 +315,37 @@ def frais_d_un_transfert(operation, transferts: dict[Jour, list[frozenset[str]]]
     return any(nums & transfert for transfert in du_jour)
 
 
+# Principale + frais de même référence (20/11/2026) : 1 à 4 frais du même compte et du même jour,
+# chacun portant un n° de la principale (« ENCAISSEMENT CHEQUE N 1550018 » + « COMMISSION 1550018 »
+# + « TVA 1550018 » + « FRAIS 1550018 »…). Au-delà de `MAX_FRAIS_REFERENCE_POOL` frais portant ce
+# n° le même jour, aucune combinaison n'est cherchée (cas trop incertain, à la main).
+MAX_FRAIS_REFERENCE = 4
+MAX_FRAIS_REFERENCE_POOL = 10
+
+
+def frais_de_meme_reference(
+    principale: Operation, frais_du_jour: list[Operation]
+) -> list[Operation]:
+    """Frais du jour (même compte) qui portent un n° de la principale."""
+    if not numeros(principale.libelle, principale.reference):
+        return []
+    return [op for op in frais_du_jour if op.id != principale.id and meme_reference(principale, op)]
+
+
+def combinaisons_par_reference(
+    principale: Operation, frais_du_jour: list[Operation]
+) -> list[tuple[Operation, ...]]:
+    """Groupes (principale, 1 à 4 frais de même n°) possibles, toutes sommes confondues."""
+    siens = frais_de_meme_reference(principale, frais_du_jour)
+    if not siens or len(siens) > MAX_FRAIS_REFERENCE_POOL:
+        return []
+    return [
+        (principale, *combo)
+        for taille in range(1, min(MAX_FRAIS_REFERENCE, len(siens)) + 1)
+        for combo in combinations(siens, taille)
+    ]
+
+
 def _groupes_possibles(
     ecriture: Ecriture,
     candidats: list[Operation],
@@ -313,27 +358,41 @@ def _groupes_possibles(
     centime près), du même compte et du même jour que la principale, dont la somme vaut l'opposé
     de l'écriture. Rien d'autre n'est regroupé automatiquement (frais seuls, deux commissions,
     timbres, n° commun…) : un cas différent se rapproche à la main. `frais_ids` : opérations
-    reconnues comme frais par la règle de « À comptabiliser »."""
+    reconnues comme frais par la règle de « À comptabiliser ».
+
+    Depuis le 20/11/2026, aussi une principale et 1 à 4 frais du même jour portant chacun un n° de
+    la principale (`combinaisons_par_reference`), dont la somme vaut l'opposé de l'écriture."""
     cible = -ecriture.montant
     compte = ecriture.bank_account_id
     fenetre = grille.fenetre_jours if grille is not None else None
     type_sage = type_ecriture(ecriture.libelle)
     trouves: dict[frozenset[int], tuple[Operation, ...]] = {}
+
+    def ajouter(ops: tuple[Operation, ...]) -> None:
+        if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+            return
+        trouves.setdefault(frozenset(op.id for op in ops), ops)
+
     for principale in candidats:
-        paires = sommes.commissions_tva((compte, principale.date_operation))
-        if not paires:
+        cle = (compte, principale.date_operation)
+        frais_du_jour = sommes.frais(cle)
+        if not frais_du_jour:
             continue
         frais, type_op = _principale_possible(principale.libelle, principale.montant > 0)
         # `types_compatibles` sans appel par opération : le même type (autre avec autre)
         if frais or principale.id in frais_ids or type_op != type_sage:
             continue
+        # Espèces aux n° de versement différents : jamais ensemble (20/11/2026)
+        if not especes_compatibles(principale, ecriture):
+            continue
+        paires = sommes.commissions_tva(cle)
         for commission, tva in paires_de_la_principale(
             principale, paires.get(cible - principale.montant, [])
         ):
-            ops = (principale, commission, tva)
-            if fenetre is not None and max(ecart_jours(op, ecriture) for op in ops) > fenetre:
-                continue
-            trouves.setdefault(frozenset(op.id for op in ops), ops)
+            ajouter((principale, commission, tva))
+        for ops in sommes.par_reference(cle, principale):
+            if sum((op.montant for op in ops), ZERO) == cible:
+                ajouter(ops)
     return list(trouves.values())
 
 
@@ -513,7 +572,7 @@ def operations_couvertes(
             for somme, paires in table.items():
                 for principale in principales.get((compte, jour, cible - somme), ()):
                     type_op = _principale_possible(principale.libelle, principale.montant > 0)[1]
-                    if type_op != type_sage:
+                    if type_op != type_sage or not especes_compatibles(principale, ecriture):
                         continue
                     for commission, tva in paires_de_la_principale(principale, paires):
                         ops = (principale, commission, tva)
@@ -523,6 +582,45 @@ def operations_couvertes(
                             continue
                         for op in ops:
                             couvertes.setdefault(op.id, ecriture.id)
+
+    # Principale + 1 à 4 frais de même n° (20/11/2026) : mêmes groupes que `_groupes_possibles`,
+    # indexés par (compte, jour, somme) ; un groupe doit contenir un frais à contrôler
+    par_reference: dict[tuple[int | None, date, Decimal], list[tuple[Operation, ...]]] = {}
+    for cle, ops_du_jour in par_compte_jour.items():
+        if not sommes.frais(cle):
+            continue
+        for principale in ops_du_jour:
+            frais, _ = _principale_possible(principale.libelle, principale.montant > 0)
+            if frais or principale.id in frais_ids:
+                continue
+            for ops in sommes.par_reference(cle, principale):
+                if cibles is not None and not any(o.id in cibles for o in ops[1:]):
+                    continue
+                somme = sum((op.montant for op in ops), ZERO)
+                par_reference.setdefault((cle[0], cle[1], somme), []).append(ops)
+    for ecriture in ecritures if par_reference else ():
+        if ecriture.montant == 0:
+            continue
+        compte = ecriture.bank_account_id
+        type_sage = type_ecriture(ecriture.libelle)
+        jours = {
+            base + timedelta(decalage)
+            for base in {ecriture.date_ecriture, ecriture.echeance or ecriture.date_ecriture}
+            for decalage in range(-fenetre, fenetre + 1)
+        }
+        for jour in sorted(jours):
+            for ops in par_reference.get((compte, jour, -ecriture.montant), ()):
+                principale = ops[0]
+                if _principale_possible(principale.libelle, principale.montant > 0)[1] != type_sage:
+                    continue
+                if not especes_compatibles(principale, ecriture):
+                    continue
+                if max(ecart_jours(op, ecriture) for op in ops) > fenetre:
+                    continue
+                if any((op.id, ecriture.id) in paires_rejetees for op in ops):
+                    continue
+                for op in ops:
+                    couvertes.setdefault(op.id, ecriture.id)
 
     # Frais seul face à une écriture Sage de frais (05/11/2026), après les groupes
     seuls: dict[tuple[int | None, Decimal], list[Operation]] = {}

@@ -930,3 +930,63 @@ def test_an_other_line_with_a_common_number_is_proposed_among_several():
     [proposition] = proposer([autre], [cheque, autre_cheque]).propositions
 
     assert proposition.ecriture_id == cheque.id
+
+
+# --- N° de versement d'espèces et chèque impayé (20/11/2026) --------------------------------------
+
+
+def test_an_esp_entry_is_never_proposed_against_a_deposit_with_another_number():
+    # Cas réel AWB : « ESP 1869948739 » (échéance 31/07) proposé à 92,56 face à un autre versement
+    operation = op(id=1, montant="10000", libelle="VERSEMENT ESPECE N 1869652335")
+    ecriture = ec(
+        id=1, montant="-10000", libelle="ESP 1869948739", piece="SRC420613855", echeance=JOUR
+    )
+    assert not comparable(operation, ecriture, GRILLE_PAR_DEFAUT)
+    assert proposer([operation], [ecriture]).propositions == []
+    loin = op(
+        id=2, montant="10000", libelle="VERSEMENT ESPECE N 1869652335", jour=JOUR + timedelta(30)
+    )
+    assert proposer_elargi([loin], [ecriture]) == []
+
+
+def test_an_esp_entry_with_the_same_number_gets_the_reference_points():
+    operation = op(id=1, montant="10000", libelle="VERSEMENT ESPECE N 1869948739")
+    ecriture = ec(
+        id=1, montant="-10000", libelle="ESP 1869948739", piece="SRC420613855", echeance=JOUR
+    )
+    resultat = score(operation, ecriture)
+    assert resultat.detail["reference"] == GRILLE_PAR_DEFAUT.reference
+    assert resultat.detail["reference"] > 0
+    assert [
+        (p.operation_id, p.ecriture_id) for p in proposer([operation], [ecriture]).propositions
+    ] == [(1, 1)]
+
+
+def test_a_deposit_without_number_scores_as_before():
+    # « VERSEMENT ESPECE DEPLACE » (AWB) n'a pas de n° : grille sans référence, toujours proposé
+    operation = op(id=1, montant="10000", libelle="VERSEMENT ESPECE DEPLACE")
+    ecriture = ec(id=1, montant="-10000", libelle="ESP 1869948739", echeance=JOUR)
+    resultat = score(operation, ecriture)
+    assert resultat.detail["reference"] == Decimal("0.00")
+    assert (
+        resultat.detail["montant"]
+        == GRILLE_PAR_DEFAUT.montant_rond + GRILLE_PAR_DEFAUT.bonus_sans_reference
+    )
+    assert comparable(operation, ecriture, GRILLE_PAR_DEFAUT)
+
+
+def test_a_cheque_impaye_of_the_bank_is_an_impaye():
+    assert type_operation("CHEQUE AWB IMPAYE N.0023808") == "Impayé"
+    assert type_operation("CHEQUE BMCE IMPAYE N 0023808") == "Impayé"
+    # Le chèque payé reste un chèque
+    assert type_operation("CHEQUE N 2223334 REMIS PAR X") == "Chèque"
+
+
+def test_a_cheque_impaye_is_proposed_against_its_imp_ear1_entry():
+    operation = op(id=1, montant="-7000", libelle="CHEQUE AWB IMPAYE N.0023808")
+    ecriture = ec(
+        id=1, montant="7000", libelle="IMP EAR1° AXJ 023808 LAYMOUNY ABDESSADEK", piece=None
+    )
+    resultat = proposer([operation], [ecriture])
+    assert [(p.operation_id, p.ecriture_id) for p in resultat.propositions] == [(1, 1)]
+    assert score(operation, ecriture).detail["reference"] > 0

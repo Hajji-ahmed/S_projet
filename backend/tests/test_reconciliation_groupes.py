@@ -337,3 +337,58 @@ def test_fees_of_a_transfert_are_recognised_by_account_day_and_number():
     assert {o.id for o in lignes if frais_d_un_transfert(o, transferts)} == {11, 12, 21, 22, 31, 32}
     for autre in (commission_ailleurs, autre_jour, sans_transfert, frais_swift):
         assert not frais_d_un_transfert(autre, transferts)
+
+
+# --- Principale + 1 à 4 frais de même n° (20/11/2026) ----------------------------------------------
+
+
+def _cheque_et_ses_frais():
+    return [
+        op(1, "-10000", "CHEQUE N 1550018 REMIS PAR ATW"),
+        op(2, "-50", "COMMISSION CHEQUE 1550018"),
+        op(3, "-5", "TVA SUR COMMISSION 1550018"),
+        op(4, "-20", "FRAIS DE TRAITEMENT 1550018"),
+        op(5, "-30", "COMMISSION"),  # sans le n° : jamais prise dans le groupe
+    ]
+
+
+def test_a_principal_with_three_fees_of_its_number_is_one_entry():
+    resultat = groupes(_cheque_et_ses_frais(), [ec(10, "10075", "CHQ 1550018 FOURNISSEUR")])
+    [groupe] = resultat.groupes
+    assert groupe.operation_ids == (1, 2, 3, 4)
+    assert groupe.principale_id == 1
+
+
+def test_a_fee_without_the_number_is_never_added_to_the_group():
+    # 10 000 + 50 + 5 + 20 + 30 = 10 105 : le 30 n'a pas le n°, aucun groupe
+    assert (
+        groupes(_cheque_et_ses_frais(), [ec(10, "10105", "CHQ 1550018 FOURNISSEUR")]).groupes == []
+    )
+
+
+def test_four_fees_of_the_number_make_a_group_but_not_five():
+    banque = [
+        op(1, "-10000", "CHEQUE N 1550018 REMIS PAR ATW"),
+        *(op(i, "-10", f"FRAIS {i} 1550018") for i in range(2, 7)),
+    ]
+    # 4 frais de 10 parmi 5 indiscernables ? Libellés différents : groupes rivaux, ambigu
+    resultat = groupes(banque, [ec(10, "10040", "CHQ 1550018")])
+    assert resultat.groupes == [] and resultat.ecritures_ambigues == {10}
+    # 5 frais : au-delà de 4, pas de groupe
+    assert groupes(banque, [ec(11, "10050", "CHQ 1550018")]).groupes == []
+
+
+def test_fees_of_the_number_on_another_day_are_not_taken():
+    banque = [
+        op(1, "-10000", "CHEQUE N 1550018 REMIS PAR ATW"),
+        op(2, "-50", "COMMISSION CHEQUE 1550018", jour=date(2026, 4, 22)),
+    ]
+    assert groupes(banque, [ec(10, "10050", "CHQ 1550018")]).groupes == []
+
+
+def test_fees_of_a_reference_group_are_covered():
+    banque = _cheque_et_ses_frais()
+    couvertes = operations_couvertes(
+        banque, [ec(10, "10075", "CHQ 1550018 FOURNISSEUR")], GRILLE_PAR_DEFAUT, cibles={2, 3, 4, 5}
+    )
+    assert couvertes == {1: 10, 2: 10, 3: 10, 4: 10}
