@@ -38,7 +38,8 @@ LIBELLE_COMMISSION_SQL = (
     # IMPORT COMMISSION OUVERTURE… », « OUVERTURE CREDOC IMPORT… ») et TVA de caution
     # (« FRAIS TVA780191… ») ; la banque et la référence sont vérifiées par
     # `frais_service.reference_bmce`
-    r"|FRAIS\W+(SWIFT|PDL|TVA)|CREDOC\W+IMPORT|OUVERTURE\W+CREDOC)"
+    # Remise documentaire (20/11/2026) : « FRAIS DE PDL / DE DOSSIERS … IDC… »
+    r"|FRAIS\W+(SWIFT|PDL|TVA|DE\W+PDL|DE\W+DOSSIERS)|CREDOC\W+IMPORT|OUVERTURE\W+CREDOC)"
 )
 # Écriture Sage d'un jour : « DT D'ENREGISTREMENT » (apostrophe droite ou non), « COM »
 ECRITURE_TIMBRE_SQL = r"^\s*DT\s+D.?\s*ENREGISTREMENT"

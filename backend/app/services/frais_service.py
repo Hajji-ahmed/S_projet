@@ -208,9 +208,16 @@ _REFERENCES_BMCE = (
         "commission_credoc",
         re.compile(r"^(?!FRAIS TVA\b)(?:COMMISSION|FRAIS|CREDOC|OUVERTURE)\b.*\b(ILC[0-9A-Z]+)$"),
     ),
+    # Remise documentaire à l'import (20/11/2026) : FRAIS DE PDL / DE DOSSIERS / SWIFT, COMMISSION
+    # D'OUVERTURE / D'ENCAISSEMENT « … IDC26E012186 » et « TVA SUR FRAIS RELATIFS … IDC… » ; la
+    # référence est parfois collée au mot qui la précède (« …L IMPORTIDC26E012268 »)
+    ("tva_remise_doc", re.compile(r"^TVA\b.*?(IDC\d{2}[A-Z]\d+)$")),
+    ("commission_remise_doc", re.compile(r"^(?:COMMISSION|FRAIS)\b.*?(IDC\d{2}[A-Z]\d+)$")),
 )
-FRAIS_REFERENCE = frozenset({"commission_credoc", "commission_caution_bmce"})
-TVA_REFERENCE = frozenset({"tva_credoc", "tva_caution_bmce"})
+FRAIS_REFERENCE = frozenset(
+    {"commission_credoc", "commission_caution_bmce", "commission_remise_doc"}
+)
+TVA_REFERENCE = frozenset({"tva_credoc", "tva_caution_bmce", "tva_remise_doc"})
 _FRAIS_TVA = (
     *_COMMISSIONS_TVA,
     ("commission_carte", _COMMISSION_CARTE),
@@ -270,6 +277,8 @@ COMPTE_FRAIS_BANCAIRES = "61473000"  # FRAIS COMMISSIONS BANCAIRE
 COMPTE_COMMISSION = COMPTE_FRAIS_BANCAIRES
 COMPTE_TVA = "34552142"  # TVA BANQUE 10 %
 COMPTE_ESCOMPTE = "63117000"  # FRAIS D'ESCOMPTE (intérêts d'escompte LCN, 14/11/2026)
+# INTERET CREDOC : frais credoc import et remise documentaire de BMCE (20/11/2026)
+COMPTE_CREDOC = "63110001"
 COMPTES_AGIOS = {
     "BMCE": "63111000",
     "BP": "63112000",
@@ -344,8 +353,10 @@ COMPTE_PAR_TYPE = {
     # BP (14/11/2026)
     "abonnement": COMPTE_FRAIS_BANCAIRES,
     "interet_escompte": COMPTE_ESCOMPTE,
-    # BMCE (20/11/2026) : credoc import et caution, TVA à part sur 34552142
-    "commission_credoc": COMPTE_FRAIS_BANCAIRES,
+    # BMCE (20/11/2026) : credoc import et remise documentaire sur INTERET CREDOC, caution sur
+    # 61473000, TVA à part sur 34552142
+    "commission_credoc": COMPTE_CREDOC,
+    "commission_remise_doc": COMPTE_CREDOC,
     "commission_caution_bmce": COMPTE_FRAIS_BANCAIRES,
 }
 # Libellé de chaque type (le champ du compte bancaire n'est plus utilisé depuis le 16/10/2026)
@@ -435,6 +446,12 @@ TYPES = {
     "tva_credoc": ("TVA commissions credoc import", "compte_tva", "compte de TVA"),
     "commission_caution_bmce": ("Commission caution", "compte_commission", "compte de charge"),
     "tva_caution_bmce": ("TVA commission caution", "compte_tva", "compte de TVA"),
+    "commission_remise_doc": (
+        "Frais remise documentaire import",
+        "compte_commission",
+        "compte de charge",
+    ),
+    "tva_remise_doc": ("TVA remise documentaire import", "compte_tva", "compte de TVA"),
 }
 
 

@@ -2897,7 +2897,16 @@ SWIFT = f"FRAIS SWIFT CREDOC IMPORT OUVERTURE REF {ILC}"
 IRREVOCABILITE = f"OUVERTURE CREDOC IMPORT COMMISSION IRREVOCABILITE {ILC}"
 TVA_ILC = f"TVA 10% SUR COMMISSION REF {ILC}"
 PAIEMENT_ILC = f"REGLEMENT ORDRE ACHAT DEBIT COMPTE CLIENT {ILC}"
-REMISE_DOC = "FRAIS SWIFT RELATIFS A LA REMISE DOUCMENTAIRE / PORTFEUILLE A L IMPORT IDC26E009454"
+IDC = "IDC26E012186"
+REMISE_IMPORT = "A LA REMISE DOUCMENTAIRE / PORTFEUILLE A L IMPORT"
+PDL_IDC = f"FRAIS DE PDL REALTIFS {REMISE_IMPORT} {IDC}"
+TVA_IDC = f"TVA SUR FRAIS RELATIFS {REMISE_IMPORT} {IDC}"
+DOSSIERS_IDC = f"FRAIS DE DOSSIERS RELATIFS A LA REMISE DOUCMENTAIRE / PORTFEUILLE A L'IMPORT {IDC}"
+SWIFT_IDC = f"FRAIS SWIFT RELATIFS {REMISE_IMPORT} {IDC}"
+OUVERTURE_IDC = f"COMMISSION D OUVERTURE REALTIVE {REMISE_IMPORT} {IDC}"
+# Référence collée au mot qui la précède, comme sur le relevé
+ENCAISSEMENT_IDC = f"COMMISSION D ENCAISSEMENT REALTIVE {REMISE_IMPORT}{IDC}"
+PAIEMENT_IDC = f"REGLEMENT ORDRE ACHAT DEBIT COMPTE CLIENT {IDC}"
 CAUTION = "COMMISSION CAUTION780191751000000061"
 TVA_CAUTION = "FRAIS TVA780191751000000061"
 
@@ -2921,10 +2930,16 @@ TVA_CAUTION = "FRAIS TVA780191751000000061"
         (CAUTION, "commission_caution_bmce", None),
         ("COMMISSION CAUTION000078019171105633", "commission_caution_bmce", None),
         (TVA_CAUTION, "tva_caution_bmce", None),
-        # Jamais : le paiement du credoc, la remise documentaire (IDC) ; un transfert émis garde
-        # sa règle
+        # Remise documentaire (IDC)
+        (PDL_IDC, "commission_remise_doc", None),
+        (DOSSIERS_IDC, "commission_remise_doc", None),
+        (SWIFT_IDC, "commission_remise_doc", None),
+        (OUVERTURE_IDC, "commission_remise_doc", None),
+        (ENCAISSEMENT_IDC, "commission_remise_doc", None),
+        (TVA_IDC, "tva_remise_doc", None),
+        # Jamais : le paiement du credoc ou de la remise ; un transfert émis garde sa règle
         (PAIEMENT_ILC, None, None),
-        (REMISE_DOC, None, None),
+        (PAIEMENT_IDC, None, None),
         ("TVA 10% SUR COMMISSION TRF26J148345", "tva", None),
     ],
 )
@@ -2968,9 +2983,9 @@ def test_bmce_credoc_fees_and_their_single_vat_are_booked_in_one_case(client, co
         caution.id: None,
         tva_caution.id: caution.id,
     }
-    # Le SWIFT passe entier sur 61473000 : sa TVA est sur la ligne à part
+    # Le SWIFT passe entier sur INTERET CREDOC : sa TVA est sur la ligne à part
     assert [(g["compte"], g["debit"], g["credit"]) for g in propositions[swift.id]["lignes"]] == [
-        ("61473000", "300.00", None),
+        ("63110001", "300.00", None),
         ("55410001", None, "300.00"),
     ]
     assert [(g["compte"], g["debit"], g["credit"]) for g in propositions[tva.id]["lignes"]] == [
@@ -2996,6 +3011,61 @@ def test_bmce_credoc_fees_and_their_single_vat_are_booked_in_one_case(client, co
         {CAUTION, TVA_CAUTION},
         {libelle[:50] for libelle in (OUVERTURE, SWIFT, IRREVOCABILITE, TVA_ILC)},
     ]
+
+
+def test_bmce_remise_documentaire_fees_and_their_vat_are_booked_in_one_case(client, comptable, db):
+    """Relevé BMCE du 20/10/2026 : 33,20 + 50,00 + 85,00 + 100,00 + 200,00 de frais de la remise
+    IDC26E012186 et 46,82 de TVA ; une écriture COM par opération, frais sur INTERET CREDOC, TVA
+    sur 34552142, une case et un N° pièce. Le paiement de la remise n'en fait pas partie."""
+    compte = bmce(db)
+    pdl = operation(db, compte, "-33.20", JOUR, PDL_IDC)
+    tva = operation(db, compte, "-46.82", JOUR, TVA_IDC)
+    autres = [
+        operation(db, compte, montant, JOUR, libelle)
+        for montant, libelle in (
+            ("-50", DOSSIERS_IDC),
+            ("-85", SWIFT_IDC),
+            ("-100", OUVERTURE_IDC),
+            ("-200", ENCAISSEMENT_IDC),
+        )
+    ]
+    paiement = operation(db, compte, "-117589.61", JOUR, PAIEMENT_IDC)
+
+    data = lire(client, comptable, db, famille=None).json()
+
+    propositions = {p["transaction_id"]: p for p in data["propositions"]}
+    assert {tx_id: p["suit_transaction_id"] for tx_id, p in propositions.items()} == {
+        pdl.id: None,
+        tva.id: pdl.id,
+        **{tx.id: pdl.id for tx in autres},
+    }
+    assert [(g["compte"], g["debit"]) for g in propositions[pdl.id]["lignes"]][0] == (
+        "63110001",
+        "33.20",
+    )
+    assert [(g["compte"], g["debit"]) for g in propositions[tva.id]["lignes"]][0] == (
+        "34552142",
+        "46.82",
+    )
+    assert paiement.id not in {a["id"] for a in data["autres_frais"]}
+
+    assert valider(client, comptable, db, (compte, JOUR), famille="commissions").status_code == 200
+    response = exporter(client, comptable, db, banque="BMCE")
+    assert response.status_code == 200, response.text
+    assert {row[1] for row in lignes_csv(response)} == {"BM2604001"}
+
+
+def test_a_bmce_remise_documentaire_without_its_vat_stays_manual(client, comptable, db):
+    compte = bmce(db)
+    ids = {
+        operation(db, compte, montant, JOUR, libelle).id
+        for montant, libelle in (("-33.20", PDL_IDC), ("-85", SWIFT_IDC))
+    }
+
+    data = lire(client, comptable, db, famille=None).json()
+
+    assert data["propositions"] == []
+    assert ids <= {a["id"] for a in data["autres_frais"]}
 
 
 def test_a_bmce_credoc_group_whose_vat_is_wrong_stays_manual(client, comptable, db):
@@ -3030,6 +3100,8 @@ def test_bmce_credoc_fees_stay_manual_at_another_bank(client, comptable, db):
         ("-310.11", TVA_ILC),
         ("-50", CAUTION),
         ("-5", TVA_CAUTION),
+        ("-33.20", PDL_IDC),
+        ("-3.32", TVA_IDC),
     ):
         operation(db, compte, montant, JOUR, libelle)
 
