@@ -189,6 +189,7 @@ type Absente = {
   debit: string;
   credit: string;
   code_rapprochement: string | null;
+  match_id?: number | null;
   a_verifier: boolean;
 };
 
@@ -205,6 +206,25 @@ export function absentesParDefaut(absentes: readonly Absente[]): Set<number> {
   return new Set(
     absentes.filter((item) => supprimable(item) && !item.a_verifier).map((item) => item.id),
   );
+}
+
+/**
+ * Après l'annulation du rapprochement `matchId` depuis l'import (21/11/2026) : toutes les écritures
+ * absentes de ce rapprochement deviennent supprimables et sont cochées « Supprimer », sauf celles à
+ * vérifier ; les autres cases restent comme elles étaient.
+ */
+export function libererRapprochement<T extends Absente>(
+  absentes: readonly T[],
+  cochees: ReadonlySet<number>,
+  matchId: number,
+): { absentes: T[]; cochees: Set<number> } {
+  const suivantes = new Set(cochees);
+  const liberees = absentes.map((item) => {
+    if (item.match_id !== matchId) return item;
+    if (!item.a_verifier) suivantes.add(item.id);
+    return { ...item, code_rapprochement: null, match_id: null };
+  });
+  return { absentes: liberees, cochees: suivantes };
 }
 
 export type SoldeApresImport = {

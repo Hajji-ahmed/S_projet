@@ -51,6 +51,8 @@ function Ecritures({ companyId }: { companyId: number }) {
   const { user } = useAuth();
   const { toast } = useToast();
   const canImport = !!user && hasAnyPermission(user.permissions, [PERMISSIONS.ACCOUNTING_IMPORT]);
+  const canCancelMatch =
+    !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
 
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ConfirmationComptable | null>(null);
@@ -200,6 +202,7 @@ function Ecritures({ companyId }: { companyId: number }) {
             logos={logos}
             onDone={handleDone}
             onCancel={() => setImporting(false)}
+            canCancelMatch={canCancelMatch}
           />
         </Card>
       )}

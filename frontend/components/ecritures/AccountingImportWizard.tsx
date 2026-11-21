@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, CircleAlert, Upload } from "lucide-react";
+import { ArrowLeft, Ban, CircleAlert, Unlink, Upload } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
@@ -10,7 +10,8 @@ import { IgnoredLinesTable } from "@/components/releves/IgnoredLinesTable";
 import { FileDropzone, ImportStepper } from "@/components/releves/ImportSteps";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
-import { Field, Select } from "@/components/ui/Field";
+import { Field, Select, TextInput } from "@/components/ui/Field";
+import { Modal } from "@/components/ui/Modal";
 import { Pagination } from "@/components/ui/Pagination";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ApiError } from "@/lib/api";
@@ -24,6 +25,7 @@ import {
   blocageImport,
   cochable,
   defaultChecked,
+  libererRapprochement,
   messagePiecesRepetees,
   messageConfirmation,
   pageOf,
@@ -36,6 +38,7 @@ import {
 } from "@/lib/importLines";
 import { fileProblem } from "@/lib/statements";
 import { analyseEntries, confirmEntries } from "@/services/accounting";
+import { cancelMatch, getMatch } from "@/services/reconciliation";
 import type {
   AccountingFieldCode,
   AccountingMapping,
@@ -74,7 +77,12 @@ type AccountingImportWizardProps = {
   logos: Map<string, string | null>;
   onDone: (result: ConfirmationComptable) => void;
   onCancel: () => void;
+  /** Droit de valider des rapprochements : bouton « Annuler le rapprochement » (21/11/2026). */
+  canCancelMatch?: boolean;
 };
+
+/** Taille du rapprochement à annuler, lue avant la confirmation. */
+type TailleRapprochement = { nb_operations: number; nb_ecritures: number };
 
 /**
  * Import d'un export Sage en deux étapes : Fichier, puis Validation. L'analyse se lance dès que le
@@ -87,6 +95,7 @@ export function AccountingImportWizard({
   logos,
   onDone,
   onCancel,
+  canCancelMatch = false,
 }: AccountingImportWizardProps) {
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -103,6 +112,14 @@ export function AccountingImportWizard({
   const [supprimees, setSupprimees] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Annulation sur place du rapprochement d'une écriture absente (21/11/2026)
+  const [aAnnuler, setAAnnuler] = useState<EcritureAbsente | null>(null);
+  const [taille, setTaille] = useState<TailleRapprochement | null>(null);
+  const [motif, setMotif] = useState("");
+  const [annulBusy, setAnnulBusy] = useState(false);
+  const [annulError, setAnnulError] = useState<string | null>(null);
+  // Écriture → code du rapprochement annulé ici, rappelé dans la colonne « État »
+  const [annules, setAnnules] = useState<Map<number, string>>(new Map());
 
   async function run(
     chosen: File,
@@ -156,6 +173,48 @@ export function AccountingImportWizard({
       else next.delete(numero);
       return next;
     });
+  }
+
+  function ouvrirAnnulation(item: EcritureAbsente) {
+    if (item.match_id === null) return;
+    setAAnnuler(item);
+    setTaille(null);
+    setMotif("");
+    setAnnulError(null);
+    // Le nombre de lignes avertit avant d'annuler un gros groupe (reprise) ; sans lui, on annule
+    getMatch(item.match_id)
+      .then((match) =>
+        setTaille({
+          nb_operations: match.nb_operations ?? match.operations?.length ?? 1,
+          nb_ecritures: match.nb_ecritures ?? match.ecritures?.length ?? 1,
+        }),
+      )
+      .catch(() => setTaille(null));
+  }
+
+  async function confirmerAnnulation() {
+    if (!aAnnuler || aAnnuler.match_id === null || !analysis) return;
+    const matchId = aAnnuler.match_id;
+    const code = aAnnuler.code_rapprochement ?? "";
+    setAnnulBusy(true);
+    setAnnulError(null);
+    try {
+      await cancelMatch(matchId, motif.trim());
+      const absentes = analysis.ecritures_absentes ?? [];
+      const liberees = libererRapprochement(absentes, supprimees, matchId);
+      setAnnules((current) => {
+        const next = new Map(current);
+        for (const item of absentes) if (item.match_id === matchId) next.set(item.id, code);
+        return next;
+      });
+      setAnalysis({ ...analysis, ecritures_absentes: liberees.absentes });
+      setSupprimees(liberees.cochees);
+      setAAnnuler(null);
+    } catch (caught) {
+      setAnnulError(errorMessage(caught));
+    } finally {
+      setAnnulBusy(false);
+    }
   }
 
   function toggleSuppression(id: number, value: boolean) {
@@ -378,9 +437,7 @@ export function AccountingImportWizard({
             type="checkbox"
             aria-label={`Supprimer l'écriture du ${formatDate(item.date_ecriture)} ${item.libelle ?? ""}`}
             title={
-              supprimable(item)
-                ? undefined
-                : "Rapprochée : annulez son rapprochement dans l'Historique d'abord."
+              supprimable(item) ? undefined : "Rapprochée : annulez d'abord son rapprochement."
             }
             checked={supprimees.has(item.id)}
             disabled={!supprimable(item)}
@@ -399,12 +456,24 @@ export function AccountingImportWizard({
                 <span className="mt-1 block text-xs text-simtis-muted">
                   {item.code_rapprochement} : à annuler d&apos;abord
                 </span>
+                {canCancelMatch && item.match_id !== null && (
+                  <Button
+                    variant="secondary"
+                    icon={Unlink}
+                    className="mt-2 whitespace-nowrap"
+                    onClick={() => ouvrirAnnulation(item)}
+                  >
+                    Annuler le rapprochement
+                  </Button>
+                )}
               </>
             ) : (
               <span className="text-xs text-simtis-muted">
-                {item.a_verifier
-                  ? "Le fichier a des lignes en erreur sur ce compte : à vérifier"
-                  : "Absente du grand livre"}
+                {annules.has(item.id)
+                  ? `Rapprochement ${annules.get(item.id)} annulé : à supprimer`
+                  : item.a_verifier
+                    ? "Le fichier a des lignes en erreur sur ce compte : à vérifier"
+                    : "Absente du grand livre"}
               </span>
             )}
           </span>
@@ -709,6 +778,56 @@ export function AccountingImportWizard({
         </>
       )}
       {step === 1 && analysis && stepValidation(analysis)}
+      <Modal
+        open={aAnnuler !== null}
+        onClose={() => setAAnnuler(null)}
+        title="Annuler le rapprochement"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setAAnnuler(null)}>
+              Retour
+            </Button>
+            <Button
+              variant="danger"
+              icon={Ban}
+              disabled={annulBusy || !motif.trim()}
+              onClick={confirmerAnnulation}
+            >
+              Annuler le rapprochement
+            </Button>
+          </>
+        }
+      >
+        {annulError && (
+          <p
+            role="alert"
+            className="mb-3 rounded-[10px] bg-simtis-danger-bg px-3 py-2 text-simtis-danger-fg"
+          >
+            {annulError}
+          </p>
+        )}
+        <p className="mb-2 text-simtis-muted">
+          Tout le rapprochement <strong>{aAnnuler?.code_rapprochement}</strong> est annulé
+          {taille
+            ? ` (${taille.nb_operations} opération${taille.nb_operations > 1 ? "s" : ""}, ${
+                taille.nb_ecritures
+              } écriture${taille.nb_ecritures > 1 ? "s" : ""})`
+            : ""}{" "}
+          : ses autres lignes redeviennent « Non rapprochée ».
+        </p>
+        <p className="mb-4 text-simtis-muted">
+          L&apos;annulation est immédiate, même si vous ne confirmez pas l&apos;import ; elle reste
+          dans l&apos;historique. L&apos;écriture est ensuite cochée « Supprimer ».
+        </p>
+        <Field label="Motif" htmlFor="import-annulation-motif" required>
+          <TextInput
+            id="import-annulation-motif"
+            value={motif}
+            maxLength={500}
+            onChange={(event) => setMotif(event.target.value)}
+          />
+        </Field>
+      </Modal>
     </div>
   );
 }

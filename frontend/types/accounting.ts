@@ -96,6 +96,8 @@ export type EcritureAbsente = {
   credit: string;
   /** Rapprochement validé qui la contient : à annuler avant de pouvoir la supprimer. */
   code_rapprochement: string | null;
+  /** Id de ce rapprochement validé : annulable depuis l'import (21/11/2026). */
+  match_id: number | null;
   /** Lignes en erreur sur ce compte dans le fichier : non cochée par défaut. */
   a_verifier: boolean;
 };

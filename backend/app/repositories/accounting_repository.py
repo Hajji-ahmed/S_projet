@@ -62,22 +62,31 @@ def ecritures_sage_entre(
     return list(db.scalars(query))
 
 
-def codes_valides(db: Session, entry_ids: list[int]) -> dict[int, str]:
-    """Code du rapprochement validé de chaque écriture qui en a un."""
-    found: dict[int, str] = {}
+def rapprochements_valides(db: Session, entry_ids: list[int]) -> dict[int, tuple[int, str]]:
+    """Rapprochement validé (id, code) de chaque écriture qui en a un."""
+    found: dict[int, tuple[int, str]] = {}
     for start in range(0, len(entry_ids), HASH_BATCH):
         batch = entry_ids[start : start + HASH_BATCH]
         query = (
-            select(ReconciliationMatchItem.accounting_entry_id, ReconciliationMatch.code)
+            select(
+                ReconciliationMatchItem.accounting_entry_id,
+                ReconciliationMatch.id,
+                ReconciliationMatch.code,
+            )
             .join(ReconciliationMatch, ReconciliationMatch.id == ReconciliationMatchItem.match_id)
             .where(
                 ReconciliationMatch.statut == "Validée",
                 ReconciliationMatchItem.accounting_entry_id.in_(batch),
             )
         )
-        for entry_id, code in db.execute(query):
-            found[entry_id] = code or "sans code"
+        for entry_id, match_id, code in db.execute(query):
+            found[entry_id] = (match_id, code or "sans code")
     return found
+
+
+def codes_valides(db: Session, entry_ids: list[int]) -> dict[int, str]:
+    """Code du rapprochement validé de chaque écriture qui en a un."""
+    return {entry_id: code for entry_id, (_, code) in rapprochements_valides(db, entry_ids).items()}
 
 
 def latest_company_mapping(db: Session, company_id: int, type_import: str) -> ColumnMapping | None:

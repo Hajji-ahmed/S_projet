@@ -178,6 +178,8 @@ class EcritureAbsente:
     credit: Decimal
     # Rapprochement validé qui la contient : à annuler avant de pouvoir la supprimer
     code_rapprochement: str | None = None
+    # Son id : l'assistant d'import peut l'annuler sur place (21/11/2026)
+    match_id: int | None = None
     # Le fichier a des lignes en erreur sur ce compte : elle y est peut-être, non cochée par défaut
     a_verifier: bool = False
 
@@ -682,7 +684,7 @@ def _ecritures_absentes(
         )
         if entry.hash_ligne not in hashes
     ]
-    codes = accounting_repository.codes_valides(db, [entry.id for entry in entries])
+    valides = accounting_repository.rapprochements_valides(db, [entry.id for entry in entries])
     return [
         EcritureAbsente(
             id=entry.id,
@@ -695,7 +697,8 @@ def _ecritures_absentes(
             libelle=entry.libelle,
             debit=entry.debit,
             credit=entry.credit,
-            code_rapprochement=codes.get(entry.id),
+            code_rapprochement=valides[entry.id][1] if entry.id in valides else None,
+            match_id=valides[entry.id][0] if entry.id in valides else None,
             a_verifier=entry.bank_account_id in en_erreur,
         )
         for entry in entries
@@ -921,8 +924,8 @@ def _absentes_choisies(analysis: AccountingAnalysis, ids: list[int]) -> list[Ecr
         if absente.code_rapprochement:
             raise ConflictError(
                 f"L'écriture du {absente.date_ecriture:%d/%m/%Y} « {absente.libelle} » est "
-                f"rapprochée ({absente.code_rapprochement}) : annulez ce rapprochement dans "
-                "l'Historique du rapprochement ou décochez-la."
+                f"rapprochée ({absente.code_rapprochement}) : annulez d'abord ce rapprochement ou "
+                "décochez-la."
             )
         choisies.append(absente)
     return choisies

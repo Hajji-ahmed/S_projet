@@ -117,6 +117,9 @@ class EcritureAbsenteOut(BaseModel):
     code_rapprochement: str | None = Field(
         None, description="Rapprochement validé qui la contient : la suppression est refusée"
     )
+    match_id: int | None = Field(
+        None, description="Id de ce rapprochement validé, pour l'annuler depuis l'import"
+    )
     a_verifier: bool = Field(
         False, description="Lignes en erreur sur ce compte dans le fichier : non cochée par défaut"
     )

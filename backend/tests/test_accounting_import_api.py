@@ -1207,6 +1207,41 @@ def test_a_reconciled_absent_entry_cannot_be_deleted(client, comptable, db, jour
     assert db.get(AccountingEntry, frais.id) is not None
 
 
+def test_a_reconciled_absent_entry_is_deleted_once_its_match_is_cancelled(
+    client, comptable, db, journals
+):
+    """21/11/2026 : l'analyse donne l'id du rapprochement, que l'assistant annule sur place (route
+    `DELETE /api/reconciliation/matches/{id}`, testée dans test_reconciliation_api)."""
+    from app.models import ReconciliationMatch, User
+    from app.services import reconciliation_service
+
+    confirm(client, comptable, db, xlsx([*EXPORT, FRAIS_BQ1]))
+    frais = db.scalar(select(AccountingEntry).filter_by(numero_piece="P009"))
+    match = _match(db, frais, "Validée", code="AWB-25-000001")
+
+    _, [absente] = _absentes(client, comptable, db, EXPORT)
+    user = db.scalar(select(User).filter_by(email="comptable@example.com"))
+    reconciliation_service.cancel(
+        db, absente["match_id"], motif="Écriture supprimée dans Sage", acteur_id=user.id, ip=None
+    )
+    statut = db.get(ReconciliationMatch, match.id).statut
+    _, [liberee] = _absentes(client, comptable, db, EXPORT)
+    response = confirm(
+        client,
+        comptable,
+        db,
+        xlsx(EXPORT),
+        lignes_choisies="[]",
+        ecritures_supprimees=json.dumps([frais.id]),
+    )
+
+    assert absente["match_id"] == match.id
+    assert statut == "Annulée"
+    assert (liberee["code_rapprochement"], liberee["match_id"]) == (None, None)
+    assert response.status_code == 201, response.text
+    assert db.get(AccountingEntry, frais.id) is None
+
+
 def test_pending_proposals_of_a_deleted_absent_entry_are_removed(client, comptable, db, journals):
     from app.models import ReconciliationMatch
 

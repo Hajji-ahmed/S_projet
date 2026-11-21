@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   absentesParDefaut,
+  libererRapprochement,
   basculerGroupe,
   blocageImport,
   totauxCoches,
@@ -277,8 +278,29 @@ describe("écritures absentes du grand livre (05/11/2026)", () => {
     debit: "0.00",
     credit: "75.00",
     code_rapprochement: null,
+    match_id: null,
     a_verifier: false,
     ...over,
+  });
+
+  it("libère et coche les écritures du rapprochement annulé, sauf celles à vérifier", () => {
+    const absentes = [
+      absente({ id: 1, code_rapprochement: "AWB-26-000001", match_id: 10 }),
+      absente({ id: 2, code_rapprochement: "AWB-26-000001", match_id: 10, a_verifier: true }),
+      absente({ id: 3, code_rapprochement: "AWB-26-000002", match_id: 11 }),
+      absente({ id: 4 }),
+    ];
+
+    const { absentes: suivantes, cochees } = libererRapprochement(absentes, new Set([4]), 10);
+
+    expect(cochees).toEqual(new Set([1, 4]));
+    expect(suivantes.map((item) => item.code_rapprochement)).toEqual([
+      null,
+      null,
+      "AWB-26-000002",
+      null,
+    ]);
+    expect(suivantes.filter(supprimable).map((item) => item.id)).toEqual([1, 2, 4]);
   });
 
   it("coche par défaut les écritures supprimables, sauf celles à vérifier", () => {
