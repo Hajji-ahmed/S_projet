@@ -46,6 +46,7 @@
   --simtis-fete-rose: #f472b6;
   --simtis-fete-rose-fonce: #db2777;
   --simtis-fete-rose-bg: #fdf2f8;
+  --simtis-fete-flamme: #fde68a;
 
   /* Palette graphiques (dans cet ordre) */
   --simtis-chart-1: #006b70; /* teal foncé */
@@ -143,6 +144,7 @@ body {
   --color-simtis-fete-rose: var(--simtis-fete-rose);
   --color-simtis-fete-rose-fonce: var(--simtis-fete-rose-fonce);
   --color-simtis-fete-rose-bg: var(--simtis-fete-rose-bg);
+  --color-simtis-fete-flamme: var(--simtis-fete-flamme);
   --radius-card: var(--simtis-radius-card);
   --shadow-simtis-hover: var(--simtis-shadow-hover);
   --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -197,5 +199,44 @@ body {
   }
   100% {
     transform: scale(1);
+  }
+}
+
+/* Étincelle d'un feu d'artifice ou d'un ballon qui éclate : --a = angle, --dist = portée */
+@keyframes simtis-etincelle {
+  0% {
+    transform: rotate(var(--a)) translateY(0) scale(1);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: rotate(var(--a)) translateY(calc(-1 * var(--dist))) scale(0.3);
+    opacity: 0;
+  }
+}
+
+@keyframes simtis-lettre-saute {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  30% {
+    transform: translateY(-14px) rotate(-6deg);
+  }
+}
+
+@keyframes simtis-flamme {
+  0%,
+  100% {
+    transform: scaleY(1) rotate(-3deg);
+  }
+  50% {
+    transform: scaleY(1.25) rotate(3deg);
   }
 }

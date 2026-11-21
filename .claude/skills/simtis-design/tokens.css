@@ -47,6 +47,7 @@
   --simtis-fete-rose: #f472b6;
   --simtis-fete-rose-fonce: #db2777;
   --simtis-fete-rose-bg: #fdf2f8;
+  --simtis-fete-flamme: #fde68a;
 
   /* Palette graphiques (dans cet ordre) */
   --simtis-chart-1: #006b70; /* teal foncé */
@@ -145,6 +146,7 @@ body {
   --color-simtis-fete-rose: var(--simtis-fete-rose);
   --color-simtis-fete-rose-fonce: var(--simtis-fete-rose-fonce);
   --color-simtis-fete-rose-bg: var(--simtis-fete-rose-bg);
+  --color-simtis-fete-flamme: var(--simtis-fete-flamme);
   --radius-card: var(--simtis-radius-card);
   --shadow-simtis-hover: var(--simtis-shadow-hover);
   --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
