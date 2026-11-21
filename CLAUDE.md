@@ -15,7 +15,7 @@ Done: P3 (technical foundation), P4 (database), P5 (authentication, roles, permi
 | Position bancaire (Banques, Prévisions, Devises, chart) | `docs/decisions/position-bancaire.md` | `position_service`, `position_banques_service`, `components/position/` |
 | Statements: import, pointage, balances, PDF | `docs/decisions/releves.md` | `import_service`, `import_file`, `normalization_service`, `/releves` |
 | Pending operations « (*) » and separate files | `docs/decisions/operations-en-cours.md` | `import_service`, `position_repository.en_cours_hors_releve` |
-| Sage entries, accounting balance, due dates | `docs/decisions/ecritures-sage.md` | `accounting_import_service`, `solde_comptable_service`, `echeance_service`, `/ecritures` |
+| Sage entries, accounting balance, due dates, « Récupérer le GL » from the Sage database | `docs/decisions/ecritures-sage.md` | `accounting_import_service`, `sage_sql_service`, `solde_comptable_service`, `echeance_service`, `/ecritures` |
 | Manual lines, import deletion, Excel reprise | `docs/decisions/saisies-suppressions-reprises.md` | `saisie_manuelle_service`, `suppression_import_service`, `reprise_service` |
 | Reconciliation engine (score, types, groups, codes) | `docs/decisions/rapprochement-moteur.md` | `reconciliation_scoring`, `reconciliation_groupes`, `reconciliation_service` |
 | Reconciliation screen (panes, proposals, ambiguous, batches) | `docs/decisions/rapprochement-ecran.md` | `components/rapprochement/`, `lib/reconciliation.ts` |

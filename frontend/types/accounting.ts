@@ -220,3 +220,35 @@ export type SoldeComptable = {
   nb_ecritures: number;
   nb_non_exportees: number;
 };
+
+/** Compte courant MAD dont le grand livre est lu dans la base Sage (21/11/2026). */
+export type SageCompte = {
+  bank_account_id: number;
+  bank_code: string;
+  libelle: string;
+  numero: string;
+  journaux: string[];
+  comptes: string[];
+};
+
+export type SageEtat = {
+  configure: boolean;
+  base: string | null;
+  derniere_copie: string | null;
+  message: string | null;
+  comptes: SageCompte[];
+};
+
+export type SageAnalyseCompte = {
+  compte: SageCompte;
+  /** À renvoyer à la confirmation : la base Sage doit être inchangée. */
+  empreinte: string;
+  analyse: AnalyseComptable;
+};
+
+export type SageAnalyse = {
+  du: string;
+  au: string;
+  derniere_copie: string | null;
+  comptes: SageAnalyseCompte[];
+};

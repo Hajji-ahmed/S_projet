@@ -12,6 +12,8 @@ import type {
   EcritureDetail,
   EcrituresPage,
   ImportComptable,
+  SageAnalyse,
+  SageEtat,
   SoldeComptable,
 } from "@/types/accounting";
 
@@ -113,5 +115,44 @@ export function setSoldeOuverture(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+/** Base Sage reliée à la société, date de sa dernière copie, comptes lus (21/11/2026). */
+export function sageEtat(companyId: number) {
+  return apiFetch<SageEtat>(`/accounting/sage/etat?company_id=${companyId}`);
+}
+
+/** Lit le grand livre de chaque compte courant MAD dans la base Sage : rien n'est enregistré. */
+export function sageAnalyse(companyId: number, du: string, au: string) {
+  return apiFetch<SageAnalyse>("/accounting/sage/analyse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ company_id: companyId, du, au }),
+  });
+}
+
+/** Importe les lignes cochées d'un compte (la base Sage est relue et doit être inchangée). */
+export function sageConfirm(request: {
+  companyId: number;
+  bankAccountId: number;
+  du: string;
+  au: string;
+  empreinte: string;
+  lignesChoisies: number[];
+  ecrituresSupprimees: number[];
+}) {
+  return apiFetch<ConfirmationComptable>("/accounting/sage/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      company_id: request.companyId,
+      bank_account_id: request.bankAccountId,
+      du: request.du,
+      au: request.au,
+      empreinte: request.empreinte,
+      lignes_choisies: request.lignesChoisies,
+      ecritures_supprimees: request.ecrituresSupprimees,
+    }),
   });
 }

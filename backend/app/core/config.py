@@ -29,6 +29,20 @@ class Settings(BaseSettings):
     max_login_failures: int = 5
     lockout_minutes: int = 15
 
+    # Base Sage 100 (SQL Server) en lecture, pour « Récupérer le GL » (21/11/2026). Joignable depuis
+    # le serveur de production seulement ; hôte vide = fonction désactivée
+    sage_sql_host: str = ""
+    sage_sql_port: int = 1433
+    sage_sql_database: str = ""
+    sage_sql_user: str = ""
+    sage_sql_password: str = ""
+    # Code de la société SIMTIS dont cette base est la comptabilité
+    sage_sql_societe: str = "SIMTIS"
+
+    @property
+    def sage_sql_configure(self) -> bool:
+        return bool(self.sage_sql_host and self.sage_sql_database and self.sage_sql_user)
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

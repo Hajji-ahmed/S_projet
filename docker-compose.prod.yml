@@ -37,6 +37,13 @@ services:
       SESSION_HOURS: ${SESSION_HOURS:-12}
       MAX_LOGIN_FAILURES: ${MAX_LOGIN_FAILURES:-5}
       LOCKOUT_MINUTES: ${LOCKOUT_MINUTES:-15}
+      # Base Sage 100 en lecture (« Récupérer le GL » sur /ecritures) ; vide = fonction désactivée
+      SAGE_SQL_HOST: ${SAGE_SQL_HOST:-}
+      SAGE_SQL_PORT: ${SAGE_SQL_PORT:-1433}
+      SAGE_SQL_DATABASE: ${SAGE_SQL_DATABASE:-}
+      SAGE_SQL_USER: ${SAGE_SQL_USER:-}
+      SAGE_SQL_PASSWORD: ${SAGE_SQL_PASSWORD:-}
+      SAGE_SQL_SOCIETE: ${SAGE_SQL_SOCIETE:-SIMTIS}
     depends_on:
       db:
         condition: service_healthy

@@ -3,6 +3,7 @@
 import {
   ChevronDown,
   CircleCheck,
+  Database,
   FileSpreadsheet,
   History,
   Plus,
@@ -17,6 +18,7 @@ import { BankLabel, logosByCode } from "@/components/banks/BankLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
 import { AccountingImportWizard } from "@/components/ecritures/AccountingImportWizard";
 import { EntriesCard } from "@/components/ecritures/EntriesCard";
+import { SageGlPanel } from "@/components/ecritures/SageGlPanel";
 import { SoldeComptableCard } from "@/components/ecritures/SoldeComptableCard";
 import { DeleteImportModal } from "@/components/imports/DeleteImportModal";
 import { Button } from "@/components/ui/Button";
@@ -55,6 +57,8 @@ function Ecritures({ companyId }: { companyId: number }) {
     !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
 
   const [importing, setImporting] = useState(false);
+  // « Récupérer le GL » depuis la base Sage (21/11/2026)
+  const [recuperant, setRecuperant] = useState(false);
   const [result, setResult] = useState<ConfirmationComptable | null>(null);
   const [logos, setLogos] = useState<Map<string, string | null>>(new Map());
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -120,6 +124,17 @@ function Ecritures({ companyId }: { companyId: number }) {
     reload();
   }
 
+  function handleSageImported(confirmation: ConfirmationComptable) {
+    const n = confirmation.nb_importees;
+    const m = confirmation.nb_supprimees ?? 0;
+    const suppression = m > 0 ? `, ${m} supprimée${m > 1 ? "s" : ""}` : "";
+    const compte = confirmation.par_compte[0]?.bank_code ?? "Compte";
+    toast(
+      `${compte} : ${n} écriture${n > 1 ? "s" : ""} importée${n > 1 ? "s" : ""} depuis Sage${suppression}.`,
+    );
+    reload();
+  }
+
   const journal = showFirst(imports, shownImports, IMPORTS_AFFICHES);
   const columns: Column<ImportComptable>[] = [
     {
@@ -181,10 +196,19 @@ function Ecritures({ companyId }: { companyId: number }) {
       ]
     : [];
 
-  const importButton = canImport && !importing && (
-    <Button icon={Plus} onClick={() => setImporting(true)}>
-      Importer un export Sage
-    </Button>
+  const importButton = canImport && (!importing || !recuperant) && (
+    <div className="flex flex-wrap gap-3">
+      {!recuperant && (
+        <Button icon={Database} onClick={() => setRecuperant(true)}>
+          Récupérer le GL
+        </Button>
+      )}
+      {!importing && (
+        <Button variant="secondary" icon={Plus} onClick={() => setImporting(true)}>
+          Importer un export Sage
+        </Button>
+      )}
+    </div>
   );
 
   return (
@@ -194,6 +218,20 @@ function Ecritures({ companyId }: { companyId: number }) {
         description="Écritures de trésorerie importées de Sage / SI"
         actions={importButton}
       />
+
+      {recuperant && (
+        <Card
+          title="Récupérer le GL depuis Sage"
+          icon={Database}
+          headerExtra={
+            <Button variant="secondary" icon={X} onClick={() => setRecuperant(false)}>
+              Fermer
+            </Button>
+          }
+        >
+          <SageGlPanel companyId={companyId} logos={logos} onImported={handleSageImported} />
+        </Card>
+      )}
 
       {importing && (
         <Card title="Importer un export Sage" icon={Upload}>

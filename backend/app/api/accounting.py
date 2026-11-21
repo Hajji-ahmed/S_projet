@@ -22,6 +22,10 @@ from app.schemas.accounting import (
     ImportComptableOut,
     LignesGardeesIn,
     MappingComptableIn,
+    SageAnalyseOut,
+    SageConfirmIn,
+    SageEtatOut,
+    SagePeriodeIn,
     SoldeComptableOut,
 )
 from app.schemas.reconciliation import TriMontant
@@ -29,6 +33,7 @@ from app.services import (
     acces_societe_service,
     accounting_import_service,
     import_file,
+    sage_sql_service,
     saisie_manuelle_service,
     solde_comptable_service,
     suppression_import_service,
@@ -147,6 +152,58 @@ def confirm_entries(
         ecarter_erreurs=ecarter_erreurs,
         lignes_choisies=None if chosen is None else chosen.root,
         ecritures_supprimees=None if supprimees is None else supprimees.root,
+        acteur_id=user.id,
+        ip=client_ip(request),
+    )
+    return ConfirmationComptableOut.from_import(result)
+
+
+# --- Grand livre lu dans la base Sage (21/11/2026) ---------------------------------------------------
+
+
+@router.get("/sage/etat", response_model=SageEtatOut)
+def sage_etat(
+    company_id: Annotated[int, Query(description="Société active")],
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> SageEtatOut:
+    """Base Sage configurée pour la société, date de sa dernière copie, comptes concernés."""
+    return SageEtatOut.of(sage_sql_service.etat(db, company_id))
+
+
+@router.post("/sage/analyse", response_model=SageAnalyseOut)
+def sage_analyse(
+    payload: SagePeriodeIn,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> SageAnalyseOut:
+    """Lit le grand livre de chaque compte courant MAD dans la base Sage et renvoie son aperçu.
+    Rien n'est enregistré."""
+    acces_societe_service.verifier(user, payload.company_id)
+    result = sage_sql_service.analyser(db, payload.company_id, payload.du, payload.au)
+    return SageAnalyseOut.of(result)
+
+
+@router.post("/sage/confirm", response_model=ConfirmationComptableOut, status_code=201)
+def sage_confirm(
+    request: Request,
+    payload: SageConfirmIn,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_import),
+) -> ConfirmationComptableOut:
+    """Importe les lignes cochées d'un compte, si la base Sage n'a pas changé depuis l'aperçu."""
+    acces_societe_service.verifier(user, payload.company_id)
+    acces_societe_service.verifier_comptes(db, user, [payload.bank_account_id])
+    acces_societe_service.verifier_ecritures(db, user, payload.ecritures_supprimees)
+    result = sage_sql_service.confirmer(
+        db,
+        company_id=payload.company_id,
+        bank_account_id=payload.bank_account_id,
+        du=payload.du,
+        au=payload.au,
+        empreinte_attendue=payload.empreinte,
+        lignes_choisies=payload.lignes_choisies,
+        ecritures_supprimees=payload.ecritures_supprimees,
         acteur_id=user.id,
         ip=client_ip(request),
     )

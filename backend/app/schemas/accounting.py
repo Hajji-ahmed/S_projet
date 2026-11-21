@@ -14,6 +14,7 @@ from app.services.accounting_import_service import (
     EntriesImport,
     EntriesPage,
 )
+from app.services.sage_sql_service import AnalyseSage, CompteSage, EtatSage
 
 AccountingFieldCode = Literal[
     "date_ecriture",
@@ -399,3 +400,91 @@ class SoldeComptableOut(BaseModel):
             nb_ecritures=item.nb_ecritures,
             nb_non_exportees=item.nb_non_exportees,
         )
+
+
+# --- Grand livre lu dans la base Sage (21/11/2026) ---------------------------------------------------
+
+
+class SageCompteOut(BaseModel):
+    """Compte courant MAD dont le grand livre est lu dans la base Sage."""
+
+    bank_account_id: int
+    bank_code: str
+    libelle: str
+    numero: str
+    journaux: list[str]
+    comptes: list[str]
+
+    @classmethod
+    def of(cls, compte: CompteSage) -> "SageCompteOut":
+        account = compte.account
+        return cls(
+            bank_account_id=account.id,
+            bank_code=account.bank.code,
+            libelle=account.libelle,
+            numero=account.numero,
+            journaux=compte.journaux,
+            comptes=compte.comptes,
+        )
+
+
+class SageEtatOut(BaseModel):
+    configure: bool = Field(description="Base Sage configurée et reliée à cette société")
+    base: str | None
+    derniere_copie: datetime | None = Field(description="Date de la dernière copie (DT_SYC_BI)")
+    message: str | None = Field(description="Pourquoi la récupération est impossible")
+    comptes: list[SageCompteOut]
+
+    @classmethod
+    def of(cls, etat: EtatSage) -> "SageEtatOut":
+        return cls(
+            configure=etat.configure,
+            base=etat.base,
+            derniere_copie=etat.derniere_copie,
+            message=etat.message,
+            comptes=[SageCompteOut.of(compte) for compte in etat.comptes],
+        )
+
+
+class SagePeriodeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    company_id: int
+    du: date
+    au: date
+
+
+class SageAnalyseCompteOut(BaseModel):
+    compte: SageCompteOut
+    empreinte: str = Field(description="À renvoyer à la confirmation : la base doit être inchangée")
+    analyse: AnalyseComptableOut
+
+
+class SageAnalyseOut(BaseModel):
+    du: date
+    au: date
+    derniere_copie: datetime | None
+    comptes: list[SageAnalyseCompteOut]
+
+    @classmethod
+    def of(cls, result: AnalyseSage) -> "SageAnalyseOut":
+        return cls(
+            du=result.du,
+            au=result.au,
+            derniere_copie=result.derniere_copie,
+            comptes=[
+                SageAnalyseCompteOut(
+                    compte=SageCompteOut.of(item.compte),
+                    empreinte=item.empreinte,
+                    analyse=AnalyseComptableOut.from_analysis(item.analyse),
+                )
+                for item in result.comptes
+            ],
+        )
+
+
+class SageConfirmIn(SagePeriodeIn):
+    bank_account_id: int
+    empreinte: str = Field(min_length=64, max_length=64)
+    lignes_choisies: list[Annotated[int, Field(ge=1)]]
+    ecritures_supprimees: list[Annotated[int, Field(ge=1)]] = []

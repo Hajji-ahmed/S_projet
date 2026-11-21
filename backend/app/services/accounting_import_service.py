@@ -794,8 +794,11 @@ def confirm_entries(
     ecritures_supprimees: list[int] | None = None,
     ip: str | None = None,
     today: date | None = None,
+    enregistrer_modele: bool = True,
 ) -> EntriesImport:
-    """Enregistre l'export : le fichier est analysé à nouveau (sans état entre les deux temps)."""
+    """Enregistre l'export : le fichier est analysé à nouveau (sans état entre les deux temps).
+    `enregistrer_modele=False` : grand livre lu dans la base Sage (21/11/2026), ses colonnes ne
+    remplacent pas le modèle mémorisé pour les exports Excel de la société."""
     analysis = analyse_entries(
         db,
         company_id=company_id,
@@ -870,7 +873,7 @@ def confirm_entries(
                 hash_ligne=line.hash_ligne,
             ),
         )
-    modele = _save_mapping(db, company, analysis)
+    modele = _save_mapping(db, company, analysis) if enregistrer_modele else False
     # Les doublons gardés comptent comme des lignes importées
     summary = _summarise([replace(line, statut="Valide") for line in lines], 0)
     audit_service.log(

@@ -102,8 +102,21 @@ seuls les ports 80 et 443 ouverts. Même volume de base : les données sont cons
    **HTTP seul en attendant un nom de domaine** (22/10/2026) : dans `.env`, `CADDYFILE=Caddyfile.http`,
    `APP_ENV=development` (cookie de session sans « Secure ») et `CORS_ORIGINS=http://10.77.77.11` ;
    adresse `http://10.77.77.11`, sans certificat à installer.
-4. Mise à jour : nouveau code, puis `docker compose -f docker-compose.prod.yml up -d --build --wait`.
-5. Retour au mode développement : `docker compose -f docker-compose.prod.yml down`, puis
+4. **Base Sage en lecture** (« Récupérer le GL » sur `/ecritures`, 21/11/2026) : la base Sage 100
+   n'est joignable que depuis ce serveur. Dans `.env` :
+   ```bash
+   SAGE_SQL_HOST=10.77.77.12
+   SAGE_SQL_PORT=1433
+   SAGE_SQL_DATABASE=SF_SIMTIS
+   SAGE_SQL_USER=Consultation
+   SAGE_SQL_PASSWORD=...        # jamais dans git ni dans un mail
+   SAGE_SQL_SOCIETE=SIMTIS      # société SIMTIS dont c'est la comptabilité
+   ```
+   puis `docker compose -f docker-compose.prod.yml up -d --wait` (le backend relit `.env`). Sans ces
+   lignes, le bouton dit que la récupération n'est pas configurée ; l'import Excel reste disponible.
+   Tester le réseau : `nc -zv 10.77.77.12 1433`.
+5. Mise à jour : nouveau code, puis `docker compose -f docker-compose.prod.yml up -d --build --wait`.
+6. Retour au mode développement : `docker compose -f docker-compose.prod.yml down`, puis
    `docker compose up -d --wait` (mêmes données).
 
 ## Déploiement automatique
