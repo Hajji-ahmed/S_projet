@@ -1,7 +1,7 @@
 "use client";
 
-import { Cake, Gift, PartyPopper, Volume2, VolumeX, X } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Cake, Gift, PartyPopper, X } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/cn";
@@ -11,9 +11,6 @@ import {
   DUREE_CELEBRATION_MS,
   estAnniversaire,
 } from "@/lib/anniversaire";
-
-/** Chanson jouée pendant l'écran de célébration (fichier libre de droits dans public/). */
-const CHANSON = "/anniversaire/chanson.mp3";
 
 /**
  * Surprise d'anniversaire de Salma (24/11/2026) : écran de 40 s à la première connexion du jour,
@@ -297,82 +294,7 @@ function Gateau() {
   );
 }
 
-type EtatSon = "chargement" | "joue" | "bloque" | "coupe" | "absent";
-
-/** Joue la chanson en boucle pendant l'écran ; s'arrête quand l'écran se ferme. */
-function useChanson() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [etat, setEtat] = useState<EtatSon>("chargement");
-
-  useEffect(() => {
-    const audio = new Audio(CHANSON);
-    audio.loop = true;
-    audioRef.current = audio;
-    audio.addEventListener("error", () => setEtat("absent"));
-    audio
-      .play()
-      .then(() => setEtat("joue"))
-      .catch((erreur: unknown) => {
-        // Lecture refusée sans clic (session restaurée au chargement) : bouton « Activer le son »
-        if (erreur instanceof DOMException && erreur.name === "NotAllowedError") {
-          setEtat("bloque");
-        } else {
-          setEtat("absent");
-        }
-      });
-    return () => {
-      audio.pause();
-      audioRef.current = null;
-    };
-  }, []);
-
-  const activer = () => {
-    audioRef.current
-      ?.play()
-      .then(() => setEtat("joue"))
-      .catch(() => setEtat("absent"));
-  };
-
-  const basculer = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.muted = !audio.muted;
-    setEtat(audio.muted ? "coupe" : "joue");
-  };
-
-  return { etat, activer, basculer };
-}
-
-function BoutonSon({
-  etat,
-  activer,
-  basculer,
-}: {
-  etat: EtatSon;
-  activer: () => void;
-  basculer: () => void;
-}) {
-  if (etat === "absent" || etat === "chargement") return null;
-  const bloque = etat === "bloque";
-  const Icone = etat === "coupe" ? VolumeX : Volume2;
-  return (
-    <button
-      type="button"
-      onClick={bloque ? activer : basculer}
-      className={cn(
-        "absolute top-4 right-4 z-10 inline-flex items-center gap-2 rounded-full bg-simtis-card px-4 py-2 text-sm font-semibold text-simtis-fete-rose-fonce shadow-simtis-hover transition-transform duration-150 hover:scale-105",
-        bloque && "animate-bounce",
-      )}
-    >
-      <Icone className="size-4" aria-hidden="true" />
-      {bloque ? "Activer le son" : etat === "coupe" ? "Remettre le son" : "Couper le son"}
-    </button>
-  );
-}
-
 function Celebration({ onFermer }: { onFermer: () => void }) {
-  const son = useChanson();
-
   useEffect(() => {
     const fermerSurEchap = (event: KeyboardEvent) => {
       if (event.key === "Escape") onFermer();
@@ -388,8 +310,6 @@ function Celebration({ onFermer }: { onFermer: () => void }) {
       aria-label={`Joyeux anniversaire ${ANNIVERSAIRE.prenom}`}
       className="fixed inset-0 z-[100] overflow-hidden bg-simtis-fete-rose-bg/95"
     >
-      <BoutonSon {...son} />
-
       {FEUX.map((f, i) => (
         <div
           key={`f${i}`}
