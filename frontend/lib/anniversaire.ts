@@ -1,11 +1,15 @@
 /**
  * Surprise d'anniversaire de Salma (24/11/2026) : réservée à son compte, ce jour-là à l'heure du Maroc.
+ * Le compte d'Ahmed Hajji la voit aussi le 21/11 (test sur le serveur) et le 24/11.
  * Ponctuel : à retirer après la date, avec components/anniversaire/ et les tokens « fete ».
  */
 export const ANNIVERSAIRE = {
-  email: "simtis.jeid.s@softgroup.ma",
   prenom: "Salma",
-  jour: "2026-11-24",
+  /** Email de connexion → jours (AAAA-MM-JJ, heure du Maroc) où la surprise s'affiche. */
+  destinataires: {
+    "simtis.jeid.s@softgroup.ma": ["2026-11-24"],
+    "simtis.hajji.a@softgroup.ma": ["2026-11-21", "2026-11-24"],
+  } as Record<string, readonly string[]>,
 } as const;
 
 /** Durée de l'écran de célébration, en millisecondes. */
@@ -23,11 +27,11 @@ export function jourAuMaroc(maintenant: Date): string {
 
 export function estAnniversaire(email: string | null | undefined, maintenant: Date): boolean {
   if (!email) return false;
-  return (
-    email.trim().toLowerCase() === ANNIVERSAIRE.email &&
-    jourAuMaroc(maintenant) === ANNIVERSAIRE.jour
-  );
+  const jours = ANNIVERSAIRE.destinataires[email.trim().toLowerCase()];
+  return jours?.includes(jourAuMaroc(maintenant)) ?? false;
 }
 
 /** Clé qui retient que l'écran de 40 s est déjà passé ce jour-là. */
-export const CLE_CELEBRATION_VUE = `simtis.anniversaire.${ANNIVERSAIRE.jour}.vue`;
+export function cleCelebrationVue(maintenant: Date): string {
+  return `simtis.anniversaire.${jourAuMaroc(maintenant)}.vue`;
+}

@@ -7,7 +7,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import {
   ANNIVERSAIRE,
-  CLE_CELEBRATION_VUE,
+  cleCelebrationVue,
   DUREE_CELEBRATION_MS,
   estAnniversaire,
 } from "@/lib/anniversaire";
@@ -27,30 +27,31 @@ export function Anniversaire() {
   }, []);
 
   if (!estAnniversaire(user?.email, maintenant)) return null;
-  return <Fete />;
+  const cle = cleCelebrationVue(maintenant);
+  return <Fete key={cle} cle={cle} />;
 }
 
-function lireVue(): boolean {
+function lireVue(cle: string): boolean {
   try {
-    return window.localStorage.getItem(CLE_CELEBRATION_VUE) === "1";
+    return window.localStorage.getItem(cle) === "1";
   } catch {
     return false;
   }
 }
 
-function Fete() {
-  const [celebration, setCelebration] = useState(() => !lireVue());
+function Fete({ cle }: { cle: string }) {
+  const [celebration, setCelebration] = useState(() => !lireVue(cle));
 
   useEffect(() => {
     if (!celebration) return;
     try {
-      window.localStorage.setItem(CLE_CELEBRATION_VUE, "1");
+      window.localStorage.setItem(cle, "1");
     } catch {
       // Stockage indisponible : l'écran repassera au prochain chargement, sans gravité
     }
     const minuterie = window.setTimeout(() => setCelebration(false), DUREE_CELEBRATION_MS);
     return () => window.clearTimeout(minuterie);
-  }, [celebration]);
+  }, [celebration, cle]);
 
   return (
     <>
