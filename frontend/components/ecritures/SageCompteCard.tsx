@@ -6,6 +6,7 @@ import { useState, type ReactNode } from "react";
 import { BankLabel } from "@/components/banks/BankLabel";
 import { CheckAllButtons } from "@/components/releves/CheckAllButtons";
 import { FilterTile } from "@/components/releves/FilterTile";
+import { EcartBadge } from "@/components/ecritures/SageEcartDetail";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
 import { Pagination } from "@/components/ui/Pagination";
@@ -29,6 +30,7 @@ import {
   type VueLignes,
 } from "@/lib/importLines";
 import { cochesParDefaut } from "@/lib/sage";
+import { ecartApresImport } from "@/lib/sageEcart";
 import type {
   ConfirmationComptable,
   EcritureAbsente,
@@ -38,6 +40,8 @@ import type {
 
 type SageCompteCardProps = {
   item: SageAnalyseCompte;
+  /** Fin de la période récupérée : date du solde Sage. */
+  au: string;
   logo: string | null | undefined;
   coches: ReadonlySet<number>;
   onCoches: (next: Set<number>) => void;
@@ -74,6 +78,7 @@ function Message({ tone, children }: { tone: "danger" | "warning"; children: Rea
  */
 export function SageCompteCard({
   item,
+  au,
   logo,
   coches,
   onCoches,
@@ -270,7 +275,7 @@ export function SageCompteCard({
           />
         ))}
       </div>
-      <dl className="mb-4 grid gap-3 sm:grid-cols-2">
+      <dl className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-[12px] border border-simtis-border bg-simtis-background px-3 py-2">
           <dt className="text-xs text-simtis-muted">Total débit / crédit des lignes cochées</dt>
           <dd className="flex flex-wrap gap-x-6 font-semibold text-simtis-text tabular-nums">
@@ -293,6 +298,29 @@ export function SageCompteCard({
                   ? "solde d'ouverture daté après la période"
                   : "solde d'ouverture à saisir"}
               </span>
+            )}
+          </dd>
+        </div>
+        <div className="rounded-[12px] border border-simtis-border bg-simtis-background px-3 py-2">
+          <dt className="text-xs text-simtis-muted">
+            Solde dans Sage au {formatDate(au)} · écart avec le solde après import
+          </dt>
+          <dd className="flex flex-wrap items-center gap-x-3 gap-y-1 font-semibold text-simtis-text tabular-nums">
+            {item.solde_sage == null ? (
+              "-"
+            ) : (
+              <>
+                <span
+                  title={
+                    item.debut_sage
+                      ? `Depuis l'à-nouveau du ${formatDate(item.debut_sage)}`
+                      : undefined
+                  }
+                >
+                  {formatAmount(item.solde_sage, "DH")}
+                </span>
+                <EcartBadge ecart={ecartApresImport(item.solde_sage, solde?.solde)} />
+              </>
             )}
           </dd>
         </div>

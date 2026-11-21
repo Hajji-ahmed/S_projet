@@ -10,7 +10,6 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from app.core.config import get_settings
 from app.models import (
     AccountingEntry,
     AuditLog,
@@ -21,14 +20,13 @@ from app.models import (
     ImportBatch,
     UserCompany,
 )
-from app.repositories import sage_sql_repository
 from app.services import sage_sql_service
 from tests.helpers import bearer, build_account, login, make_auth_user, save
+from tests.sage_faux import FauxSage
 
 ETAT = "/api/accounting/sage/etat"
 ANALYSE = "/api/accounting/sage/analyse"
 CONFIRM = "/api/accounting/sage/confirm"
-COPIE = datetime(2025, 9, 30, 0, 33)
 
 
 def ligne(jour, journal, compte, piece, libelle, debit=None, credit=None, ech=None) -> tuple:
@@ -43,49 +41,6 @@ def ligne(jour, journal, compte, piece, libelle, debit=None, credit=None, ech=No
         None if debit is None else Decimal(debit),
         None if credit is None else Decimal(credit),
     )
-
-
-class FauxSage:
-    """Remplace la base Sage : lignes par journal, et trace des lectures."""
-
-    def __init__(self) -> None:
-        self.lignes: dict[str, list[tuple]] = {}
-        self.lectures: list[dict] = []
-        self.panne = False
-
-    def derniere_copie(self, cnx):
-        if self.panne:
-            raise OSError("connexion refusée")
-        return COPIE
-
-    def grand_livre(self, cnx, *, journaux, comptes, du, au):
-        if self.panne:
-            raise OSError("connexion refusée")
-        self.lectures.append({"journaux": list(journaux), "comptes": list(comptes)})
-        return [
-            row
-            for journal in journaux
-            for row in self.lignes.get(journal, [])
-            if row[2].startswith(tuple(comptes)) and du <= row[0].date() <= au
-        ]
-
-
-@pytest.fixture
-def sage(monkeypatch) -> FauxSage:
-    faux = FauxSage()
-    monkeypatch.setattr(sage_sql_repository, "derniere_copie", faux.derniere_copie)
-    monkeypatch.setattr(sage_sql_repository, "grand_livre", faux.grand_livre)
-    configure = get_settings().model_copy(
-        update={
-            "sage_sql_host": "10.0.0.1",
-            "sage_sql_database": "SF_TEST",
-            "sage_sql_user": "Consultation",
-            "sage_sql_password": "secret",
-            "sage_sql_societe": "SIMTIS",
-        }
-    )
-    monkeypatch.setattr(sage_sql_service, "get_settings", lambda: configure)
-    return faux
 
 
 @pytest.fixture

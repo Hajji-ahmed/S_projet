@@ -23,9 +23,12 @@ from app.schemas.accounting import (
     LignesGardeesIn,
     MappingComptableIn,
     SageAnalyseOut,
+    SageComparaisonOut,
     SageConfirmIn,
+    SageEcartDetailOut,
     SageEtatOut,
     SagePeriodeIn,
+    SageSoldesOut,
     SoldeComptableOut,
 )
 from app.schemas.reconciliation import TriMontant
@@ -33,6 +36,7 @@ from app.services import (
     acces_societe_service,
     accounting_import_service,
     import_file,
+    sage_ecart_service,
     sage_sql_service,
     saisie_manuelle_service,
     solde_comptable_service,
@@ -208,6 +212,44 @@ def sage_confirm(
         ip=client_ip(request),
     )
     return ConfirmationComptableOut.from_import(result)
+
+
+JourSage = Annotated[
+    date | None, Query(alias="date", description="Date du solde, aujourd'hui par défaut")
+]
+
+
+@router.get("/sage/soldes", response_model=SageSoldesOut)
+def sage_soldes(
+    company_id: Annotated[int, Query(description="Société active")],
+    jour: JourSage = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_read),
+) -> SageSoldesOut:
+    """Solde Sage, solde comptable SIMTIS et écart de chaque compte courant MAD."""
+    return SageSoldesOut.of(sage_ecart_service.soldes(db, company_id, jour))
+
+
+@router.get("/sage/ecart", response_model=SageEcartDetailOut)
+def sage_ecart(
+    bank_account_id: Annotated[int, Query(description="Compte bancaire")],
+    jour: JourSage = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_read),
+) -> SageEcartDetailOut:
+    """D'où vient l'écart : départ, journaux, non exportées, lignes hors journaux de banque."""
+    return SageEcartDetailOut.of(sage_ecart_service.detail(db, bank_account_id, jour))
+
+
+@router.get("/sage/comparaison", response_model=SageComparaisonOut)
+def sage_comparaison(
+    bank_account_id: Annotated[int, Query(description="Compte bancaire")],
+    jour: JourSage = None,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(can_read),
+) -> SageComparaisonOut:
+    """Écritures des journaux de banque présentes d'un seul côté, Sage ou SIMTIS."""
+    return SageComparaisonOut.of(sage_ecart_service.comparer(db, bank_account_id, jour))
 
 
 # --- Lecture ---------------------------------------------------------------------------------------

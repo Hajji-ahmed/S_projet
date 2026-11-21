@@ -3,7 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -339,3 +339,30 @@ def mouvements_comptables(db: Session, account_id: int, *, apres: date | None, j
         nb_ecritures=row[3],
         nb_non_exportees=row[4],
     )
+
+
+def mouvements_par_journal(
+    db: Session, account_id: int, *, du: date, au: date
+) -> list[tuple[str | None, bool, Decimal, Decimal, int]]:
+    """(journal, écriture SIMTIS pas encore exportée vers Sage, débits, crédits, nombre) des
+    écritures du compte entre deux dates incluses (écart avec le solde Sage, 21/11/2026)."""
+    non_exportee = and_(AccountingEntry.origine == "SIMTIS", AccountingEntry.exportee_le.is_(None))
+    rows = db.execute(
+        select(
+            AccountingEntry.journal,
+            non_exportee,
+            func.coalesce(func.sum(AccountingEntry.debit), 0),
+            func.coalesce(func.sum(AccountingEntry.credit), 0),
+            func.count(),
+        )
+        .where(
+            AccountingEntry.bank_account_id == account_id,
+            AccountingEntry.date_ecriture >= du,
+            AccountingEntry.date_ecriture <= au,
+        )
+        .group_by(AccountingEntry.journal, non_exportee)
+    ).all()
+    return [
+        (journal, bool(flag), Decimal(debit), Decimal(credit), nb)
+        for journal, flag, debit, credit, nb in rows
+    ]

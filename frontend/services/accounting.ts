@@ -13,7 +13,10 @@ import type {
   EcrituresPage,
   ImportComptable,
   SageAnalyse,
+  SageComparaison,
+  SageEcartDetail,
   SageEtat,
+  SageSoldes,
   SoldeComptable,
 } from "@/types/accounting";
 
@@ -155,4 +158,23 @@ export function sageConfirm(request: {
       ecritures_supprimees: request.ecrituresSupprimees,
     }),
   });
+}
+
+/** Solde Sage, solde comptable SIMTIS et écart de chaque compte courant MAD (21/11/2026). */
+export function sageSoldes(companyId: number, jour: string) {
+  return apiFetch<SageSoldes>(`/accounting/sage/soldes?company_id=${companyId}&date=${jour}`);
+}
+
+/** D'où vient l'écart d'un compte : départ, journaux, non exportées, lignes hors journaux. */
+export function sageEcart(bankAccountId: number, jour: string) {
+  return apiFetch<SageEcartDetail>(
+    `/accounting/sage/ecart?bank_account_id=${bankAccountId}&date=${jour}`,
+  );
+}
+
+/** Écritures des journaux de banque présentes d'un seul côté, Sage ou SIMTIS. */
+export function sageComparaison(bankAccountId: number, jour: string) {
+  return apiFetch<SageComparaison>(
+    `/accounting/sage/comparaison?bank_account_id=${bankAccountId}&date=${jour}`,
+  );
 }

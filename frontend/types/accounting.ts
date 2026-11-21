@@ -244,6 +244,9 @@ export type SageAnalyseCompte = {
   /** À renvoyer à la confirmation : la base Sage doit être inchangée. */
   empreinte: string;
   analyse: AnalyseComptable;
+  /** Solde du compte dans Sage à la date « Au » (21/11/2026). */
+  solde_sage?: string | null;
+  debut_sage?: string | null;
 };
 
 export type SageAnalyse = {
@@ -251,4 +254,63 @@ export type SageAnalyse = {
   au: string;
   derniere_copie: string | null;
   comptes: SageAnalyseCompte[];
+};
+
+/** Écart entre le solde Sage et le solde comptable SIMTIS d'un compte (21/11/2026). */
+export type SageSolde = SageCompte & {
+  jour: string;
+  /** À-nouveau (journal 9000) dont part le solde Sage. */
+  debut: string | null;
+  solde_sage: string;
+  /** Null : solde d'ouverture SIMTIS à saisir. */
+  solde_simtis: string | null;
+  /** Solde Sage − solde SIMTIS. */
+  ecart: string | null;
+};
+
+export type SageSoldes = {
+  configure: boolean;
+  derniere_copie: string | null;
+  message: string | null;
+  comptes: SageSolde[];
+};
+
+export type SageJournal = {
+  journal: string;
+  /** Journal Sage du compte (sinon OD, autre banque…). */
+  banque: boolean;
+  sage: string;
+  simtis: string;
+  ecart: string;
+  nb_sage: number;
+  nb_simtis: number;
+};
+
+export type SageLigne = {
+  date_ecriture: string;
+  journal: string;
+  compte: string;
+  numero_piece: string | null;
+  libelle: string | null;
+  debit: string;
+  credit: string;
+};
+
+export type SageEcartDetail = {
+  solde: SageSolde;
+  debut_simtis: string | null;
+  depart_sage: string;
+  depart_simtis: string | null;
+  journaux: SageJournal[];
+  /** Écritures SIMTIS pas encore exportées vers Sage (débits − crédits). */
+  non_exportees: string;
+  nb_non_exportees: number;
+  hors_journaux: SageLigne[];
+  hors_journaux_tronque: boolean;
+};
+
+export type SageComparaison = {
+  solde: SageSolde;
+  absentes_de_simtis: LigneComptable[];
+  absentes_de_sage: EcritureAbsente[];
 };

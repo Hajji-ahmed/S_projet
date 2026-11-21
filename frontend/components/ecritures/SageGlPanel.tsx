@@ -270,6 +270,7 @@ export function SageGlPanel({ companyId, logos, onImported }: SageGlPanelProps) 
               <SageCompteCard
                 key={id}
                 item={item}
+                au={analyse.au}
                 logo={logos.get(item.compte.bank_code)}
                 coches={cochesDe(item)}
                 onCoches={(next) => setCoches((current) => new Map(current).set(id, next))}

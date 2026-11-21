@@ -14,6 +14,12 @@ from app.services.accounting_import_service import (
     EntriesImport,
     EntriesPage,
 )
+from app.services.sage_ecart_service import (
+    Comparaison,
+    EcartDetail,
+    EtatSoldesSage,
+    SoldeSageCompte,
+)
 from app.services.sage_sql_service import AnalyseSage, CompteSage, EtatSage
 
 AccountingFieldCode = Literal[
@@ -458,6 +464,8 @@ class SageAnalyseCompteOut(BaseModel):
     compte: SageCompteOut
     empreinte: str = Field(description="À renvoyer à la confirmation : la base doit être inchangée")
     analyse: AnalyseComptableOut
+    solde_sage: Decimal | None = Field(None, description="Solde du compte dans Sage à la date Au")
+    debut_sage: date | None = Field(None, description="À-nouveau dont part le solde Sage")
 
 
 class SageAnalyseOut(BaseModel):
@@ -477,6 +485,8 @@ class SageAnalyseOut(BaseModel):
                     compte=SageCompteOut.of(item.compte),
                     empreinte=item.empreinte,
                     analyse=AnalyseComptableOut.from_analysis(item.analyse),
+                    solde_sage=item.solde_sage.solde if item.solde_sage else None,
+                    debut_sage=item.solde_sage.debut if item.solde_sage else None,
                 )
                 for item in result.comptes
             ],
@@ -488,3 +498,109 @@ class SageConfirmIn(SagePeriodeIn):
     empreinte: str = Field(min_length=64, max_length=64)
     lignes_choisies: list[Annotated[int, Field(ge=1)]]
     ecritures_supprimees: list[Annotated[int, Field(ge=1)]] = []
+
+
+# --- Écart entre le solde Sage et le solde comptable SIMTIS (21/11/2026) -------------------------
+
+
+class SageSoldeOut(SageCompteOut):
+    jour: date
+    debut: date | None = Field(description="À-nouveau (journal 9000) dont part le solde Sage")
+    solde_sage: Decimal = Field(description="Débiteur positif, tous journaux")
+    solde_simtis: Decimal | None = Field(description="Solde comptable SIMTIS ; null sans ouverture")
+    ecart: Decimal | None = Field(description="Solde Sage − solde SIMTIS")
+
+    @classmethod
+    def of_solde(cls, item: SoldeSageCompte) -> "SageSoldeOut":
+        return cls(
+            **SageCompteOut.of(item.compte).model_dump(),
+            jour=item.jour,
+            debut=item.debut,
+            solde_sage=item.solde_sage,
+            solde_simtis=item.solde_simtis,
+            ecart=item.ecart,
+        )
+
+
+class SageSoldesOut(BaseModel):
+    configure: bool
+    derniere_copie: datetime | None
+    message: str | None
+    comptes: list[SageSoldeOut]
+
+    @classmethod
+    def of(cls, etat: EtatSoldesSage) -> "SageSoldesOut":
+        return cls(
+            configure=etat.configure,
+            derniere_copie=etat.derniere_copie,
+            message=etat.message,
+            comptes=[SageSoldeOut.of_solde(item) for item in etat.comptes],
+        )
+
+
+class SageJournalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    journal: str
+    banque: bool = Field(description="Journal Sage du compte (sinon OD, autre banque...)")
+    sage: Decimal = Field(description="Débits − crédits dans Sage sur la période")
+    simtis: Decimal
+    ecart: Decimal
+    nb_sage: int
+    nb_simtis: int
+
+
+class SageLigneOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    date_ecriture: date
+    journal: str
+    compte: str
+    numero_piece: str | None
+    libelle: str | None
+    debit: Decimal
+    credit: Decimal
+
+
+class SageEcartDetailOut(BaseModel):
+    solde: SageSoldeOut
+    debut_simtis: date | None = Field(description="Début de la période côté SIMTIS")
+    depart_sage: Decimal
+    depart_simtis: Decimal | None
+    journaux: list[SageJournalOut]
+    non_exportees: Decimal = Field(description="Écritures SIMTIS pas encore exportées vers Sage")
+    nb_non_exportees: int
+    hors_journaux: list[SageLigneOut]
+    hors_journaux_tronque: bool
+
+    @classmethod
+    def of(cls, item: EcartDetail) -> "SageEcartDetailOut":
+        return cls(
+            solde=SageSoldeOut.of_solde(item.solde),
+            debut_simtis=item.debut_simtis,
+            depart_sage=item.depart_sage,
+            depart_simtis=item.depart_simtis,
+            journaux=[SageJournalOut.model_validate(j) for j in item.journaux],
+            non_exportees=item.non_exportees,
+            nb_non_exportees=item.nb_non_exportees,
+            hors_journaux=[SageLigneOut.model_validate(line) for line in item.hors_journaux],
+            hors_journaux_tronque=item.hors_journaux_tronque,
+        )
+
+
+class SageComparaisonOut(BaseModel):
+    solde: SageSoldeOut
+    absentes_de_simtis: list[LigneComptableOut]
+    absentes_de_sage: list[EcritureAbsenteOut]
+
+    @classmethod
+    def of(cls, item: Comparaison) -> "SageComparaisonOut":
+        return cls(
+            solde=SageSoldeOut.of_solde(item.solde),
+            absentes_de_simtis=[
+                LigneComptableOut.model_validate(line) for line in item.absentes_de_simtis
+            ],
+            absentes_de_sage=[
+                EcritureAbsenteOut.model_validate(item) for item in item.absentes_de_sage
+            ],
+        )

@@ -97,3 +97,91 @@ def grand_livre(
     with _curseur(cnx) as cur:
         cur.execute(sql, tuple(params))
         return [tuple(row) for row in cur.fetchall()]
+
+
+# --- Solde Sage d'un compte (21/11/2026) -----------------------------------------------------------
+
+# Journal des à-nouveaux : le solde Sage d'un compte part du dernier à-nouveau
+JOURNAL_A_NOUVEAUX = "9000"
+
+
+def _comptes_sql(comptes: Sequence[str]) -> tuple[str, list[str]]:
+    return " OR ".join(["e.CG_Num LIKE %s"] * len(comptes)), [f"{c}%" for c in comptes]
+
+
+def _jour(valeur: date) -> str:
+    return valeur.strftime("%Y%m%d")
+
+
+def debut_solde(cnx: ConnexionSage, *, comptes: Sequence[str], jour: date) -> date | None:
+    """Date du dernier à-nouveau des comptes au plus tard le `jour` (début de l'exercice ouvert
+    le plus ancien non clôturé) ; à défaut, date de leur première écriture ; None sans écriture."""
+    comptes_sql, params = _comptes_sql(comptes)
+    sql = f"""
+        SELECT
+            MAX(CASE WHEN e.JO_Num = %s THEN {_DATE_ECRITURE} END),
+            MIN({_DATE_ECRITURE})
+        FROM F_ECRITUREC e
+        WHERE ({comptes_sql}) AND {_DATE_ECRITURE} <= %s
+    """  # noqa: S608
+    with _curseur(cnx) as cur:
+        cur.execute(sql, (JOURNAL_A_NOUVEAUX, *params, _jour(jour)))
+        a_nouveau, premiere = cur.fetchone()
+    debut = a_nouveau or premiere
+    return debut.date() if isinstance(debut, datetime) else debut
+
+
+def totaux_par_journal(
+    cnx: ConnexionSage, *, comptes: Sequence[str], du: date, au: date
+) -> list[tuple[str, object, object, int]]:
+    """(journal, total débit, total crédit, nombre de lignes) des comptes entre deux dates
+    incluses, tous journaux, à-nouveaux compris."""
+    comptes_sql, params = _comptes_sql(comptes)
+    sql = f"""
+        SELECT
+            e.JO_Num,
+            SUM(CASE WHEN e.EC_Sens = 0 THEN e.EC_Montant ELSE 0 END),
+            SUM(CASE WHEN e.EC_Sens = 1 THEN e.EC_Montant ELSE 0 END),
+            COUNT(*)
+        FROM F_ECRITUREC e
+        WHERE ({comptes_sql}) AND {_DATE_ECRITURE} BETWEEN %s AND %s
+        GROUP BY e.JO_Num
+        ORDER BY e.JO_Num
+    """  # noqa: S608
+    with _curseur(cnx) as cur:
+        cur.execute(sql, (*params, _jour(du), _jour(au)))
+        return [tuple(row) for row in cur.fetchall()]
+
+
+def lignes_hors_journaux(
+    cnx: ConnexionSage,
+    *,
+    comptes: Sequence[str],
+    journaux_exclus: Sequence[str],
+    du: date,
+    au: date,
+    limite: int,
+) -> list[tuple]:
+    """Lignes des comptes passées dans un autre journal que ceux donnés, entre deux dates
+    incluses (au plus `limite`, les plus récentes d'abord), dans l'ordre de `COLONNES_GL`."""
+    comptes_sql, params = _comptes_sql(comptes)
+    exclus_sql = ", ".join(["%s"] * len(journaux_exclus))
+    sql = f"""
+        SELECT TOP {int(limite)}
+            {_DATE_ECRITURE},
+            e.JO_Num,
+            e.CG_Num,
+            e.EC_Piece,
+            e.EC_Intitule,
+            NULLIF(e.EC_Echeance, '19000101'),
+            CASE WHEN e.EC_Sens = 0 THEN e.EC_Montant END,
+            CASE WHEN e.EC_Sens = 1 THEN e.EC_Montant END
+        FROM F_ECRITUREC e
+        WHERE ({comptes_sql})
+          AND e.JO_Num NOT IN ({exclus_sql})
+          AND {_DATE_ECRITURE} BETWEEN %s AND %s
+        ORDER BY {_DATE_ECRITURE} DESC, e.JO_Num, e.EC_No
+    """  # noqa: S608
+    with _curseur(cnx) as cur:
+        cur.execute(sql, (*params, *journaux_exclus, _jour(du), _jour(au)))
+        return [tuple(row) for row in cur.fetchall()]

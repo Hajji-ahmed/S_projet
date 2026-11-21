@@ -676,6 +676,32 @@ def _ecritures_absentes(
         periodes[key] = (min(du, line.date_ecriture), max(au, line.date_ecriture))
         banques[line.bank_account_id] = line.bank_code
     en_erreur = {line.bank_account_id for line in lines if line.statut == "Erreur"}
+    return _absentes(db, company_id, hashes, periodes, banques, en_erreur)
+
+
+def ecritures_absentes_periode(
+    db: Session, account: BankAccount, journaux: list[str], du: date, au: date,
+    lines: list[EntryLine],
+) -> list[EcritureAbsente]:  # fmt: skip
+    """Écritures Sage en base du compte, dans chacun de ses journaux entre deux dates, absentes des
+    lignes données : comparaison avec la base Sage sur toute une période (21/11/2026), même pour
+    un journal dont il ne reste aucune ligne dans Sage."""
+    hashes = {line.hash_ligne for line in lines if line.hash_ligne}
+    periodes = {(account.id, journal): (du, au) for journal in journaux}
+    en_erreur = {line.bank_account_id for line in lines if line.statut == "Erreur"}
+    return _absentes(
+        db, account.company_id, hashes, periodes, {account.id: account.bank.code}, en_erreur
+    )
+
+
+def _absentes(
+    db: Session,
+    company_id: int,
+    hashes: set[str],
+    periodes: dict[tuple[int, str], tuple[date, date]],
+    banques: dict[int, str],
+    en_erreur: set[int],
+) -> list[EcritureAbsente]:
     entries = [
         entry
         for (account_id, journal), (du, au) in sorted(periodes.items())

@@ -4,6 +4,7 @@ import { ChevronDown, PenLine, Scale } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { BankLabel } from "@/components/banks/BankLabel";
+import { EcartBadge, SageEcartDetail } from "@/components/ecritures/SageEcartDetail";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/ui/DataTable";
@@ -23,8 +24,9 @@ import {
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/format";
 import { repli } from "@/lib/repli";
-import { listSoldesComptables, setSoldeOuverture } from "@/services/accounting";
-import type { SoldeComptable } from "@/types/accounting";
+import { formatCopie } from "@/lib/sage";
+import { listSoldesComptables, sageSoldes, setSoldeOuverture } from "@/services/accounting";
+import type { SageSoldes, SoldeComptable } from "@/types/accounting";
 
 type Ligne = SoldeComptable & Record<string, unknown>;
 
@@ -52,6 +54,11 @@ export function SoldeComptableCard({
   const [erreur, setErreur] = useState(false);
   const [version, setVersion] = useState(0);
   const [edition, setEdition] = useState<SoldeComptable | null>(null);
+  // Solde dans la base Sage et écart (21/11/2026) : demandés à part, la carte reste lisible
+  // quand Sage est injoignable
+  const [sage, setSage] = useState<SageSoldes | null>(null);
+  const [sageErreur, setSageErreur] = useState(false);
+  const [detail, setDetail] = useState<number | null>(null);
   const ouverte = useSyncExternalStore(OUVERTURE.subscribe, OUVERTURE.lire, () => false);
   const basculer = () => OUVERTURE.ecrire(!ouverte);
 
@@ -73,6 +80,28 @@ export function SoldeComptableCard({
       annule = true;
     };
   }, [companyId, jour, reloadKey, version, ouverte]);
+
+  useEffect(() => {
+    if (!ouverte) return;
+    let annule = false;
+    sageSoldes(companyId, jour).then(
+      (result) => {
+        if (annule) return;
+        setSage(result);
+        setSageErreur(false);
+      },
+      () => {
+        if (!annule) setSageErreur(true);
+      },
+    );
+    return () => {
+      annule = true;
+    };
+  }, [companyId, jour, reloadKey, version, ouverte]);
+
+  const parCompte = new Map((sage?.comptes ?? []).map((item) => [item.bank_account_id, item]));
+  const avecSage = !!sage?.configure;
+  const copie = formatCopie(sage?.derniere_copie ?? null);
 
   const unite = (l: SoldeComptable) => currencySuffix(l.devise);
   const colonnes: Column<Ligne>[] = [
@@ -176,6 +205,53 @@ export function SoldeComptableCard({
         </span>
       ),
     },
+    ...(avecSage
+      ? [
+          {
+            key: "solde_sage",
+            header: "Solde Sage",
+            align: "right" as const,
+            render: (l: Ligne) => {
+              const item = parCompte.get(l.bank_account_id);
+              if (!item) return <span className="text-simtis-muted">-</span>;
+              return (
+                <span
+                  title={item.debut ? `Depuis l'à-nouveau du ${formatDate(item.debut)}` : undefined}
+                >
+                  {formatAmount(item.solde_sage, "DH")}
+                </span>
+              );
+            },
+          },
+          {
+            key: "ecart_sage",
+            header: "Écart Sage",
+            align: "right" as const,
+            render: (l: Ligne) => {
+              const item = parCompte.get(l.bank_account_id);
+              if (!item) return <span className="text-simtis-muted">-</span>;
+              return (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDetail(detail === item.bank_account_id ? null : item.bank_account_id)
+                  }
+                  aria-expanded={detail === item.bank_account_id}
+                  aria-label={`Détail de l'écart avec Sage du compte ${l.bank_code}`}
+                  title="Voir d'où vient l'écart"
+                  className="rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary"
+                >
+                  {item.ecart === null ? (
+                    <span className="text-xs text-simtis-warning-fg">Ouverture à saisir</span>
+                  ) : (
+                    <EcartBadge ecart={item.ecart} />
+                  )}
+                </button>
+              );
+            },
+          },
+        ]
+      : []),
     ...(canEdit
       ? [
           {
@@ -247,6 +323,31 @@ export function SoldeComptableCard({
               rows={lignes as Ligne[]}
               getRowKey={(l) => String(l.bank_account_id)}
               emptyMessage="Aucun compte avec un journal Sage."
+            />
+          )}
+          {lignes !== null && (sageErreur || sage?.message || copie) && (
+            <p
+              className={cn(
+                "mt-3 text-xs",
+                sageErreur || sage?.message ? "text-simtis-warning-fg" : "text-simtis-muted",
+              )}
+            >
+              {sageErreur
+                ? "Solde Sage indisponible pour le moment."
+                : sage?.message && sage.configure
+                  ? sage.message
+                  : copie
+                    ? `Solde Sage : base Sage copiée le ${copie}, tous journaux, depuis le dernier à-nouveau. Cliquez sur un écart pour son détail.`
+                    : null}
+            </p>
+          )}
+          {detail !== null && (
+            <SageEcartDetail
+              key={`${detail}-${jour}-${reloadKey}`}
+              bankAccountId={detail}
+              jour={jour}
+              logos={logos}
+              onClose={() => setDetail(null)}
             />
           )}
         </div>

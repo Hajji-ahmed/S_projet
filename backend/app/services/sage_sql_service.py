@@ -13,6 +13,7 @@ import io
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 
 from openpyxl import Workbook
 from sqlalchemy.orm import Session
@@ -71,6 +72,8 @@ class AnalyseCompteSage:
     compte: CompteSage
     empreinte: str
     analyse: AccountingAnalysis
+    # Solde du compte dans Sage à la date « Au » (écart avec le solde après import, 21/11/2026)
+    solde_sage: "SoldeSage | None" = None
 
 
 @dataclass
@@ -81,7 +84,7 @@ class AnalyseSage:
     comptes: list[AnalyseCompteSage]
 
 
-def _connexion() -> ConnexionSage:
+def connexion() -> ConnexionSage:
     settings = get_settings()
     return ConnexionSage(
         host=settings.sage_sql_host,
@@ -92,14 +95,14 @@ def _connexion() -> ConnexionSage:
     )
 
 
-def _company(db: Session, company_id: int) -> Company:
+def societe(db: Session, company_id: int) -> Company:
     company = db.get(Company, company_id)
     if company is None:
         raise NotFoundError("Société introuvable.")
     return company
 
 
-def _refus(company: Company) -> str | None:
+def refus(company: Company) -> str | None:
     """Pourquoi la base Sage ne peut pas servir à cette société, ou None."""
     settings = get_settings()
     if not settings.sage_sql_configure:
@@ -123,7 +126,7 @@ def comptes_concernes(db: Session, company_id: int) -> list[CompteSage]:
     return sorted(comptes, key=lambda c: (c.account.bank.ordre_affichage, c.account.id))
 
 
-def _derniere_copie(cnx: ConnexionSage) -> datetime:
+def derniere_copie(cnx: ConnexionSage) -> datetime:
     try:
         return sage_sql_repository.derniere_copie(cnx)
     except Exception as error:  # pymssql : réseau, identifiants, base absente
@@ -133,14 +136,14 @@ def _derniere_copie(cnx: ConnexionSage) -> datetime:
 
 def etat(db: Session, company_id: int) -> EtatSage:
     """Connexion configurée, date de la dernière copie et comptes concernés (pour l'écran)."""
-    company = _company(db, company_id)
+    company = societe(db, company_id)
     comptes = comptes_concernes(db, company.id)
-    refus = _refus(company)
-    if refus:
-        return EtatSage(False, None, None, refus, comptes)
+    motif = refus(company)
+    if motif:
+        return EtatSage(False, None, None, motif, comptes)
     base = get_settings().sage_sql_database
     try:
-        copie = _derniere_copie(_connexion())
+        copie = derniere_copie(connexion())
     except ConflictError as error:
         return EtatSage(True, base, None, error.message, comptes)
     return EtatSage(True, base, copie, None, comptes)
@@ -151,7 +154,7 @@ def _verifier_periode(du: date, au: date) -> None:
         raise ConflictError("La date de début doit précéder la date de fin.")
 
 
-def _lire(cnx: ConnexionSage, compte: CompteSage, du: date, au: date) -> list[tuple]:
+def lire(cnx: ConnexionSage, compte: CompteSage, du: date, au: date) -> list[tuple]:
     try:
         return sage_sql_repository.grand_livre(
             cnx, journaux=compte.journaux, comptes=compte.comptes, du=du, au=au
@@ -159,6 +162,43 @@ def _lire(cnx: ConnexionSage, compte: CompteSage, du: date, au: date) -> list[tu
     except Exception as error:
         logger.warning("Lecture du grand livre Sage impossible : %s", error)
         raise ConflictError(INJOIGNABLE) from error
+
+
+CENTIME = Decimal("0.01")
+
+
+@dataclass
+class SoldeSage:
+    """Solde d'un compte dans Sage au `jour` : du dernier à-nouveau (`debut`) au jour inclus,
+    tous journaux (21/11/2026). Sage ne stocke aucun solde : il le recalcule de même."""
+
+    debut: date | None
+    solde: Decimal
+    # (journal, débits, crédits, nombre de lignes) de la période, à-nouveaux compris
+    totaux: list[tuple[str, Decimal, Decimal, int]]
+
+
+def solde_sage(cnx: ConnexionSage, compte: CompteSage, jour: date) -> SoldeSage:
+    try:
+        debut = sage_sql_repository.debut_solde(cnx, comptes=compte.comptes, jour=jour)
+        rows = (
+            sage_sql_repository.totaux_par_journal(cnx, comptes=compte.comptes, du=debut, au=jour)
+            if debut
+            else []
+        )
+    except Exception as error:
+        logger.warning("Solde Sage illisible : %s", error)
+        raise ConflictError(INJOIGNABLE) from error
+    totaux = [
+        (str(journal).strip(), decimal(debit), decimal(credit), int(nb))
+        for journal, debit, credit, nb in rows
+    ]
+    solde = sum((debit - credit for _, debit, credit, _ in totaux), Decimal("0.00"))
+    return SoldeSage(debut, solde, totaux)
+
+
+def decimal(valeur: object) -> Decimal:
+    return Decimal(str(valeur or 0)).quantize(CENTIME)
 
 
 def empreinte(lignes: list[tuple]) -> str:
@@ -191,10 +231,10 @@ def analyser(
     db: Session, company_id: int, du: date, au: date, today: date | None = None
 ) -> AnalyseSage:
     """Aperçu du grand livre de chaque compte concerné. Ne modifie pas la base SIMTIS."""
-    company = _company(db, company_id)
-    refus = _refus(company)
-    if refus:
-        raise ConflictError(refus)
+    company = societe(db, company_id)
+    motif = refus(company)
+    if motif:
+        raise ConflictError(motif)
     _verifier_periode(du, au)
     comptes = comptes_concernes(db, company.id)
     if not comptes:
@@ -202,12 +242,12 @@ def analyser(
             "Aucun compte courant en dirhams n'a de journal Sage et de compte comptable "
             "(écran Comptes)."
         )
-    cnx = _connexion()
-    copie = _derniere_copie(cnx)
+    cnx = connexion()
+    copie = derniere_copie(cnx)
     today = today or position_service.business_today()
     resultats = []
     for compte in comptes:
-        lignes = _lire(cnx, compte, du, au)
+        lignes = lire(cnx, compte, du, au)
         analyse = accounting_import_service.analyse_entries(
             db,
             company_id=company.id,
@@ -216,7 +256,9 @@ def analyser(
             mapping=MAPPING,
             today=today,
         )
-        resultats.append(AnalyseCompteSage(compte, empreinte(lignes), analyse))
+        resultats.append(
+            AnalyseCompteSage(compte, empreinte(lignes), analyse, solde_sage(cnx, compte, au))
+        )
     return AnalyseSage(du, au, copie, resultats)
 
 
@@ -235,17 +277,17 @@ def confirmer(
     today: date | None = None,
 ) -> EntriesImport:
     """Importe les lignes cochées d'un compte : la base Sage est relue et doit être inchangée."""
-    company = _company(db, company_id)
-    refus = _refus(company)
-    if refus:
-        raise ConflictError(refus)
+    company = societe(db, company_id)
+    motif = refus(company)
+    if motif:
+        raise ConflictError(motif)
     _verifier_periode(du, au)
     compte = next(
         (c for c in comptes_concernes(db, company.id) if c.account.id == bank_account_id), None
     )
     if compte is None:
         raise NotFoundError("Compte introuvable parmi les comptes récupérés depuis Sage.")
-    lignes = _lire(_connexion(), compte, du, au)
+    lignes = lire(connexion(), compte, du, au)
     if empreinte(lignes) != empreinte_attendue:
         raise ConflictError(BASE_CHANGEE)
     return accounting_import_service.confirm_entries(

@@ -113,3 +113,7 @@ def production_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     monkeypatch.undo()
     get_settings.cache_clear()
+
+
+# Faux dépôt Sage (fixture `sage`), partagé par les tests de « Récupérer le GL » et de l'écart
+pytest_plugins = ["tests.sage_faux"]
