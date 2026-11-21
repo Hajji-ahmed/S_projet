@@ -1,5 +1,6 @@
 import {
   BookText,
+  Calculator,
   FileSpreadsheet,
   FileText,
   GitCompare,
@@ -25,6 +26,8 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Relevés", href: "/releves", icon: FileSpreadsheet },
   { label: "Écritures comptables", href: "/ecritures", icon: BookText },
   { label: "Rapprochement", href: "/rapprochement", icon: GitCompare },
+  // Frais bancaires à passer dans Sage : leur page depuis le 21/11/2026 (onglet avant)
+  { label: "À comptabiliser", href: "/a-comptabiliser", icon: Calculator },
   { label: "Position bancaire", href: "/position-bancaire", icon: TrendingUp },
   { label: "Rapports", href: "/rapports", icon: FileText },
   { label: "Administration", href: "/administration", icon: Settings },

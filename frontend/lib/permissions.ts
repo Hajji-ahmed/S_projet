@@ -38,6 +38,7 @@ export const ROUTE_PERMISSIONS: Record<string, readonly PermissionCode[]> = {
   "/releves": [P.STATEMENTS_IMPORT, P.RECONCILIATION_VIEW],
   "/ecritures": [P.ACCOUNTING_IMPORT, P.RECONCILIATION_VIEW],
   "/rapprochement": [P.RECONCILIATION_VIEW],
+  "/a-comptabiliser": [P.RECONCILIATION_VIEW],
   "/administration": [P.ADMIN_USERS, P.ADMIN_ROLES, P.ADMIN_SETTINGS],
   "/historique": [P.AUDIT_VIEW],
 };

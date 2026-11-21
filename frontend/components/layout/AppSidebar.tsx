@@ -4,11 +4,48 @@ import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth/AuthProvider";
+import { useCompany } from "@/components/company/CompanyProvider";
+import { abonnerAComptabiliser, texteBadge } from "@/lib/aComptabiliser";
 import { cn } from "@/lib/cn";
 import { NAV_ITEMS } from "@/lib/navigation";
 import { canAccess } from "@/lib/permissions";
+import { A_COMPTABILISER } from "@/lib/reconciliation";
+import { listTransactions } from "@/services/reconciliation";
+
+const ROUTE_A_COMPTABILISER = "/a-comptabiliser";
+
+/**
+ * Nombre de frais bancaires à comptabiliser de la société active, toutes dates confondues
+ * (21/11/2026) : relu au changement de société ou de page, et après une action sur la page.
+ */
+function useNombreAComptabiliser(actif: boolean, pathname: string): number | null {
+  const { company } = useCompany();
+  const [nombre, setNombre] = useState<number | null>(null);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => abonnerAComptabiliser(() => setVersion((v) => v + 1)), []);
+
+  useEffect(() => {
+    if (!actif || !company) return;
+    let cancelled = false;
+    listTransactions(company.id, { from: "", to: "", statut: A_COMPTABILISER, page: 1 }).then(
+      (page) => {
+        if (!cancelled) setNombre(page.a_comptabiliser ?? 0);
+      },
+      () => {
+        if (!cancelled) setNombre(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [actif, company, pathname, version]);
+
+  return actif && company ? nombre : null;
+}
 
 type AppSidebarProps = {
   /** Mobile : le menu est un tiroir ouvert par le bouton de l'en-tête. */
@@ -33,6 +70,12 @@ export function AppSidebar({
   const { user } = useAuth();
   // Seules les pages que l'utilisateur peut consulter apparaissent
   const items = NAV_ITEMS.filter((item) => user && canAccess(user.permissions, item.href));
+  const badge = texteBadge(
+    useNombreAComptabiliser(
+      items.some((item) => item.href === ROUTE_A_COMPTABILISER),
+      pathname,
+    ),
+  );
 
   return (
     <aside
@@ -95,6 +138,27 @@ export function AppSidebar({
               <span className={cn("md:hidden", collapsed ? "lg:hidden" : "lg:inline")}>
                 {label}
               </span>
+              {href === ROUTE_A_COMPTABILISER && badge && (
+                <>
+                  {/* Menu ouvert : le nombre à droite ; réduit aux icônes : un point sur l'icône */}
+                  <span
+                    className={cn(
+                      "ml-auto rounded-full bg-simtis-secondary px-2 py-0.5 text-xs font-semibold text-white tabular-nums md:hidden",
+                      collapsed ? "lg:hidden" : "lg:inline",
+                    )}
+                  >
+                    {badge}
+                  </span>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "absolute top-2 right-1/2 hidden h-2 w-2 translate-x-3 rounded-full bg-simtis-secondary md:block",
+                      collapsed ? "lg:block" : "lg:hidden",
+                    )}
+                  />
+                  <span className="sr-only">{`, ${badge} à comptabiliser`}</span>
+                </>
+              )}
             </Link>
           );
         })}

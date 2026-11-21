@@ -1,9 +1,8 @@
 "use client";
 
 import {
+  ArrowRight,
   Calculator,
-  Download,
-  FileSpreadsheet,
   GitCompareArrows,
   History,
   ListChecks,
@@ -19,12 +18,15 @@ import {
   type CSSProperties,
 } from "react";
 
+import Link from "next/link";
+
 import { useAuth } from "@/components/auth/AuthProvider";
-import { AccountChipLabel } from "@/components/banks/AccountChipLabel";
 import { useCompany } from "@/components/company/CompanyProvider";
-import { AccountButton } from "@/components/ecritures/EntriesCard";
 import { EntriesPane } from "@/components/rapprochement/EntriesPane";
-import { FraisCard } from "@/components/rapprochement/FraisCard";
+import {
+  FiltreRapprochement,
+  useFiltreRapprochement,
+} from "@/components/rapprochement/FiltreRapprochement";
 import { HistoryTab } from "@/components/rapprochement/HistoryTab";
 import { ImpayesOriginesCard } from "@/components/rapprochement/ImpayesOriginesCard";
 import { MatchPanel } from "@/components/rapprochement/MatchPanel";
@@ -33,24 +35,16 @@ import { ProposalsTab } from "@/components/rapprochement/ProposalsTab";
 import { StatButton } from "@/components/rapprochement/StatButton";
 import { TransactionsPane } from "@/components/rapprochement/TransactionsPane";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
-import { DateInput, Field } from "@/components/ui/Field";
 import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useToast } from "@/components/ui/Toast";
 import { ApiError } from "@/lib/api";
-import { businessToday } from "@/lib/balances";
 import { cn } from "@/lib/cn";
 import { formatNombre } from "@/lib/format";
 import {
   basculerLigne,
-  CLE_PERIODE,
   compteurStatut,
   operationOf,
-  periodeAStocker,
-  periodeMemorisee,
-  periodeRapprochement,
-  raccourcisPeriode,
   tauxRapprochement,
   toggleStatut,
   A_COMPTABILISER,
@@ -58,10 +52,6 @@ import {
 } from "@/lib/reconciliation";
 import { PERMISSIONS, hasAnyPermission } from "@/lib/permissions";
 import { estPleinEcran, setPleinEcran, subscribe as subscribePleinEcran } from "@/lib/pleinEcran";
-import { saveFile } from "@/lib/statements";
-import { listAccounts } from "@/services/accounts";
-import { exporterJustificatif } from "@/services/frais";
-import { ExportSageModal } from "@/components/rapprochement/ExportSageModal";
 import {
   listAmbiguous,
   listAmbiguousEntries,
@@ -70,7 +60,6 @@ import {
   runReconciliation,
   runReconciliationElargie,
 } from "@/services/reconciliation";
-import type { Account } from "@/types/account";
 import type { Ecriture, StatutRapprochement } from "@/types/accounting";
 import type {
   Ambigues,
@@ -107,16 +96,16 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const { toast } = useToast();
   const canValidate =
     !!user && hasAnyPermission(user.permissions, [PERMISSIONS.RECONCILIATION_VALIDATE]);
-  // Comptabilisation des droits de timbre (13/10/2026)
-  const canPrepare = !!user && hasAnyPermission(user.permissions, [PERMISSIONS.ACCOUNTING_PREPARE]);
 
-  // Du 1er janvier à aujourd'hui, ou la dernière période choisie sur ce poste (27/10/2026)
-  const [filter, setFilter] = useState<ReconciliationFilter>(() =>
-    periodeRapprochement(businessToday()),
-  );
-  // La période gardée par le navigateur est lue avant le premier chargement des volets
-  const [periodeLue, setPeriodeLue] = useState(false);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  // Du 1er janvier à aujourd'hui, ou la dernière période choisie sur ce poste (27/10/2026),
+  // partagée avec la page « À comptabiliser » (21/11/2026)
+  const {
+    filter,
+    changeFilter: changerFiltre,
+    periodeLue,
+    periodError,
+    accounts,
+  } = useFiltreRapprochement(companyId);
   const [reloadKey, setReloadKey] = useState(0);
   const [operation, setOperation] = useState<Operation | null>(null);
   const [entry, setEntry] = useState<Ecriture | null>(null);
@@ -143,63 +132,9 @@ function Rapprochement({ companyId }: { companyId: number }) {
   const [running, setRunning] = useState(false);
   // Filtre « Type » de l'onglet Propositions (14/10/2026)
   const [typePropositions, setTypePropositions] = useState("");
-  // Écritures de frais pas encore exportées : un seul export pour Sage (13/10/2026)
-  const [totalAExporter, setTotalAExporter] = useState(0);
-  const [exporting, setExporting] = useState(false);
-
-  /** Frais de plus de 200 DH à envoyer à la banque (19/10/2026) : ne marque rien. */
-  async function exporterPourBanque() {
-    setExporting(true);
-    try {
-      const blob = await exporterJustificatif(companyId, filter);
-      saveFile(blob, `frais-a-justifier-${filter.from}-${filter.to}.xlsx`);
-      toast("Frais à justifier exportés pour la banque.");
-    } catch (error) {
-      toast(error instanceof ApiError ? error.message : "L'export a échoué.", "error");
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  // Export pour Sage par banque et par mois, N° de la première pièce saisi (09/11/2026)
-  const [exportSage, setExportSage] = useState(false);
   const [statut, setStatut] = useState("");
-  const [tab, setTab] = useState<"rapprochement" | "propositions" | "comptabiliser" | "historique">(
-    "rapprochement",
-  );
-
-  const periodError =
-    filter.from && filter.to && filter.from > filter.to
-      ? "La date de début doit précéder la date de fin."
-      : !filter.from || !filter.to
-        ? "Choisissez une période."
-        : null;
-
-  useEffect(() => {
-    let brut: string | null = null;
-    try {
-      brut = window.localStorage.getItem(CLE_PERIODE);
-    } catch {
-      // Stockage indisponible : période par défaut
-    }
-    const periode = periodeMemorisee(brut, businessToday());
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- lecture unique du navigateur
-    setFilter((current) => ({ ...current, ...periode }));
-    setPeriodeLue(true);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    listAccounts(companyId, { actif: true }).then(
-      (list) => {
-        if (!cancelled) setAccounts(list.filter((account) => account.journal_sage));
-      },
-      () => undefined,
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId]);
+  // « À comptabiliser » a sa propre page depuis le 21/11/2026 (/a-comptabiliser)
+  const [tab, setTab] = useState<"rapprochement" | "propositions" | "historique">("rapprochement");
 
   useEffect(() => {
     if (periodError) return;
@@ -307,17 +242,7 @@ function Rapprochement({ companyId }: { companyId: number }) {
   function changeFilter(next: Partial<ReconciliationFilter>) {
     setOperation(null);
     setEntry(null);
-    setFilter((current) => {
-      const suivant = { ...current, ...next };
-      if ("from" in next || "to" in next) {
-        try {
-          window.localStorage.setItem(CLE_PERIODE, periodeAStocker(suivant, businessToday()));
-        } catch {
-          // Stockage indisponible : le choix vaut pour la visite en cours
-        }
-      }
-      return suivant;
-    });
+    changerFiltre(next);
   }
 
   function reload(message: string) {
@@ -407,83 +332,13 @@ function Rapprochement({ companyId }: { companyId: number }) {
         />
       )}
 
-      <Card>
-        <div className="space-y-4">
-          <div
-            className="flex gap-2 overflow-x-auto pb-1"
-            role="group"
-            aria-label="Compte bancaire"
-          >
-            <AccountButton
-              active={filter.bankAccountId === undefined}
-              onClick={() => changeFilter({ bankAccountId: undefined })}
-            >
-              Tous les comptes
-            </AccountButton>
-            {accounts.map((account) => (
-              <AccountButton
-                key={account.id}
-                active={filter.bankAccountId === account.id}
-                onClick={() => changeFilter({ bankAccountId: account.id })}
-              >
-                <AccountChipLabel account={account} />
-              </AccountButton>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
-            <div className="w-full max-w-[170px]">
-              <Field label="Du" htmlFor="rapprochement-du">
-                <DateInput
-                  id="rapprochement-du"
-                  value={filter.from}
-                  onChange={(event) => changeFilter({ from: event.target.value })}
-                />
-              </Field>
-            </div>
-            <div className="w-full max-w-[170px]">
-              <Field label="Au" htmlFor="rapprochement-au">
-                <DateInput
-                  id="rapprochement-au"
-                  value={filter.to}
-                  onChange={(event) => changeFilter({ to: event.target.value })}
-                />
-              </Field>
-            </div>
-            {/* Raccourcis de période (11/11/2026) : remplissent Du et Au */}
-            <div
-              className="flex flex-wrap gap-1 pb-1"
-              role="group"
-              aria-label="Raccourcis de période"
-            >
-              {raccourcisPeriode(businessToday()).map((raccourci) => {
-                const actif = filter.from === raccourci.from && filter.to === raccourci.to;
-                return (
-                  <button
-                    key={raccourci.label}
-                    type="button"
-                    aria-pressed={actif}
-                    onClick={() => changeFilter({ from: raccourci.from, to: raccourci.to })}
-                    className={cn(
-                      "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors duration-200",
-                      actif
-                        ? "border-simtis-primary bg-simtis-light text-simtis-primary-dark"
-                        : "border-simtis-border bg-simtis-card text-simtis-muted hover:border-simtis-primary hover:text-simtis-primary",
-                    )}
-                  >
-                    {raccourci.label}
-                  </button>
-                );
-              })}
-            </div>
-            {periodError && (
-              <p role="alert" className="pb-2 text-sm text-simtis-danger-fg">
-                {periodError}
-              </p>
-            )}
-          </div>
-        </div>
-      </Card>
+      <FiltreRapprochement
+        idPrefix="rapprochement"
+        filter={filter}
+        accounts={accounts}
+        periodError={periodError}
+        onChange={changeFilter}
+      />
 
       {/* Compteurs en tuiles sous les filtres (11/11/2026), visibles aussi en plein écran ;
           « Propositions en attente » et « À comptabiliser » retirées : leurs onglets portent le nombre */}
@@ -537,8 +392,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
               [
                 ["rapprochement", "Rapprochement", GitCompareArrows, null],
                 ["propositions", "Propositions", ListChecks, aVerifier],
-                // Frais bancaires à passer dans Sage : un onglet à part (11/11/2026)
-                ["comptabiliser", A_COMPTABILISER, Calculator, aComptabiliser],
                 ["historique", "Historique", History, null],
               ] as const
             ).map(([value, label, Icon, nombre]) => {
@@ -575,6 +428,20 @@ function Rapprochement({ companyId }: { companyId: number }) {
               );
             })}
           </div>
+          {/* Les frais à passer dans Sage ont leur page (21/11/2026) : un lien à la place de l'onglet */}
+          <Link
+            href="/a-comptabiliser"
+            className="ml-2 inline-flex shrink-0 items-center gap-2 rounded-[10px] px-4 py-2 text-sm font-medium whitespace-nowrap text-simtis-primary transition-colors duration-200 hover:bg-simtis-light focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-simtis-secondary"
+          >
+            <Calculator className="h-4 w-4" aria-hidden />
+            {A_COMPTABILISER}
+            {aComptabiliser !== null && (
+              <span className="rounded-full bg-simtis-light px-2 py-0.5 text-xs font-semibold text-simtis-primary-dark tabular-nums">
+                {formatNombre(aComptabiliser)}
+              </span>
+            )}
+            <ArrowRight className="h-4 w-4" aria-hidden />
+          </Link>
         </div>
       )}
 
@@ -629,71 +496,6 @@ function Rapprochement({ companyId }: { companyId: number }) {
           reloadKey={reloadKey}
           onChanged={reload}
         />
-      )}
-
-      {/* Onglet « À comptabiliser » (11/11/2026) : exports, carte des frais et opérations de frais */}
-      {periodeLue && !periodError && tab === "comptabiliser" && (
-        <div className="space-y-5">
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <Button
-              variant="secondary"
-              icon={FileSpreadsheet}
-              disabled={exporting}
-              onClick={exporterPourBanque}
-              title="Frais de plus de 200 DH (hors droits de timbre et commissions avec TVA séparée) à justifier"
-            >
-              Exporter pour la banque
-            </Button>
-            {canPrepare && (
-              <span className="text-sm text-simtis-muted">
-                {plural(totalAExporter, "écriture")} de frais à exporter
-              </span>
-            )}
-            {canPrepare && (
-              <Button icon={Download} disabled={exporting} onClick={() => setExportSage(true)}>
-                Exporter pour Sage
-              </Button>
-            )}
-          </div>
-          {exportSage && (
-            <ExportSageModal
-              companyId={companyId}
-              onClose={() => setExportSage(false)}
-              onExported={(message) => {
-                setExportSage(false);
-                reload(message);
-              }}
-            />
-          )}
-          <FraisCard
-            companyId={companyId}
-            filter={filter}
-            reloadKey={reloadKey}
-            canPrepare={canPrepare}
-            onChanged={reload}
-            onAExporter={setTotalAExporter}
-            onLancer={canValidate ? run : undefined}
-          />
-          {/* Pas de panier dans cet onglet : un clic sur une ligne ouvre son détail ; un autre
-              statut choisi dans le filtre ramène à l'onglet Rapprochement */}
-          <TransactionsPane
-            key={`frais-${filterKey}`}
-            pleinEcran={pleinEcran}
-            companyId={companyId}
-            filter={filter}
-            reloadKey={reloadKey}
-            selectedId={operation?.id ?? null}
-            coches={{ ids: [], onToggle: setOperation }}
-            onSelect={setOperation}
-            onLoaded={handleOperations}
-            statut={A_COMPTABILISER}
-            onStatutChange={(valeur) => {
-              if (valeur === A_COMPTABILISER) return;
-              setStatut(valeur);
-              setTab("rapprochement");
-            }}
-          />
-        </div>
       )}
 
       {periodeLue && !periodError && tab === "rapprochement" && (
