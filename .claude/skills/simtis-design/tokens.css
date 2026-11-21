@@ -43,6 +43,10 @@
   --simtis-info-fg: #2563eb;
   --simtis-violet-bg: #f1ebfe;
   --simtis-violet-fg: #7c3aed;
+  /* Anniversaire de Salma (24/11/2026), à retirer ensuite */
+  --simtis-fete-rose: #f472b6;
+  --simtis-fete-rose-fonce: #db2777;
+  --simtis-fete-rose-bg: #fdf2f8;
 
   /* Palette graphiques (dans cet ordre) */
   --simtis-chart-1: #006b70; /* teal foncé */
@@ -138,6 +142,9 @@ body {
   --color-simtis-info-fg: var(--simtis-info-fg);
   --color-simtis-violet-bg: var(--simtis-violet-bg);
   --color-simtis-violet-fg: var(--simtis-violet-fg);
+  --color-simtis-fete-rose: var(--simtis-fete-rose);
+  --color-simtis-fete-rose-fonce: var(--simtis-fete-rose-fonce);
+  --color-simtis-fete-rose-bg: var(--simtis-fete-rose-bg);
   --radius-card: var(--simtis-radius-card);
   --shadow-simtis-hover: var(--simtis-shadow-hover);
   --font-sans: var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { Anniversaire } from "@/components/anniversaire/Anniversaire";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { cn } from "@/lib/cn";
@@ -54,6 +55,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         {!pleinEcran && <AppHeader onMenuClick={() => setMobileOpen(true)} />}
         <main className={cn(pleinEcran ? "space-y-4 p-3 sm:p-4" : "space-y-6 p-4 sm:p-6 lg:p-8")}>
+          <Anniversaire />
           {children}
         </main>
       </div>
